@@ -93,10 +93,8 @@ def evaluate_open_predictions(
             closed += 1
             continue
 
-        # Drop the prediction-day bar itself (already known at prediction time)
-        post = ohlc[ohlc.index > pd.Timestamp(pred["date"])]
         reason, exit_price, day = _walk_forward_hit(
-            post, direction=pred["direction"],
+            ohlc, direction=pred["direction"],
             tp=float(pred["tp_price"]), sl=float(pred["sl_price"]),
         )
         pl_eur = _profit_loss_eur(
