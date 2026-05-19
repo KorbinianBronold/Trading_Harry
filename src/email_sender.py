@@ -1,0 +1,285 @@
+"""Phase 5: E-Mail rendering and SendGrid delivery.
+
+Daily mail is rendered as four sections in this fixed order:
+  1. Portfolio-Empfehlungen (Phase 4a) — directly actionable on market open
+  2. Aktien Top-10 Long + Top-10 Short
+  3. Trends (dark cards)
+  4. Commodities + Crypto
+
+Plus a footer with yesterday's outcomes, skipped tickers, disclaimer, costs.
+Weekly mail is a shorter HTML body with the same delivery infra."""
+import html
+import logging
+from typing import Any
+
+from sendgrid import SendGridAPIClient
+from sendgrid.helpers.mail import Mail
+
+log = logging.getLogger("shares_future.email_sender")
+
+
+class EmailSendError(RuntimeError):
+    """SendGrid returned a non-2xx response. Caller should still treat the run
+    as successful — the data is in the DB."""
+
+
+# ---------- Daily HTML ----------
+
+_DISCLAIMER = (
+    "Shares_Future ist ein automatisiertes Research- und Paper-Trading-System "
+    "ohne automatische Orderausführung. Alle Analysen dienen ausschließlich zu "
+    "Informationszwecken und stellen KEINE Anlageberatung dar. CFD-Handel kann "
+    "zum Totalverlust führen. Keine Garantie für Prognosen."
+)
+
+
+def _h(s: Any) -> str:
+    if s is None:
+        return ""
+    return html.escape(str(s))
+
+
+def _section_portfolio(recs: list[dict]) -> str:
+    if not recs:
+        return ('<h2>Portfolio-Empfehlungen</h2>'
+                '<p><i>Keine offenen Positionen.</i></p>')
+    rows = []
+    for r in recs:
+        new_lvls = ""
+        if r["action"] == "ANPASSEN":
+            new_lvls = (f' (neuer SL {_h(r.get("new_sl_price"))}, '
+                        f'neues TP {_h(r.get("new_tp_price"))})')
+        rows.append(
+            f'<tr><td><b>{_h(r["action"])}</b></td>'
+            f'<td>{_h(r["ticker"])}</td>'
+            f'<td>{_h(r["direction"])} @ {_h(r.get("entry_price"))}</td>'
+            f'<td>{_h(r.get("reason", ""))}{new_lvls}</td></tr>'
+        )
+    return (
+        '<h2>Portfolio-Empfehlungen</h2>'
+        '<table border="1" cellpadding="4" cellspacing="0">'
+        '<tr><th>Action</th><th>Ticker</th><th>Position</th><th>Begründung</th></tr>'
+        + "".join(rows) + '</table>'
+    )
+
+
+def _row_for_setup(rank: int, a: dict) -> str:
+    scores = a.get("scores", {})
+    trend_flag = "🔥" if a.get("trend_boost") else ""
+    policy_flag = "⚠️" if scores.get("policy_risk", {}).get("value", 10) <= 4 else ""
+    return (
+        f'<tr><td>{rank}</td><td>{_h(a["ticker"])}</td>'
+        f'<td>{_h(a.get("total_score"))}</td>'
+        f'<td>{_h(a.get("probability_pct"))}%</td>'
+        f'<td>{_h(a.get("current_price"))}</td>'
+        f'<td>{_h(a.get("tp_price"))}</td>'
+        f'<td>{_h(a.get("sl_price"))}</td>'
+        f'<td>{_h(a.get("rr_ratio"))}</td>'
+        f'<td>{_h(a.get("atr_pct"))}</td>'
+        f'<td>{_h(a.get("intraday_range_pct"))}</td>'
+        f'<td>{trend_flag}{policy_flag}</td>'
+        f'<td>{_h(a.get("summary", ""))[:160]}</td></tr>'
+    )
+
+
+def _section_stocks(top_long: list[dict], top_short: list[dict]) -> str:
+    if not top_long and not top_short:
+        return '<h2>Aktien Top-10</h2><p><i>Keine Setups gefunden.</i></p>'
+    head = (
+        '<tr><th>#</th><th>Ticker</th><th>Score</th><th>P%</th>'
+        '<th>Kurs</th><th>TP</th><th>SL</th><th>R/R</th>'
+        '<th>ATR/Tag</th><th>Range/Tag</th><th>Flags</th><th>Begründung</th></tr>'
+    )
+    long_rows = "".join(_row_for_setup(i + 1, a) for i, a in enumerate(top_long))
+    short_rows = "".join(_row_for_setup(i + 1, a) for i, a in enumerate(top_short))
+    return (
+        '<h2>Aktien Top-10 Long</h2>'
+        '<table border="1" cellpadding="4" cellspacing="0">' + head + long_rows +
+        '</table>'
+        '<h2>Aktien Top-10 Short</h2>'
+        '<table border="1" cellpadding="4" cellspacing="0">' + head + short_rows +
+        '</table>'
+    )
+
+
+def _section_trends(trends: list[dict]) -> str:
+    if not trends:
+        return '<h2>Trends</h2><p><i>Keine Trends erkannt.</i></p>'
+    cards = []
+    for t in trends:
+        cards.append(
+            '<div style="background:#1a1a1a;color:#eee;padding:12px;'
+            'margin:6px 0;border-radius:8px;">'
+            f'<h3 style="margin:0;color:#80c0ff;">{_h(t.get("name"))} '
+            f'<small>(Stärke {_h(t.get("strength"))}, '
+            f'{_h(t.get("duration_estimate"))})</small></h3>'
+            f'<p>{_h(t.get("summary"))}</p>'
+            f'<p><b>+</b> {_h(", ".join(t.get("beneficiary_tickers") or []))}<br>'
+            f'<b>−</b> {_h(", ".join(t.get("negative_tickers") or []))}<br>'
+            f'<b>Catalyst:</b> {_h(t.get("next_catalyst"))}</p>'
+            '</div>'
+        )
+    return '<h2>Trends</h2>' + "".join(cards)
+
+
+def _section_commodities_crypto(items: list[dict]) -> str:
+    if not items:
+        return ('<h2>Commodities + Crypto</h2>'
+                '<p><i>Keine Daten.</i></p>')
+    rows = []
+    for a in items:
+        extra = a.get("extra") or {}
+        rows.append(
+            f'<tr><td>{_h(a["ticker"])}</td>'
+            f'<td>{_h(a.get("direction"))}</td>'
+            f'<td>{_h(a.get("total_score"))}</td>'
+            f'<td>{_h(a.get("probability_pct"))}%</td>'
+            f'<td>{_h(a.get("current_price"))}</td>'
+            f'<td>{_h(a.get("tp_price"))}</td>'
+            f'<td>{_h(a.get("sl_price"))}</td>'
+            f'<td>{_h(extra.get("fear_greed_value"))}</td></tr>'
+        )
+    gsr = next(
+        (a.get("extra", {}).get("gold_silver_ratio")
+         for a in items if a.get("extra", {}).get("gold_silver_ratio") is not None),
+        None,
+    )
+    btc_dom = next(
+        (a.get("extra", {}).get("btc_dominance_pct")
+         for a in items if a.get("extra", {}).get("btc_dominance_pct") is not None),
+        None,
+    )
+    footer = ""
+    if gsr is not None or btc_dom is not None:
+        footer = (
+            f'<p><small>Gold/Silver-Ratio: {_h(gsr)} '
+            f' | BTC-Dominanz: {_h(btc_dom)}%</small></p>'
+        )
+    return (
+        '<h2>Commodities + Crypto</h2>'
+        '<table border="1" cellpadding="4" cellspacing="0">'
+        '<tr><th>Ticker</th><th>Dir</th><th>Score</th><th>P%</th>'
+        '<th>Kurs</th><th>TP</th><th>SL</th><th>F&amp;G</th></tr>'
+        + "".join(rows) + '</table>' + footer
+    )
+
+
+def _section_footer(payload: dict) -> str:
+    cost = payload.get("cost_summary") or {}
+    y = payload.get("yesterday_outcomes") or {}
+    skipped = payload.get("skipped_tickers") or []
+    aborted_line = ""
+    if cost.get("aborted_at_phase"):
+        aborted_line = (
+            f'<p style="color:#c00"><b>Run wurde abgebrochen in Phase: '
+            f'{_h(cost["aborted_at_phase"])}</b> (Hard-Cap erreicht).</p>'
+        )
+    return (
+        aborted_line +
+        '<hr>'
+        '<p><b>Vortags-Performance:</b> '
+        f'Long {_h(y.get("long_correct"))}/{_h(y.get("long_total"))}, '
+        f'Short {_h(y.get("short_correct"))}/{_h(y.get("short_total"))}, '
+        f'sim. P/L {_h(y.get("total_pl_eur"))} EUR</p>'
+        f'<p><b>Übersprungene Aktien:</b> {_h(", ".join(skipped)) or "—"}</p>'
+        '<p><b>Run-Kosten:</b> '
+        f'{_h(cost.get("total_eur"))} EUR | '
+        f'Cache-Hit-Rate: {_h(round((cost.get("cache_hit_rate") or 0) * 100, 1))}% | '
+        f'Tokens: {_h(cost.get("input_tokens"))}/'
+        f'{_h(cost.get("output_tokens"))} | '
+        f'Web-Searches: {_h(cost.get("web_search_calls"))}</p>'
+        f'<p><small><b>Disclaimer:</b> {_h(_DISCLAIMER)}</small></p>'
+    )
+
+
+def render_daily_html(payload: dict) -> str:
+    """Build the 4-section daily e-mail body."""
+    return (
+        '<html><body style="font-family:sans-serif;font-size:14px;">'
+        f'<h1>Shares_Future — {_h(payload.get("date"))} '
+        f'({_h(payload.get("run_type"))})</h1>'
+        + _section_portfolio(payload.get("portfolio_recs") or [])
+        + _section_stocks(
+            payload.get("top_long") or [], payload.get("top_short") or [],
+        )
+        + _section_trends(payload.get("trends") or [])
+        + _section_commodities_crypto(payload.get("commodities_crypto") or [])
+        + _section_footer(payload)
+        + '</body></html>'
+    )
+
+
+# ---------- Weekly HTML ----------
+
+def render_weekly_html(payload: dict) -> str:
+    """Reduced weekly e-mail. No learnings/prompt-optimizer in Sprint 1."""
+    trades_rows = "".join(
+        f'<tr><td>{_h(t["date"])}</td><td>{_h(t["ticker"])}</td>'
+        f'<td>{_h(t["direction"])}</td>'
+        f'<td>{_h(t.get("entry_price"))}</td>'
+        f'<td>{_h(t.get("exit_price"))}</td>'
+        f'<td>{_h(t.get("exit_reason"))}</td>'
+        f'<td>{_h(t.get("profit_loss_eur"))}</td></tr>'
+        for t in (payload.get("trades") or [])
+    )
+    cost = payload.get("cost_summary") or {}
+    return (
+        '<html><body style="font-family:sans-serif;font-size:14px;">'
+        f'<h1>Shares_Future Wochen-Summary — {_h(payload.get("week_label"))}</h1>'
+        '<h2>Performance</h2>'
+        f'<p>Long: {_h(payload.get("long_correct"))}/'
+        f'{_h(payload.get("long_total"))} | '
+        f'Ø P/L {_h(payload.get("long_avg_pl"))} EUR</p>'
+        f'<p>Short: {_h(payload.get("short_correct"))}/'
+        f'{_h(payload.get("short_total"))} | '
+        f'Ø P/L {_h(payload.get("short_avg_pl"))} EUR</p>'
+        f'<p><b>Sim. Gesamt-P/L:</b> {_h(payload.get("total_pl_eur"))} EUR</p>'
+        '<h2>Trades</h2>'
+        '<table border="1" cellpadding="4" cellspacing="0">'
+        '<tr><th>Datum</th><th>Ticker</th><th>Dir</th>'
+        '<th>Entry</th><th>Exit</th><th>Reason</th><th>P/L EUR</th></tr>'
+        + trades_rows + '</table>'
+        f'<p><b>Run-Kosten Woche:</b> {_h(cost.get("total_eur"))} EUR</p>'
+        f'<p><small>{_h(_DISCLAIMER)}</small></p>'
+        '</body></html>'
+    )
+
+
+# ---------- Delivery ----------
+
+def send_daily_email(
+    payload: dict, api_key: str, email_from: str, email_to: str,
+) -> None:
+    html_body = render_daily_html(payload)
+    subject = (
+        f"[Shares_Future] {payload.get('date')} {payload.get('run_type')} — "
+        f"Top {len(payload.get('top_long') or [])}L / "
+        f"{len(payload.get('top_short') or [])}S"
+    )
+    _send(api_key, email_from, email_to, subject, html_body)
+
+
+def send_weekly_email(
+    payload: dict, api_key: str, email_from: str, email_to: str,
+) -> None:
+    html_body = render_weekly_html(payload)
+    subject = (
+        f"[Shares_Future] {payload.get('week_label')} — Wochen-Summary"
+    )
+    _send(api_key, email_from, email_to, subject, html_body)
+
+
+def _send(api_key: str, email_from: str, email_to: str,
+          subject: str, html_body: str) -> None:
+    mail = Mail(
+        from_email=email_from, to_emails=email_to,
+        subject=subject, html_content=html_body,
+    )
+    client = SendGridAPIClient(api_key)
+    resp = client.send(mail)
+    if not (200 <= getattr(resp, "status_code", 0) < 300):
+        raise EmailSendError(
+            f"SendGrid returned status {resp.status_code}: "
+            f"{getattr(resp, 'body', '')!r}"
+        )
+    log.info(f"SendGrid accepted message (status={resp.status_code})")
