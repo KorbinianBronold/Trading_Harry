@@ -14,7 +14,7 @@ CREATE TABLE IF NOT EXISTS technical_indicators (
     ticker TEXT NOT NULL, date TEXT NOT NULL,
     rsi_14 REAL, macd_signal TEXT, atr_pct REAL,
     bb_position REAL, above_sma20 REAL, above_sma50 REAL, above_sma200 REAL,
-    volume_ratio REAL,
+    volume_ratio REAL, intraday_range_pct REAL,
     UNIQUE(ticker, date)
 );
 
@@ -111,6 +111,19 @@ CREATE INDEX IF NOT EXISTS idx_price_history_ticker_date ON price_history(ticker
 """
 
 
+def _apply_migrations(conn: sqlite3.Connection) -> None:
+    """Idempotent column-add migrations for pre-existing DBs.
+    SQLite does not support IF NOT EXISTS on ALTER TABLE, so we inspect first."""
+    existing = {r["name"] for r in conn.execute(
+        "PRAGMA table_info(technical_indicators)"
+    ).fetchall()}
+    if "intraday_range_pct" not in existing:
+        conn.execute(
+            "ALTER TABLE technical_indicators ADD COLUMN intraday_range_pct REAL"
+        )
+    conn.commit()
+
+
 def connect(db_path: str | Path) -> sqlite3.Connection:
     conn = sqlite3.connect(str(db_path))
     conn.row_factory = sqlite3.Row
@@ -121,6 +134,7 @@ def connect(db_path: str | Path) -> sqlite3.Connection:
 def init_schema(conn: sqlite3.Connection) -> None:
     conn.executescript(SCHEMA_SQL)
     conn.commit()
+    _apply_migrations(conn)
 
 
 def get_tables(conn: sqlite3.Connection) -> list[str]:
@@ -220,5 +234,54 @@ def cleanup_old_data(conn: sqlite3.Connection) -> None:
         DELETE FROM trend_analyses WHERE date < date('now', '-180 days');
         DELETE FROM skipped_tickers WHERE date < date('now', '-30 days');
         """
+    )
+    conn.commit()
+
+
+def upsert_technical_indicators(conn: sqlite3.Connection, row: dict) -> None:
+    cols = [
+        "ticker", "date", "rsi_14", "macd_signal", "atr_pct",
+        "bb_position", "above_sma20", "above_sma50", "above_sma200",
+        "volume_ratio", "intraday_range_pct",
+    ]
+    placeholders = ", ".join(["?"] * len(cols))
+    values = [row.get(c) for c in cols]
+    conn.execute(
+        f"INSERT OR REPLACE INTO technical_indicators ({', '.join(cols)}) "
+        f"VALUES ({placeholders})",
+        values,
+    )
+    conn.commit()
+
+
+def save_trend_analysis(conn: sqlite3.Connection, trend: dict) -> None:
+    """Insert or replace one trend row. Lists serialised as comma-joined strings."""
+    beneficiaries = ",".join(trend.get("beneficiary_tickers") or [])
+    negatives = ",".join(trend.get("negative_tickers") or [])
+    conn.execute(
+        """INSERT OR REPLACE INTO trend_analyses
+           (date, run_type, trend_name, strength, duration_estimate, summary,
+            beneficiary_tickers, negative_tickers, next_catalyst)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (
+            trend["date"], trend["run_type"], trend["trend_name"],
+            trend.get("strength"), trend.get("duration_estimate"),
+            trend.get("summary"), beneficiaries, negatives,
+            trend.get("next_catalyst"),
+        ),
+    )
+    conn.commit()
+
+
+def log_skipped_ticker(
+    conn: sqlite3.Connection,
+    ticker: str, date: str, run_type: str,
+    reason: str, learnable: bool = False,
+) -> None:
+    conn.execute(
+        """INSERT INTO skipped_tickers
+           (ticker, date, run_type, reason, learnable)
+           VALUES (?, ?, ?, ?, ?)""",
+        (ticker, date, run_type, reason, 1 if learnable else 0),
     )
     conn.commit()

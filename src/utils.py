@@ -53,6 +53,7 @@ class ClaudeResult:
     cache_read_tokens: int
     cache_creation_tokens: int
     model: str
+    web_search_calls: int = 0
 
 
 @retry_with_backoff(max_retries=3, base_delay=2.0)
@@ -80,6 +81,12 @@ def call_claude(
     response = _anthropic_client.messages.create(**kwargs)
 
     text_parts = [b.text for b in response.content if hasattr(b, "text")]
+
+    server_tool_use = getattr(response.usage, "server_tool_use", None)
+    web_search_calls = 0
+    if server_tool_use is not None:
+        web_search_calls = getattr(server_tool_use, "web_search_requests", 0) or 0
+
     return ClaudeResult(
         text="\n".join(text_parts),
         input_tokens=response.usage.input_tokens,
@@ -87,4 +94,5 @@ def call_claude(
         cache_read_tokens=getattr(response.usage, "cache_read_input_tokens", 0) or 0,
         cache_creation_tokens=getattr(response.usage, "cache_creation_input_tokens", 0) or 0,
         model=model,
+        web_search_calls=web_search_calls,
     )
