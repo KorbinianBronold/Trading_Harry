@@ -1,0 +1,28 @@
+{
+  "results": [
+    {
+      "ticker": "AAPL",
+      "long_score": 7.5,
+      "short_score": 2.0,
+      "confidence": "high",
+      "evidence": ["RSI 58 rising", "above SMA200 +12.8%", "earnings beat 4.2%"],
+      "exclude": false
+    },
+    {
+      "ticker": "MSFT",
+      "long_score": 6.8,
+      "short_score": 3.2,
+      "confidence": "medium",
+      "evidence": ["MACD bullish_cross", "volume_ratio 1.15"],
+      "exclude": false
+    },
+    {
+      "ticker": "BADCO",
+      "long_score": 0.0,
+      "short_score": 0.0,
+      "confidence": "low",
+      "evidence": ["data_quality low"],
+      "exclude": true
+    }
+  ]
+}
