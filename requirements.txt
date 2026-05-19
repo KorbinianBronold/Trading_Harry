@@ -1,6 +1,6 @@
 anthropic==0.42.0
 pandas==2.2.3
-pandas-ta==0.3.14b0
+pandas-ta==0.4.71b0
 yfinance==0.2.50
 finnhub-python==2.4.21
 sendgrid==6.11.0
