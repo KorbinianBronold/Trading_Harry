@@ -15,3 +15,6 @@ class PaidProvider(DataProvider):
 
     def get_last_available_date(self, ticker):
         raise NotImplementedError("PaidProvider is stubbed in Sprint 1")
+
+    def get_ohlc_after(self, ticker, start_date, end_date):
+        raise NotImplementedError("Paid provider OHLC backfill is Sprint 2")

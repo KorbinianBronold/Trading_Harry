@@ -19,6 +19,9 @@ class FinnhubProvider(DataProvider):
     def get_price_history(self, ticker, days=90):
         raise NotImplementedError("FinnhubProvider only supplies earnings")
 
+    def get_ohlc_after(self, ticker, start_date, end_date):
+        raise NotImplementedError("Finnhub provider is earnings-only; use yfinance for OHLC")
+
     def get_fundamentals(self, ticker):
         return {}
 

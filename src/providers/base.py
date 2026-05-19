@@ -19,3 +19,10 @@ class DataProvider(ABC):
     @abstractmethod
     def get_last_available_date(self, ticker: str) -> str | None:
         ...
+
+    @abstractmethod
+    def get_ohlc_after(
+        self, ticker: str, start_date: str, end_date: str,
+    ) -> pd.DataFrame | None:
+        """Daily OHLC bars inclusive [start_date, end_date]. None if empty."""
+        ...

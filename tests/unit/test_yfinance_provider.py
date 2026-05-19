@@ -79,3 +79,24 @@ def test_get_fundamentals_extracts_known_fields():
     assert f["sector"] == "Technology"
     assert f["consensus"] == "buy"
     assert f["analyst_upside"] == pytest.approx((195 - 180) / 180 * 100)
+
+
+def test_get_ohlc_after_returns_subset(monkeypatch):
+    """Reads a 90-day fetch and slices to the requested window."""
+    import pandas as pd
+    from src.providers.yfinance_provider import YFinanceProvider
+
+    full = pd.DataFrame(
+        {"Open": [1, 2, 3, 4], "High": [1, 2, 3, 4],
+         "Low":  [1, 2, 3, 4], "Close":[1, 2, 3, 4],
+         "Volume":[10, 20, 30, 40]},
+        index=pd.to_datetime(["2026-05-15", "2026-05-18",
+                              "2026-05-19", "2026-05-20"]),
+    )
+    provider = YFinanceProvider()
+    monkeypatch.setattr(provider, "get_price_history", lambda t, days=90: full)
+    out = provider.get_ohlc_after("AAPL", start_date="2026-05-18",
+                                  end_date="2026-05-20")
+    assert list(out.index.strftime("%Y-%m-%d")) == [
+        "2026-05-18", "2026-05-19", "2026-05-20",
+    ]

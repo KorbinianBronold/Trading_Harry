@@ -62,3 +62,14 @@ class YFinanceProvider(DataProvider):
         if df is None or df.empty:
             return None
         return df.index[-1].strftime("%Y-%m-%d")
+
+    def get_ohlc_after(
+        self, ticker: str, start_date: str, end_date: str,
+    ) -> "pd.DataFrame | None":
+        df = self.get_price_history(ticker, days=90)
+        if df is None or df.empty:
+            return None
+        import pandas as pd
+        mask = (df.index >= pd.Timestamp(start_date)) & (df.index <= pd.Timestamp(end_date))
+        sub = df.loc[mask]
+        return sub if not sub.empty else None
