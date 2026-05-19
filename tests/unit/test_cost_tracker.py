@@ -71,3 +71,25 @@ def test_persist_returns_summary_dict():
     assert summary["total_eur"] > 0
     assert "cache_hit_rate" in summary
     assert 0 <= summary["cache_hit_rate"] <= 1
+
+
+from unittest.mock import MagicMock
+from src.cost_tracker import CostTracker
+
+
+def test_add_from_result_forwards_all_fields():
+    tracker = CostTracker(hard_cap_eur=10.0)
+    result = MagicMock(
+        model="claude-sonnet-4-6",
+        input_tokens=1000,
+        output_tokens=400,
+        cache_read_tokens=200,
+        cache_creation_tokens=100,
+        web_search_calls=2,
+    )
+    tracker.add_from_result(result)
+    assert tracker.input_tokens == 1000
+    assert tracker.output_tokens == 400
+    assert tracker.cache_read_tokens == 200
+    assert tracker.web_search_calls == 2
+    assert tracker.total_eur > 0

@@ -96,3 +96,37 @@ def call_claude(
         model=model,
         web_search_calls=web_search_calls,
     )
+
+
+import json
+import re
+from typing import Type
+
+_JSON_FENCE_RE = re.compile(r"```(?:json)?\s*(\{.*\})\s*```", re.DOTALL)
+
+
+def extract_json_blob(text: str, error_cls: Type[Exception]) -> dict:
+    """Tolerate ```json ... ``` fences and leading/trailing prose. Raises the
+    caller-provided error_cls on failure so callers can keep their own taxonomy."""
+    m = _JSON_FENCE_RE.search(text)
+    if m:
+        text = m.group(1)
+    text = text.strip()
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError as e:
+        start = text.find("{")
+        end = text.rfind("}")
+        if start >= 0 and end > start:
+            try:
+                return json.loads(text[start:end + 1])
+            except json.JSONDecodeError:
+                pass
+        raise error_cls(f"Could not parse JSON: {e}") from e
+
+
+WEB_SEARCH_TOOL = {
+    "type": "web_search_20250305",
+    "name": "web_search",
+    "max_uses": 5,
+}

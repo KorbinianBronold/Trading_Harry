@@ -9,11 +9,14 @@ class GuardrailsChecker:
     min_rr_hard: float = config.RR_RATIO_MIN_HARD
     momentum_long_min: float = config.MOMENTUM_LONG_MIN
     momentum_short_max: float = config.MOMENTUM_SHORT_MAX
+    max_hold_days: int = 3
+    min_intraday_range_pct: float = 1.0
 
     REQUIRED_FIELDS = (
         "ticker", "direction", "confidence", "current_price",
         "tp_price", "sl_price", "rr_ratio", "total_score", "summary",
         "sources_used", "signal_consistency_check", "scores",
+        "hold_days_recommended", "intraday_range_pct",
     )
 
     def check_analysis(self, a: dict) -> tuple[bool, list[str]]:
@@ -70,5 +73,19 @@ class GuardrailsChecker:
                 errors.append(
                     f"Signal consistency: short momentum {momentum} > {self.momentum_short_max}"
                 )
+
+        hold_days = a.get("hold_days_recommended")
+        if hold_days is not None and hold_days > self.max_hold_days:
+            errors.append(
+                f"Haltedauer > {self.max_hold_days} Tage – nicht CFD-geeignet "
+                f"(hold_days_recommended={hold_days})"
+            )
+
+        rng = a.get("intraday_range_pct")
+        if rng is not None and rng < self.min_intraday_range_pct:
+            errors.append(
+                f"Intraday-Range < {self.min_intraday_range_pct:.1f}% – nicht CFD-geeignet "
+                f"(intraday_range_pct={rng})"
+            )
 
         return len(errors) == 0, errors

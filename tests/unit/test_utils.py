@@ -131,3 +131,30 @@ def test_call_claude_web_search_calls_zero_when_absent():
         result = call_claude(model="claude-haiku-4-5", system="s", user="u")
 
     assert result.web_search_calls == 0
+
+
+import pytest
+from src.utils import extract_json_blob
+
+
+class _DemoError(RuntimeError):
+    pass
+
+
+def test_extract_json_blob_parses_plain_json():
+    assert extract_json_blob('{"a": 1}', _DemoError) == {"a": 1}
+
+
+def test_extract_json_blob_strips_markdown_fences():
+    text = "```json\n{\"a\": 2}\n```"
+    assert extract_json_blob(text, _DemoError) == {"a": 2}
+
+
+def test_extract_json_blob_extracts_outermost_braces_on_prose():
+    text = "Sure, here is the result:\n{\"a\": 3}\nLet me know if you need more."
+    assert extract_json_blob(text, _DemoError) == {"a": 3}
+
+
+def test_extract_json_blob_raises_provided_error_class():
+    with pytest.raises(_DemoError, match="Could not parse JSON"):
+        extract_json_blob("not json at all and no braces", _DemoError)

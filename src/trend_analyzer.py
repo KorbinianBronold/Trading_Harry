@@ -5,14 +5,12 @@ JSON blob which we persist row-per-trend in the trend_analyses table. The caller
 (main.py orchestrator) treats a TrendAnalyzerError as fatal for the run, per
 spec §3 "Phase 0 fehlt → Run abbrechen + Alert-Mail".
 """
-import json
 import logging
-import re
 from pathlib import Path
 
 from src import db
 from src.cost_tracker import CostTracker
-from src.utils import call_claude
+from src.utils import call_claude, extract_json_blob, WEB_SEARCH_TOOL
 
 log = logging.getLogger("shares_future.trend_analyzer")
 
@@ -21,38 +19,10 @@ SYSTEM_PROMPT = (Path(__file__).resolve().parent.parent
 
 MODEL = "claude-sonnet-4-6"
 MAX_TOKENS = 4096
-WEB_SEARCH_TOOL = {
-    "type": "web_search_20250305",
-    "name": "web_search",
-    "max_uses": 5,
-}
 
 
 class TrendAnalyzerError(RuntimeError):
     """Phase 0 produced no usable output. Caller MUST abort the run."""
-
-
-_FENCE_RE = re.compile(r"```(?:json)?\s*(\{.*\})\s*```", re.DOTALL)
-
-
-def _extract_json(text: str) -> dict:
-    """Tolerate ```json ... ``` fences and leading/trailing prose."""
-    m = _FENCE_RE.search(text)
-    if m:
-        text = m.group(1)
-    text = text.strip()
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError as e:
-        # Try to find the outermost {...} substring
-        start = text.find("{")
-        end = text.rfind("}")
-        if start >= 0 and end > start:
-            try:
-                return json.loads(text[start:end + 1])
-            except json.JSONDecodeError:
-                pass
-        raise TrendAnalyzerError(f"Could not parse JSON: {e}") from e
 
 
 def analyze_trends(
@@ -85,16 +55,9 @@ def analyze_trends(
         tools=[WEB_SEARCH_TOOL],
     )
 
-    cost_tracker.add_call(
-        model=result.model,
-        input_tokens=result.input_tokens,
-        output_tokens=result.output_tokens,
-        cache_read_tokens=result.cache_read_tokens,
-        cache_creation_tokens=result.cache_creation_tokens,
-        web_search_calls=result.web_search_calls,
-    )
+    cost_tracker.add_from_result(result)
 
-    parsed = _extract_json(result.text)
+    parsed = extract_json_blob(result.text, TrendAnalyzerError)
     trends = parsed.get("trends") or []
     if not trends:
         raise TrendAnalyzerError(

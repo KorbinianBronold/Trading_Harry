@@ -71,6 +71,18 @@ class CostTracker:
         if not self._warned and self.total_eur > self.warn_threshold_eur:
             self._warned = True
 
+    def add_from_result(self, result) -> None:
+        """Shortcut for the 4 Claude callers — forwards every field from a
+        utils.ClaudeResult into add_call(). Avoids 6-kwarg boilerplate."""
+        self.add_call(
+            model=result.model,
+            input_tokens=result.input_tokens,
+            output_tokens=result.output_tokens,
+            cache_read_tokens=result.cache_read_tokens,
+            cache_creation_tokens=result.cache_creation_tokens,
+            web_search_calls=result.web_search_calls,
+        )
+
     def summary(self, run_type: str, date: str) -> dict:
         hit_rate = 0.0
         if self.input_tokens > 0:

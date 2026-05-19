@@ -202,3 +202,126 @@ def test_log_skipped_ticker_inserts_row(in_memory_db):
     ).fetchone()
     assert row["reason"] == "yfinance returned no data"
     assert row["learnable"] == 0
+
+
+from src import db
+
+
+def test_predictions_has_hold_days_and_intraday_range_columns(in_memory_db):
+    db.init_schema(in_memory_db)
+    cols = {r["name"] for r in in_memory_db.execute(
+        "PRAGMA table_info(predictions)"
+    ).fetchall()}
+    assert "hold_days_recommended" in cols
+    assert "intraday_range_pct" in cols
+
+
+def test_outcomes_has_days_to_close_and_exit_reason_columns(in_memory_db):
+    db.init_schema(in_memory_db)
+    cols = {r["name"] for r in in_memory_db.execute(
+        "PRAGMA table_info(outcomes)"
+    ).fetchall()}
+    assert "days_to_close" in cols
+    assert "exit_reason" in cols
+
+
+def test_position_recommendations_table_exists(in_memory_db):
+    db.init_schema(in_memory_db)
+    assert "position_recommendations" in db.get_tables(in_memory_db)
+
+
+def test_save_prediction_persists_hold_days_and_intraday(in_memory_db):
+    db.init_schema(in_memory_db)
+    pid = db.save_prediction(in_memory_db, {
+        "date": "2026-05-19", "run_type": "close",
+        "asset_class": "stock", "ticker": "AAPL", "direction": "long",
+        "entry_price": 178.0, "tp_price": 184.0, "tp_pct": 3.4,
+        "sl_price": 176.0, "sl_pct": 1.1, "rr_ratio": 3.0,
+        "total_score": 7.8, "probability_pct": 68, "confidence": "high",
+        "score_market_env": 7.0, "score_company": 8.0, "score_valuation": 6.0,
+        "score_momentum": 8.0, "score_risk": 6.0, "score_sector": 7.0,
+        "score_catalyst": 7.0, "score_policy": 6.0,
+        "atr_pct": 1.8, "rsi_at_entry": 58.0, "volume_ratio": 1.15,
+        "market_regime": "risk_on", "vix_at_prediction": 14.0,
+        "sector": "Technology", "trend_boost": "ai-capex",
+        "earnings_warning": False, "summary": "ok",
+        "learnable": True,
+        "hold_days_recommended": 2,
+        "intraday_range_pct": 1.4,
+    })
+    row = in_memory_db.execute(
+        "SELECT hold_days_recommended, intraday_range_pct FROM predictions WHERE id=?",
+        (pid,),
+    ).fetchone()
+    assert row["hold_days_recommended"] == 2
+    assert row["intraday_range_pct"] == 1.4
+
+
+def test_save_position_recommendation(in_memory_db):
+    db.init_schema(in_memory_db)
+    pid = _insert_test_prediction(in_memory_db)
+    db.save_position_recommendation(in_memory_db, {
+        "date": "2026-05-20", "run_type": "pre_market",
+        "prediction_id": pid, "action": "HALTEN",
+        "reason": "These intakt, kein neuer Katalysator.",
+        "new_sl_price": None, "new_tp_price": None,
+        "market_context_changed": False,
+    })
+    row = in_memory_db.execute(
+        "SELECT action, reason FROM position_recommendations WHERE prediction_id=?",
+        (pid,),
+    ).fetchone()
+    assert row["action"] == "HALTEN"
+
+
+def test_load_open_predictions_within_max_age_days(in_memory_db):
+    db.init_schema(in_memory_db)
+    p_old = _insert_test_prediction(in_memory_db, date="2026-05-10")
+    p_new = _insert_test_prediction(in_memory_db, date="2026-05-19")
+    rows = db.load_open_predictions_within_max_age_days(
+        in_memory_db, today="2026-05-20", max_trading_days=3,
+    )
+    ids = {r["id"] for r in rows}
+    assert p_new in ids
+    assert p_old not in ids
+
+
+def test_save_outcome_with_new_columns(in_memory_db):
+    db.init_schema(in_memory_db)
+    pid = _insert_test_prediction(in_memory_db)
+    oid = db.save_outcome(in_memory_db, {
+        "prediction_id": pid, "direction": "long",
+        "evaluated_date": "2026-05-22",
+        "price_after_eod": 184.0, "price_change_eod_pct": 3.4,
+        "correct_direction_eod": True,
+        "tp_hit": True, "sl_hit": False,
+        "days_to_close": 2, "exit_reason": "tp_hit",
+        "profit_loss_eur": 25.0,
+    })
+    row = in_memory_db.execute(
+        "SELECT days_to_close, exit_reason FROM outcomes WHERE id=?",
+        (oid,),
+    ).fetchone()
+    assert row["days_to_close"] == 2
+    assert row["exit_reason"] == "tp_hit"
+
+
+def _insert_test_prediction(conn, date: str = "2026-05-19") -> int:
+    """Helper used by multiple new tests."""
+    return db.save_prediction(conn, {
+        "date": date, "run_type": "close",
+        "asset_class": "stock", "ticker": "AAPL", "direction": "long",
+        "entry_price": 178.0, "tp_price": 184.0, "tp_pct": 3.4,
+        "sl_price": 176.0, "sl_pct": 1.1, "rr_ratio": 3.0,
+        "total_score": 7.8, "probability_pct": 68, "confidence": "high",
+        "score_market_env": 7.0, "score_company": 8.0, "score_valuation": 6.0,
+        "score_momentum": 8.0, "score_risk": 6.0, "score_sector": 7.0,
+        "score_catalyst": 7.0, "score_policy": 6.0,
+        "atr_pct": 1.8, "rsi_at_entry": 58.0, "volume_ratio": 1.15,
+        "market_regime": "risk_on", "vix_at_prediction": 14.0,
+        "sector": "Technology", "trend_boost": "ai-capex",
+        "earnings_warning": False, "summary": "ok",
+        "learnable": True,
+        "hold_days_recommended": 2,
+        "intraday_range_pct": 1.4,
+    })

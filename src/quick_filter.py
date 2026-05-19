@@ -6,11 +6,10 @@ Phase 3 (deep analysis) in a later plan.
 """
 import json
 import logging
-import re
 from pathlib import Path
 
 from src.cost_tracker import CostTracker
-from src.utils import call_claude
+from src.utils import call_claude, extract_json_blob
 
 log = logging.getLogger("shares_future.quick_filter")
 
@@ -23,27 +22,6 @@ MAX_TOKENS = 4096
 
 class QuickFilterError(RuntimeError):
     """Quick-filter output unparseable or incomplete."""
-
-
-_FENCE_RE = re.compile(r"```(?:json)?\s*(\{.*\})\s*```", re.DOTALL)
-
-
-def _extract_json(text: str) -> dict:
-    m = _FENCE_RE.search(text)
-    if m:
-        text = m.group(1)
-    text = text.strip()
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError as e:
-        start = text.find("{")
-        end = text.rfind("}")
-        if start >= 0 and end > start:
-            try:
-                return json.loads(text[start:end + 1])
-            except json.JSONDecodeError:
-                pass
-        raise QuickFilterError(f"Could not parse JSON: {e}") from e
 
 
 def _format_batch_for_prompt(batch: list[dict], trend_context: dict) -> str:
@@ -85,16 +63,9 @@ def quick_filter_batch(
         max_tokens=MAX_TOKENS,
     )
 
-    cost_tracker.add_call(
-        model=result.model,
-        input_tokens=result.input_tokens,
-        output_tokens=result.output_tokens,
-        cache_read_tokens=result.cache_read_tokens,
-        cache_creation_tokens=result.cache_creation_tokens,
-        web_search_calls=result.web_search_calls,
-    )
+    cost_tracker.add_from_result(result)
 
-    parsed = _extract_json(result.text)
+    parsed = extract_json_blob(result.text, QuickFilterError)
     results = parsed.get("results")
     if not isinstance(results, list):
         raise QuickFilterError("Response missing 'results' list")
