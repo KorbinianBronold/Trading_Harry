@@ -1,0 +1,30 @@
+{
+  "ticker": "AAPL",
+  "asset_class": "stock",
+  "direction": "long",
+  "confidence": "high",
+  "current_price": 178.5,
+  "tp_price": 184.0,
+  "sl_price": 176.0,
+  "tp_pct": 3.08,
+  "sl_pct": 1.4,
+  "rr_ratio": 2.2,
+  "total_score": 7.62,
+  "probability_pct": 66,
+  "hold_days_recommended": 2,
+  "intraday_range_pct": 1.5,
+  "earnings_warning": false,
+  "summary": "AAPL benefits from AI capex acceleration + tariff truce. Tight SL below SMA20.",
+  "sources_used": ["https://www.reuters.com/x", "https://www.bloomberg.com/y"],
+  "signal_consistency_check": "ok",
+  "scores": {
+    "market_environment": {"value": 7.0, "evidence": ["VIX 14", "SP500 +0.6%"]},
+    "company_quality":    {"value": 8.5, "evidence": ["EPS beat 4.2%", "guidance raised"]},
+    "valuation":           {"value": 6.0, "evidence": ["fwd P/E 26", "below 5yr avg"]},
+    "momentum":           {"value": 8.0, "evidence": ["RSI 58 rising", "above SMA200 +12.8%"]},
+    "risk":               {"value": 6.5, "evidence": ["ATR 1.8%", "debt/eq 1.45"]},
+    "sector_trend":       {"value": 7.5, "evidence": ["XLK +3% week", "AI flows"]},
+    "catalyst":           {"value": 7.0, "evidence": ["WWDC 2026-06-09", "iPad refresh leaked"]},
+    "policy_risk":        {"value": 6.0, "evidence": ["tariff truce extended", "China supply chain stable"]}
+  }
+}

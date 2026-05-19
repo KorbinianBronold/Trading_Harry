@@ -1,0 +1,24 @@
+{
+  "policy_risk_level": "medium",
+  "events": [
+    {
+      "headline": "US-EU tariff truce extended by 60 days (Reuters 2026-05-18)",
+      "category": "tariff",
+      "affected_tickers": ["AAPL", "TSLA"],
+      "affected_sectors": ["XLK", "XLY"],
+      "direction_hint": "bullish",
+      "source_url": "https://www.reuters.com/world/tariff-truce-extended",
+      "as_of": "2026-05-18"
+    },
+    {
+      "headline": "Fed signals one more 25 bps hike at June meeting (Bloomberg 2026-05-19)",
+      "category": "central_bank",
+      "affected_tickers": [],
+      "affected_sectors": ["XLF", "XLU"],
+      "direction_hint": "bearish",
+      "source_url": "https://www.bloomberg.com/news/fed-signals-hike",
+      "as_of": "2026-05-19"
+    }
+  ],
+  "summary": "Tariff thaw is mildly bullish for consumer tech; Fed hike risk weighs on rate-sensitive sectors. Net policy_risk_level=medium."
+}
