@@ -83,7 +83,7 @@ def test_run_pipeline_calls_phases_in_order():
         run_pipeline(run_type="close", date="2026-05-19", db_path=":memory:")
 
     assert call_log == [
-        "trend", "collect", "quick_filter", "policy",
+        "trend", "collect", "collect", "quick_filter", "policy",
         "deep", "cc", "portfolio", "ranking", "email",
     ]
 
