@@ -10,3 +10,4 @@ data/*.json
 *.egg-info/
 .venv/
 venv/
+.worktrees/
