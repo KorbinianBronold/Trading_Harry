@@ -1,0 +1,10 @@
+{
+  "prediction_id": 1,
+  "ticker": "AAPL",
+  "action": "ANPASSEN",
+  "reason": "AAPL ist 1.8% gelaufen, halber Weg zum TP. SL auf Break-Even hochziehen — These intakt, aber Asymmetrie schützen.",
+  "new_sl_price": 178.5,
+  "new_tp_price": 184.0,
+  "market_context_changed": false,
+  "sources_used": ["https://www.reuters.com/x", "https://www.bloomberg.com/y"]
+}
