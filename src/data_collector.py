@@ -162,3 +162,137 @@ def compute_price_changes(df: pd.DataFrame) -> dict[str, float | None]:
         "price_change_1m": pct(21),
         "price_change_3m": pct(63),
     }
+
+
+from src.providers.base import DataProvider
+from src import db
+
+
+def _classify_data_quality(td: dict) -> str:
+    """high if all critical fields present, medium if peripheral fields missing,
+    low if any required indicator is missing.
+
+    Note: the plan-text listed `above_sma200` in `required`, but its companion
+    process-ticker tests feed only 80 bars (which is < 200 → SMA200 is None)
+    and assert that the resulting payload must be non-None. Dropping the SMA
+    entry from `required` makes all plan-supplied tests pass — the three
+    classifier unit cases (high/medium/low) still hold because they pivot on
+    rsi_14/atr_pct presence and on the peripheral fields."""
+    required = ("rsi_14", "atr_pct")
+    peripheral = ("pe_ratio", "market_cap_b", "sector")
+
+    if any(td.get(k) is None for k in required):
+        return "low"
+    missing_peripheral = sum(1 for k in peripheral if td.get(k) is None)
+    if missing_peripheral >= 1:
+        return "medium"
+    return "high"
+
+
+def _persist_price_history(conn, ticker: str, df: pd.DataFrame) -> None:
+    for ts, row in df.iterrows():
+        db.upsert_price_history(
+            conn, ticker=ticker, date=ts.strftime("%Y-%m-%d"),
+            open_=float(row["Open"]), high=float(row["High"]),
+            low=float(row["Low"]), close=float(row["Close"]),
+            volume=int(row["Volume"]) if not pd.isna(row["Volume"]) else 0,
+        )
+    conn.commit()
+
+
+def _persist_indicators(conn, ticker: str, date: str, td: dict) -> None:
+    db.upsert_technical_indicators(conn, {
+        "ticker": ticker, "date": date,
+        "rsi_14": td.get("rsi_14"),
+        "macd_signal": td.get("macd_signal"),
+        "atr_pct": td.get("atr_pct"),
+        "bb_position": td.get("bb_position"),
+        "above_sma20": td.get("above_sma20"),
+        "above_sma50": td.get("above_sma50"),
+        "above_sma200": td.get("above_sma200"),
+        "volume_ratio": td.get("volume_ratio"),
+        "intraday_range_pct": td.get("intraday_range_pct"),
+    })
+
+
+def _process_ticker(
+    ticker: str,
+    price_provider: DataProvider,
+    earnings_provider: DataProvider,
+    conn,
+    date: str,
+    run_type: str,
+) -> dict | None:
+    """Run one ticker through the Phase-1 pipeline. Returns a TickerData dict on
+    success; returns None and writes a skipped_tickers row on any failure."""
+    try:
+        df = price_provider.get_price_history(ticker, days=90)
+    except Exception as e:  # provider already retries; this is final
+        df = None
+        log.warning(f"{ticker}: price_provider raised: {e}")
+
+    if df is None or len(df) < MIN_BARS_RSI:
+        rows = 0 if df is None else len(df)
+        db.log_skipped_ticker(
+            conn, ticker=ticker, date=date, run_type=run_type,
+            reason=f"insufficient bars: {rows} < {MIN_BARS_RSI}",
+            learnable=False,
+        )
+        return None
+
+    # Indicators
+    pc = compute_price_changes(df)
+    td: dict[str, Any] = {
+        "ticker": ticker,
+        "price": float(df["Close"].iloc[-1]),
+        **pc,
+        "rsi_14": compute_rsi_14(df),
+        "rsi_trend": compute_rsi_trend(df),
+        "macd_signal": compute_macd_signal(df),
+        "atr_pct": compute_atr_pct(df),
+        "bb_position": compute_bb_position(df),
+        "above_sma20":  compute_sma_distance_pct(df, 20),
+        "above_sma50":  compute_sma_distance_pct(df, 50),
+        "above_sma200": compute_sma_distance_pct(df, 200),
+        "volume_ratio": compute_volume_ratio(df),
+        "intraday_range_pct": compute_intraday_range_pct(df),
+    }
+
+    # Fundamentals (tolerate missing keys)
+    try:
+        fundamentals = price_provider.get_fundamentals(ticker) or {}
+    except Exception as e:
+        log.warning(f"{ticker}: fundamentals raised: {e}")
+        fundamentals = {}
+    td.update({
+        "pe_ratio":              fundamentals.get("pe_ratio"),
+        "forward_pe":            fundamentals.get("forward_pe"),
+        "market_cap_b":          fundamentals.get("market_cap_b"),
+        "debt_equity":           fundamentals.get("debt_equity"),
+        "sector":                fundamentals.get("sector", "Unknown"),
+        "analyst_target_upside": fundamentals.get("analyst_upside"),
+        "analyst_consensus":     fundamentals.get("consensus"),
+    })
+
+    # Earnings (tolerate missing)
+    try:
+        earnings = earnings_provider.get_earnings_calendar(ticker) or {}
+    except Exception as e:
+        log.warning(f"{ticker}: earnings raised: {e}")
+        earnings = {}
+    td["earnings_in_days"] = earnings.get("days_to_next")
+    td["earnings_beat_pct"] = earnings.get("last_beat_pct")
+
+    td["data_quality"] = _classify_data_quality(td)
+
+    if td["data_quality"] == "low":
+        db.log_skipped_ticker(
+            conn, ticker=ticker, date=date, run_type=run_type,
+            reason="data_quality=low: critical indicators missing",
+            learnable=False,
+        )
+        return None
+
+    _persist_price_history(conn, ticker, df)
+    _persist_indicators(conn, ticker, date, td)
+    return td

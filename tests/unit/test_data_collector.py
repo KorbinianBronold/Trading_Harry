@@ -126,3 +126,155 @@ def test_compute_price_changes_returns_dict_with_expected_keys():
                                "price_change_1m", "price_change_3m"}
     # Monotonic up → all positive
     assert all(v is None or v > 0 for v in out.values())
+
+
+from unittest.mock import MagicMock
+from src.db import init_schema
+from src.data_collector import _process_ticker, _classify_data_quality
+
+
+def _good_provider(df: pd.DataFrame, fundamentals: dict | None = None) -> MagicMock:
+    p = MagicMock()
+    p.get_price_history.return_value = df
+    p.get_fundamentals.return_value = fundamentals or {
+        "pe_ratio": 28.4, "forward_pe": 26.2,
+        "market_cap_b": 2800.0, "debt_equity": 1.45,
+        "sector": "Technology",
+        "analyst_upside": 8.5, "consensus": "buy",
+    }
+    return p
+
+
+def _earnings_provider(days_to_next: int | None = 14, beat_pct: float | None = 4.2) -> MagicMock:
+    p = MagicMock()
+    p.get_earnings_calendar.return_value = {
+        "days_to_next": days_to_next, "last_beat_pct": beat_pct,
+    }
+    return p
+
+
+def test_process_ticker_returns_full_ticker_data(in_memory_db):
+    init_schema(in_memory_db)
+    df = _df_monotonic_up(250)
+    out = _process_ticker(
+        ticker="AAPL",
+        price_provider=_good_provider(df),
+        earnings_provider=_earnings_provider(),
+        conn=in_memory_db,
+        date="2026-05-19",
+        run_type="pre_market",
+    )
+    assert out is not None
+    assert out["ticker"] == "AAPL"
+    assert out["price"] > 0
+    assert out["rsi_14"] is not None
+    assert out["macd_signal"] in {"bullish_cross", "bearish_cross", "neutral"}
+    assert out["atr_pct"] is not None
+    assert out["sector"] == "Technology"
+    assert out["earnings_in_days"] == 14
+    assert out["earnings_beat_pct"] == 4.2
+    assert out["data_quality"] in {"high", "medium", "low"}
+    assert out["intraday_range_pct"] is not None
+
+
+def test_process_ticker_writes_price_history_and_indicators(in_memory_db):
+    init_schema(in_memory_db)
+    df = _df_monotonic_up(80)
+    _process_ticker(
+        ticker="AAPL",
+        price_provider=_good_provider(df),
+        earnings_provider=_earnings_provider(),
+        conn=in_memory_db,
+        date="2026-05-19",
+        run_type="pre_market",
+    )
+    ph = in_memory_db.execute(
+        "SELECT COUNT(*) AS c FROM price_history WHERE ticker=?", ("AAPL",)
+    ).fetchone()["c"]
+    ti = in_memory_db.execute(
+        "SELECT COUNT(*) AS c FROM technical_indicators WHERE ticker=?", ("AAPL",)
+    ).fetchone()["c"]
+    assert ph == 80
+    assert ti == 1
+
+
+def test_process_ticker_skips_on_none_price_history(in_memory_db):
+    init_schema(in_memory_db)
+    bad = MagicMock()
+    bad.get_price_history.return_value = None
+    bad.get_fundamentals.return_value = {}
+
+    out = _process_ticker(
+        ticker="XYZ",
+        price_provider=bad,
+        earnings_provider=_earnings_provider(),
+        conn=in_memory_db,
+        date="2026-05-19",
+        run_type="pre_market",
+    )
+    assert out is None
+    row = in_memory_db.execute(
+        "SELECT reason, learnable FROM skipped_tickers WHERE ticker=?", ("XYZ",)
+    ).fetchone()
+    assert row is not None
+    assert row["learnable"] == 0
+
+
+def test_process_ticker_skips_on_too_few_bars(in_memory_db):
+    init_schema(in_memory_db)
+    short_df = _df_monotonic_up(10)  # < MIN_BARS for indicators
+
+    out = _process_ticker(
+        ticker="NEW",
+        price_provider=_good_provider(short_df),
+        earnings_provider=_earnings_provider(),
+        conn=in_memory_db,
+        date="2026-05-19",
+        run_type="pre_market",
+    )
+    assert out is None
+    row = in_memory_db.execute(
+        "SELECT * FROM skipped_tickers WHERE ticker=?", ("NEW",)
+    ).fetchone()
+    assert row is not None
+    assert "bars" in row["reason"].lower() or "indicator" in row["reason"].lower()
+
+
+def test_process_ticker_tolerates_missing_earnings(in_memory_db):
+    init_schema(in_memory_db)
+    df = _df_monotonic_up(80)
+    out = _process_ticker(
+        ticker="AAPL",
+        price_provider=_good_provider(df),
+        earnings_provider=_earnings_provider(days_to_next=None, beat_pct=None),
+        conn=in_memory_db,
+        date="2026-05-19",
+        run_type="pre_market",
+    )
+    assert out is not None
+    assert out["earnings_in_days"] is None
+    assert out["earnings_beat_pct"] is None
+
+
+def test_classify_data_quality_high_when_all_fields_present():
+    td = {
+        "rsi_14": 60, "atr_pct": 1.8, "above_sma200": 12.0,
+        "pe_ratio": 25, "market_cap_b": 1000, "sector": "Technology",
+    }
+    assert _classify_data_quality(td) == "high"
+
+
+def test_classify_data_quality_medium_when_some_missing():
+    td = {
+        "rsi_14": 60, "atr_pct": 1.8, "above_sma200": 12.0,
+        "pe_ratio": None, "market_cap_b": 1000, "sector": "Technology",
+    }
+    assert _classify_data_quality(td) == "medium"
+
+
+def test_classify_data_quality_low_when_indicator_missing():
+    td = {
+        "rsi_14": None, "atr_pct": None, "above_sma200": None,
+        "pe_ratio": 25, "market_cap_b": 1000, "sector": "Technology",
+    }
+    assert _classify_data_quality(td) == "low"
