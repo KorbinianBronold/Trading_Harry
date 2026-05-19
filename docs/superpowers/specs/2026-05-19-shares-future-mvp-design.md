@@ -14,6 +14,23 @@ Automatisiertes Research-Tool zur täglichen Analyse von S&P 500 Aktien, Rohstof
 
 ---
 
+## Design-Prinzip: CFD-Kurzfristfokus
+
+Das Tool ist explizit für **kurzfristige CFD-Trades** optimiert und denkt in Tages-Zyklen, nicht in Wochen:
+
+- **Haltedauer:** wenige Stunden bis maximal 3 Handelstage.
+- **Täglicher Reset:** jede offene Position wird in jedem Werktags-Analyse-Run neu bewertet (Phase 4a, siehe §3).
+- **Flexibilität:** schnelle Reaktion auf Marktveränderungen — keine Position wird blind gehalten.
+
+Daraus folgende harte Invarianten, die überall im System gelten:
+
+1. Setups mit `hold_days_recommended > 3` werden via Guardrail rejected (siehe §6).
+2. Assets mit `intraday_range_pct < 1.0%` (Durchschnitt der letzten 5 Tage) werden via Guardrail rejected (siehe §6).
+3. Phase 4a (Portfolio-Check) bewertet alle gestern offenen Positionen mit `HALTEN | SCHLIESSEN | ANPASSEN` und erscheint als **erste Sektion** in der E-Mail — vor den neuen Top-10 (siehe §3).
+4. Der **`close`-Run (lokal 21:30 / 22:30) ist der wichtigste**: er produziert die Setups und Phase-4a-Empfehlungen für den nächsten Handelstag, die der Trader im `pre_market`-Run morgens bestätigt findet (siehe §7).
+
+---
+
 ## 1 · Scope & Sequencing
 
 Wir kippen das „Sofort vollständig bauen"-Mandat der Spec und bauen in drei Sprints mit expliziten Gates.
@@ -27,7 +44,7 @@ Wir kippen das „Sofort vollständig bauen"-Mandat der Spec und bauen in drei S
 - Predictions werden ab Tag 1 mit allen 8 Score-Dimensionen gespeichert → Daten für späteres Lernmodul
 - Walk-Forward Evaluator (OHLC-Hit-Check, 1-3 Handelstage)
 - Guardrails vollständig
-- Daily E-Mail (3 Sektionen) + Weekly E-Mail (reduziert)
+- Daily E-Mail (4 Sektionen inkl. Phase-4a-Portfolio-Empfehlungen) + Weekly E-Mail (reduziert)
 - GitHub Actions Cron + DB-Persistenz via Release Assets
 - Cost-Tracking + Hard-Cap
 - Tests min. 80% Coverage
@@ -83,6 +100,7 @@ src/
 ├── quick_filter.py              # Phase 2: Batch-Scoring (Haiku)
 ├── deep_analysis.py             # Phase 3: 8-Dim Score + Policy Monitor
 ├── commodities_crypto.py        # Phase 3b: Festes Asset-Set
+├── portfolio_check.py           # NEU Phase 4a: Tägliche Bewertung offener Positionen (CFD-Kurzfrist)
 ├── ranking.py                   # Phase 4: Top-Selektion + DB-Save
 ├── email_sender.py              # Phase 5: Daily + Weekly E-Mail
 ├── guardrails.py                # Qualitätskontrolle, R/R-Check
@@ -166,17 +184,25 @@ Wird im MVP aufgesplittet:
    └─ 7 Assets, Sonnet + Web-Search, eigener Prompt
    └─ Gleiche Guardrails wie Aktien
 
-8. ranking
+8. portfolio_check (Phase 4a, Sonnet + Web-Search, pro offener Position aus Vortagen)
+   └─ Lädt alle Predictions mit `status='open'` und Alter ≤ 3 Handelstage (`learnable=True`)
+   └─ Input pro Position: ursprüngliche These + aktueller TickerData + Trend + policy_events
+   └─ Prüft: Hält die These? Hat sich Markt/News/Technicals verändert? Gibt es ein stärkeres Signal?
+   └─ Output pro Position: `action ∈ {HALTEN, SCHLIESSEN, ANPASSEN}` + Begründung + ggf. neue SL/TP
+   └─ DB-Write: `position_recommendations` (siehe §5)
+   └─ Konsequenz: Empfehlung erscheint als **erste Sektion** in der E-Mail vor den neuen Top-10 — direkt umsetzbar beim Aufwachen
+
+9. ranking
    └─ Filter: nur guardrail-bestandene Analysen
    └─ Top 10 Long + Top 10 Short
    └─ Commodities + Crypto: alle ausgeben
    └─ DB-Write: predictions (alle Score-Dimensionen, learnable=True)
 
-9. email_sender
-   └─ Lädt: predictions, trend, eval-stats von gestern
-   └─ Rendert 3-Sektionen-HTML
-   └─ SendGrid POST
-   └─ DB-Write: cost_tracking (Run-Kosten)
+10. email_sender
+    └─ Lädt: position_recommendations (Phase 4a), predictions, trend, eval-stats von gestern
+    └─ Rendert 4-Sektionen-HTML: (1) Portfolio-Empfehlungen, (2) Aktien Top-10, (3) Trends, (4) Commodities/Crypto
+    └─ SendGrid POST
+    └─ DB-Write: cost_tracking (Run-Kosten)
 ```
 
 ### Evaluate-Run (täglich, läuft still ohne Mail)
@@ -320,6 +346,45 @@ CREATE TABLE cost_tracking (
 );
 ```
 
+### CFD-Kurzfrist-Schema-Erweiterungen
+
+`predictions` erhält zwei weitere Pflichtfelder aus dem `deep_analysis`-Output:
+
+```sql
+ALTER TABLE predictions ADD COLUMN hold_days_recommended INTEGER;
+   -- vom deep_analysis-Prompt zurückgegeben; > 3 → Guardrail-Reject
+ALTER TABLE predictions ADD COLUMN intraday_range_pct REAL;
+   -- (High-Low)/Close*100 Durchschnitt der letzten 5 Handelstage; < 1.0 → Guardrail-Reject
+```
+
+`technical_indicators` erhält ein Feld, das `data_collector._process_ticker()` befüllt:
+
+```sql
+ALTER TABLE technical_indicators ADD COLUMN intraday_range_pct REAL;
+   -- Quelle für predictions.intraday_range_pct
+```
+
+Neue Tabelle `position_recommendations` für die Phase-4a-Ausgabe:
+
+```sql
+CREATE TABLE position_recommendations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    date TEXT NOT NULL,
+    run_type TEXT NOT NULL,
+    prediction_id INTEGER NOT NULL REFERENCES predictions(id),
+    action TEXT NOT NULL,
+        -- 'HALTEN' | 'SCHLIESSEN' | 'ANPASSEN'
+    reason TEXT NOT NULL,
+    new_sl_price REAL,                  -- nur bei action='ANPASSEN'
+    new_tp_price REAL,                  -- nur bei action='ANPASSEN'
+    market_context_changed BOOLEAN,     -- These-Validation aus dem Prompt
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(date, run_type, prediction_id)
+);
+
+CREATE INDEX idx_position_recs_prediction ON position_recommendations(prediction_id);
+```
+
 ### Walk-Forward-Eval State-Machine
 
 ```
@@ -423,6 +488,24 @@ DIMENSION_WEIGHTS = {
 }
 ```
 
+### CFD-Kurzfrist-Guardrails
+
+Zusätzlich zu Required-Fields, Evidenz-Min., R/R-Min. und Signal-Konsistenz muss `guardrails.py` zwei harte Filter durchsetzen:
+
+```python
+if analysis.get("hold_days_recommended", 99) > 3:
+    errors.append("Haltedauer > 3 Tage – nicht CFD-geeignet")
+
+if analysis.get("intraday_range_pct", 0) < 1.0:
+    errors.append("Intraday-Range < 1.0% – nicht CFD-geeignet")
+```
+
+Begründung:
+- **`hold_days_recommended`**: vom `deep_analysis`-Prompt erzwungenes Pflichtfeld. Setups, die der Trader länger als 3 Handelstage halten müsste, gehören nicht in eine CFD-Top-10.
+- **`intraday_range_pct`**: aus `data_collector._process_ticker()` als `(High-Low)/Close*100`, gemittelt über die letzten 5 Handelstage. Aktien mit Range < 1 % bewegen sich innerhalb eines Tages zu wenig, um Intraday-CFDs sinnvoll zu traden.
+
+`intraday_range_pct` wird zusätzlich in der E-Mail-Tabelle als Spalte „Range/Tag" neben „ATR/Tag" ausgegeben.
+
 ---
 
 ## 7 · Cron-Plan & DST
@@ -438,6 +521,8 @@ GitHub Actions läuft in UTC ohne DST-Awareness. Wir fixieren in UTC und akzepti
 | `0 18 * * 0` | 19:00 / 20:00 So | `weekly` | Wochen-Performance. Mail |
 
 Pro Werktag: **3 Analyse-Mails** + 1 stille Auswertung. Sonntags zusätzlich Weekly-Mail.
+
+**Wichtigster Run:** `close` (lokal 21:30 / 22:30). Er produziert die Setups und Phase-4a-Empfehlungen für den nächsten Handelstag — der Trader öffnet sie morgens und bekommt im darauffolgenden `pre_market`-Run (lokal 14:00 / 15:00) die Bestätigung oder Korrektur vor US-Open. Phase 4a läuft in **allen drei** Werktags-Runs und steht jeweils ganz oben in der E-Mail.
 
 ---
 
@@ -473,8 +558,9 @@ tests/
 │   ├── test_commodities_crypto.py
 │   ├── test_ranking.py
 │   ├── test_evaluator.py           # Alle 4 Exit-Reasons
-│   ├── test_email_sender.py        # HTML-Snapshot
-│   ├── test_guardrails.py          # Alle Reject-Cases, R/R-Check 1.5
+│   ├── test_portfolio_check.py     # HALTEN/SCHLIESSEN/ANPASSEN-Klassifikation
+│   ├── test_email_sender.py        # HTML-Snapshot, inkl. Phase-4a-Sektion
+│   ├── test_guardrails.py          # Alle Reject-Cases, R/R-Check 1.5, hold_days>3, intraday<1.0
 │   ├── test_cost_tracker.py        # Hard-Cap-Abort
 │   └── test_db.py                  # Schema, Migrations, Upserts
 ├── integration/
@@ -517,12 +603,13 @@ CI-Gate: 80 % Coverage in `.github/workflows/test.yml` erzwungen.
 | 12 | `src/commodities_crypto.py` | `test_commodities_crypto.py` |
 | 13 | `src/ranking.py` | `test_ranking.py` |
 | 14 | `src/evaluator.py` | `test_evaluator.py` |
-| 15 | `src/email_sender.py` (Daily + Weekly reduziert) | `test_email_sender.py` |
-| 16 | `main.py` (Orchestrator) | `test_full_pipeline.py` |
-| 17 | Coverage-Check | `pytest --cov-fail-under=80` |
-| 18 | `.github/workflows/test.yml` | grüner Push-Build |
-| 19 | **Smoke-Test manuell** mit echtem yfinance + Claude + SendGrid | E-Mail im Posteingang |
-| 20 | `.github/workflows/analyze.yml` (Cron + Release-Asset) | erster Cron-Run grün |
+| 15 | `src/portfolio_check.py` (Phase 4a) | `test_portfolio_check.py` |
+| 16 | `src/email_sender.py` (Daily 4-Sektionen + Weekly reduziert) | `test_email_sender.py` |
+| 17 | `main.py` (Orchestrator) | `test_full_pipeline.py` |
+| 18 | Coverage-Check | `pytest --cov-fail-under=80` |
+| 19 | `.github/workflows/test.yml` | grüner Push-Build |
+| 20 | **Smoke-Test manuell** mit echtem yfinance + Claude + SendGrid | E-Mail im Posteingang |
+| 21 | `.github/workflows/analyze.yml` (Cron + Release-Asset) | erster Cron-Run grün |
 
 ### Sprint-1-Definition of Done
 
