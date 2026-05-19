@@ -7,6 +7,7 @@ DataProvider interface and db.py.
 """
 import logging
 import math
+import time
 from typing import Any
 
 import pandas as pd
@@ -166,6 +167,9 @@ def compute_price_changes(df: pd.DataFrame) -> dict[str, float | None]:
 
 from src.providers.base import DataProvider
 from src import db
+import config
+
+BATCH_PAUSE_EVERY = 30  # spec §"Rate Limiting yfinance"
 
 
 def _classify_data_quality(td: dict) -> str:
@@ -296,3 +300,43 @@ def _process_ticker(
     _persist_price_history(conn, ticker, df)
     _persist_indicators(conn, ticker, date, td)
     return td
+
+
+def collect(
+    tickers: list[str],
+    price_provider: DataProvider,
+    earnings_provider: DataProvider,
+    conn,
+    date: str,
+    run_type: str,
+) -> tuple[list[dict], int]:
+    """Run Phase 1 over the MVP universe. Returns (ticker_data_list, skipped_count).
+
+    Tickers are processed sequentially. After every BATCH_PAUSE_EVERY tickers
+    we sleep config.YFINANCE_BATCH_PAUSE seconds to avoid yfinance rate limits.
+    """
+    results: list[dict] = []
+    skipped = 0
+    for i, t in enumerate(tickers):
+        td = _process_ticker(
+            ticker=t,
+            price_provider=price_provider,
+            earnings_provider=earnings_provider,
+            conn=conn,
+            date=date,
+            run_type=run_type,
+        )
+        if td is None:
+            skipped += 1
+        else:
+            results.append(td)
+
+        if (i + 1) % BATCH_PAUSE_EVERY == 0 and (i + 1) < len(tickers):
+            log.info(
+                f"Batch pause: processed {i + 1}/{len(tickers)} tickers, "
+                f"sleeping {config.YFINANCE_BATCH_PAUSE}s"
+            )
+            time.sleep(config.YFINANCE_BATCH_PAUSE)
+
+    log.info(f"Phase 1 done: {len(results)} ok, {skipped} skipped")
+    return results, skipped

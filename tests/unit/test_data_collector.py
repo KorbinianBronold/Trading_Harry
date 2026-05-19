@@ -278,3 +278,80 @@ def test_classify_data_quality_low_when_indicator_missing():
         "pe_ratio": 25, "market_cap_b": 1000, "sector": "Technology",
     }
     assert _classify_data_quality(td) == "low"
+
+
+from unittest.mock import patch
+from src.data_collector import collect, BATCH_PAUSE_EVERY
+
+
+def test_collect_returns_list_of_ticker_data(in_memory_db):
+    init_schema(in_memory_db)
+    df = _df_monotonic_up(80)
+    pp = _good_provider(df)
+    ep = _earnings_provider()
+
+    with patch("src.data_collector.time.sleep") as sleep_mock:
+        results, skipped = collect(
+            tickers=["AAPL", "MSFT", "NVDA"],
+            price_provider=pp,
+            earnings_provider=ep,
+            conn=in_memory_db,
+            date="2026-05-19",
+            run_type="pre_market",
+        )
+
+    assert len(results) == 3
+    assert skipped == 0
+    assert {r["ticker"] for r in results} == {"AAPL", "MSFT", "NVDA"}
+
+
+def test_collect_skips_failed_tickers_but_continues(in_memory_db):
+    init_schema(in_memory_db)
+    df = _df_monotonic_up(80)
+
+    pp = MagicMock()
+    def history(ticker, days=90):
+        return None if ticker == "BAD" else df
+    pp.get_price_history.side_effect = history
+    pp.get_fundamentals.return_value = {
+        "pe_ratio": 25, "forward_pe": 24, "market_cap_b": 1000,
+        "debt_equity": 1.0, "sector": "Technology",
+        "analyst_upside": 5, "consensus": "buy",
+    }
+    ep = _earnings_provider()
+
+    with patch("src.data_collector.time.sleep"):
+        results, skipped = collect(
+            tickers=["AAPL", "BAD", "MSFT"],
+            price_provider=pp,
+            earnings_provider=ep,
+            conn=in_memory_db,
+            date="2026-05-19",
+            run_type="pre_market",
+        )
+
+    assert {r["ticker"] for r in results} == {"AAPL", "MSFT"}
+    assert skipped == 1
+
+
+def test_collect_pauses_between_batches(in_memory_db):
+    init_schema(in_memory_db)
+    df = _df_monotonic_up(80)
+    pp = _good_provider(df)
+    ep = _earnings_provider()
+
+    tickers = [f"T{i}" for i in range(BATCH_PAUSE_EVERY + 1)]
+    with patch("src.data_collector.time.sleep") as sleep_mock:
+        collect(
+            tickers=tickers,
+            price_provider=pp,
+            earnings_provider=ep,
+            conn=in_memory_db,
+            date="2026-05-19",
+            run_type="pre_market",
+        )
+
+    # The batch pause is the longest sleep argument; assert it was called.
+    batch_calls = [c for c in sleep_mock.call_args_list
+                   if c.args and c.args[0] >= 5]
+    assert len(batch_calls) >= 1
