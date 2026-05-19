@@ -1,0 +1,27 @@
+{
+  "trends": [
+    {
+      "name": "ai-capex-acceleration",
+      "strength": 8,
+      "duration_estimate": "1m+",
+      "summary": "Hyperscalers raised guidance two quarters in a row (Reuters 2026-05-18).",
+      "beneficiary_tickers": ["NVDA", "AVGO"],
+      "negative_tickers": ["INTC"],
+      "next_catalyst": "GTC keynote 2026-06-12"
+    },
+    {
+      "name": "oil-supply-tightening",
+      "strength": 6,
+      "duration_estimate": "1w",
+      "summary": "OPEC+ extended cuts; WTI +3% week (Bloomberg 2026-05-19).",
+      "beneficiary_tickers": ["XOM", "CL=F"],
+      "negative_tickers": ["DAL"],
+      "next_catalyst": "OPEC meeting 2026-06-05"
+    }
+  ],
+  "sector_rotation": {
+    "into": ["XLK", "XLE"],
+    "out_of": ["XLU"]
+  },
+  "trend_summary": "Risk-on continues, led by AI and energy. Volatility low (VIX 14)."
+}
