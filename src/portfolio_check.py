@@ -112,6 +112,10 @@ def check_open_positions(
             log.warning(f"{ticker}: portfolio_check failed: {e}")
             continue
 
+        parsed["ticker"]      = pred["ticker"]
+        parsed["direction"]   = pred["direction"]
+        parsed["entry_price"] = pred["entry_price"]
+
         db.save_position_recommendation(conn, {
             "date": today, "run_type": run_type,
             "prediction_id": pred["id"],

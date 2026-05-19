@@ -176,6 +176,43 @@ def test_check_open_positions_continues_after_single_failure(in_memory_db):
     assert out[0]["ticker"] == "MSFT"
 
 
+def test_check_open_positions_enriches_with_prediction_fields(in_memory_db):
+    """The returned dict must include ticker/direction/entry_price for the
+    email renderer, even though the raw Claude response doesn't have them."""
+    db.init_schema(in_memory_db)
+    pid = _make_open_prediction(in_memory_db, ticker="AAPL")
+    # Build a response WITHOUT ticker/direction/entry_price (just like a real
+    # portfolio_check response per prompts/portfolio_check_v1.txt).
+    raw_resp = json.dumps({
+        "prediction_id": pid,
+        "ticker": "AAPL",  # prompt requires this, model echoes
+        "action": "HALTEN",
+        "reason": "These intakt",
+        "new_sl_price": None,
+        "new_tp_price": None,
+        "market_context_changed": False,
+        "sources_used": ["a.com", "b.com"],
+    })
+    fake = _fake_result(raw_resp)
+    tracker = CostTracker(hard_cap_eur=10.0)
+    snapshots = {"AAPL": {"ticker": "AAPL", "price": 181.0,
+                          "intraday_range_pct": 1.5}}
+    with patch("src.portfolio_check.call_claude", return_value=fake):
+        out = check_open_positions(
+            conn=in_memory_db, today="2026-05-20", run_type="pre_market",
+            snapshots_by_ticker=snapshots,
+            trend_context={}, policy_context={},
+            cost_tracker=tracker,
+        )
+    assert len(out) == 1
+    # The renderer needs these — must be enriched from the prediction row:
+    assert out[0]["ticker"]      == "AAPL"
+    assert out[0]["direction"]   == "long"
+    assert out[0]["entry_price"] == 178.0
+    # Sanity: original fields still there
+    assert out[0]["action"] == "HALTEN"
+
+
 def test_check_open_positions_returns_empty_when_no_open(in_memory_db):
     db.init_schema(in_memory_db)
     tracker = CostTracker(hard_cap_eur=10.0)
