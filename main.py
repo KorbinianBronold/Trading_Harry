@@ -246,6 +246,17 @@ def _guess_aborted_phase(_exc: CostCapExceeded) -> str:
     return "policy_monitor"
 
 
+def run_close(date: str, db_path: str) -> None:
+    """Close-Run: DB Datenpflege only. No Claude, no email."""
+    conn = db.connect(db_path)
+    db.init_schema(conn)
+    price_provider = YFinanceProvider()
+    n = evaluate_open_predictions(conn=conn, today=date, price_provider=price_provider)
+    log.info(f"Close run: {n} predictions evaluated")
+    db.cleanup_old_data(conn)
+    conn.close()
+
+
 def run_evaluate(date: str, db_path: str) -> None:
     conn = db.connect(db_path)
     db.init_schema(conn)
@@ -278,8 +289,10 @@ def run_weekly(date: str, db_path: str) -> None:
 def main(argv: list[str] | None = None) -> None:
     ns = parse_args(argv)
     date = ns.date or date_cls.today().isoformat()
-    if ns.run_type in ("pre_market", "midday", "close"):
+    if ns.run_type in ("pre_market", "midday"):
         run_pipeline(run_type=ns.run_type, date=date, db_path=ns.db_path)
+    elif ns.run_type == "close":
+        run_close(date=date, db_path=ns.db_path)
     elif ns.run_type == "evaluate":
         run_evaluate(date=date, db_path=ns.db_path)
     elif ns.run_type == "weekly":

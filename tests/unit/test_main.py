@@ -135,3 +135,15 @@ def test_run_weekly_calls_send_weekly_email(tmp_db_path):
                              "total_pl_eur": 0.0, "trades": []}):
         run_weekly(date="2026-05-24", db_path=str(tmp_db_path))
     mock_send.assert_called_once()
+
+
+def test_close_run_does_not_call_claude(tmp_db_path, mocker):
+    """Close run must not invoke Claude or send email."""
+    mock_claude = mocker.patch("src.utils.call_claude")
+    mocker.patch("src.email_sender._send")
+    mocker.patch("src.evaluator.evaluate_open_predictions", return_value=0)
+
+    from main import run_close
+    run_close(date="2026-05-21", db_path=str(tmp_db_path))
+
+    mock_claude.assert_not_called()
