@@ -180,6 +180,12 @@ def _apply_migrations(conn: sqlite3.Connection) -> None:
                 UNIQUE(ticker)
             )
         """)
+
+    ph_cols = {r["name"] for r in conn.execute(
+        "PRAGMA table_info(price_history)"
+    ).fetchall()}
+    if "premarket_price" not in ph_cols:
+        conn.execute("ALTER TABLE price_history ADD COLUMN premarket_price REAL")
     conn.commit()
 
 
@@ -493,3 +499,42 @@ def save_fundamentals_cache(
         ),
     )
     conn.commit()
+
+
+def insert_price_bar_if_missing(
+    conn: sqlite3.Connection,
+    ticker: str, date: str,
+    open_: float, high: float, low: float, close: float,
+    volume: int, source: str = "capital.com",
+) -> None:
+    conn.execute(
+        """INSERT OR IGNORE INTO price_history
+           (ticker, date, open, high, low, close, volume, source)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+        (ticker, date, open_, high, low, close, volume, source),
+    )
+
+
+def load_price_history_from_db(
+    conn: sqlite3.Connection,
+    ticker: str,
+    as_of_date: str,
+    limit: int = 200,
+) -> "pd.DataFrame | None":
+    import pandas as pd
+    rows = conn.execute(
+        """SELECT date, open, high, low, close, volume
+           FROM price_history
+           WHERE ticker=? AND date <= ?
+           ORDER BY date DESC LIMIT ?""",
+        (ticker, as_of_date, limit),
+    ).fetchall()
+    if not rows:
+        return None
+    df = pd.DataFrame([dict(r) for r in rows])
+    df = df.rename(columns={
+        "date": "Date", "open": "Open", "high": "High",
+        "low": "Low", "close": "Close", "volume": "Volume",
+    })
+    df["Date"] = pd.to_datetime(df["Date"])
+    return df.set_index("Date").sort_index()
