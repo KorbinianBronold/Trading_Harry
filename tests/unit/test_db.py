@@ -1,6 +1,6 @@
 import sqlite3
 import pytest
-from src.db import init_schema, get_tables
+from src.db import init_schema, get_tables, get_cached_fundamentals, save_fundamentals_cache
 
 
 def test_init_schema_creates_all_tables(in_memory_db):
@@ -325,3 +325,38 @@ def _insert_test_prediction(conn, date: str = "2026-05-19") -> int:
         "hold_days_recommended": 2,
         "intraday_range_pct": 1.4,
     })
+
+
+def test_fundamentals_cache_miss_on_fresh_db(in_memory_db):
+    init_schema(in_memory_db)
+    assert get_cached_fundamentals(in_memory_db, "AAPL") is None
+
+
+def test_fundamentals_cache_hit_within_7_days(in_memory_db):
+    init_schema(in_memory_db)
+    data = {
+        "pe_ratio": 25.0, "forward_pe": 22.0, "market_cap_b": 3000.0,
+        "debt_equity": 0.5, "sector": "Technology",
+        "analyst_upside": 10.0, "consensus": "buy",
+    }
+    save_fundamentals_cache(in_memory_db, "AAPL", data, fetched_date="2026-05-21")
+    result = get_cached_fundamentals(in_memory_db, "AAPL", today="2026-05-21")
+    assert result is not None
+    assert result["pe_ratio"] == 25.0
+    assert result["sector"] == "Technology"
+
+
+def test_fundamentals_cache_stale_after_7_days(in_memory_db):
+    init_schema(in_memory_db)
+    save_fundamentals_cache(in_memory_db, "AAPL", {"pe_ratio": 20.0}, fetched_date="2026-05-01")
+    result = get_cached_fundamentals(in_memory_db, "AAPL", today="2026-05-21")
+    assert result is None
+
+
+def test_fundamentals_cache_upsert_overwrites_stale(in_memory_db):
+    init_schema(in_memory_db)
+    save_fundamentals_cache(in_memory_db, "AAPL", {"pe_ratio": 20.0}, fetched_date="2026-05-01")
+    save_fundamentals_cache(in_memory_db, "AAPL", {"pe_ratio": 25.0}, fetched_date="2026-05-21")
+    result = get_cached_fundamentals(in_memory_db, "AAPL", today="2026-05-21")
+    assert result is not None
+    assert result["pe_ratio"] == 25.0
