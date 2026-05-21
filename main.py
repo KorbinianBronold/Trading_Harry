@@ -270,6 +270,9 @@ def run_close(date: str, db_path: str) -> None:
 
 def run_position_check(date: str, db_path: str) -> None:
     """Read open Capital.com positions, compare to DB predictions, send status mail."""
+    if not config.CAPITAL_COM_API_KEY:
+        log.warning("position_check skipped: CAPITAL_COM_API_KEY not set")
+        return
     conn = db.connect(db_path)
     db.init_schema(conn)
     capital = CapitalComProvider()

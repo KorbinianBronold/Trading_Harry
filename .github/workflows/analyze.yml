@@ -38,8 +38,10 @@ jobs:
       SENDGRID_API_KEY: ${{ secrets.SENDGRID_API_KEY }}
       EMAIL_TO:         ${{ secrets.EMAIL_TO }}
       EMAIL_FROM:       ${{ secrets.EMAIL_FROM }}
-      FINNHUB_API_KEY:  ${{ secrets.FINNHUB_API_KEY }}
-      GH_TOKEN:         ${{ secrets.GITHUB_TOKEN }}
+      FINNHUB_API_KEY:       ${{ secrets.FINNHUB_API_KEY }}
+      CAPITAL_COM_API_KEY:   ${{ secrets.CAPITAL_COM_API_KEY }}
+      CAPITAL_COM_PASSWORD:  ${{ secrets.CAPITAL_COM_PASSWORD }}
+      GH_TOKEN:              ${{ secrets.GITHUB_TOKEN }}
     steps:
       - uses: actions/checkout@v4
 

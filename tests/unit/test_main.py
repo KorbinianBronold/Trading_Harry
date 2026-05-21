@@ -177,6 +177,7 @@ def test_main_date_uses_berlin_timezone(tmp_db_path, mocker):
 
 def test_position_check_calls_get_open_positions(tmp_db_path, mocker):
     """position_check must call get_open_positions on Capital.com."""
+    mocker.patch("main.config.CAPITAL_COM_API_KEY", "test-key")
     mock_capital = mocker.MagicMock()
     mock_capital.get_open_positions.return_value = []
     mocker.patch("main.CapitalComProvider", return_value=mock_capital)
@@ -189,6 +190,7 @@ def test_position_check_calls_get_open_positions(tmp_db_path, mocker):
 
 
 def test_position_check_always_sends_email(tmp_db_path, mocker):
+    mocker.patch("main.config.CAPITAL_COM_API_KEY", "test-key")
     mock_capital = mocker.MagicMock()
     mock_capital.get_open_positions.return_value = []
     mocker.patch("main.CapitalComProvider", return_value=mock_capital)
