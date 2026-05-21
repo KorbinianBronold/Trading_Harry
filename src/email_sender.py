@@ -326,3 +326,41 @@ def _send(api_key: str, email_from: str, email_to: str,
             f"{getattr(resp, 'body', '')!r}"
         )
     log.info(f"SendGrid accepted message (status={resp.status_code})")
+
+
+# ---------- Position-Check HTML ----------
+
+def render_position_check_html(payload: dict) -> str:
+    checks = payload.get("checks") or []
+    _icons = {"on_track": "[OK]", "near_sl": "[WARN]", "signal_fallen": "[ALERT]"}
+    rows = "".join(
+        f'<tr><td>{_h(_icons.get(c.get("status", ""), ""))}</td>'
+        f'<td>{_h(c.get("ticker"))}</td>'
+        f'<td>{_h(c.get("direction"))}</td>'
+        f'<td>{_h(c.get("note", ""))}</td></tr>'
+        for c in checks
+    )
+    return (
+        '<html><body style="font-family:sans-serif;font-size:14px;">'
+        f'<h1>Shares_Future Position-Check — {_h(payload.get("date"))}</h1>'
+        f'<p><b>{_h(payload.get("summary"))}</b></p>'
+        '<table border="1" cellpadding="4" cellspacing="0">'
+        '<tr><th>Status</th><th>Ticker</th><th>Dir</th><th>Note</th></tr>'
+        + rows
+        + '</table>'
+        f'<p><small>{_h(_DISCLAIMER)}</small></p>'
+        '</body></html>'
+    )
+
+
+def send_position_check_email(
+    payload: dict, api_key: str, email_from: str, email_to: str,
+) -> None:
+    html_body = render_position_check_html(payload)
+    checks = payload.get("checks") or []
+    n_warn = sum(1 for c in checks if c.get("status") in ("near_sl", "signal_fallen"))
+    subject = (
+        f"[Shares_Future] {payload.get('date')} Position-Check — "
+        f"{len(checks)} Pos, {n_warn} Warnung(en)"
+    )
+    _send(api_key, email_from, email_to, subject, html_body)

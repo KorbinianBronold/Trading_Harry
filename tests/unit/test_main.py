@@ -173,3 +173,28 @@ def test_main_date_uses_berlin_timezone(tmp_db_path, mocker):
         m.main(["--run-type", "evaluate", "--db-path", str(tmp_db_path)])
         call_date = m.run_evaluate.call_args[1]["date"]
     assert call_date == "2026-05-22", f"Expected Berlin date 2026-05-22, got {call_date}"
+
+
+def test_position_check_calls_get_open_positions(tmp_db_path, mocker):
+    """position_check must call get_open_positions on Capital.com."""
+    mock_capital = mocker.MagicMock()
+    mock_capital.get_open_positions.return_value = []
+    mocker.patch("main.CapitalComProvider", return_value=mock_capital)
+    mocker.patch("src.utils.call_claude")
+    mocker.patch("src.email_sender._send")
+
+    from main import run_position_check
+    run_position_check(date="2026-05-21", db_path=str(tmp_db_path))
+    mock_capital.get_open_positions.assert_called_once()
+
+
+def test_position_check_always_sends_email(tmp_db_path, mocker):
+    mock_capital = mocker.MagicMock()
+    mock_capital.get_open_positions.return_value = []
+    mocker.patch("main.CapitalComProvider", return_value=mock_capital)
+    mocker.patch("src.utils.call_claude")
+    mock_send = mocker.patch("src.email_sender._send")
+
+    from main import run_position_check
+    run_position_check(date="2026-05-21", db_path=str(tmp_db_path))
+    mock_send.assert_called_once()

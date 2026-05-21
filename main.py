@@ -5,9 +5,11 @@ re-raising; the GH Actions step turns red and the user is alerted via the
 workflow's email-on-failure notification. Cost-cap aborts produce a partial
 e-mail with the warning bar."""
 import argparse
+import json
 import logging
 import sys
 from datetime import date as date_cls, datetime, timedelta
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import config
@@ -25,7 +27,9 @@ from src.ranking import rank_and_persist
 from src.evaluator import evaluate_open_predictions
 from src.email_sender import (
     send_daily_email, send_weekly_email, generate_daily_briefing,
+    send_position_check_email,
 )
+from src.utils import call_claude, extract_json_blob
 from src.providers.yfinance_provider import YFinanceProvider
 from src.providers.finnhub_provider import FinnhubProvider
 from src.providers.capital_provider import CapitalComProvider
@@ -263,6 +267,55 @@ def run_close(date: str, db_path: str) -> None:
     conn.close()
 
 
+def run_position_check(date: str, db_path: str) -> None:
+    """Read open Capital.com positions, compare to DB predictions, send status mail."""
+    conn = db.connect(db_path)
+    db.init_schema(conn)
+    capital = CapitalComProvider()
+
+    real_positions = capital.get_open_positions()
+    open_preds     = db.load_open_predictions(conn)
+    real_by_ticker = {p["ticker"]: p for p in real_positions if p.get("ticker")}
+
+    position_inputs = [
+        {
+            "ticker":        pred["ticker"],
+            "direction":     pred["direction"],
+            "entry_price":   pred["entry_price"],
+            "current_price": real_by_ticker.get(pred["ticker"], {}).get("current_price"),
+            "tp_price":      pred["tp_price"],
+            "sl_price":      pred["sl_price"],
+            "profit_loss":   real_by_ticker.get(pred["ticker"], {}).get("profit_loss"),
+        }
+        for pred in open_preds
+    ]
+
+    if not position_inputs:
+        parsed = {"checks": [], "summary": "Keine offenen Positionen."}
+    else:
+        system_prompt = (Path("prompts") / "position_check_v1.txt").read_text()
+        user_msg      = f"Today is {date}. Open positions:\n{json.dumps(position_inputs, indent=2)}"
+        result        = call_claude(
+            model=config.CLAUDE_MODEL_SONNET,
+            system=system_prompt,
+            user=user_msg,
+            max_tokens=1024,
+            tools=[],
+        )
+        try:
+            parsed = extract_json_blob(result.text, RuntimeError)
+        except Exception:
+            parsed = {"checks": [], "summary": "Parse error — raw: " + result.text[:200]}
+
+    send_position_check_email(
+        payload={"date": date, **parsed},
+        api_key=config.SENDGRID_API_KEY,
+        email_from=config.EMAIL_FROM,
+        email_to=config.EMAIL_TO,
+    )
+    conn.close()
+
+
 def run_evaluate(date: str, db_path: str) -> None:
     conn = db.connect(db_path)
     db.init_schema(conn)
@@ -303,6 +356,8 @@ def main(argv: list[str] | None = None) -> None:
         run_evaluate(date=date, db_path=ns.db_path)
     elif ns.run_type == "weekly":
         run_weekly(date=date, db_path=ns.db_path)
+    elif ns.run_type == "position_check":
+        run_position_check(date=date, db_path=ns.db_path)
     else:  # pragma: no cover — argparse validated
         sys.exit(2)
 

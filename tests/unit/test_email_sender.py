@@ -216,3 +216,39 @@ def test_render_daily_html_includes_briefing_section():
     html = render_daily_html(payload)
     assert "Was heute" in html
     assert "ai-capex" in html
+
+
+def test_render_position_check_html_contains_tickers():
+    from src.email_sender import render_position_check_html
+    payload = {
+        "date": "2026-05-21",
+        "checks": [
+            {"ticker": "AAPL", "direction": "long",
+             "status": "on_track", "note": "Moving as expected"},
+            {"ticker": "MSFT", "direction": "short",
+             "status": "near_sl",  "note": "Approaching stop-loss"},
+        ],
+        "summary": "1 position on track, 1 near SL.",
+    }
+    html = render_position_check_html(payload)
+    assert "AAPL" in html
+    assert "MSFT" in html
+    assert "on track" in html.lower() or "[OK]" in html
+
+
+def test_send_position_check_email_subject_contains_count(mocker):
+    mock_send = mocker.patch("src.email_sender._send")
+    from src.email_sender import send_position_check_email
+    send_position_check_email(
+        payload={
+            "date": "2026-05-21",
+            "checks": [
+                {"ticker": "AAPL", "status": "near_sl", "direction": "long", "note": ""},
+            ],
+            "summary": "1 warning.",
+        },
+        api_key="key", email_from="a@b.com", email_to="x@y.com",
+    )
+    subject = mock_send.call_args[0][3]
+    assert "2026-05-21" in subject
+    assert "1" in subject
