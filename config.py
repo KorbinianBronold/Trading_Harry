@@ -56,6 +56,10 @@ CLAUDE_PARALLEL_CALLS = 5
 YFINANCE_PAUSE_SEC = 0.8
 YFINANCE_BATCH_PAUSE = 12
 
+CAPITAL_COM_API_KEY  = os.getenv("CAPITAL_COM_API_KEY")
+CAPITAL_COM_PASSWORD = os.getenv("CAPITAL_COM_PASSWORD")
+CAPITAL_COM_BASE_URL = "https://demo-api-capital.backend-capital.com"
+
 DIMENSION_WEIGHTS = {
     "market_environment": 0.10,
     "company_quality":    0.18,
