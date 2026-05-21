@@ -147,3 +147,15 @@ def test_close_run_does_not_call_claude(tmp_db_path, mocker):
 
     mock_claude.assert_not_called()
     mock_evaluate.assert_called_once()
+
+
+def test_prompts_contain_intraday_focus():
+    from pathlib import Path
+    prompt_dir = Path("prompts")
+    for name in [
+        "deep_analysis_v1.txt",
+        "commodities_crypto_v1.txt",
+        "portfolio_check_v1.txt",
+    ]:
+        text = (prompt_dir / name).read_text()
+        assert "Intraday-Horizont" in text, f"{name} missing intraday focus paragraph"
