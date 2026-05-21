@@ -3,7 +3,7 @@ from unittest.mock import patch, MagicMock
 import pytest
 
 from main import (
-    run_pipeline, run_evaluate, run_weekly, parse_args, build_commodity_crypto_inputs,
+    run_pipeline, run_evaluate, run_weekly, run_close, parse_args, build_commodity_crypto_inputs,
 )
 import config
 
@@ -141,9 +141,9 @@ def test_close_run_does_not_call_claude(tmp_db_path, mocker):
     """Close run must not invoke Claude or send email."""
     mock_claude = mocker.patch("src.utils.call_claude")
     mocker.patch("src.email_sender._send")
-    mocker.patch("src.evaluator.evaluate_open_predictions", return_value=0)
+    mock_evaluate = mocker.patch("main.evaluate_open_predictions", return_value=0)
 
-    from main import run_close
     run_close(date="2026-05-21", db_path=str(tmp_db_path))
 
     mock_claude.assert_not_called()
+    mock_evaluate.assert_called_once()
