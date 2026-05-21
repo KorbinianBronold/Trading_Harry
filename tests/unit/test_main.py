@@ -159,3 +159,17 @@ def test_prompts_contain_intraday_focus():
     ]:
         text = (prompt_dir / name).read_text()
         assert "Intraday-Horizont" in text, f"{name} missing intraday focus paragraph"
+
+
+from freezegun import freeze_time
+
+def test_main_date_uses_berlin_timezone(tmp_db_path, mocker):
+    """At 23:30 UTC on 2026-05-21, Berlin (CEST UTC+2) is 01:30 on 2026-05-22."""
+    import importlib
+    import main as m
+    importlib.reload(m)
+    mocker.patch.object(m, "run_evaluate")
+    with freeze_time("2026-05-21T23:30:00+00:00"):
+        m.main(["--run-type", "evaluate", "--db-path", str(tmp_db_path)])
+        call_date = m.run_evaluate.call_args[1]["date"]
+    assert call_date == "2026-05-22", f"Expected Berlin date 2026-05-22, got {call_date}"

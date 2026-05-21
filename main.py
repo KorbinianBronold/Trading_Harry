@@ -7,7 +7,8 @@ e-mail with the warning bar."""
 import argparse
 import logging
 import sys
-from datetime import date as date_cls, timedelta
+from datetime import date as date_cls, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import config
 from src import db
@@ -30,14 +31,16 @@ from src.providers.finnhub_provider import FinnhubProvider
 
 log = logging.getLogger("shares_future.main")
 
-RUN_TYPES = ["pre_market", "midday", "close", "evaluate", "weekly"]
+BERLIN = ZoneInfo("Europe/Berlin")
+
+RUN_TYPES = ["pre_market", "midday", "close", "evaluate", "weekly", "position_check"]
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--run-type", required=True, choices=RUN_TYPES)
     parser.add_argument("--date", default=None,
-                        help="ISO date (default: today UTC)")
+                        help="ISO date (default: today Europe/Berlin)")
     parser.add_argument("--db-path", default=str(config.DB_PATH))
     return parser.parse_args(argv)
 
@@ -290,7 +293,7 @@ def run_weekly(date: str, db_path: str) -> None:
 
 def main(argv: list[str] | None = None) -> None:
     ns = parse_args(argv)
-    date = ns.date or date_cls.today().isoformat()
+    date = ns.date or datetime.now(BERLIN).date().isoformat()
     if ns.run_type in ("pre_market", "midday"):
         run_pipeline(run_type=ns.run_type, date=date, db_path=ns.db_path)
     elif ns.run_type == "close":

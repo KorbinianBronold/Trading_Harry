@@ -1,10 +1,13 @@
 import logging
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 import finnhub
 import config
 from src.providers.base import DataProvider
 
 log = logging.getLogger("shares_future.finnhub")
+
+BERLIN = ZoneInfo("Europe/Berlin")
 
 _client = (
     finnhub.Client(api_key=config.FINNHUB_API_KEY)
@@ -31,7 +34,7 @@ class FinnhubProvider(DataProvider):
     def get_earnings_calendar(self, ticker: str) -> dict:
         if _client is None:
             return {"days_to_next": None, "last_beat_pct": None}
-        today = datetime.now().date()
+        today = datetime.now(BERLIN).date()
         try:
             resp = _client.earnings_calendar(
                 _from=(today - timedelta(days=self.LOOKBACK_DAYS)).isoformat(),
