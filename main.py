@@ -23,7 +23,7 @@ from src.portfolio_check import check_open_positions
 from src.ranking import rank_and_persist
 from src.evaluator import evaluate_open_predictions
 from src.email_sender import (
-    send_daily_email, send_weekly_email,
+    send_daily_email, send_weekly_email, generate_daily_briefing,
 )
 from src.providers.yfinance_provider import YFinanceProvider
 from src.providers.finnhub_provider import FinnhubProvider
@@ -121,6 +121,7 @@ def run_pipeline(run_type: str, date: str, db_path: str) -> None:
     aborted_at: str | None = None
     payload = {
         "date": date, "run_type": run_type,
+        "briefing": [],
         "portfolio_recs": [], "top_long": [], "top_short": [],
         "commodities_crypto": [], "trends": [],
         "skipped_tickers": [],
@@ -176,6 +177,7 @@ def run_pipeline(run_type: str, date: str, db_path: str) -> None:
         policy_context = run_policy_monitor(
             date=date, run_type=run_type, cost_tracker=cost_tracker,
         )
+        payload["briefing"] = generate_daily_briefing(trend_context, policy_context)
 
         # Phase 3 deep analysis
         deep_stocks = analyze_assets(
