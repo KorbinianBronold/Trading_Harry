@@ -70,3 +70,8 @@ DIMENSION_WEIGHTS = {
     "catalyst":           0.10,
     "policy_risk":        0.08,
 }
+
+USE_FULL_SP500 = os.getenv("USE_FULL_SP500", "false").lower() == "true"
+
+# Full S&P 500 ticker list. Replace with complete 500-symbol list before enabling USE_FULL_SP500.
+SP500_FULL_TICKERS: list[str] = SP500_MVP_TICKERS  # stub — replace with full list

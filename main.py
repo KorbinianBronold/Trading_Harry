@@ -145,8 +145,9 @@ def run_pipeline(run_type: str, date: str, db_path: str) -> None:
 
     try:
         # Phase 1 — Stocks data
+        _tickers = config.SP500_FULL_TICKERS if config.USE_FULL_SP500 else config.SP500_MVP_TICKERS
         sp500_tds, skipped_sp = collect(
-            tickers=config.SP500_MVP_TICKERS,
+            tickers=_tickers,
             price_provider=price_provider,
             earnings_provider=earnings_provider,
             conn=conn, date=date, run_type=run_type,
