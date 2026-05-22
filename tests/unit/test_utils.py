@@ -156,5 +156,28 @@ def test_extract_json_blob_extracts_outermost_braces_on_prose():
 
 
 def test_extract_json_blob_raises_provided_error_class():
-    with pytest.raises(_DemoError, match="Could not parse JSON"):
-        extract_json_blob("not json at all and no braces", _DemoError)
+    with pytest.raises(_DemoError):
+        extract_json_blob("{invalid json}", _DemoError)
+
+
+def test_extract_json_blob_raises_on_no_opening_brace():
+    with pytest.raises(_DemoError, match="No JSON object found"):
+        extract_json_blob("just text without any braces", _DemoError)
+
+
+def test_extract_json_blob_ignores_trailing_commentary():
+    # Simulates Claude appending explanation text after the JSON
+    text = (
+        '{"ticker": "NVDA", "score": 8.5}\n\n'
+        "Note: Based on web search, I found additional context that "
+        "supports the above analysis."
+    )
+    result = extract_json_blob(text, _DemoError)
+    assert result == {"ticker": "NVDA", "score": 8.5}
+
+
+def test_extract_json_blob_ignores_trailing_json_like_content():
+    # Simulates 'Extra data' scenario: valid JSON followed by more text
+    text = '{"a": 1}\n{"b": 2}'
+    result = extract_json_blob(text, _DemoError)
+    assert result == {"a": 1}  # only first object parsed, second ignored

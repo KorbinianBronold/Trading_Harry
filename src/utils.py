@@ -106,22 +106,19 @@ _JSON_FENCE_RE = re.compile(r"```(?:json)?\s*(\{.*\})\s*```", re.DOTALL)
 
 
 def extract_json_blob(text: str, error_cls: Type[Exception]) -> dict:
-    """Tolerate ```json ... ``` fences and leading/trailing prose. Raises the
-    caller-provided error_cls on failure so callers can keep their own taxonomy."""
+    """Tolerate ```json ... ``` fences, leading prose, and trailing text/commentary.
+    Uses raw_decode so any content after the closing } is silently ignored.
+    Raises the caller-provided error_cls on failure."""
     m = _JSON_FENCE_RE.search(text)
     if m:
         text = m.group(1)
-    text = text.strip()
+    start = text.find("{")
+    if start < 0:
+        raise error_cls("No JSON object found in response")
     try:
-        return json.loads(text)
+        obj, _ = json.JSONDecoder().raw_decode(text, start)
+        return obj
     except json.JSONDecodeError as e:
-        start = text.find("{")
-        end = text.rfind("}")
-        if start >= 0 and end > start:
-            try:
-                return json.loads(text[start:end + 1])
-            except json.JSONDecodeError:
-                pass
         raise error_cls(f"Could not parse JSON: {e}") from e
 
 
