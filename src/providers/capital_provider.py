@@ -34,21 +34,30 @@ class CapitalComProvider(DataProvider):
     def __init__(self) -> None:
         self._cst: str | None = None
         self._security_token: str | None = None
+        self._auth_failed: bool = False
 
     def _ensure_session(self) -> None:
+        if self._auth_failed:
+            raise RuntimeError("Capital.com session auth previously failed — skipping")
         if self._cst:
             return
-        resp = requests.post(
-            f"{config.CAPITAL_COM_BASE_URL}/api/v1/session",
-            json={
-                "identifier":        config.CAPITAL_COM_API_KEY,
-                "password":          config.CAPITAL_COM_PASSWORD,
-                "encryptedPassword": False,
-            },
-            headers={"X-CAP-API-KEY": config.CAPITAL_COM_API_KEY},
-            timeout=30,
-        )
-        resp.raise_for_status()
+        try:
+            identifier = config.CAPITAL_COM_IDENTIFIER or config.CAPITAL_COM_API_KEY
+            resp = requests.post(
+                f"{config.CAPITAL_COM_BASE_URL}/api/v1/session",
+                json={
+                    "identifier":        identifier,
+                    "password":          config.CAPITAL_COM_PASSWORD,
+                    "encryptedPassword": False,
+                },
+                headers={"X-CAP-API-KEY": config.CAPITAL_COM_API_KEY},
+                timeout=30,
+            )
+            resp.raise_for_status()
+        except Exception as e:
+            self._auth_failed = True
+            log.error(f"Capital.com session auth failed (will not retry): {e}")
+            raise
         self._cst            = resp.headers.get("CST")
         self._security_token = resp.headers.get("X-SECURITY-TOKEN")
 
