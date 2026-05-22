@@ -39,6 +39,48 @@ def _h(s: Any) -> str:
     return html.escape(str(s))
 
 
+def generate_daily_briefing(trend_context: dict, policy_context: dict) -> list[str]:
+    """Returns 4-6 bullet strings for the 'Was heute zaehlt' box."""
+    bullets: list[str] = []
+    strong = sorted(
+        [t for t in (trend_context.get("trends") or []) if t.get("strength", 0) >= 7],
+        key=lambda t: -t.get("strength", 0),
+    )
+    for t in strong[:2]:
+        name = t.get("name") or t.get("trend_name", "Trend")
+        summary = (t.get("summary") or "")[:70]
+        bullets.append(f"{name}: {summary}")
+    if (policy_context.get("policy_risk_level") or "").lower() == "high":
+        events = policy_context.get("events") or []
+        if events:
+            headline = (events[0].get("headline") or "")[:80]
+            bullets.append(f"Policy-Risiko HOCH: {headline}")
+    for t in (trend_context.get("trends") or []):
+        tickers = t.get("beneficiary_tickers") or []
+        if tickers:
+            bullets.append(f"Trend-Beneficiary: {tickers[0]}")
+            break
+    for t in (trend_context.get("trends") or []):
+        cat = t.get("next_catalyst")
+        if cat and cat != "TBD":
+            bullets.append(f"Naechster Katalysator: {cat[:60]}")
+            break
+    return bullets[:6]
+
+
+def _section_briefing(bullets: list[str]) -> str:
+    if not bullets:
+        return ""
+    items = "".join(f"<li>{_h(b)}</li>" for b in bullets)
+    return (
+        '<div style="background:#1a1a2e;color:#fff;padding:16px;'
+        'margin-bottom:20px;border-radius:4px;">'
+        '<h2 style="color:#fff;margin:0 0 12px 0;">Was heute zaehlt</h2>'
+        f'<ul style="margin:0;padding-left:20px;">{items}</ul>'
+        '</div>'
+    )
+
+
 def _section_portfolio(recs: list[dict]) -> str:
     if not recs:
         return ('<h2>Portfolio-Empfehlungen</h2>'
@@ -198,6 +240,7 @@ def render_daily_html(payload: dict) -> str:
         '<html><body style="font-family:sans-serif;font-size:14px;">'
         f'<h1>Shares_Future — {_h(payload.get("date"))} '
         f'({_h(payload.get("run_type"))})</h1>'
+        + _section_briefing(payload.get("briefing") or [])
         + _section_portfolio(payload.get("portfolio_recs") or [])
         + _section_stocks(
             payload.get("top_long") or [], payload.get("top_short") or [],
@@ -283,3 +326,41 @@ def _send(api_key: str, email_from: str, email_to: str,
             f"{getattr(resp, 'body', '')!r}"
         )
     log.info(f"SendGrid accepted message (status={resp.status_code})")
+
+
+# ---------- Position-Check HTML ----------
+
+def render_position_check_html(payload: dict) -> str:
+    checks = payload.get("checks") or []
+    _icons = {"on_track": "[OK]", "near_sl": "[WARN]", "signal_fallen": "[ALERT]"}
+    rows = "".join(
+        f'<tr><td>{_h(_icons.get(c.get("status", ""), ""))}</td>'
+        f'<td>{_h(c.get("ticker"))}</td>'
+        f'<td>{_h(c.get("direction"))}</td>'
+        f'<td>{_h(c.get("note", ""))}</td></tr>'
+        for c in checks
+    )
+    return (
+        '<html><body style="font-family:sans-serif;font-size:14px;">'
+        f'<h1>Shares_Future Position-Check — {_h(payload.get("date"))}</h1>'
+        f'<p><b>{_h(payload.get("summary"))}</b></p>'
+        '<table border="1" cellpadding="4" cellspacing="0">'
+        '<tr><th>Status</th><th>Ticker</th><th>Dir</th><th>Note</th></tr>'
+        + rows
+        + '</table>'
+        f'<p><small>{_h(_DISCLAIMER)}</small></p>'
+        '</body></html>'
+    )
+
+
+def send_position_check_email(
+    payload: dict, api_key: str, email_from: str, email_to: str,
+) -> None:
+    html_body = render_position_check_html(payload)
+    checks = payload.get("checks") or []
+    n_warn = sum(1 for c in checks if c.get("status") in ("near_sl", "signal_fallen"))
+    subject = (
+        f"[Shares_Future] {payload.get('date')} Position-Check — "
+        f"{len(checks)} Pos, {n_warn} Warnung(en)"
+    )
+    _send(api_key, email_from, email_to, subject, html_body)

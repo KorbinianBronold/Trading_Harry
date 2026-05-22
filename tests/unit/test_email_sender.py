@@ -152,3 +152,103 @@ def test_send_daily_email_raises_on_non_2xx():
                 payload=payload, api_key="SG.fake",
                 email_from="from@example.com", email_to="to@example.com",
             )
+
+
+def test_generate_daily_briefing_high_strength_trends():
+    from src.email_sender import generate_daily_briefing
+    trend_context = {
+        "trends": [
+            {"name": "ai-capex", "strength": 9,
+             "summary": "AI spending accelerates across hyperscalers",
+             "beneficiary_tickers": ["NVDA", "MSFT"],
+             "next_catalyst": "NVDA earnings 2026-05-28"},
+            {"name": "oil-supply", "strength": 7,
+             "summary": "OPEC cuts production by 500k bpd",
+             "beneficiary_tickers": [], "next_catalyst": "TBD"},
+            {"name": "weak-trend", "strength": 4,
+             "summary": "Low strength, must be excluded",
+             "beneficiary_tickers": [], "next_catalyst": "TBD"},
+        ]
+    }
+    policy_context = {"policy_risk_level": "low", "events": []}
+    bullets = generate_daily_briefing(trend_context, policy_context)
+    assert any("ai-capex" in b for b in bullets)
+    assert any("oil-supply" in b for b in bullets)
+    assert not any("weak-trend" in b for b in bullets)
+
+
+def test_generate_daily_briefing_policy_high_adds_bullet():
+    from src.email_sender import generate_daily_briefing
+    trend_context = {"trends": []}
+    policy_context = {
+        "policy_risk_level": "high",
+        "events": [{"headline": "Fed surprise rate cut announced"}],
+    }
+    bullets = generate_daily_briefing(trend_context, policy_context)
+    assert any("HOCH" in b for b in bullets)
+    assert any("Fed" in b for b in bullets)
+
+
+def test_generate_daily_briefing_max_6_bullets():
+    from src.email_sender import generate_daily_briefing
+    trend_context = {
+        "trends": [
+            {"name": f"trend-{i}", "strength": 9, "summary": "X" * 80,
+             "beneficiary_tickers": [f"T{i}"], "next_catalyst": f"Event {i}"}
+            for i in range(10)
+        ]
+    }
+    policy_context = {"policy_risk_level": "high",
+                      "events": [{"headline": "Big event"}]}
+    bullets = generate_daily_briefing(trend_context, policy_context)
+    assert len(bullets) <= 6
+
+
+def test_render_daily_html_includes_briefing_section():
+    from src.email_sender import render_daily_html
+    payload = {
+        "date": "2026-05-21", "run_type": "pre_market",
+        "briefing": ["ai-capex: AI spending accelerates", "Policy-Risiko HOCH: tariffs"],
+        "portfolio_recs": [], "top_long": [], "top_short": [],
+        "commodities_crypto": [], "trends": [],
+        "skipped_tickers": [], "yesterday_outcomes": {}, "cost_summary": {},
+    }
+    html = render_daily_html(payload)
+    assert "Was heute" in html
+    assert "ai-capex" in html
+
+
+def test_render_position_check_html_contains_tickers():
+    from src.email_sender import render_position_check_html
+    payload = {
+        "date": "2026-05-21",
+        "checks": [
+            {"ticker": "AAPL", "direction": "long",
+             "status": "on_track", "note": "Moving as expected"},
+            {"ticker": "MSFT", "direction": "short",
+             "status": "near_sl",  "note": "Approaching stop-loss"},
+        ],
+        "summary": "1 position on track, 1 near SL.",
+    }
+    html = render_position_check_html(payload)
+    assert "AAPL" in html
+    assert "MSFT" in html
+    assert "on track" in html.lower() or "[OK]" in html
+
+
+def test_send_position_check_email_subject_contains_count(mocker):
+    mock_send = mocker.patch("src.email_sender._send")
+    from src.email_sender import send_position_check_email
+    send_position_check_email(
+        payload={
+            "date": "2026-05-21",
+            "checks": [
+                {"ticker": "AAPL", "status": "near_sl", "direction": "long", "note": ""},
+            ],
+            "summary": "1 warning.",
+        },
+        api_key="key", email_from="a@b.com", email_to="x@y.com",
+    )
+    subject = mock_send.call_args[0][3]
+    assert "2026-05-21" in subject
+    assert "1" in subject

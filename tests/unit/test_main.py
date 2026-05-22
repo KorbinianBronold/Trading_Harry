@@ -3,7 +3,7 @@ from unittest.mock import patch, MagicMock
 import pytest
 
 from main import (
-    run_pipeline, run_evaluate, run_weekly, parse_args, build_commodity_crypto_inputs,
+    run_pipeline, run_evaluate, run_weekly, run_close, parse_args, build_commodity_crypto_inputs,
 )
 import config
 
@@ -134,4 +134,69 @@ def test_run_weekly_calls_send_weekly_email(tmp_db_path):
                              "short_total": 0, "short_avg_pl": 0.0,
                              "total_pl_eur": 0.0, "trades": []}):
         run_weekly(date="2026-05-24", db_path=str(tmp_db_path))
+    mock_send.assert_called_once()
+
+
+def test_close_run_does_not_call_claude(tmp_db_path, mocker):
+    """Close run must not invoke Claude or send email."""
+    mock_claude = mocker.patch("src.utils.call_claude")
+    mocker.patch("src.email_sender._send")
+    mock_evaluate = mocker.patch("main.evaluate_open_predictions", return_value=0)
+
+    run_close(date="2026-05-21", db_path=str(tmp_db_path))
+
+    mock_claude.assert_not_called()
+    mock_evaluate.assert_called_once()
+
+
+def test_prompts_contain_intraday_focus():
+    from pathlib import Path
+    prompt_dir = Path("prompts")
+    for name in [
+        "deep_analysis_v1.txt",
+        "commodities_crypto_v1.txt",
+        "portfolio_check_v1.txt",
+    ]:
+        text = (prompt_dir / name).read_text()
+        assert "Intraday-Horizont" in text, f"{name} missing intraday focus paragraph"
+
+
+from freezegun import freeze_time
+
+def test_main_date_uses_berlin_timezone(tmp_db_path, mocker):
+    """At 23:30 UTC on 2026-05-21, Berlin (CEST UTC+2) is 01:30 on 2026-05-22."""
+    import importlib
+    import main as m
+    importlib.reload(m)
+    mocker.patch.object(m, "run_evaluate")
+    with freeze_time("2026-05-21T23:30:00+00:00"):
+        m.main(["--run-type", "evaluate", "--db-path", str(tmp_db_path)])
+        call_date = m.run_evaluate.call_args[1]["date"]
+    assert call_date == "2026-05-22", f"Expected Berlin date 2026-05-22, got {call_date}"
+
+
+def test_position_check_calls_get_open_positions(tmp_db_path, mocker):
+    """position_check must call get_open_positions on Capital.com."""
+    mocker.patch("main.config.CAPITAL_COM_API_KEY", "test-key")
+    mock_capital = mocker.MagicMock()
+    mock_capital.get_open_positions.return_value = []
+    mocker.patch("main.CapitalComProvider", return_value=mock_capital)
+    mocker.patch("src.utils.call_claude")
+    mocker.patch("src.email_sender._send")
+
+    from main import run_position_check
+    run_position_check(date="2026-05-21", db_path=str(tmp_db_path))
+    mock_capital.get_open_positions.assert_called_once()
+
+
+def test_position_check_always_sends_email(tmp_db_path, mocker):
+    mocker.patch("main.config.CAPITAL_COM_API_KEY", "test-key")
+    mock_capital = mocker.MagicMock()
+    mock_capital.get_open_positions.return_value = []
+    mocker.patch("main.CapitalComProvider", return_value=mock_capital)
+    mocker.patch("src.utils.call_claude")
+    mock_send = mocker.patch("src.email_sender._send")
+
+    from main import run_position_check
+    run_position_check(date="2026-05-21", db_path=str(tmp_db_path))
     mock_send.assert_called_once()

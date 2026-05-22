@@ -1,10 +1,13 @@
 import logging
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 import finnhub
 import config
 from src.providers.base import DataProvider
 
 log = logging.getLogger("shares_future.finnhub")
+
+BERLIN = ZoneInfo("Europe/Berlin")
 
 _client = (
     finnhub.Client(api_key=config.FINNHUB_API_KEY)
@@ -22,8 +25,42 @@ class FinnhubProvider(DataProvider):
     def get_ohlc_after(self, ticker, start_date, end_date):
         raise NotImplementedError("Finnhub provider is earnings-only; use yfinance for OHLC")
 
-    def get_fundamentals(self, ticker):
-        return {}
+    def get_fundamentals(self, ticker: str) -> dict:
+        if _client is None:
+            return {}
+        try:
+            profile  = _client.company_profile2(symbol=ticker) or {}
+            resp     = _client.company_basic_financials(ticker, "all") or {}
+            metrics  = resp.get("metric") or {}
+            recs     = _client.recommendation_trends(ticker) or []
+            _client.price_target(ticker)  # fetched; not used yet
+        except Exception as e:
+            log.warning(f"{ticker}: Finnhub fundamentals failed: {e}")
+            return {}
+
+        consensus = None
+        if recs:
+            r     = recs[0]
+            total = (r.get("buy") or 0) + (r.get("hold") or 0) + (r.get("sell") or 0)
+            if total > 0:
+                ratio     = (r.get("buy") or 0) / total
+                consensus = "buy" if ratio >= 0.6 else ("sell" if ratio <= 0.3 else "hold")
+
+        mc_millions  = profile.get("marketCapitalization")
+        market_cap_b = round(mc_millions / 1000, 2) if mc_millions else None
+
+        de_raw  = metrics.get("totalDebt/totalEquityAnnual")
+        debt_eq = round(de_raw / 100, 4) if de_raw is not None else None
+
+        return {
+            "pe_ratio":       metrics.get("peNormalizedAnnual"),
+            "forward_pe":     metrics.get("forwardPE"),
+            "market_cap_b":   market_cap_b,
+            "debt_equity":    debt_eq,
+            "sector":         profile.get("finnhubIndustry"),
+            "analyst_upside": None,
+            "consensus":      consensus,
+        }
 
     def get_last_available_date(self, ticker):
         return None
@@ -31,7 +68,7 @@ class FinnhubProvider(DataProvider):
     def get_earnings_calendar(self, ticker: str) -> dict:
         if _client is None:
             return {"days_to_next": None, "last_beat_pct": None}
-        today = datetime.now().date()
+        today = datetime.now(BERLIN).date()
         try:
             resp = _client.earnings_calendar(
                 _from=(today - timedelta(days=self.LOOKBACK_DAYS)).isoformat(),

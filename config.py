@@ -35,7 +35,9 @@ CRYPTO_TICKERS = {
 }
 
 SP500_MIN_MARKET_CAP_B = 5
-SP500_MIN_ATR_PCT = 0.8
+SP500_MIN_ATR_PCT = 2.0
+MAX_HOLD_DAYS = 5
+HOLD_TARGET = "intraday"
 MAX_DEEP_ANALYSIS = 80
 BATCH_SIZE_QUICK = 30
 
@@ -54,6 +56,10 @@ CLAUDE_PARALLEL_CALLS = 5
 YFINANCE_PAUSE_SEC = 0.8
 YFINANCE_BATCH_PAUSE = 12
 
+CAPITAL_COM_API_KEY  = os.getenv("CAPITAL_COM_API_KEY")
+CAPITAL_COM_PASSWORD = os.getenv("CAPITAL_COM_PASSWORD")
+CAPITAL_COM_BASE_URL = "https://demo-api-capital.backend-capital.com"
+
 DIMENSION_WEIGHTS = {
     "market_environment": 0.10,
     "company_quality":    0.18,
@@ -64,3 +70,8 @@ DIMENSION_WEIGHTS = {
     "catalyst":           0.10,
     "policy_risk":        0.08,
 }
+
+USE_FULL_SP500 = os.getenv("USE_FULL_SP500", "false").lower() == "true"
+
+# Full S&P 500 ticker list. Replace with complete 500-symbol list before enabling USE_FULL_SP500.
+SP500_FULL_TICKERS: list[str] = SP500_MVP_TICKERS  # stub — replace with full list

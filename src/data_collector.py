@@ -20,6 +20,7 @@ MIN_BARS_ATR = 20
 MIN_BARS_BB = 25
 MIN_BARS_VOL = 25
 MIN_BARS_INTRADAY = 5
+MIN_BARS_MACD = 35
 
 
 def _last_finite(series: pd.Series) -> float | None:
@@ -58,7 +59,7 @@ def compute_rsi_trend(df: pd.DataFrame) -> str:
 def compute_macd_signal(df: pd.DataFrame) -> str:
     """bullish_cross if MACD crossed above signal in the last 2 bars,
     bearish_cross if crossed below, else neutral."""
-    if len(df) < 35:
+    if len(df) < MIN_BARS_MACD:
         return "neutral"
     macd = ta.macd(df["Close"])
     if macd is None or macd.empty:
@@ -173,33 +174,63 @@ BATCH_PAUSE_EVERY = 30  # spec §"Rate Limiting yfinance"
 
 
 def _classify_data_quality(td: dict) -> str:
-    """high if all critical fields present, medium if peripheral fields missing,
-    low if any required indicator is missing.
-
-    Note: the plan-text listed `above_sma200` in `required`, but its companion
-    process-ticker tests feed only 80 bars (which is < 200 → SMA200 is None)
-    and assert that the resulting payload must be non-None. Dropping the SMA
-    entry from `required` makes all plan-supplied tests pass — the three
-    classifier unit cases (high/medium/low) still hold because they pivot on
-    rsi_14/atr_pct presence and on the peripheral fields."""
-    required = ("rsi_14", "atr_pct")
-    peripheral = ("pe_ratio", "market_cap_b", "sector")
-
+    required   = ("rsi_14", "atr_pct")
+    peripheral = ("pe_ratio", "market_cap_b", "sector", "above_sma200")
     if any(td.get(k) is None for k in required):
         return "low"
     missing_peripheral = sum(1 for k in peripheral if td.get(k) is None)
-    if missing_peripheral >= 1:
-        return "medium"
-    return "high"
+    return "medium" if missing_peripheral >= 1 else "high"
 
 
-def _persist_price_history(conn, ticker: str, df: pd.DataFrame) -> None:
+def _ensure_today_bar(
+    ticker: str,
+    price_provider: DataProvider,
+    conn,
+    date: str,
+) -> None:
+    """Append today's bar to price_history via INSERT OR IGNORE.
+
+    Tries single-bar fetch (get_ohlc_after) first; falls back to full
+    history fetch for fresh installs without historical_loader data."""
+    existing = conn.execute(
+        "SELECT 1 FROM price_history WHERE ticker=? AND date=?",
+        (ticker, date),
+    ).fetchone()
+    if existing:
+        return
+
+    df: pd.DataFrame | None = None
+    try:
+        _ohlc = price_provider.get_ohlc_after(ticker, date, date)
+        df = _ohlc if isinstance(_ohlc, pd.DataFrame) else None
+    except Exception as e:
+        log.warning(f"{ticker}: single-bar fetch failed: {e}")
+
+    if df is None or df.empty:
+        try:
+            _hist = price_provider.get_price_history(ticker, days=200)
+            df = _hist if isinstance(_hist, pd.DataFrame) else None
+        except Exception as e:
+            log.warning(f"{ticker}: full-history fallback failed: {e}")
+            return
+
+    if df is None or df.empty:
+        return
+
+    _raw_source = getattr(price_provider, "_source_name", None)
+    source = _raw_source if isinstance(_raw_source, str) else "yfinance"
     for ts, row in df.iterrows():
-        db.upsert_price_history(
-            conn, ticker=ticker, date=ts.strftime("%Y-%m-%d"),
-            open_=float(row["Open"]), high=float(row["High"]),
-            low=float(row["Low"]), close=float(row["Close"]),
-            volume=int(row["Volume"]) if not pd.isna(row["Volume"]) else 0,
+        d = ts.strftime("%Y-%m-%d") if hasattr(ts, "strftime") else str(ts)[:10]
+        if d > date:
+            continue
+        db.insert_price_bar_if_missing(
+            conn, ticker=ticker, date=d,
+            open_=float(row.get("Open", 0)),
+            high=float(row.get("High", 0)),
+            low=float(row.get("Low", 0)),
+            close=float(row.get("Close", 0)),
+            volume=int(row.get("Volume", 0) or 0),
+            source=source,
         )
     conn.commit()
 
@@ -227,13 +258,11 @@ def _process_ticker(
     date: str,
     run_type: str,
 ) -> dict | None:
-    """Run one ticker through the Phase-1 pipeline. Returns a TickerData dict on
-    success; returns None and writes a skipped_tickers row on any failure."""
-    try:
-        df = price_provider.get_price_history(ticker, days=90)
-    except Exception as e:  # provider already retries; this is final
-        df = None
-        log.warning(f"{ticker}: price_provider raised: {e}")
+    # Step 1: Ensure today's bar is in DB
+    _ensure_today_bar(ticker, price_provider, conn, date)
+
+    # Step 2: Load last 200 days from DB for indicator calculation
+    df = db.load_price_history_from_db(conn, ticker, as_of_date=date, limit=200)
 
     if df is None or len(df) < MIN_BARS_RSI:
         rows = 0 if df is None else len(df)
@@ -244,30 +273,38 @@ def _process_ticker(
         )
         return None
 
-    # Indicators
+    # Indicators (computed from DB data — df has capitalized column names)
     pc = compute_price_changes(df)
     td: dict[str, Any] = {
         "ticker": ticker,
-        "price": float(df["Close"].iloc[-1]),
+        "price":  float(df["Close"].iloc[-1]),
         **pc,
-        "rsi_14": compute_rsi_14(df),
-        "rsi_trend": compute_rsi_trend(df),
-        "macd_signal": compute_macd_signal(df),
-        "atr_pct": compute_atr_pct(df),
-        "bb_position": compute_bb_position(df),
-        "above_sma20":  compute_sma_distance_pct(df, 20),
-        "above_sma50":  compute_sma_distance_pct(df, 50),
-        "above_sma200": compute_sma_distance_pct(df, 200),
-        "volume_ratio": compute_volume_ratio(df),
+        "rsi_14":             compute_rsi_14(df),
+        "rsi_trend":          compute_rsi_trend(df),
+        "macd_signal":        compute_macd_signal(df),
+        "atr_pct":            compute_atr_pct(df),
+        "bb_position":        compute_bb_position(df),
+        "above_sma20":        compute_sma_distance_pct(df, 20),
+        "above_sma50":        compute_sma_distance_pct(df, 50),
+        "above_sma200":       compute_sma_distance_pct(df, 200),
+        "volume_ratio":       compute_volume_ratio(df),
         "intraday_range_pct": compute_intraday_range_pct(df),
     }
 
-    # Fundamentals (tolerate missing keys)
-    try:
-        fundamentals = price_provider.get_fundamentals(ticker) or {}
-    except Exception as e:
-        log.warning(f"{ticker}: fundamentals raised: {e}")
-        fundamentals = {}
+    # Fundamentals: cache-first
+    cached_fund = db.get_cached_fundamentals(conn, ticker, today=date)
+    if cached_fund is not None:
+        fundamentals = cached_fund
+    else:
+        try:
+            _raw_fund = earnings_provider.get_fundamentals(ticker)
+            fundamentals = _raw_fund if isinstance(_raw_fund, dict) else {}
+        except Exception as e:
+            log.warning(f"{ticker}: fundamentals raised: {e}")
+            fundamentals = {}
+        if fundamentals:
+            db.save_fundamentals_cache(conn, ticker, fundamentals, fetched_date=date)
+
     td.update({
         "pe_ratio":              fundamentals.get("pe_ratio"),
         "forward_pe":            fundamentals.get("forward_pe"),
@@ -278,17 +315,16 @@ def _process_ticker(
         "analyst_consensus":     fundamentals.get("consensus"),
     })
 
-    # Earnings (tolerate missing)
+    # Earnings
     try:
         earnings = earnings_provider.get_earnings_calendar(ticker) or {}
     except Exception as e:
         log.warning(f"{ticker}: earnings raised: {e}")
         earnings = {}
-    td["earnings_in_days"] = earnings.get("days_to_next")
+    td["earnings_in_days"]  = earnings.get("days_to_next")
     td["earnings_beat_pct"] = earnings.get("last_beat_pct")
 
     td["data_quality"] = _classify_data_quality(td)
-
     if td["data_quality"] == "low":
         db.log_skipped_ticker(
             conn, ticker=ticker, date=date, run_type=run_type,
@@ -297,7 +333,6 @@ def _process_ticker(
         )
         return None
 
-    _persist_price_history(conn, ticker, df)
     _persist_indicators(conn, ticker, date, td)
     return td
 

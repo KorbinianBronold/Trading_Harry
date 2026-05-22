@@ -5,9 +5,12 @@ re-raising; the GH Actions step turns red and the user is alerted via the
 workflow's email-on-failure notification. Cost-cap aborts produce a partial
 e-mail with the warning bar."""
 import argparse
+import json
 import logging
 import sys
-from datetime import date as date_cls, timedelta
+from datetime import date as date_cls, datetime, timedelta
+from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import config
 from src import db
@@ -23,21 +26,26 @@ from src.portfolio_check import check_open_positions
 from src.ranking import rank_and_persist
 from src.evaluator import evaluate_open_predictions
 from src.email_sender import (
-    send_daily_email, send_weekly_email,
+    send_daily_email, send_weekly_email, generate_daily_briefing,
+    send_position_check_email,
 )
+from src.utils import call_claude, extract_json_blob
 from src.providers.yfinance_provider import YFinanceProvider
 from src.providers.finnhub_provider import FinnhubProvider
+from src.providers.capital_provider import CapitalComProvider
 
 log = logging.getLogger("shares_future.main")
 
-RUN_TYPES = ["pre_market", "midday", "close", "evaluate", "weekly"]
+BERLIN = ZoneInfo("Europe/Berlin")
+
+RUN_TYPES = ["pre_market", "midday", "close", "evaluate", "weekly", "position_check"]
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--run-type", required=True, choices=RUN_TYPES)
     parser.add_argument("--date", default=None,
-                        help="ISO date (default: today UTC)")
+                        help="ISO date (default: today Europe/Berlin)")
     parser.add_argument("--db-path", default=str(config.DB_PATH))
     return parser.parse_args(argv)
 
@@ -115,12 +123,13 @@ def run_pipeline(run_type: str, date: str, db_path: str) -> None:
     db.init_schema(conn)
     db.cleanup_old_data(conn)
     cost_tracker = CostTracker()
-    price_provider = YFinanceProvider()
+    price_provider = CapitalComProvider() if config.CAPITAL_COM_API_KEY else YFinanceProvider()
     earnings_provider = FinnhubProvider()
 
     aborted_at: str | None = None
     payload = {
         "date": date, "run_type": run_type,
+        "briefing": [],
         "portfolio_recs": [], "top_long": [], "top_short": [],
         "commodities_crypto": [], "trends": [],
         "skipped_tickers": [],
@@ -136,8 +145,9 @@ def run_pipeline(run_type: str, date: str, db_path: str) -> None:
 
     try:
         # Phase 1 — Stocks data
+        _tickers = config.SP500_FULL_TICKERS if config.USE_FULL_SP500 else config.SP500_MVP_TICKERS
         sp500_tds, skipped_sp = collect(
-            tickers=config.SP500_MVP_TICKERS,
+            tickers=_tickers,
             price_provider=price_provider,
             earnings_provider=earnings_provider,
             conn=conn, date=date, run_type=run_type,
@@ -176,6 +186,7 @@ def run_pipeline(run_type: str, date: str, db_path: str) -> None:
         policy_context = run_policy_monitor(
             date=date, run_type=run_type, cost_tracker=cost_tracker,
         )
+        payload["briefing"] = generate_daily_briefing(trend_context, policy_context)
 
         # Phase 3 deep analysis
         deep_stocks = analyze_assets(
@@ -246,6 +257,69 @@ def _guess_aborted_phase(_exc: CostCapExceeded) -> str:
     return "policy_monitor"
 
 
+def run_close(date: str, db_path: str) -> None:
+    """Close-Run: DB Datenpflege only. No Claude, no email."""
+    conn = db.connect(db_path)
+    db.init_schema(conn)
+    price_provider = CapitalComProvider() if config.CAPITAL_COM_API_KEY else YFinanceProvider()
+    n = evaluate_open_predictions(conn=conn, today=date, price_provider=price_provider)
+    log.info(f"Close run: {n} predictions evaluated")
+    db.cleanup_old_data(conn)
+    conn.close()
+
+
+def run_position_check(date: str, db_path: str) -> None:
+    """Read open Capital.com positions, compare to DB predictions, send status mail."""
+    if not config.CAPITAL_COM_API_KEY:
+        log.warning("position_check skipped: CAPITAL_COM_API_KEY not set")
+        return
+    conn = db.connect(db_path)
+    db.init_schema(conn)
+    capital = CapitalComProvider()
+
+    real_positions = capital.get_open_positions()
+    open_preds     = db.load_open_predictions(conn)
+    real_by_ticker = {p["ticker"]: p for p in real_positions if p.get("ticker")}
+
+    position_inputs = [
+        {
+            "ticker":        pred["ticker"],
+            "direction":     pred["direction"],
+            "entry_price":   pred["entry_price"],
+            "current_price": real_by_ticker.get(pred["ticker"], {}).get("current_price"),
+            "tp_price":      pred["tp_price"],
+            "sl_price":      pred["sl_price"],
+            "profit_loss":   real_by_ticker.get(pred["ticker"], {}).get("profit_loss"),
+        }
+        for pred in open_preds
+    ]
+
+    if not position_inputs:
+        parsed = {"checks": [], "summary": "Keine offenen Positionen."}
+    else:
+        system_prompt = (Path("prompts") / "position_check_v1.txt").read_text()
+        user_msg      = f"Today is {date}. Open positions:\n{json.dumps(position_inputs, indent=2)}"
+        result        = call_claude(
+            model=config.CLAUDE_MODEL_SONNET,
+            system=system_prompt,
+            user=user_msg,
+            max_tokens=1024,
+            tools=[],
+        )
+        try:
+            parsed = extract_json_blob(result.text, RuntimeError)
+        except Exception:
+            parsed = {"checks": [], "summary": "Parse error — raw: " + result.text[:200]}
+
+    send_position_check_email(
+        payload={"date": date, **parsed},
+        api_key=config.SENDGRID_API_KEY,
+        email_from=config.EMAIL_FROM,
+        email_to=config.EMAIL_TO,
+    )
+    conn.close()
+
+
 def run_evaluate(date: str, db_path: str) -> None:
     conn = db.connect(db_path)
     db.init_schema(conn)
@@ -277,13 +351,17 @@ def run_weekly(date: str, db_path: str) -> None:
 
 def main(argv: list[str] | None = None) -> None:
     ns = parse_args(argv)
-    date = ns.date or date_cls.today().isoformat()
-    if ns.run_type in ("pre_market", "midday", "close"):
+    date = ns.date or datetime.now(BERLIN).date().isoformat()
+    if ns.run_type in ("pre_market", "midday"):
         run_pipeline(run_type=ns.run_type, date=date, db_path=ns.db_path)
+    elif ns.run_type == "close":
+        run_close(date=date, db_path=ns.db_path)
     elif ns.run_type == "evaluate":
         run_evaluate(date=date, db_path=ns.db_path)
     elif ns.run_type == "weekly":
         run_weekly(date=date, db_path=ns.db_path)
+    elif ns.run_type == "position_check":
+        run_position_check(date=date, db_path=ns.db_path)
     else:  # pragma: no cover — argparse validated
         sys.exit(2)
 

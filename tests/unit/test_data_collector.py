@@ -150,6 +150,12 @@ def _earnings_provider(days_to_next: int | None = 14, beat_pct: float | None = 4
     p.get_earnings_calendar.return_value = {
         "days_to_next": days_to_next, "last_beat_pct": beat_pct,
     }
+    p.get_fundamentals.return_value = {
+        "pe_ratio": 28.4, "forward_pe": 26.2,
+        "market_cap_b": 2800.0, "debt_equity": 1.45,
+        "sector": "Technology",
+        "analyst_upside": 8.5, "consensus": "buy",
+    }
     return p
 
 
@@ -355,3 +361,103 @@ def test_collect_pauses_between_batches(in_memory_db):
     batch_calls = [c for c in sleep_mock.call_args_list
                    if c.args and c.args[0] >= 5]
     assert len(batch_calls) >= 1
+
+
+from src import db as _db
+from datetime import date as _date, timedelta
+
+
+def _ohlcv_rows(n: int = 90, end: str = "2026-05-21") -> list[tuple]:
+    """Returns n consecutive rows of OHLCV, last row = end date."""
+    end_d = _date.fromisoformat(end)
+    rows = []
+    for i in range(n):
+        d = (end_d - timedelta(days=n - 1 - i)).isoformat()
+        close = 100.0 + i * 0.5
+        rows.append((d, close - 0.1, close + 0.5, close - 0.5, close, 1_000_000))
+    return rows
+
+
+def test_incremental_no_fetch_when_today_in_db(in_memory_db, mocker):
+    """When today's bar already exists, no price fetch occurs."""
+    _db.init_schema(in_memory_db)
+    for d, o, h, l, c, v in _ohlcv_rows(90, "2026-05-21"):
+        _db.upsert_price_history(in_memory_db, "AAPL", d, o, h, l, c, v)
+
+    mock_price = mocker.MagicMock()
+    mock_price.get_ohlc_after.return_value   = None
+    mock_price.get_price_history.return_value = None
+    mock_earn  = mocker.MagicMock()
+    mock_earn.get_earnings_calendar.return_value = {}
+    mock_earn.get_fundamentals.return_value      = {}
+
+    from src.data_collector import _process_ticker
+    td = _process_ticker("AAPL", mock_price, mock_earn, in_memory_db, "2026-05-21", "test")
+
+    mock_price.get_ohlc_after.assert_not_called()
+    mock_price.get_price_history.assert_not_called()
+    assert td is not None
+
+
+def test_incremental_fetches_and_persists_missing_today(in_memory_db, mocker):
+    """When today is missing, get_ohlc_after is called and bar is stored."""
+    import pandas as pd
+    _db.init_schema(in_memory_db)
+    for d, o, h, l, c, v in _ohlcv_rows(89, "2026-05-20"):
+        _db.upsert_price_history(in_memory_db, "AAPL", d, o, h, l, c, v)
+
+    today_df = pd.DataFrame(
+        {"Open": [101.0], "High": [104.0], "Low": [100.0], "Close": [103.0], "Volume": [2_000_000]},
+        index=pd.DatetimeIndex(["2026-05-21"]),
+    )
+    today_df.index.name = "Date"
+
+    mock_price = mocker.MagicMock()
+    mock_price.get_ohlc_after.return_value = today_df
+    mock_earn  = mocker.MagicMock()
+    mock_earn.get_earnings_calendar.return_value = {}
+    mock_earn.get_fundamentals.return_value      = {}
+
+    from src.data_collector import _process_ticker
+    td = _process_ticker("AAPL", mock_price, mock_earn, in_memory_db, "2026-05-21", "test")
+
+    mock_price.get_ohlc_after.assert_called_once()
+    assert td is not None
+    row = in_memory_db.execute(
+        "SELECT close FROM price_history WHERE ticker='AAPL' AND date='2026-05-21'"
+    ).fetchone()
+    assert row is not None
+    assert row["close"] == pytest.approx(103.0)
+
+
+def test_incremental_fallback_to_full_history_when_ohlc_after_none(in_memory_db, mocker):
+    """If get_ohlc_after returns None, full history fetch is attempted."""
+    import pandas as pd
+    _db.init_schema(in_memory_db)
+
+    full_df_rows = _ohlcv_rows(90, "2026-05-21")
+    idx = pd.DatetimeIndex([r[0] for r in full_df_rows])
+    full_df = pd.DataFrame(
+        {
+            "Open":   [r[1] for r in full_df_rows],
+            "High":   [r[2] for r in full_df_rows],
+            "Low":    [r[3] for r in full_df_rows],
+            "Close":  [r[4] for r in full_df_rows],
+            "Volume": [r[5] for r in full_df_rows],
+        },
+        index=idx,
+    )
+    full_df.index.name = "Date"
+
+    mock_price = mocker.MagicMock()
+    mock_price.get_ohlc_after.return_value    = None
+    mock_price.get_price_history.return_value = full_df
+    mock_earn  = mocker.MagicMock()
+    mock_earn.get_earnings_calendar.return_value = {}
+    mock_earn.get_fundamentals.return_value      = {}
+
+    from src.data_collector import _process_ticker
+    td = _process_ticker("AAPL", mock_price, mock_earn, in_memory_db, "2026-05-21", "test")
+
+    mock_price.get_price_history.assert_called_once()
+    assert td is not None

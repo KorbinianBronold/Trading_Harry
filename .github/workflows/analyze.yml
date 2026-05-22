@@ -2,16 +2,29 @@ name: analyze
 
 on:
   schedule:
-    - cron: '0 12 * * 1-5'     # 14:00/13:00 MEZ/MESZ pre_market
-    - cron: '0 13 * * 1-5'     # 15:00/14:00 MEZ/MESZ evaluate (silent)
-    - cron: '15 14 * * 1-5'    # 16:15/15:15 MEZ/MESZ midday
-    - cron: '30 20 * * 1-5'    # 22:30/21:30 MEZ/MESZ close
-    - cron: '0 18 * * 0'       # 20:00/19:00 MEZ/MESZ Sunday weekly
+    # pre_market 14:00 Berlin
+    - cron: '0 12 * * 1-5'   # Sommer CEST UTC+2
+    - cron: '0 13 * * 1-5'   # Winter CET UTC+1
+    # evaluate 15:00 Berlin
+    - cron: '0 13 * * 1-5'   # Sommer
+    - cron: '0 14 * * 1-5'   # Winter
+    # midday 16:15 Berlin
+    - cron: '15 14 * * 1-5'  # Sommer
+    - cron: '15 15 * * 1-5'  # Winter
+    # position_check 17:30 Berlin
+    - cron: '30 15 * * 1-5'  # Sommer
+    - cron: '30 16 * * 1-5'  # Winter
+    # close 22:30 Berlin
+    - cron: '30 20 * * 1-5'  # Sommer
+    - cron: '30 21 * * 1-5'  # Winter
+    # weekly Sonntag 20:00 Berlin
+    - cron: '0 18 * * 0'     # Sommer
+    - cron: '0 19 * * 0'     # Winter
   workflow_dispatch:
     inputs:
       run_type:
         type: choice
-        options: [pre_market, midday, close, evaluate, weekly]
+        options: [pre_market, midday, close, evaluate, weekly, position_check]
         default: close
 
 permissions:
@@ -25,8 +38,10 @@ jobs:
       SENDGRID_API_KEY: ${{ secrets.SENDGRID_API_KEY }}
       EMAIL_TO:         ${{ secrets.EMAIL_TO }}
       EMAIL_FROM:       ${{ secrets.EMAIL_FROM }}
-      FINNHUB_API_KEY:  ${{ secrets.FINNHUB_API_KEY }}
-      GH_TOKEN:         ${{ secrets.GITHUB_TOKEN }}
+      FINNHUB_API_KEY:       ${{ secrets.FINNHUB_API_KEY }}
+      CAPITAL_COM_API_KEY:   ${{ secrets.CAPITAL_COM_API_KEY }}
+      CAPITAL_COM_PASSWORD:  ${{ secrets.CAPITAL_COM_PASSWORD }}
+      GH_TOKEN:              ${{ secrets.GITHUB_TOKEN }}
     steps:
       - uses: actions/checkout@v4
 
@@ -54,14 +69,15 @@ jobs:
             echo "type=${{ inputs.run_type }}" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          HOUR=$(date -u +%H)
-          DOW=$(date -u +%u)
-          MIN=$(date -u +%M)
-          if [ "$DOW" = "7" ] && [ "$HOUR" = "18" ]; then T="weekly"
-          elif [ "$HOUR" = "13" ]; then T="evaluate"
-          elif [ "$HOUR" = "12" ]; then T="pre_market"
-          elif [ "$HOUR" = "14" ] && [ "$MIN" -ge "10" ]; then T="midday"
-          elif [ "$HOUR" = "20" ]; then T="close"
+          HOUR=$(TZ="Europe/Berlin" date +%H)
+          MIN=$(TZ="Europe/Berlin" date +%M)
+          DOW=$(TZ="Europe/Berlin" date +%u)
+          if [ "$DOW" = "7" ] && [ "$HOUR" = "20" ]; then T="weekly"
+          elif [ "$HOUR" = "15" ] && [ "$MIN" -lt "30" ]; then T="evaluate"
+          elif [ "$HOUR" = "14" ] && [ "$MIN" -lt "15" ]; then T="pre_market"
+          elif [ "$HOUR" = "16" ] && [ "$MIN" -ge "10" ]; then T="midday"
+          elif [ "$HOUR" = "17" ] && [ "$MIN" -ge "25" ]; then T="position_check"
+          elif [ "$HOUR" = "22" ] || [ "$HOUR" = "21" ]; then T="close"
           else T="close"; fi
           echo "type=$T" >> "$GITHUB_OUTPUT"
 

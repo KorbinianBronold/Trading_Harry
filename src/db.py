@@ -123,6 +123,19 @@ CREATE TABLE IF NOT EXISTS position_recommendations (
 );
 
 CREATE INDEX IF NOT EXISTS idx_position_recs_prediction ON position_recommendations(prediction_id);
+
+CREATE TABLE IF NOT EXISTS fundamentals_cache (
+    ticker TEXT NOT NULL,
+    fetched_date TEXT NOT NULL,
+    pe_ratio REAL,
+    forward_pe REAL,
+    market_cap_b REAL,
+    debt_equity REAL,
+    sector TEXT,
+    analyst_upside REAL,
+    consensus TEXT,
+    UNIQUE(ticker)
+);
 """
 
 
@@ -153,6 +166,26 @@ def _apply_migrations(conn: sqlite3.Connection) -> None:
     if "exit_reason" not in out_cols:
         conn.execute("ALTER TABLE outcomes ADD COLUMN exit_reason TEXT")
 
+    tables = {r["name"] for r in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table'"
+    ).fetchall()}
+    if "fundamentals_cache" not in tables:
+        conn.execute("""
+            CREATE TABLE fundamentals_cache (
+                ticker TEXT NOT NULL,
+                fetched_date TEXT NOT NULL,
+                pe_ratio REAL, forward_pe REAL, market_cap_b REAL,
+                debt_equity REAL, sector TEXT,
+                analyst_upside REAL, consensus TEXT,
+                UNIQUE(ticker)
+            )
+        """)
+
+    ph_cols = {r["name"] for r in conn.execute(
+        "PRAGMA table_info(price_history)"
+    ).fetchall()}
+    if "premarket_price" not in ph_cols:
+        conn.execute("ALTER TABLE price_history ADD COLUMN premarket_price REAL")
     conn.commit()
 
 
@@ -367,8 +400,7 @@ def update_outcome_close(
         "data_missing": "closed_data_missing",
     }
     status = status_map.get(exit_reason, "closed_timeout")
-    conn.execute("BEGIN")
-    try:
+    with conn:
         conn.execute(
             "UPDATE predictions SET status=?, closed_date=?, closed_price=? WHERE id=?",
             (status, closed_date, exit_price, prediction_id),
@@ -387,10 +419,6 @@ def update_outcome_close(
                 days_to_close, exit_reason, profit_loss_eur,
             ),
         )
-        conn.execute("COMMIT")
-    except Exception:
-        conn.execute("ROLLBACK")
-        raise
 
 
 def load_predictions_for_date(
@@ -430,3 +458,83 @@ def load_recent_outcomes(
            ORDER BY o.evaluated_date DESC""",
         (since_date,),
     ).fetchall()
+
+
+_FUNDAMENTALS_TTL_DAYS = 7
+
+
+def get_cached_fundamentals(
+    conn: sqlite3.Connection,
+    ticker: str,
+    today: str | None = None,
+) -> dict | None:
+    from datetime import date as _d, timedelta
+    _today = today or _d.today().isoformat()
+    cutoff = (_d.fromisoformat(_today) - timedelta(days=_FUNDAMENTALS_TTL_DAYS)).isoformat()
+    row = conn.execute(
+        "SELECT * FROM fundamentals_cache WHERE ticker=? AND fetched_date >= ?",
+        (ticker, cutoff),
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def save_fundamentals_cache(
+    conn: sqlite3.Connection,
+    ticker: str,
+    data: dict,
+    fetched_date: str | None = None,
+) -> None:
+    from datetime import date as _d
+    _fetched = fetched_date or _d.today().isoformat()
+    conn.execute(
+        """INSERT OR REPLACE INTO fundamentals_cache
+           (ticker, fetched_date, pe_ratio, forward_pe, market_cap_b,
+            debt_equity, sector, analyst_upside, consensus)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (
+            ticker, _fetched,
+            data.get("pe_ratio"), data.get("forward_pe"), data.get("market_cap_b"),
+            data.get("debt_equity"), data.get("sector"),
+            data.get("analyst_upside"), data.get("consensus"),
+        ),
+    )
+    conn.commit()
+
+
+def insert_price_bar_if_missing(
+    conn: sqlite3.Connection,
+    ticker: str, date: str,
+    open_: float, high: float, low: float, close: float,
+    volume: int, source: str = "capital.com",
+) -> None:
+    conn.execute(
+        """INSERT OR IGNORE INTO price_history
+           (ticker, date, open, high, low, close, volume, source)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+        (ticker, date, open_, high, low, close, volume, source),
+    )
+
+
+def load_price_history_from_db(
+    conn: sqlite3.Connection,
+    ticker: str,
+    as_of_date: str,
+    limit: int = 200,
+) -> "pd.DataFrame | None":
+    import pandas as pd
+    rows = conn.execute(
+        """SELECT date, open, high, low, close, volume
+           FROM price_history
+           WHERE ticker=? AND date <= ?
+           ORDER BY date DESC LIMIT ?""",
+        (ticker, as_of_date, limit),
+    ).fetchall()
+    if not rows:
+        return None
+    df = pd.DataFrame([dict(r) for r in rows])
+    df = df.rename(columns={
+        "date": "Date", "open": "Open", "high": "High",
+        "low": "Low", "close": "Close", "volume": "Volume",
+    })
+    df["Date"] = pd.to_datetime(df["Date"])
+    return df.set_index("Date").sort_index()
