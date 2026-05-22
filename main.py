@@ -27,7 +27,7 @@ from src.ranking import rank_and_persist
 from src.evaluator import evaluate_open_predictions
 from src.email_sender import (
     send_daily_email, send_weekly_email, generate_daily_briefing,
-    send_position_check_email,
+    send_position_check_email, send_error_email,
 )
 from src.utils import call_claude, extract_json_blob
 from src.providers.yfinance_provider import YFinanceProvider
@@ -350,20 +350,38 @@ def run_weekly(date: str, db_path: str) -> None:
 
 
 def main(argv: list[str] | None = None) -> None:
+    import traceback as _tb
     ns = parse_args(argv)
     date = ns.date or datetime.now(BERLIN).date().isoformat()
-    if ns.run_type in ("pre_market", "midday"):
-        run_pipeline(run_type=ns.run_type, date=date, db_path=ns.db_path)
-    elif ns.run_type == "close":
-        run_close(date=date, db_path=ns.db_path)
-    elif ns.run_type == "evaluate":
-        run_evaluate(date=date, db_path=ns.db_path)
-    elif ns.run_type == "weekly":
-        run_weekly(date=date, db_path=ns.db_path)
-    elif ns.run_type == "position_check":
-        run_position_check(date=date, db_path=ns.db_path)
-    else:  # pragma: no cover — argparse validated
-        sys.exit(2)
+    try:
+        if ns.run_type in ("pre_market", "midday"):
+            run_pipeline(run_type=ns.run_type, date=date, db_path=ns.db_path)
+        elif ns.run_type == "close":
+            run_close(date=date, db_path=ns.db_path)
+        elif ns.run_type == "evaluate":
+            run_evaluate(date=date, db_path=ns.db_path)
+        elif ns.run_type == "weekly":
+            run_weekly(date=date, db_path=ns.db_path)
+        elif ns.run_type == "position_check":
+            run_position_check(date=date, db_path=ns.db_path)
+        else:  # pragma: no cover — argparse validated
+            sys.exit(2)
+    except SystemExit:
+        raise
+    except Exception as exc:
+        tb_text = _tb.format_exc()
+        log.error(f"Run {ns.run_type} FAILED: {exc}\n{tb_text}")
+        if config.SENDGRID_API_KEY and config.EMAIL_FROM and config.EMAIL_TO:
+            try:
+                send_error_email(
+                    run_type=ns.run_type, date=date, exc=exc,
+                    traceback_text=tb_text,
+                    api_key=config.SENDGRID_API_KEY,
+                    email_from=config.EMAIL_FROM, email_to=config.EMAIL_TO,
+                )
+            except Exception as mail_exc:
+                log.error(f"Failed to send error email: {mail_exc}")
+        sys.exit(1)
 
 
 if __name__ == "__main__":

@@ -1,5 +1,8 @@
 """Phase 5: E-Mail rendering and SendGrid delivery.
 
+Error-Mail: send_error_email() is called by main.py on any unhandled exception.
+It replaces the normal run email so the user is informed via the same channel.
+
 Daily mail is rendered as four sections in this fixed order:
   1. Portfolio-Empfehlungen (Phase 4a) — directly actionable on market open
   2. Aktien Top-10 Long + Top-10 Short
@@ -363,4 +366,37 @@ def send_position_check_email(
         f"[Shares_Future] {payload.get('date')} Position-Check — "
         f"{len(checks)} Pos, {n_warn} Warnung(en)"
     )
+    _send(api_key, email_from, email_to, subject, html_body)
+
+
+# ---------- Error Mail ----------
+
+def render_error_html(
+    run_type: str, date: str, exc: BaseException, traceback_text: str,
+) -> str:
+    exc_type = type(exc).__name__
+    exc_msg = _h(str(exc))
+    tb_html = _h(traceback_text).replace("\n", "<br>").replace(" ", "&nbsp;")
+    return (
+        '<html><body style="font-family:monospace;font-size:13px;">'
+        f'<h1 style="color:#c00;">[Shares_Future] Run FAILED — {_h(date)} {_h(run_type)}</h1>'
+        f'<p><b>Exception:</b> {_h(exc_type)}: {exc_msg}</p>'
+        '<h2>Root Cause / Traceback</h2>'
+        f'<pre style="background:#f5f5f5;padding:12px;border-radius:4px;">{tb_html}</pre>'
+        f'<p><small>{_h(_DISCLAIMER)}</small></p>'
+        '</body></html>'
+    )
+
+
+def send_error_email(
+    run_type: str,
+    date: str,
+    exc: BaseException,
+    traceback_text: str,
+    api_key: str,
+    email_from: str,
+    email_to: str,
+) -> None:
+    html_body = render_error_html(run_type, date, exc, traceback_text)
+    subject = f"[Shares_Future] FEHLER {date} {run_type} — {type(exc).__name__}"
     _send(api_key, email_from, email_to, subject, html_body)

@@ -45,6 +45,7 @@ def test_full_pipeline_writes_predictions_and_sends_email(tmp_path, monkeypatch)
     fake_provider_cls.return_value = fake_provider
 
     monkeypatch.setattr(orchestrator, "YFinanceProvider", fake_provider_cls)
+    monkeypatch.setattr(orchestrator, "CapitalComProvider", fake_provider_cls)
     monkeypatch.setattr(orchestrator, "FinnhubProvider", fake_provider_cls)
     monkeypatch.setattr(orchestrator.config, "SP500_MVP_TICKERS",
                         ["AAPL", "MSFT", "NVDA"])

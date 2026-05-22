@@ -11,8 +11,8 @@ log = logging.getLogger("shares_future.yfinance")
 class YFinanceProvider(DataProvider):
     PAUSE_BETWEEN_TICKERS = 0.8
     PAUSE_BETWEEN_BATCHES = 12
-    PAUSE_ON_ERROR = 30
-    MAX_RETRIES = 3
+    PAUSE_ON_ERROR = 5
+    MAX_RETRIES = 2
     JITTER_MAX = 0.5
     MIN_ROWS = 20
 

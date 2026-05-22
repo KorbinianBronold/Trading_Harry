@@ -56,7 +56,7 @@ class ClaudeResult:
     web_search_calls: int = 0
 
 
-@retry_with_backoff(max_retries=3, base_delay=2.0)
+@retry_with_backoff(max_retries=2, base_delay=2.0)
 def call_claude(
     model: str,
     system: str,
@@ -80,7 +80,7 @@ def call_claude(
 
     response = _anthropic_client.messages.create(**kwargs)
 
-    text_parts = [b.text for b in response.content if hasattr(b, "text")]
+    text_parts = [b.text for b in response.content if hasattr(b, "text") and b.text is not None]
 
     server_tool_use = getattr(response.usage, "server_tool_use", None)
     web_search_calls = 0
