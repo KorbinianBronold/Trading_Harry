@@ -1,8 +1,8 @@
 # Shares_Future — MVP Design
 
-**Datum:** 2026-05-19
-**Status:** Genehmigt durch User, bereit für Implementierungsplan
-**Vorgängerdokument:** `docs/SPECIFICATION.md` (Version 4.0 Final, 2026-05-18)
+**Datum:** 2026-05-19 | **Zuletzt aktualisiert:** 2026-05-22
+**Status:** Sprint 1 ERLEDIGT — Sprint 2 Plan geschrieben
+**Vorgängerdokument:** `docs/SPECIFICATION.md` (Version 5.0, 2026-05-22)
 
 Dieses Dokument ergänzt und ersetzt selektiv die ursprüngliche Spec. Wo dieses Dokument von der Spec abweicht, gilt dieses Dokument.
 
@@ -24,7 +24,7 @@ Das Tool ist explizit für **kurzfristige CFD-Trades** optimiert und denkt in Ta
 
 Daraus folgende harte Invarianten, die überall im System gelten:
 
-1. Setups mit `hold_days_recommended > 3` werden via Guardrail rejected (siehe §6).
+1. Setups mit `hold_days_recommended > 5` werden via Guardrail rejected (`MAX_HOLD_DAYS = 5`, siehe §6).
 2. Assets mit `intraday_range_pct < 1.0%` (Durchschnitt der letzten 5 Tage) werden via Guardrail rejected (siehe §6).
 3. Phase 4a (Portfolio-Check) bewertet alle gestern offenen Positionen mit `HALTEN | SCHLIESSEN | ANPASSEN` und erscheint als **erste Sektion** in der E-Mail — vor den neuen Top-10 (siehe §3).
 4. Der **`close`-Run (lokal 21:30 / 22:30) ist der wichtigste**: er produziert die Setups und Phase-4a-Empfehlungen für den nächsten Handelstag, die der Trader im `pre_market`-Run morgens bestätigt findet (siehe §7).
@@ -42,19 +42,32 @@ Wir kippen das „Sofort vollständig bauen"-Mandat der Spec und bauen in drei S
 - Phasen 0, 1, 2, 3, 3b, 4, 5 vollständig
 - DB-Schema vollständig wie in Spec (auch Felder, die erst später gefüllt werden)
 - Predictions werden ab Tag 1 mit allen 8 Score-Dimensionen gespeichert → Daten für späteres Lernmodul
-- Walk-Forward Evaluator (OHLC-Hit-Check, 1-3 Handelstage)
+- Walk-Forward Evaluator (OHLC-Hit-Check, 1-5 Handelstage)
 - Guardrails vollständig
 - Daily E-Mail (4 Sektionen inkl. Phase-4a-Portfolio-Empfehlungen) + Weekly E-Mail (reduziert)
 - GitHub Actions Cron + DB-Persistenz via Release Assets
 - Cost-Tracking + Hard-Cap
 - Tests min. 80% Coverage
 
+**Status: ERLEDIGT — 159 Tests, 89.62% Coverage, gemerged in main (2026-05-20)**
+
 **Out of Scope (defer):**
 - Learning Module / dynamische Schwellwerte → Sprint 3
 - Prompt-Optimizer / A/B-Testing → Sprint 3
-- Paid API + historischer Loader → Sprint 2
+- Capital.com Provider + historischer Loader → Sprint 2
 - SP500 auf 500 Ticker → Sprint 2
 - SP500-Auto-Update monatlich → Sprint 2
+
+---
+
+### Sprint 1 Fixes (am bestehenden Code, geplant 2026-05-22)
+
+- ATR-Mindest: SP500_MIN_ATR_PCT = 2.0
+- Intraday-Fokus in allen Prompts
+- "Was heute zählt"-Box in täglicher E-Mail
+- close-Run vereinfacht: kein Claude, kein Mail
+- Timezone-Fix: TZ="Europe/Berlin" in analyze.yml + zoneinfo in Python
+- Doppelte Cron-Einträge für DST (Sommer/Winter)
 
 ### Ticker-Auswahl (Sprint 1)
 
@@ -65,14 +78,21 @@ Plus festes Asset-Set:
 - Commodities: `GC=F` (Gold), `SI=F` (Silber), `CL=F` (Öl)
 - Crypto: `BTC-USD`, `ETH-USD`, `SOL-USD`, `XRP-USD`
 
-### Sprint 2 — Skalierung
+### Sprint 2 / Plan 1 (Capital Provider + DB Incremental + Position Check)
 
 Voraussetzung: Sprint 1 stabil seit ≥1 Woche.
 
-- Paid API aktivieren, historischer 3-Jahres-Pull
-- Auf 500 SP500 Ticker hochskalieren
-- SP500-Auto-Update monatlich
-- Earnings via Finnhub hochskalieren oder durch paid API ersetzen
+Plan: `docs/superpowers/plans/2026-05-21-sprint2-plan1-capital-provider-db-incremental.md`
+Status: Plan geschrieben, Implementierung ausstehend
+
+Scope:
+- `capital_provider.py`: CapitalComProvider (primary OHLC, GET /positions, premarket)
+- `fundamentals_cache`: Finnhub-Fundamentals mit 7-Tage TTL
+- DB-Incremental-Update: täglich nur 1 Bar fetchen, Indikatoren aus DB (200 Tage)
+- `position_check` Run-Type: Capital.com Position-Read + Claude + Status-Mail
+- Timezone-Fix (in Sprint-1-Fix integriert)
+- `historical_loader.py`: 3-Jahres-Pull via Capital.com
+- 500-Ticker Scaling: USE_FULL_SP500 Flag
 
 ### Sprint 3 — Lernen & Optimieren
 
@@ -185,7 +205,7 @@ Wird im MVP aufgesplittet:
    └─ Gleiche Guardrails wie Aktien
 
 8. portfolio_check (Phase 4a, Sonnet + Web-Search, pro offener Position aus Vortagen)
-   └─ Lädt alle Predictions mit `status='open'` und Alter ≤ 3 Handelstage (`learnable=True`)
+   └─ Lädt alle Predictions mit `status='open'` und Alter ≤ 5 Handelstage (`learnable=True`)
    └─ Input pro Position: ursprüngliche These + aktueller TickerData + Trend + policy_events
    └─ Prüft: Hält die These? Hat sich Markt/News/Technicals verändert? Gibt es ein stärkeres Signal?
    └─ Output pro Position: `action ∈ {HALTEN, SCHLIESSEN, ANPASSEN}` + Begründung + ggf. neue SL/TP
@@ -208,7 +228,7 @@ Wird im MVP aufgesplittet:
 ### Evaluate-Run (täglich, läuft still ohne Mail)
 
 ```
-1. Lade alle predictions mit status='open' UND Alter ≤ 3 Handelstage UND learnable=True
+1. Lade alle predictions mit status='open' UND Alter ≤ 5 Handelstage UND learnable=True
 2. Pro Prediction:
    - Hole OHLC für die seit Prediction verstrichenen Handelstage
    - Walk-forward Tag für Tag:
@@ -283,6 +303,19 @@ Vor Phase 3: `estimated = current_cost + n_deep * 0.10 + n_commodities * 0.10`. 
 
 > Run-Kosten: 2.84 EUR | Cache-Hit-Rate: 87% | Tokens: 142k/63k | Web-Searches: 23
 
+### Kosten-Übersicht pro Tag (Sprint 2, 500 Ticker)
+
+| Run-Type | Kosten |
+|---|---|
+| pre_market | ~3,20 EUR |
+| evaluate | ~0,00 EUR |
+| midday | ~3,20 EUR |
+| position_check | ~0,20 EUR |
+| close | ~0,00 EUR |
+| **Gesamt/Tag** | **~6,60 EUR** |
+| **Gesamt/Monat (500 Ticker)** | **~145 EUR** |
+| **Gesamt/Monat (MVP 20 Ticker)** | **~29 EUR** |
+
 ---
 
 ## 5 · DB-Persistenz & Eval-Schema
@@ -312,23 +345,53 @@ Eine Release `db-latest` mit immer aktueller DB. Versions-History via wöchentli
 
 ### Schema-Deltas zur Spec
 
-Tabellen `price_history`, `technical_indicators`, `fundamentals`, `news_summaries`, `trend_analyses`, `market_context`, `skipped_tickers`, `prompt_versions` bleiben unverändert wie in Spec.
+Tabellen `technical_indicators`, `fundamentals`, `news_summaries`, `trend_analyses`, `market_context`, `skipped_tickers`, `prompt_versions` bleiben unverändert wie in Spec.
 
-`predictions` erhält drei zusätzliche Felder:
+`price_history` erhält ein neues Feld (Sprint 2):
+
+```sql
+ALTER TABLE price_history ADD COLUMN premarket_price REAL;
+   -- nullable, Capital.com vorbörslicher Kurs
+```
+
+`predictions` erhält fünf zusätzliche Felder:
 
 ```sql
 ALTER TABLE predictions ADD COLUMN status TEXT DEFAULT 'open';
    -- 'open' | 'closed_tp' | 'closed_sl' | 'closed_timeout' | 'closed_data_missing'
 ALTER TABLE predictions ADD COLUMN closed_date TEXT;
 ALTER TABLE predictions ADD COLUMN closed_price REAL;
+ALTER TABLE predictions ADD COLUMN hold_day INTEGER DEFAULT 0;
+   -- aktueller Haltetag, täglich +1
+ALTER TABLE predictions ADD COLUMN extended_hold BOOLEAN DEFAULT 0;
+   -- True ab Tag 2
 ```
 
-`outcomes` erhält zwei zusätzliche Felder:
+`outcomes` erhält vier zusätzliche Felder:
 
 ```sql
-ALTER TABLE outcomes ADD COLUMN days_to_close INTEGER;     -- 1, 2 oder 3
+ALTER TABLE outcomes ADD COLUMN days_to_close INTEGER;     -- 1–5
 ALTER TABLE outcomes ADD COLUMN exit_reason TEXT;
-   -- 'tp_hit' | 'sl_hit' | 'timeout' | 'pessimistic_overlap'
+   -- 'tp_hit' | 'sl_hit' | 'timeout_forced' | 'pessimistic_overlap'
+ALTER TABLE outcomes ADD COLUMN hold_day INTEGER;
+ALTER TABLE outcomes ADD COLUMN extended_hold BOOLEAN;
+```
+
+Neue Tabelle `fundamentals_cache` (Sprint 2):
+
+```sql
+CREATE TABLE IF NOT EXISTS fundamentals_cache (
+    ticker TEXT NOT NULL,
+    fetched_date TEXT NOT NULL,
+    pe_ratio REAL,
+    forward_pe REAL,
+    market_cap_b REAL,
+    debt_equity REAL,
+    sector TEXT,
+    analyst_upside REAL,
+    consensus TEXT,
+    UNIQUE(ticker)
+);
 ```
 
 `cost_tracking` wird zur Tabelle (statt JSON):
@@ -443,9 +506,9 @@ def evaluate_open_predictions(today):
                 closed = True
                 break
 
-        if not closed and days_elapsed >= 3:
-            close(pred, exit_reason='timeout',
-                  exit_price=ohlc[-1].close, day=3)
+        if not closed and days_elapsed >= 5:
+            close(pred, exit_reason='timeout_forced',
+                  exit_price=ohlc[-1].close, day=5)
 ```
 
 ### Datenpflege
@@ -493,15 +556,15 @@ DIMENSION_WEIGHTS = {
 Zusätzlich zu Required-Fields, Evidenz-Min., R/R-Min. und Signal-Konsistenz muss `guardrails.py` zwei harte Filter durchsetzen:
 
 ```python
-if analysis.get("hold_days_recommended", 99) > 3:
-    errors.append("Haltedauer > 3 Tage – nicht CFD-geeignet")
+if analysis.get("hold_days_recommended", 99) > 5:
+    errors.append("Haltedauer > 5 Tage – nicht CFD-geeignet")
 
 if analysis.get("intraday_range_pct", 0) < 1.0:
     errors.append("Intraday-Range < 1.0% – nicht CFD-geeignet")
 ```
 
 Begründung:
-- **`hold_days_recommended`**: vom `deep_analysis`-Prompt erzwungenes Pflichtfeld. Setups, die der Trader länger als 3 Handelstage halten müsste, gehören nicht in eine CFD-Top-10.
+- **`hold_days_recommended`**: vom `deep_analysis`-Prompt erzwungenes Pflichtfeld. Setups, die der Trader länger als 5 Handelstage halten müsste (`MAX_HOLD_DAYS = 5`), gehören nicht in eine CFD-Top-10.
 - **`intraday_range_pct`**: aus `data_collector._process_ticker()` als `(High-Low)/Close*100`, gemittelt über die letzten 5 Handelstage. Aktien mit Range < 1 % bewegen sich innerhalb eines Tages zu wenig, um Intraday-CFDs sinnvoll zu traden.
 
 `intraday_range_pct` wird zusätzlich in der E-Mail-Tabelle als Spalte „Range/Tag" neben „ATR/Tag" ausgegeben.
@@ -512,17 +575,20 @@ Begründung:
 
 GitHub Actions läuft in UTC ohne DST-Awareness. Wir fixieren in UTC und akzeptieren die 1-h-Verschiebung zwischen Winter und Sommer (lokale Zeit verschiebt sich; *relative* Zeit zum US-Markt bleibt stabil, weil US und EU beide DST haben).
 
-| Cron (UTC) | Lokal MEZ/MESZ | `run_type` | Zweck |
+Jeder Run-Type hat **zwei Cron-Einträge** (Sommer/Winter) für DST-Korrektheit. Run-Type-Bestimmung via `TZ="Europe/Berlin"` in Bash.
+
+| Berliner Zeit | `run_type` | Kosten | Zweck |
 |---|---|---|---|
-| `0 12 * * 1-5` | 13:00 / 14:00 | `pre_market` | Setups vor US-Open (15:30 MESZ). Mail |
-| `0 13 * * 1-5` | 14:00 / 15:00 | `evaluate` | Vortags-Outcomes via Walk-Forward. Keine Mail |
-| `15 14 * * 1-5` | 15:15 / 16:15 | `midday` | 45 min nach Open. Mail |
-| `30 20 * * 1-5` | 21:30 / 22:30 | `close` | Nach US-Close. Mail |
-| `0 18 * * 0` | 19:00 / 20:00 So | `weekly` | Wochen-Performance. Mail |
+| 14:00 Mo–Fr | `pre_market` | ~3,20 EUR | Setups vor US-Open. Mail |
+| 15:00 Mo–Fr | `evaluate` | ~0,00 EUR | Walk-Forward Hit-Check. Kein Mail |
+| 16:15 Mo–Fr | `midday` | ~3,20 EUR | 45 min nach US-Open. Mail |
+| 17:30 Mo–Fr | `position_check` | ~0,20 EUR | Capital.com GET /positions + Claude + Status-Mail (Sprint 2) |
+| 22:30 Mo–Fr | `close` | ~0,00 EUR | NUR Datenpflege, kein Claude, kein Mail |
+| 20:00 So | `weekly` | ~0,00 EUR | Wochen-Performance. Mail |
 
-Pro Werktag: **3 Analyse-Mails** + 1 stille Auswertung. Sonntags zusätzlich Weekly-Mail.
+Pro Werktag: **2 Analyse-Mails** + 1 Position-Check-Mail + stille Runs. Sonntags Weekly-Mail.
 
-**Wichtigster Run:** `close` (lokal 21:30 / 22:30). Er produziert die Setups und Phase-4a-Empfehlungen für den nächsten Handelstag — der Trader öffnet sie morgens und bekommt im darauffolgenden `pre_market`-Run (lokal 14:00 / 15:00) die Bestätigung oder Korrektur vor US-Open. Phase 4a läuft in **allen drei** Werktags-Runs und steht jeweils ganz oben in der E-Mail.
+**Wichtigste Runs:** `pre_market` und `midday` (je ~3,20 EUR). `close` ist vereinfacht und nur noch Datenpflege. Phase 4a läuft in den Analyse-Runs und steht ganz oben in der E-Mail.
 
 ---
 
@@ -533,9 +599,9 @@ ANTHROPIC_API_KEY=...
 SENDGRID_API_KEY=...
 EMAIL_TO=korbinian.bronold@gmail.com
 EMAIL_FROM=...
-FINNHUB_API_KEY=...              # NEU: Earnings-Calendar
-PAID_API_KEY=...                 # Sprint 2
-PAID_API_TYPE=polygon            # Sprint 2
+FINNHUB_API_KEY=...              # Earnings-Calendar + Fundamentals (gecacht)
+CAPITAL_COM_API_KEY=...          # Sprint 2: Capital.com Demo API
+CAPITAL_COM_PASSWORD=...         # Sprint 2: Capital.com Demo Passwort
 ```
 
 GitHub Secrets analog. `GITHUB_TOKEN` ist von Actions automatisch verfügbar (für Release-Upload).
@@ -647,4 +713,4 @@ CFD-Handel kann zum Totalverlust führen. Keine Garantie für Prognosen.
 
 ---
 
-*Shares_Future MVP Design | 2026-05-19 | basiert auf Spec v4.0 vom 2026-05-18*
+*Shares_Future MVP Design | 2026-05-19 | Zuletzt aktualisiert 2026-05-22 | basiert auf Spec v5.0 vom 2026-05-22*

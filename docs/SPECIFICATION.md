@@ -1,6 +1,6 @@
 # Shares_Future – Vollständige Spezifikation
 ## SP500 CFD Research Tool | Claude Code Buildanweisung
-## Stand: 18.05.2026 | Version 4.0 Final
+## Stand: 2026-05-22 | Version 5.0
 
 ---
 
@@ -34,15 +34,17 @@ Aber das Ziel ist ein vollständig lauffähiges System – nicht ein Prototyp.
 
 ```
 Sprache:     Python 3.11+
-KI:          Anthropic Claude API (claude-sonnet-4-5)
-Marktdaten:  Flexibles DataProvider-Interface:
-             - Primär: yfinance (täglich, kostenlos)
-             - Setup:  kostenpflichtige API (Polygon.io / FMP / Alpha Vantage)
-             - Fallback bei yfinance-Fehler: Retry mit Backoff
+KI:          Anthropic Claude API (claude-sonnet-4-6)
+Marktdaten:  Flexibles DataProvider-Interface (Hierarchie):
+             - Primär:    Capital.com Demo API (OHLCV, 600 Calls/Min, kostenlos)
+                          ENV: CAPITAL_COM_API_KEY, CAPITAL_COM_PASSWORD
+             - Fundamentals: Finnhub Free (7-Tage Cache in DB)
+                          ENV: FINNHUB_API_KEY
+             - Fallback:  yfinance (wenn Capital.com nicht verfügbar)
 E-Mail:      SendGrid API (Free Tier: 100 Mails/Tag)
 Hosting:     GitHub Actions (Free Tier: 2.000 Min/Monat)
 Datenbank:   SQLite (tracking.db, ~200-500 MB nach 1 Jahr)
-Scheduler:   GitHub Actions Cron (3× täglich + 1× Auswertung)
+Scheduler:   GitHub Actions Cron (6 Run-Types täglich)
 Tests:       pytest mit min. 80% Code Coverage
 ```
 
@@ -59,8 +61,9 @@ Shares_Future/
 ├── src/
 │   ├── providers/
 │   │   ├── base.py              # DataProvider Interface
-│   │   ├── yfinance_provider.py # Täglich, primär
-│   │   └── paid_provider.py     # Setup + Delta, austauschbar
+│   │   ├── capital_provider.py  # Capital.com (primary OHLC + positions)
+│   │   ├── yfinance_provider.py # Fallback
+│   │   └── finnhub_provider.py  # Fundamentals (7-Tage gecacht)
 │   ├── data_collector.py        # Phase 1: Datenabruf
 │   ├── trend_analyzer.py        # Phase 0: Megatrend-Analyse
 │   ├── quick_filter.py          # Phase 2: Batch ohne Web-Search
@@ -101,12 +104,22 @@ Shares_Future/
 
 ## DATENPROVIDER – FLEXIBLES INTERFACE
 
+### Provider-Hierarchie
+
+**Preisdaten (OHLCV, täglich):**
+1. Primary: `CapitalComProvider` (Capital.com Demo API)
+2. Fallback: `YFinanceProvider` (wenn Capital.com nicht verfügbar)
+
+**Fundamentaldaten (wöchentlich gecacht):**
+- `FinnhubProvider.get_fundamentals()` → Tabelle `fundamentals_cache` (7-Tage TTL)
+- Im täglichen Run: Cache aus DB lesen, kein Live-Call wenn < 7 Tage alt
+
 ```python
 # src/providers/base.py
 class DataProvider:
     """
     Interface für alle Datenprovider.
-    Swap zwischen yfinance und kostenpflichtiger API ohne Umbau.
+    Swap zwischen Capital.com und yfinance ohne Umbau.
     """
     def get_price_history(self, ticker: str, days: int) -> pd.DataFrame | None: ...
     def get_fundamentals(self, ticker: str) -> dict: ...
@@ -114,10 +127,53 @@ class DataProvider:
     def get_last_available_date(self, ticker: str) -> str | None: ...
 
 
+# src/providers/capital_provider.py
+class CapitalComProvider(DataProvider):
+    """
+    Primary OHLC-Provider (Capital.com Demo API).
+    Base URL: https://demo-api-capital.backend-capital.com/
+    Rate Limit: 600 Calls/Min, kostenlos
+    ENV: CAPITAL_COM_API_KEY, CAPITAL_COM_PASSWORD
+
+    Ticker-Mapping:
+    - SP500-Ticker: direkt übergeben
+    - Gold="GOLD", Silber="SILVER", Öl="CRUDE_OIL"
+    - BTC="BITCOIN", ETH="ETHEREUM", SOL="SOLANA", XRP="XRP"
+    """
+    def get_price_history(self, ticker: str, days: int = 200) -> pd.DataFrame | None:
+        """Holt OHLCV-Daten via Capital.com REST API."""
+        ...
+
+    def get_ohlc_after(self, ticker: str, start_date: str,
+                       end_date: str) -> pd.DataFrame | None:
+        """Holt OHLCV-Daten für ein bestimmtes Datumsfenster."""
+        ...
+
+    def get_premarket_price(self, ticker: str) -> float | None:
+        """Vorbörslicher Kurs falls verfügbar (für pre_market Run)."""
+        ...
+
+    def get_open_positions(self) -> list[dict]:
+        """GET /api/v1/positions — offene Capital.com-Trades (nur lesend)."""
+        ...
+
+    def get_closed_positions(self, date: str) -> list[dict]:
+        """GET /api/v1/history/activity — heute geschlossene Trades."""
+        ...
+
+    def get_fundamentals(self, ticker: str) -> dict:
+        """Leer — Fundamentals kommen von FinnhubProvider."""
+        return {}
+
+    def get_earnings_calendar(self, ticker: str) -> dict:
+        """Leer — Earnings kommen von FinnhubProvider."""
+        return {}
+
+
 # src/providers/yfinance_provider.py
 class YFinanceProvider(DataProvider):
     """
-    Primärer Provider für tägliche Updates.
+    Fallback-Provider wenn Capital.com nicht verfügbar.
     Rate-Limiting: 0.8s zwischen Tickern + Jitter, 12s alle 30 Ticker.
     """
     PAUSE_BETWEEN_TICKERS = 0.8
@@ -126,7 +182,7 @@ class YFinanceProvider(DataProvider):
     MAX_RETRIES           = 3
     JITTER_MAX            = 0.5
 
-    def get_price_history(self, ticker: str, days: int = 90) -> pd.DataFrame | None:
+    def get_price_history(self, ticker: str, days: int = 200) -> pd.DataFrame | None:
         for attempt in range(self.MAX_RETRIES):
             try:
                 import random, time
@@ -142,59 +198,45 @@ class YFinanceProvider(DataProvider):
         return None
 
 
-# src/providers/paid_provider.py
-class PaidProvider(DataProvider):
+# src/providers/finnhub_provider.py — Fundamentals mit 7-Tage Cache
+class FinnhubProvider:
     """
-    Für historischen Setup-Pull und Delta-Updates.
-    Unterstützt: Polygon.io, Financial Modeling Prep, Alpha Vantage.
-    API-Key via ENV: PAID_API_KEY, PAID_API_TYPE ('polygon'/'fmp'/'alphavantage')
+    Fundamentaldaten via Finnhub Free Tier.
+    ENV: FINNHUB_API_KEY
+    Cache: fundamentals_cache-Tabelle in tracking.db (TTL 7 Tage).
+    Im täglichen Run: Cache aus DB lesen → nur neu laden wenn > 7 Tage alt.
     """
-    def get_price_history(self, ticker: str, days: int = 90,
-                          from_date: str = None) -> pd.DataFrame | None:
-        api_type = os.getenv('PAID_API_TYPE', 'polygon')
-        if api_type == 'polygon':
-            return self._fetch_polygon(ticker, days, from_date)
-        elif api_type == 'fmp':
-            return self._fetch_fmp(ticker, days, from_date)
-        elif api_type == 'alphavantage':
-            return self._fetch_alphavantage(ticker, days, from_date)
+    def get_fundamentals(self, ticker: str) -> dict:
+        """
+        Returns: {pe_ratio, forward_pe, market_cap_b, debt_equity,
+                  sector, analyst_upside, consensus}
+        """
+        ...
 
-    def _fetch_polygon(self, ticker, days, from_date):
-        import requests
-        end   = datetime.now().strftime('%Y-%m-%d')
-        start = from_date or (datetime.now() - timedelta(days=days)).strftime('%Y-%m-%d')
-        url   = f"https://api.polygon.io/v2/aggs/ticker/{ticker}/range/1/day/{start}/{end}"
-        r = requests.get(url, params={'apiKey': os.getenv('PAID_API_KEY'), 'limit': 50000})
-        if r.status_code != 200:
-            raise Exception(f"Polygon API Fehler: {r.status_code}")
-        results = r.json().get('results', [])
-        if not results:
-            return None
-        df = pd.DataFrame(results)
-        df['timestamp'] = pd.to_datetime(df['t'], unit='ms')
-        df = df.rename(columns={'o':'Open','h':'High','l':'Low','c':'Close','v':'Volume'})
-        df.set_index('timestamp', inplace=True)
-        return df[['Open','High','Low','Close','Volume']]
+    def get_earnings_calendar(self, ticker: str) -> dict:
+        """
+        Returns: {days_to_next, last_beat_pct}
+        """
+        ...
 ```
 
 ---
 
-## HISTORISCHER SETUP-PULL + DELTA (setup/historical_loader.py)
+## HISTORISCHER SETUP-PULL (setup/historical_loader.py)
 
 ```python
 """
-Einmaliger historischer Datenabruf über kostenpflichtige API.
-Unterstützt Delta-Modus: nur fehlende Daten abrufen.
+Historischer Datenabruf über Capital.com Demo API.
+Lädt 3-Jahres-Historie für alle oder ausgewählte Ticker.
 
 Verwendung:
-  python setup/historical_loader.py --mode full    # Erstmalig: 3 Jahre
-  python setup/historical_loader.py --mode delta   # Nur fehlende Tage
-  python setup/historical_loader.py --mode full --ticker NVDA  # Einzeln
+  python setup/historical_loader.py --all              # Alle SP500-Ticker (3 Jahre)
+  python setup/historical_loader.py --full-sp500       # Vollständige 500-Ticker-Liste
+  python setup/historical_loader.py --tickers AAPL MSFT NVDA  # Einzelne Ticker
 
 Delta-Logik:
   Prüft für jeden Ticker den letzten Eintrag in der DB.
   Lädt nur Daten ab diesem Datum bis heute.
-  Effizienter Einsatz der kostenpflichtigen API während Testphase.
 """
 
 def get_last_db_date(conn, ticker: str) -> str | None:
@@ -203,10 +245,7 @@ def get_last_db_date(conn, ticker: str) -> str | None:
     ).fetchone()
     return row[0] if row and row[0] else None
 
-def needs_update(conn, ticker: str, mode: str) -> tuple[bool, str | None]:
-    if mode == 'full':
-        from_date = (datetime.now() - timedelta(days=365*3)).strftime('%Y-%m-%d')
-        return True, from_date
+def needs_update(conn, ticker: str) -> tuple[bool, str | None]:
     last_date = get_last_db_date(conn, ticker)
     if not last_date:
         return True, (datetime.now() - timedelta(days=365*3)).strftime('%Y-%m-%d')
@@ -215,19 +254,19 @@ def needs_update(conn, ticker: str, mode: str) -> tuple[bool, str | None]:
         return False, None
     return True, (last_dt + timedelta(days=1)).strftime('%Y-%m-%d')
 
-def run_historical_load(mode: str = 'delta', single_ticker: str = None):
+def run_historical_load(tickers: list[str]):
     conn     = sqlite3.connect(DB_PATH)
-    provider = PaidProvider()
-    tickers  = [single_ticker] if single_ticker else load_sp500_tickers()
+    provider = CapitalComProvider()
     stats    = {'updated': 0, 'skipped': 0, 'failed': 0, 'new_rows': 0}
 
     for i, ticker in enumerate(tickers):
-        update_needed, from_date = needs_update(conn, ticker, mode)
+        update_needed, from_date = needs_update(conn, ticker)
         if not update_needed:
             stats['skipped'] += 1
             continue
         try:
-            hist = provider.get_price_history(ticker, from_date=from_date)
+            hist = provider.get_ohlc_after(ticker, from_date,
+                                           datetime.now().strftime('%Y-%m-%d'))
             if hist is None or hist.empty:
                 stats['failed'] += 1
                 continue
@@ -238,16 +277,15 @@ def run_historical_load(mode: str = 'delta', single_ticker: str = None):
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """, (ticker, date.strftime('%Y-%m-%d'),
                       row['Open'], row['High'], row['Low'],
-                      row['Close'], int(row['Volume']),
-                      f"paid_{os.getenv('PAID_API_TYPE', 'unknown')}"))
+                      row['Close'], int(row['Volume']), 'capital_com'))
             conn.commit()
             stats['updated'] += 1
         except Exception as e:
             log_error(f"{ticker}: {e}")
             stats['failed'] += 1
-        time.sleep(0.5)
-        if (i + 1) % 30 == 0:
-            time.sleep(5)
+        time.sleep(0.1)  # Capital.com erlaubt 600 Calls/Min
+        if (i + 1) % 100 == 0:
+            time.sleep(2)
 
     conn.close()
     print(f"Aktualisiert: {stats['updated']} | Übersprungen: {stats['skipped']} | "
@@ -255,10 +293,17 @@ def run_historical_load(mode: str = 'delta', single_ticker: str = None):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--mode',   choices=['full', 'delta'], default='delta')
-    parser.add_argument('--ticker', default=None)
+    group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument('--all',        action='store_true',  help='Alle SP500-Ticker')
+    group.add_argument('--full-sp500', action='store_true',  help='Vollständige 500-Ticker-Liste')
+    group.add_argument('--tickers',    nargs='+',            help='Einzelne Ticker')
     args = parser.parse_args()
-    run_historical_load(mode=args.mode, single_ticker=args.ticker)
+
+    if args.all or args.full_sp500:
+        tickers = load_sp500_tickers()
+    else:
+        tickers = args.tickers
+    run_historical_load(tickers)
 ```
 
 ---
@@ -395,7 +440,7 @@ def _process_ticker(ticker: str, hist: pd.DataFrame, provider: DataProvider) -> 
 Kein Web-Search. Batches à 30. Lernkontext aus learnings.json.
 Jeder Score braucht min. 2 konkrete Belege (Guardrail prüft das).
 
-Ausschluss-Kriterien: market_cap_b < 5, atr_pct < 0.8, data_quality = 'low'
+Ausschluss-Kriterien: market_cap_b < 5, atr_pct < 2.0, data_quality = 'low'
 
 Trend-Boost: Wenn Aktie in Trend-Beneficiaries und Trend-Stärke >= 7
 → long_score + 0.5. Wenn in negatively_affected → short_score + 0.5.
@@ -515,11 +560,12 @@ Commodities und Crypto immer ausgegeben, unabhängig vom Score.
 ### Vollständiges SQLite-Schema
 
 ```sql
--- Kursdaten (einmalig historisch + täglich delta)
+-- Kursdaten (historisch + täglich incremental via Capital.com)
 CREATE TABLE price_history (
     ticker TEXT, date TEXT, open REAL, high REAL,
     low REAL, close REAL NOT NULL, volume INTEGER,
-    source TEXT DEFAULT 'yfinance', UNIQUE(ticker, date)
+    premarket_price REAL,                 -- nullable, Capital.com vorbörslich
+    source TEXT DEFAULT 'capital_com', UNIQUE(ticker, date)
 );
 
 -- Technische Indikatoren (berechnet, gecacht)
@@ -573,6 +619,8 @@ CREATE TABLE predictions (
     atr_pct REAL, rsi_at_entry REAL, volume_ratio REAL, market_regime TEXT,
     vix_at_prediction REAL, sector TEXT, trend_boost TEXT,
     earnings_warning BOOLEAN, summary TEXT,
+    hold_day INTEGER DEFAULT 0,           -- aktueller Haltetag, täglich +1
+    extended_hold BOOLEAN DEFAULT 0,      -- True ab Tag 2
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -583,7 +631,23 @@ CREATE TABLE outcomes (
     direction TEXT, evaluated_date TEXT, price_after_eod REAL,
     price_change_eod_pct REAL, correct_direction_eod BOOLEAN,
     tp_hit BOOLEAN, sl_hit BOOLEAN, profit_loss_eur REAL,
+    hold_day INTEGER,                     -- Haltetag bei Close
+    extended_hold BOOLEAN,                -- True wenn > 1 Tag gehalten
     evaluated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Fundamentals-Cache (Finnhub, 7-Tage TTL)
+CREATE TABLE IF NOT EXISTS fundamentals_cache (
+    ticker TEXT NOT NULL,
+    fetched_date TEXT NOT NULL,
+    pe_ratio REAL,
+    forward_pe REAL,
+    market_cap_b REAL,
+    debt_equity REAL,
+    sector TEXT,
+    analyst_upside REAL,
+    consensus TEXT,
+    UNIQUE(ticker)
 );
 
 -- Übersprungene Ticker (nie lernbar)
@@ -807,11 +871,24 @@ name: Shares_Future Analysis
 
 on:
   schedule:
-    - cron: '0 13 * * 1-5'     # 15:00 MEZ – Auswertung Vortag
-    - cron: '0 12 * * 1-5'     # 14:00 MEZ – Pre-Market
-    - cron: '15 14 * * 1-5'    # 16:15 MEZ – Post-Noise
-    - cron: '30 20 * * 1-5'    # 22:30 MEZ – After-Market
-    - cron: '0 18 * * 0'       # 20:00 MEZ Sonntag – Wochen-Summary
+    # pre_market 14:00 Berlin (Sommer UTC+2 / Winter UTC+1)
+    - cron: '0 12 * * 1-5'    # Sommer (MESZ)
+    - cron: '0 13 * * 1-5'    # Winter (MEZ)
+    # evaluate 15:00 Berlin
+    - cron: '0 13 * * 1-5'    # Sommer
+    - cron: '0 14 * * 1-5'    # Winter
+    # midday 16:15 Berlin
+    - cron: '15 14 * * 1-5'   # Sommer
+    - cron: '15 15 * * 1-5'   # Winter
+    # position_check 17:30 Berlin
+    - cron: '30 15 * * 1-5'   # Sommer
+    - cron: '30 16 * * 1-5'   # Winter
+    # close 22:30 Berlin
+    - cron: '30 20 * * 1-5'   # Sommer
+    - cron: '30 21 * * 1-5'   # Winter
+    # weekly Sonntag 20:00 Berlin
+    - cron: '0 18 * * 0'      # Sommer
+    - cron: '0 19 * * 0'      # Winter
   workflow_dispatch:
 
 jobs:
@@ -830,18 +907,23 @@ jobs:
       - run: pip install -r requirements.txt
       - name: Run
         env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          SENDGRID_API_KEY:  ${{ secrets.SENDGRID_API_KEY }}
-          PAID_API_KEY:      ${{ secrets.PAID_API_KEY }}
-          PAID_API_TYPE:     ${{ secrets.PAID_API_TYPE }}
-          EMAIL_TO:          ${{ secrets.EMAIL_TO }}
-          EMAIL_FROM:        ${{ secrets.EMAIL_FROM }}
+          ANTHROPIC_API_KEY:    ${{ secrets.ANTHROPIC_API_KEY }}
+          SENDGRID_API_KEY:     ${{ secrets.SENDGRID_API_KEY }}
+          CAPITAL_COM_API_KEY:  ${{ secrets.CAPITAL_COM_API_KEY }}
+          CAPITAL_COM_PASSWORD: ${{ secrets.CAPITAL_COM_PASSWORD }}
+          FINNHUB_API_KEY:      ${{ secrets.FINNHUB_API_KEY }}
+          EMAIL_TO:             ${{ secrets.EMAIL_TO }}
+          EMAIL_FROM:           ${{ secrets.EMAIL_FROM }}
         run: |
-          HOUR=$(date -u +%H) DOW=$(date -u +%u)
-          if [ "$DOW" = "7" ] && [ "$HOUR" = "18" ]; then TYPE="weekly"
-          elif [ "$HOUR" = "13" ]; then TYPE="evaluate"
-          elif [ "$HOUR" = "12" ]; then TYPE="pre_market"
-          elif [ "$HOUR" = "14" ]; then TYPE="midday"
+          HOUR=$(TZ="Europe/Berlin" date +%H)
+          MIN=$(TZ="Europe/Berlin" date +%M)
+          DOW=$(TZ="Europe/Berlin" date +%u)
+          if [ "$DOW" = "7" ] && [ "$HOUR" = "20" ]; then TYPE="weekly"
+          elif [ "$HOUR" = "15" ] && [ "$MIN" -lt "30" ]; then TYPE="evaluate"
+          elif [ "$HOUR" = "14" ] && [ "$MIN" -lt "30" ]; then TYPE="pre_market"
+          elif [ "$HOUR" = "16" ] && [ "$MIN" -ge "10" ]; then TYPE="midday"
+          elif [ "$HOUR" = "17" ] && [ "$MIN" -ge "30" ]; then TYPE="position_check"
+          elif [ "$HOUR" = "22" ] || [ "$HOUR" = "21" ]; then TYPE="close"
           else TYPE="close"; fi
           python main.py --run-type $TYPE
       - name: Save DB
@@ -858,23 +940,26 @@ jobs:
 ```python
 import os
 
-ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
-SENDGRID_API_KEY  = os.getenv("SENDGRID_API_KEY")
-EMAIL_TO          = os.getenv("EMAIL_TO")
-EMAIL_FROM        = os.getenv("EMAIL_FROM")
-PAID_API_KEY      = os.getenv("PAID_API_KEY")
-PAID_API_TYPE     = os.getenv("PAID_API_TYPE", "polygon")
+ANTHROPIC_API_KEY    = os.getenv("ANTHROPIC_API_KEY")
+SENDGRID_API_KEY     = os.getenv("SENDGRID_API_KEY")
+EMAIL_TO             = os.getenv("EMAIL_TO")
+EMAIL_FROM           = os.getenv("EMAIL_FROM")
+CAPITAL_COM_API_KEY  = os.getenv("CAPITAL_COM_API_KEY")
+CAPITAL_COM_PASSWORD = os.getenv("CAPITAL_COM_PASSWORD")
+FINNHUB_API_KEY      = os.getenv("FINNHUB_API_KEY")
 
-CLAUDE_MODEL    = "claude-sonnet-4-5"
+CLAUDE_MODEL    = "claude-sonnet-4-6"
 SIMULATION_ONLY = True   # NIEMALS auf False setzen
 
 SP500_MIN_MARKET_CAP_B = 5
-SP500_MIN_ATR_PCT      = 0.8
+SP500_MIN_ATR_PCT      = 2.0        # Mindest-ATR für CFD-Eignung
 MAX_DEEP_ANALYSIS      = 80
 BATCH_SIZE_QUICK       = 30
 RR_RATIO_MIN           = 1.5
 CFD_MARGIN_EUR         = 500
 CFD_LEVERAGE           = 5
+MAX_HOLD_DAYS          = 5          # Zwangsschluss nach 5 Handelstagen
+HOLD_TARGET            = "intraday" # Primärziel: Intraday-Close
 
 DIMENSION_WEIGHTS = {
     "market_environment": 0.10,
@@ -931,7 +1016,7 @@ Mindest-Coverage: 80% (in CI erzwungen)
 1.  config.py + requirements.txt + .env.example
 2.  src/utils.py – Logging, Retry, DB-Setup, Hilfsfunktionen
 3.  tests/conftest.py – In-Memory DB, Mock-Fixtures
-4.  src/providers/base.py + yfinance_provider.py + paid_provider.py
+4.  src/providers/base.py + capital_provider.py + yfinance_provider.py + finnhub_provider.py
     → pytest tests/unit/test_data_collector.py ✓
 5.  setup/historical_loader.py – full + delta Modus
     → Lokal testen: python setup/historical_loader.py --mode full --ticker AAPL
@@ -976,4 +1061,4 @@ CFD-Handel kann zum Totalverlust führen. Keine Garantie für Prognosen.
 
 ---
 
-*Shares_Future | Version 4.0 Final | 18.05.2026*
+*Shares_Future | Version 5.0 | 2026-05-22*

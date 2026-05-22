@@ -7,7 +7,7 @@ Das System folgt einer **Pipeline-Architektur** mit 6 Phasen (Phase 0–5), die 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                      ORCHESTRATOR (main.py)                      │
-│  Dispatch: --run-type {pre_market|midday|close|evaluate|weekly}  │
+│  Dispatch: --run-type {pre_market|midday|close|evaluate|weekly|position_check}  │
 └─────────────────────────────────────────────────────────────────┘
                               ↓
 ┌─────────────────────────────────────────────────────────────────┐
@@ -22,7 +22,9 @@ Das System folgt einer **Pipeline-Architektur** mit 6 Phasen (Phase 0–5), die 
 ┌─────────────────────────────────────────────────────────────────┐
 │                  PHASE 1: DATENSAMMLUNG                          │
 │  Input: —                                                         │
-│  Quelle: yfinance (90 Tage, 500 Aktien + Commodities/Crypto)    │
+│  Quelle: Capital.com (primary) / yfinance (fallback)            │
+│           500 Aktien + Commodities/Crypto                        │
+│           1 Bar täglich fetchen + letzte 200 aus DB              │
 │  Berechnen: RSI-14, MACD, ATR, SMA200, PE, Volume-Ratio, etc.   │
 │  Output: list[{ticker, price, rsi_14, macd, ..., intraday_range}│
 │  Cost: ~0.00 EUR                                                 │
@@ -58,7 +60,7 @@ Das System folgt einer **Pipeline-Architektur** mit 6 Phasen (Phase 0–5), die 
 │  8-Dim Score: market_env, company_quality, valuation, momentum, │
 │              risk, sector_trend, catalyst, policy_risk           │
 │  Cost: ~2.50 EUR (biggest cost)                                  │
-│  Guardrails: R/R ≥ 1.5, hold_days ≤ 3, intraday_range ≥ 1%    │
+│  Guardrails: R/R ≥ 1.5, hold_days ≤ 5, intraday_range ≥ 1%    │
 │  Fail: ✅ Skip Ticker, continue                                   │
 │  Order: Sequential (nicht parallel) für deterministisches Cost-Tracking│
 └─────────────────────────────────────────────────────────────────┘
@@ -77,7 +79,7 @@ Das System folgt einer **Pipeline-Architektur** mit 6 Phasen (Phase 0–5), die 
                               ↓
 ┌─────────────────────────────────────────────────────────────────┐
 │       PHASE 4a: PORTFOLIO-CHECK (Offene Positionen)              │
-│  Input: db.predictions[status='open' & date ≤ 3 days ago],      │
+│  Input: db.predictions[status='open' & date ≤ 5 days ago],      │
 │         current_snapshots, trend_context, policy_context        │
 │  Claude: Sonnet × N offene Positionen + web_search              │
 │  Output: list[{prediction_id, action="HALTEN|SCHLIESSEN|..."}]  │
@@ -85,6 +87,19 @@ Das System folgt einer **Pipeline-Architektur** mit 6 Phasen (Phase 0–5), die 
 │  Cost: ~0.20 EUR (abhängig von offenen Positionen)              │
 │  Fail: ✅ Skip Position, continue                                │
 │  DB: position_recommendations-Table schreiben                   │
+└─────────────────────────────────────────────────────────────────┘
+                              ↓
+┌─────────────────────────────────────────────────────────────────┐
+│   EVALUATE RUN: Walk-Forward OHLC-Hit-Check                      │
+│   CLOSE RUN: Capital.com Schlusskurs + Datenpflege               │
+│   (kein Claude, kein Mail — nur Datenpflege)                     │
+└─────────────────────────────────────────────────────────────────┘
+                              ↓
+┌─────────────────────────────────────────────────────────────────┐
+│   POSITION CHECK RUN (17:30 Berlin, ~0.20 EUR)                   │
+│   Capital.com GET /positions → offene Trades abrufen             │
+│   Claude 1× → hat sich etwas wesentlich verändert?              │
+│   Status-Mail: ✅ auf Kurs / ⚠ nahe SL / ❌ Signal gefallen      │
 └─────────────────────────────────────────────────────────────────┘
                               ↓
 ┌─────────────────────────────────────────────────────────────────┐
@@ -227,7 +242,7 @@ def analyze_asset(
     }
     
     Guardrails (nach dieser Funktion geprüft):
-    - hold_days > 3 → reject
+    - hold_days > 5 → reject
     - intraday_range < 1.0 → reject
     - R/R < 1.5 → reject
     - direction = "none" → reject (beide Scores gleich)
@@ -237,6 +252,36 @@ def analyze_asset(
 **Fail-Verhalten:** `DeepAnalysisError` → skip Ticker, continue.
 
 **Billing:** `cost_tracker.add_from_result(result)` **VOR** JSON parse.
+
+---
+
+### 4b. **`src/providers/capital_provider.py`** (Sprint 2)
+
+Capital.com Demo API als primary OHLC-Datenquelle.
+
+```python
+class CapitalComProvider(DataProvider):
+    """
+    Primary OHLC-Provider (Capital.com Demo API).
+    Base URL: https://demo-api-capital.backend-capital.com/
+    Rate Limit: 600 Calls/Min
+    ENV: CAPITAL_COM_API_KEY, CAPITAL_COM_PASSWORD
+    
+    Ticker-Mapping:
+    - SP500-Ticker: direkt übergeben
+    - Gold="GOLD", Silber="SILVER", Öl="CRUDE_OIL"
+    - BTC="BITCOIN", ETH="ETHEREUM", SOL="SOLANA", XRP="XRP"
+    """
+    def get_price_history(ticker, days) -> pd.DataFrame: ...
+    def get_ohlc_after(ticker, start_date, end_date) -> pd.DataFrame: ...
+    def get_premarket_price(ticker) -> float | None: ...
+    def get_open_positions() -> list[dict]: ...
+    def get_closed_positions(date) -> list[dict]: ...
+    def get_fundamentals() -> dict: ...       # leer – nicht zuständig
+    def get_earnings_calendar() -> dict: ...  # leer – nicht zuständig
+```
+
+**Fundamentals** werden separat von `FinnhubProvider.get_fundamentals()` abgerufen und in `fundamentals_cache`-Tabelle mit 7-Tage TTL gecacht. Im täglichen Run wird der Cache aus der DB gelesen, kein Live-Call.
 
 ---
 
@@ -273,7 +318,7 @@ def analyze_commodities_and_crypto(
 
 ### 6. **`src/portfolio_check.py`** (Phase 4a)
 
-Evaluiert täglich alle offenen Positionen (max 3 Tage alt).
+Evaluiert täglich alle offenen Positionen (max 5 Tage alt).
 
 ```python
 def check_open_positions(
@@ -286,7 +331,7 @@ def check_open_positions(
     cost_tracker: CostTracker,
 ) -> list[dict]:
     """
-    Für jede offene Position (≤ 3 Tage alt):
+    Für jede offene Position (≤ 5 Tage alt):
       - Sonnet + web_search Call
       - Returns: {prediction_id, action:"HALTEN"|"SCHLIESSEN"|"ANPASSEN",
                  reason, new_sl_price, new_tp_price, market_context_changed}
@@ -315,7 +360,7 @@ def rank_and_persist(
 ) -> dict:
     """
     Logik:
-    1. Guardrail-Filter (hold_days ≤ 3, intraday_range ≥ 1%, R/R ≥ 1.5, no "none")
+    1. Guardrail-Filter (hold_days ≤ 5, intraday_range ≥ 1%, R/R ≥ 1.5, no "none")
     2. Split Long/Short
     3. Sort by probability_pct DESC
     4. Keep Top 10 each, ALL commodities/crypto
@@ -342,7 +387,7 @@ def evaluate_open_predictions(
     """
     Für jede offene & learnable & date<today Prediction:
       1. Fetch OHLC-Fenster [pred.date → today]
-      2. Walk-Forward Hit-Check (max 3 Bars)
+      2. Walk-Forward Hit-Check (max 5 Bars)
       3. Bestimme exit_reason + exit_price + days_to_close
       4. Atomisch update outcomes-Row + prediction.status
     
@@ -402,7 +447,7 @@ class GuardrailsChecker:
         1. Alle 8 Dimensionen vorhanden + scores 0-10
         2. Jede Dimension ≥ 2 Belege
         3. R/R Ratio ≥ 1.5
-        4. hold_days_recommended: 1-3
+        4. hold_days_recommended: 1-5
         5. intraday_range_pct ≥ 1.0
         6. direction ≠ "none"
         """
@@ -415,15 +460,17 @@ class GuardrailsChecker:
 SQLite-Schema + Persistence.
 
 **Tabellen:**
-- `predictions` – Alle generierten Setups (id, date, ticker, direction, scores, ...)
+- `predictions` – Alle generierten Setups (id, date, ticker, direction, scores, hold_day, extended_hold, ...)
 - `technical_indicators` – Phase 1 Daten (rsi_14, macd, ...)
-- `outcomes` – Walk-Forward Ergebnisse (tp_hit, sl_hit, days_to_close, p&l, ...)
+- `outcomes` – Walk-Forward Ergebnisse (tp_hit, sl_hit, days_to_close, hold_day, extended_hold, p&l, ...)
 - `position_recommendations` – Phase 4a Output (HALTEN/SCHLIESSEN/ANPASSEN)
 - `cost_tracking` – Claude-API Kosten pro Run
+- `fundamentals_cache` – Finnhub-Fundamentals mit 7-Tage TTL (UNIQUE per ticker)
+- `price_history` – OHLCV inkl. premarket_price (nullable)
 
 **Wichtige Helpers:**
 - `save_prediction(conn, pred_dict)` – Phase 4
-- `load_open_predictions_within_max_age_days(conn, today, max_trading_days=3)` – Phase 4a
+- `load_open_predictions_within_max_age_days(conn, today, max_trading_days=5)` – Phase 4a
 - `update_outcome_close(conn, pred_id, exit_reason, exit_price, ...)` – Evaluator
 - `load_recent_outcomes(conn, days=7)` – Weekly Email
 
@@ -527,12 +574,13 @@ TOTAL: ~3.50 EUR
 ## Invarianten (Never Violated)
 
 1. **SIMULATION_ONLY=True** – Niemals echte Order-Ausführung
-2. **CFD-Kurzfristfokus** – hold_days ≤ 3, intraday_range ≥ 1%
+2. **CFD-Kurzfristfokus** – hold_days ≤ 5 (`MAX_HOLD_DAYS = 5`), intraday_range ≥ 1%; SP500_MIN_ATR_PCT = 2.0
 3. **Phase 0 ist fatal** – TrendAnalyzerError → no email
 4. **Billing vor Parse** – `cost_tracker.add_from_result()` VOR JSON-Extraktion
 5. **Guardrail-Pflicht** – Vor Phase 4 Ranking MÜSSEN alle Analysen durch Checks
 6. **Atomare DB-Writes** – `evaluator.update_outcome_close` ACID-transactional
 7. **Portfolio-Sektion zuerst** – Email-Rendering: Portfolio → Stocks → Trends → Commodities
+8. **Timezone** – Alle datetime-Berechnungen in `ZoneInfo("Europe/Berlin")`; Bash: `TZ="Europe/Berlin" date`
 
 ---
 
@@ -547,10 +595,16 @@ TOTAL: ~3.50 EUR
 
 ## Skalierung für Sprint 2
 
-- **Paid API** (Polygon/FMP) für historischen 3-Jahres-Pull
-- **500 SP500 Tickers** (statt MVP-Subset)
-- **Auto-Update** SP500-List monatlich
-- **Regional Provider** (Japan, Europa optional)
+Scope: Sprint 2 / Plan 1 (Capital Provider + DB Incremental + Position Check).
+Plan: `docs/superpowers/plans/2026-05-21-sprint2-plan1-capital-provider-db-incremental.md`
+
+- **capital_provider.py** – CapitalComProvider (primary OHLC, GET /positions, premarket)
+- **fundamentals_cache** – Finnhub-Fundamentals mit 7-Tage TTL
+- **DB-Incremental-Update** – täglich nur 1 Bar fetchen, Indikatoren aus DB (200 Tage)
+- **position_check Run-Type** – Capital.com Position-Read + Claude + Status-Mail
+- **Timezone-Fix** – doppelte Crons + ZoneInfo("Europe/Berlin") in Python
+- **historical_loader.py** – 3-Jahres-Pull via Capital.com (`--all`, `--full-sp500`, `--tickers`)
+- **500-Ticker Scaling** – USE_FULL_SP500 Flag
 
 ---
 
