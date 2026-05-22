@@ -33,7 +33,6 @@ class FinnhubProvider(DataProvider):
             resp     = _client.company_basic_financials(ticker, "all") or {}
             metrics  = resp.get("metric") or {}
             recs     = _client.recommendation_trends(ticker) or []
-            _client.price_target(ticker)  # fetched; not used yet
         except Exception as e:
             log.warning(f"{ticker}: Finnhub fundamentals failed: {e}")
             return {}
