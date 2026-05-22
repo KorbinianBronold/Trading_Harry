@@ -20,11 +20,12 @@ BERLIN = ZoneInfo("Europe/Berlin")
 TICKER_MAP: dict[str, str] = {
     "GC=F":    "GOLD",
     "SI=F":    "SILVER",
-    "CL=F":    "CRUDE_OIL",
-    "BTC-USD": "BITCOIN",
-    "ETH-USD": "ETHEREUM",
-    "SOL-USD": "SOLANA",
-    "XRP-USD": "XRP",
+    "CL=F":    "OIL_CRUDE",   # Capital.com epic (not CRUDE_OIL)
+    "BTC-USD": "BTCUSD",
+    "ETH-USD": "ETHUSD",
+    "SOL-USD": "SOLUSD",
+    "XRP-USD": "XRPUSD",
+    "BRK-B":   "BRKB",        # Capital.com epic for Berkshire B
 }
 
 
@@ -94,18 +95,11 @@ class CapitalComProvider(DataProvider):
 
     def get_price_history(self, ticker: str, days: int = 90) -> pd.DataFrame | None:
         epic = self._map(ticker)
-        end   = datetime.now(BERLIN)
-        start = end - timedelta(days=days)
         try:
             resp = requests.get(
                 f"{config.CAPITAL_COM_BASE_URL}/api/v1/prices/{epic}",
                 headers=self._headers(),
-                params={
-                    "resolution": "DAY",
-                    "max":        days,
-                    "from":       start.strftime("%Y-%m-%dT%H:%M:%S"),
-                    "to":         end.strftime("%Y-%m-%dT%H:%M:%S"),
-                },
+                params={"resolution": "DAY", "max": days},
                 timeout=30,
             )
             resp.raise_for_status()
@@ -118,6 +112,15 @@ class CapitalComProvider(DataProvider):
         self, ticker: str, start_date: str, end_date: str,
     ) -> pd.DataFrame | None:
         epic = self._map(ticker)
+        # Capital.com filters by snapshotTimeUTC. 'to=DATE T00:00:00' includes that
+        # date's bar. 'to' must not exceed today's midnight — future dates → 400.
+        # When start==end (same-day check), step 'from' back 1 day so the range
+        # is non-empty and still captures today's bar.
+        from datetime import date as _date, timedelta as _td
+        start_dt = _date.fromisoformat(start_date)
+        end_dt   = _date.fromisoformat(end_date)
+        if start_dt >= end_dt:
+            start_dt = end_dt - _td(days=1)
         try:
             resp = requests.get(
                 f"{config.CAPITAL_COM_BASE_URL}/api/v1/prices/{epic}",
@@ -125,8 +128,8 @@ class CapitalComProvider(DataProvider):
                 params={
                     "resolution": "DAY",
                     "max":        1000,
-                    "from":       f"{start_date}T00:00:00",
-                    "to":         f"{end_date}T23:59:59",
+                    "from":       f"{start_dt.isoformat()}T00:00:00",
+                    "to":         f"{end_dt.isoformat()}T00:00:00",
                 },
                 timeout=30,
             )
