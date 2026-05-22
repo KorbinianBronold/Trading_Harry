@@ -5,8 +5,7 @@ Session is created lazily on first call and reused for the lifetime of the
 provider instance (one instance per run).
 """
 import logging
-from datetime import datetime, timedelta
-from zoneinfo import ZoneInfo
+from datetime import date as _date, timedelta
 
 import pandas as pd
 import requests
@@ -15,7 +14,6 @@ import config
 from src.providers.base import DataProvider
 
 log = logging.getLogger("shares_future.capital")
-BERLIN = ZoneInfo("Europe/Berlin")
 
 TICKER_MAP: dict[str, str] = {
     "GC=F":    "GOLD",
@@ -116,11 +114,10 @@ class CapitalComProvider(DataProvider):
         # date's bar. 'to' must not exceed today's midnight — future dates → 400.
         # When start==end (same-day check), step 'from' back 1 day so the range
         # is non-empty and still captures today's bar.
-        from datetime import date as _date, timedelta as _td
         start_dt = _date.fromisoformat(start_date)
         end_dt   = _date.fromisoformat(end_date)
         if start_dt >= end_dt:
-            start_dt = end_dt - _td(days=1)
+            start_dt = end_dt - timedelta(days=1)
         try:
             resp = requests.get(
                 f"{config.CAPITAL_COM_BASE_URL}/api/v1/prices/{epic}",

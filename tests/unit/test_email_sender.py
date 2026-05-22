@@ -3,7 +3,7 @@ import pytest
 
 from src.email_sender import (
     render_daily_html, render_weekly_html, send_daily_email,
-    EmailSendError,
+    render_error_html, EmailSendError,
 )
 
 
@@ -216,6 +216,16 @@ def test_render_daily_html_includes_briefing_section():
     html = render_daily_html(payload)
     assert "Was heute" in html
     assert "ai-capex" in html
+
+
+def test_render_error_html_contains_exception_type_and_traceback():
+    exc = ValueError("something broke badly")
+    html = render_error_html("pre_market", "2026-05-22", exc, "Traceback:\n  line 1")
+    assert "ValueError" in html
+    assert "something broke badly" in html
+    assert "2026-05-22" in html
+    assert "pre_market" in html
+    assert "Traceback" in html
 
 
 def test_render_position_check_html_contains_tickers():

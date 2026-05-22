@@ -8,6 +8,7 @@ import argparse
 import json
 import logging
 import sys
+import traceback
 from datetime import date as date_cls, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -350,7 +351,6 @@ def run_weekly(date: str, db_path: str) -> None:
 
 
 def main(argv: list[str] | None = None) -> None:
-    import traceback as _tb
     ns = parse_args(argv)
     date = ns.date or datetime.now(BERLIN).date().isoformat()
     try:
@@ -369,7 +369,7 @@ def main(argv: list[str] | None = None) -> None:
     except SystemExit:
         raise
     except Exception as exc:
-        tb_text = _tb.format_exc()
+        tb_text = traceback.format_exc()
         log.error(f"Run {ns.run_type} FAILED: {exc}\n{tb_text}")
         if config.SENDGRID_API_KEY and config.EMAIL_FROM and config.EMAIL_TO:
             try:

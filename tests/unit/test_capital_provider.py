@@ -136,3 +136,56 @@ def test_get_closed_positions_filters_by_action_type(monkeypatch):
     closed = CapitalComProvider().get_closed_positions("2026-05-21")
     assert len(closed) == 1
     assert closed[0]["ticker"] == "AAPL"
+
+
+@pytest.mark.parametrize("yf_ticker,expected_epic", [
+    ("GC=F",    "GOLD"),
+    ("SI=F",    "SILVER"),
+    ("CL=F",    "OIL_CRUDE"),
+    ("BTC-USD", "BTCUSD"),
+    ("ETH-USD", "ETHUSD"),
+    ("SOL-USD", "SOLUSD"),
+    ("XRP-USD", "XRPUSD"),
+    ("BRK-B",   "BRKB"),
+])
+def test_ticker_map_all_epics(monkeypatch, yf_ticker, expected_epic):
+    monkeypatch.setattr("requests.post", _mock_post)
+    called = []
+    def _capture(url, **kwargs):
+        called.append(url)
+        return _mock_prices_get(url, **kwargs)
+    monkeypatch.setattr("requests.get", _capture)
+    from src.providers.capital_provider import CapitalComProvider
+    CapitalComProvider().get_price_history(yf_ticker, days=5)
+    assert any(expected_epic in u for u in called), \
+        f"Expected epic '{expected_epic}' in request URL, got: {called}"
+
+
+def test_auth_failed_flag_skips_all_subsequent_calls(monkeypatch):
+    post_calls = []
+    def _failing_post(url, **kwargs):
+        post_calls.append(url)
+        m = MagicMock()
+        m.raise_for_status.side_effect = Exception("401 Unauthorized")
+        m.headers = {}
+        return m
+    monkeypatch.setattr("requests.post", _failing_post)
+    from src.providers.capital_provider import CapitalComProvider
+    p = CapitalComProvider()
+    assert p.get_price_history("AAPL") is None   # first call → auth fails
+    assert p.get_price_history("MSFT") is None   # second call → skipped via _auth_failed
+    assert len(post_calls) == 1, "Session POST should only be attempted once"
+
+
+def test_get_ohlc_after_same_day_steps_from_back(monkeypatch):
+    monkeypatch.setattr("requests.post", _mock_post)
+    captured = {}
+    def _capture(url, **kwargs):
+        captured.update(kwargs.get("params", {}))
+        return _mock_prices_get(url, **kwargs)
+    monkeypatch.setattr("requests.get", _capture)
+    from src.providers.capital_provider import CapitalComProvider
+    CapitalComProvider().get_ohlc_after("AAPL", "2026-05-22", "2026-05-22")
+    assert captured.get("from") == "2026-05-21T00:00:00", \
+        f"Expected 'from' stepped back 1 day, got: {captured.get('from')}"
+    assert captured.get("to") == "2026-05-22T00:00:00"
