@@ -1,25 +1,13 @@
 name: analyze
-
 on:
   schedule:
-    # pre_market 14:00 Berlin
-    - cron: '0 12 * * 1-5'   # Sommer CEST UTC+2
-    - cron: '0 13 * * 1-5'   # Winter CET UTC+1
-    # evaluate 15:00 Berlin
-    - cron: '0 13 * * 1-5'   # Sommer
-    - cron: '0 14 * * 1-5'   # Winter
-    # midday 16:15 Berlin
-    - cron: '15 14 * * 1-5'  # Sommer
-    - cron: '15 15 * * 1-5'  # Winter
-    # position_check 17:30 Berlin
-    - cron: '30 15 * * 1-5'  # Sommer
-    - cron: '30 16 * * 1-5'  # Winter
-    # close 22:30 Berlin
-    - cron: '30 20 * * 1-5'  # Sommer
-    - cron: '30 21 * * 1-5'  # Winter
-    # weekly Sonntag 20:00 Berlin
-    - cron: '0 18 * * 0'     # Sommer
-    - cron: '0 19 * * 0'     # Winter
+    - cron: '0 13 * * 1-5'    # pre_market     15:00 Berlin
+    - cron: '0 14 * * 1-5'    # evaluate       16:00 Berlin
+    - cron: '0 17 * * 1-5'   # midday         19:00 Berlin
+    - cron: '30 15 * * 1-5'   # position_check 17:30 Berlin
+    - cron: '30 20 * * 1-5'   # close          22:30 Berlin
+    - cron: '0 18 * * 0'      # weekly         20:00 Berlin Sonntag
+
   workflow_dispatch:
     inputs:
       run_type:
@@ -28,21 +16,22 @@ on:
         default: close
 
 permissions:
-  contents: write   # required for gh release upload
+  contents: write
 
 jobs:
   run:
     runs-on: ubuntu-latest
     env:
-      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-      SENDGRID_API_KEY: ${{ secrets.SENDGRID_API_KEY }}
-      EMAIL_TO:         ${{ secrets.EMAIL_TO }}
-      EMAIL_FROM:       ${{ secrets.EMAIL_FROM }}
-      FINNHUB_API_KEY:       ${{ secrets.FINNHUB_API_KEY }}
+      ANTHROPIC_API_KEY:      ${{ secrets.ANTHROPIC_API_KEY }}
+      SENDGRID_API_KEY:       ${{ secrets.SENDGRID_API_KEY }}
+      EMAIL_TO:               ${{ secrets.EMAIL_TO }}
+      EMAIL_FROM:             ${{ secrets.EMAIL_FROM }}
+      FINNHUB_API_KEY:        ${{ secrets.FINNHUB_API_KEY }}
       CAPITAL_COM_API_KEY:    ${{ secrets.CAPITAL_COM_API_KEY }}
       CAPITAL_COM_IDENTIFIER: ${{ secrets.CAPITAL_COM_IDENTIFIER }}
       CAPITAL_COM_PASSWORD:   ${{ secrets.CAPITAL_COM_PASSWORD }}
-      GH_TOKEN:              ${{ secrets.GITHUB_TOKEN }}
+      GH_TOKEN:               ${{ secrets.GITHUB_TOKEN }}
+
     steps:
       - uses: actions/checkout@v4
 
@@ -73,13 +62,15 @@ jobs:
           HOUR=$(TZ="Europe/Berlin" date +%H)
           MIN=$(TZ="Europe/Berlin" date +%M)
           DOW=$(TZ="Europe/Berlin" date +%u)
-          if [ "$DOW" = "7" ] && [ "$HOUR" = "20" ]; then T="weekly"
-          elif [ "$HOUR" = "15" ] && [ "$MIN" -lt "30" ]; then T="evaluate"
-          elif [ "$HOUR" = "14" ] && [ "$MIN" -lt "15" ]; then T="pre_market"
-          elif [ "$HOUR" = "16" ] && [ "$MIN" -ge "10" ]; then T="midday"
-          elif [ "$HOUR" = "17" ] && [ "$MIN" -ge "25" ]; then T="position_check"
-          elif [ "$HOUR" = "22" ] || [ "$HOUR" = "21" ]; then T="close"
-          else T="close"; fi
+
+          if   [ "$DOW" = "7" ] && [ "$HOUR" = "20" ]; then    T="weekly"
+          elif [ "$HOUR" = "14" ] && [ "$MIN" -lt "30" ]; then  T="pre_market"
+          elif [ "$HOUR" = "15" ] && [ "$MIN" -lt "30" ]; then  T="evaluate"
+          elif [ "$HOUR" = "16" ] && [ "$MIN" -ge "10" ]; then  T="midday"
+          elif [ "$HOUR" = "17" ] && [ "$MIN" -ge "25" ]; then  T="position_check"
+          elif [ "$HOUR" = "22" ] || [ "$HOUR" = "23" ]; then   T="close"
+          else                                                    T="close"
+          fi
           echo "type=$T" >> "$GITHUB_OUTPUT"
 
       - name: Run analysis
