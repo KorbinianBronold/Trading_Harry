@@ -4,9 +4,9 @@ Each open predictions row that is >= 1 trading-day old gets evaluated against th
 post-prediction OHLC bars. Returns the exit reason and atomically writes both the
 outcomes row and the prediction status via db.update_outcome_close().
 
-Trading-day precision is intentionally approximated by calendar days: yfinance
-returns weekday-only bars anyway, so iterating bars in order corresponds to
-trading-day order. We cap at 3 bars (== 3 trading days)."""
+Trading-day precision is intentionally approximated by calendar days: Capital.com
+returns weekday-only bars, so iterating bars in order corresponds to trading-day
+order. We cap at 3 bars (== 3 trading days)."""
 import logging
 import pandas as pd
 

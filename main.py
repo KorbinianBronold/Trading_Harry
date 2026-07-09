@@ -31,7 +31,6 @@ from src.email_sender import (
     send_position_check_email, send_error_email,
 )
 from src.utils import call_claude, extract_json_blob
-from src.providers.yfinance_provider import YFinanceProvider
 from src.providers.finnhub_provider import FinnhubProvider
 from src.providers.capital_provider import CapitalComProvider
 
@@ -124,7 +123,7 @@ def run_pipeline(run_type: str, date: str, db_path: str) -> None:
     db.init_schema(conn)
     db.cleanup_old_data(conn)
     cost_tracker = CostTracker()
-    price_provider = CapitalComProvider() if config.CAPITAL_COM_API_KEY else YFinanceProvider()
+    price_provider = CapitalComProvider()
     earnings_provider = FinnhubProvider()
 
     aborted_at: str | None = None
@@ -262,7 +261,7 @@ def run_close(date: str, db_path: str) -> None:
     """Close-Run: DB Datenpflege only. No Claude, no email."""
     conn = db.connect(db_path)
     db.init_schema(conn)
-    price_provider = CapitalComProvider() if config.CAPITAL_COM_API_KEY else YFinanceProvider()
+    price_provider = CapitalComProvider()
     n = evaluate_open_predictions(conn=conn, today=date, price_provider=price_provider)
     log.info(f"Close run: {n} predictions evaluated")
     db.cleanup_old_data(conn)
@@ -324,7 +323,7 @@ def run_position_check(date: str, db_path: str) -> None:
 def run_evaluate(date: str, db_path: str) -> None:
     conn = db.connect(db_path)
     db.init_schema(conn)
-    price_provider = YFinanceProvider()
+    price_provider = CapitalComProvider()
     n = evaluate_open_predictions(
         conn=conn, today=date, price_provider=price_provider,
     )

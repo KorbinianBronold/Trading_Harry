@@ -23,7 +23,7 @@ class FinnhubProvider(DataProvider):
         raise NotImplementedError("FinnhubProvider only supplies earnings")
 
     def get_ohlc_after(self, ticker, start_date, end_date):
-        raise NotImplementedError("Finnhub provider is earnings-only; use yfinance for OHLC")
+        raise NotImplementedError("Finnhub provider is earnings-only; use CapitalComProvider for OHLC")
 
     def get_fundamentals(self, ticker: str) -> dict:
         if _client is None:

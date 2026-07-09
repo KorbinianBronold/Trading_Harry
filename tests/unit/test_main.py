@@ -74,12 +74,11 @@ def test_run_pipeline_calls_phases_in_order():
               side_effect=make_mock("ranking", fake_ranking)),
         patch("main.fetch_fear_greed", return_value={"value": 50, "label": "Neutral"}),
         patch("main.send_daily_email", side_effect=make_mock("email", None)),
-        patch("main.YFinanceProvider"),
         patch("main.FinnhubProvider"),
     ]
     with patches[0], patches[1], patches[2], patches[3], patches[4], \
          patches[5], patches[6], patches[7], patches[8], patches[9], \
-         patches[10], patches[11]:
+         patches[10]:
         run_pipeline(run_type="close", date="2026-05-19", db_path=":memory:")
 
     assert call_log == [
@@ -92,7 +91,7 @@ def test_run_pipeline_aborts_when_trend_fails(tmp_db_path):
     from src.trend_analyzer import TrendAnalyzerError
     with patch("main.analyze_trends", side_effect=TrendAnalyzerError("no trends")), \
          patch("main.send_daily_email") as mock_email, \
-         patch("main.YFinanceProvider"), patch("main.FinnhubProvider"):
+         patch("main.FinnhubProvider"):
         with pytest.raises(TrendAnalyzerError):
             run_pipeline(run_type="close", date="2026-05-19",
                          db_path=str(tmp_db_path))
@@ -110,7 +109,7 @@ def test_run_pipeline_partial_email_when_cost_cap_hit(tmp_db_path):
          patch("main.run_policy_monitor",
                side_effect=CostCapExceeded("cap hit")), \
          patch("main.send_daily_email") as mock_email, \
-         patch("main.YFinanceProvider"), patch("main.FinnhubProvider"):
+         patch("main.FinnhubProvider"):
         run_pipeline(run_type="close", date="2026-05-19", db_path=str(tmp_db_path))
     # Email IS sent with the partial payload + abort warning
     args = mock_email.call_args.kwargs
@@ -120,7 +119,7 @@ def test_run_pipeline_partial_email_when_cost_cap_hit(tmp_db_path):
 def test_run_evaluate_calls_evaluator_no_email(tmp_db_path):
     with patch("main.evaluate_open_predictions", return_value=3) as mock_eval, \
          patch("main.send_daily_email") as mock_email, \
-         patch("main.YFinanceProvider"):
+         patch("main.CapitalComProvider"):
         run_evaluate(date="2026-05-19", db_path=str(tmp_db_path))
     mock_eval.assert_called_once()
     mock_email.assert_not_called()

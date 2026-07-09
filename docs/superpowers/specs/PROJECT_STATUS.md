@@ -96,8 +96,8 @@ Aktuelle Struktur (veraltet):
 
 ### D — SendGrid Status prüfen
 E-Mail-Versand ist implementiert aber nie live getestet. Vor erstem echten Lauf sicherstellen:
-- `SENDGRID_API_KEY`, `EMAIL_FROM`, `EMAIL_TO` in GitHub Secrets gesetzt
-- Domain-Verifizierung bei SendGrid abgeschlossen
+- SendGrid ist aktiv und getestet. SENDGRID_API_KEY, EMAIL_FROM, EMAIL_TO sind in GitHub Secrets gesetzt und verifiziert.
+- Kein Handlungsbedarf in Sprint 3.
 - Test-Mail via `python -c "from src.email_sender import ..."` senden
 
 ### E — `learning_module.py` bauen

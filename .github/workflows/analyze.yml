@@ -59,18 +59,15 @@ jobs:
             echo "type=${{ inputs.run_type }}" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          HOUR=$(TZ="Europe/Berlin" date +%H)
-          MIN=$(TZ="Europe/Berlin" date +%M)
-          DOW=$(TZ="Europe/Berlin" date +%u)
-
-          if   [ "$DOW" = "7" ] && [ "$HOUR" = "20" ]; then    T="weekly"
-          elif [ "$HOUR" = "14" ] && [ "$MIN" -lt "30" ]; then  T="pre_market"
-          elif [ "$HOUR" = "15" ] && [ "$MIN" -lt "30" ]; then  T="evaluate"
-          elif [ "$HOUR" = "16" ] && [ "$MIN" -ge "10" ]; then  T="midday"
-          elif [ "$HOUR" = "17" ] && [ "$MIN" -ge "25" ]; then  T="position_check"
-          elif [ "$HOUR" = "22" ] || [ "$HOUR" = "23" ]; then   T="close"
-          else                                                    T="close"
-          fi
+          case "${{ github.event.schedule }}" in
+            "0 13 * * 1-5")  T="pre_market" ;;
+            "0 14 * * 1-5")  T="evaluate" ;;
+            "0 17 * * 1-5")  T="midday" ;;
+            "30 15 * * 1-5") T="position_check" ;;
+            "30 20 * * 1-5") T="close" ;;
+            "0 18 * * 0")    T="weekly" ;;
+            *)               T="close" ;;
+          esac
           echo "type=$T" >> "$GITHUB_OUTPUT"
 
       - name: Run analysis

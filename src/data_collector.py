@@ -170,7 +170,7 @@ from src.providers.base import DataProvider
 from src import db
 import config
 
-BATCH_PAUSE_EVERY = 30  # spec §"Rate Limiting yfinance"
+BATCH_PAUSE_EVERY = 30
 
 
 def _classify_data_quality(td: dict) -> str:
@@ -218,7 +218,7 @@ def _ensure_today_bar(
         return
 
     _raw_source = getattr(price_provider, "_source_name", None)
-    source = _raw_source if isinstance(_raw_source, str) else "yfinance"
+    source = _raw_source if isinstance(_raw_source, str) else "capital.com"
     for ts, row in df.iterrows():
         d = ts.strftime("%Y-%m-%d") if hasattr(ts, "strftime") else str(ts)[:10]
         if d > date:
@@ -348,7 +348,7 @@ def collect(
     """Run Phase 1 over the MVP universe. Returns (ticker_data_list, skipped_count).
 
     Tickers are processed sequentially. After every BATCH_PAUSE_EVERY tickers
-    we sleep config.YFINANCE_BATCH_PAUSE seconds to avoid yfinance rate limits.
+    we sleep config.CAPITAL_COM_BATCH_PAUSE seconds to respect Capital.com rate limits.
     """
     results: list[dict] = []
     skipped = 0
@@ -369,9 +369,9 @@ def collect(
         if (i + 1) % BATCH_PAUSE_EVERY == 0 and (i + 1) < len(tickers):
             log.info(
                 f"Batch pause: processed {i + 1}/{len(tickers)} tickers, "
-                f"sleeping {config.YFINANCE_BATCH_PAUSE}s"
+                f"sleeping {config.CAPITAL_COM_BATCH_PAUSE}s"
             )
-            time.sleep(config.YFINANCE_BATCH_PAUSE)
+            time.sleep(config.CAPITAL_COM_BATCH_PAUSE)
 
     log.info(f"Phase 1 done: {len(results)} ok, {skipped} skipped")
     return results, skipped
