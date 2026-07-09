@@ -82,7 +82,7 @@ Aktuelle Struktur (veraltet):
 **Neue Ziel-Struktur:**
 - `evaluate` streichen (wird in `close` integriert)
 - `midday` streichen (zu spät, kein Mehrwert nach 19:00 Berlin)
-- `pre_open` neu (15:00 Berlin): erster Tagesrun, Phase 0–4, Mail
+- `pre_open` neu (15:00 Berlin): erster Tagesrun, nur Phase 0+1 (Trend-Analyse + Datenabruf), kein Ranking, keine Mail, ~0,20€
 - `post_open` (16:15 Berlin): Hauptrun, Phase 0–4, Mail (bisheriger pre_market)
 - `close` (22:30 Berlin): DB-Pflege + TP/SL-Evaluierung (bisher separate evaluate-Run)
 
@@ -130,6 +130,7 @@ E-Mail-Versand ist implementiert aber nie live getestet. Vor erstem echten Lauf 
 | B-03 | `config.py:SP500_FULL_TICKERS` | Ist Stub (= MVP-Liste), `USE_FULL_SP500=true` würde nur 20 Ticker laufen lassen | Mittel |
 | B-04 | `analyze.yml` | Cron-Zeiten im Kommentar stimmen nicht mit Zeit-Matching im Shell-Script überein (evaluate: `0 14` = 16:00 Berlin, Code prüft `HOUR=15`) | Niedrig |
 | B-05 | `main.py:_guess_aborted_phase()` | Gibt immer `"policy_monitor"` zurück, egal wo der Abort war | Niedrig |
+| B-06 | `config.py` vs `guardrails.py` | MAX_HOLD_DAYS=5 in config.py, aber guardrails.py und evaluator.py nutzen hardcoded 3 — Widerspruch | Niedrig |
 
 ---
 
