@@ -1,3 +1,5 @@
+> ⚠️ HISTORISCH — docs/superpowers/specs/PROJECT_STATUS.md lesen stattdessen
+
 # Shares_Future — MVP Design
 
 **Datum:** 2026-05-19 | **Zuletzt aktualisiert:** 2026-05-22
