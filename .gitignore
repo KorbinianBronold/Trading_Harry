@@ -12,3 +12,4 @@ data/*.json
 venv/
 .worktrees/
 notes
+claude_commands.txt

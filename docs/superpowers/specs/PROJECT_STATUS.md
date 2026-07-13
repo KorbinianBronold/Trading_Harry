@@ -1,8 +1,8 @@
 # PROJECT_STATUS.md — Shares_Future (Trading_Harry)
 
-**Zuletzt aktualisiert:** 2026-07-09  
+**Zuletzt aktualisiert:** 2026-07-13  
 **Aktueller Branch:** main  
-**Letzter Merge:** Sprint 2 / Plan 1 (2026-05-22)
+**Letzter Merge:** Sprint 2 / Plan 1 (2026-05-22) — Sprint 3 in Arbeit, Teilfortschritt s. Abschnitt 2
 
 ---
 
@@ -58,14 +58,19 @@
 
 ---
 
-## 2. Was in Sprint 3 noch kommt
+### Sprint 3 — Fortschritt (in Arbeit, Stand 2026-07-13)
 
-### A — yFinance entfernen
-- `requirements.txt`: `yfinance` raus
-- `run_evaluate()` in `main.py`: noch hardcoded auf `YFinanceProvider()` — auf Capital.com umstellen
-- `main.py` Import `YFinanceProvider` entfernen
-- `src/providers/yfinance_provider.py` löschen (oder stub lassen wenn Tests darauf aufbauen)
-- Alle Tests, die YFinance mocken, auf Capital.com-Mock umstellen
+Bereits erledigt, obwohl noch keine Sprint-3-Abschlussmeldung erfolgt ist:
+
+| Was | Commit | Details |
+|---|---|---|
+| yFinance komplett entfernt | `d17c2f5` (2026-07-09) | `src/providers/yfinance_provider.py` gelöscht, `yfinance` aus `requirements.txt`, `config.py` (`YFINANCE_*` → `CAPITAL_COM_BATCH_PAUSE`), `main.py` (`run_pipeline()`, `run_close()`, `run_evaluate()` instanziieren jetzt unconditional `CapitalComProvider()`), Tests entsprechend angepasst. Capital.com ist seither alleiniger OHLC-Provider ohne Fallback. |
+| DST-Bug (ehem. Bug B-01) mitgefixt | `d17c2f5` (2026-07-09) | `analyze.yml`: Run-Type-Erkennung matcht jetzt `github.event.schedule`-String direkt per `case`, statt Uhrzeit zu parsen. Damit auch Bug B-04 (Kommentar/Code-Mismatch) hinfällig. |
+| Toter Code entfernt | `e198520`, `b3d743c` (2026-07-09) | `src/providers/paid_provider.py` + zugehöriger Test gelöscht (unbenutzter Stub, nicht Teil der dokumentierten Architektur). |
+
+Noch offen aus dem ursprünglichen Sprint-3-Scope: Punkte B, E, F, G unten sowie Bugs B-03, B-05, B-06.
+
+## 2. Was in Sprint 3 noch offen ist
 
 ### B — Cron-Struktur umbauen
 Aktuelle Struktur (veraltet):
@@ -85,14 +90,6 @@ Aktuelle Struktur (veraltet):
 - `pre_open` neu (15:00 Berlin): erster Tagesrun, nur Phase 0+1 (Trend-Analyse + Datenabruf), kein Ranking, keine Mail, ~0,20€
 - `post_open` (16:15 Berlin): Hauptrun, Phase 0–4, Mail (bisheriger pre_market)
 - `close` (22:30 Berlin): DB-Pflege + TP/SL-Evaluierung (bisher separate evaluate-Run)
-
-### C — Run-Type-Erkennungs-Bug fixen
-**Problem:** `analyze.yml` ermittelt den Run-Type per Uhrzeit-Matching statt via `github.event.schedule`. Das führt zu DST-Bugs:
-- Cron `0 13 * * 1-5` feuert um 13:00 UTC = **15:00 Berlin (CEST)**
-- Code prüft aber `HOUR=14` für `pre_market` → trifft im Sommer nie zu → fällt auf `close` zurück
-- `0 17 * * 1-5` = 19:00 Berlin, Code prüft `HOUR=16` für `midday` → gleiches Problem
-
-**Fix:** Entweder `github.event.schedule`-String direkt matchen, oder separate Job-Steps pro Cron-Trigger mit `if: github.event.schedule == '...'`.
 
 ### D — SendGrid Status prüfen
 E-Mail-Versand ist implementiert aber nie live getestet. Vor erstem echten Lauf sicherstellen:
@@ -125,12 +122,17 @@ E-Mail-Versand ist implementiert aber nie live getestet. Vor erstem echten Lauf 
 
 | # | Datei | Bug | Schwere |
 |---|---|---|---|
-| B-01 | `analyze.yml` | Run-Type-Erkennung per Uhrzeit bricht bei DST: pre_market und midday werden im Sommer nie korrekt erkannt | Hoch |
-| B-02 | `main.py:run_evaluate()` | Hardcoded `YFinanceProvider()` statt Capital.com — evaluate läuft auf veralteten Daten | Mittel |
 | B-03 | `config.py:SP500_FULL_TICKERS` | Ist Stub (= MVP-Liste), `USE_FULL_SP500=true` würde nur 20 Ticker laufen lassen | Mittel |
-| B-04 | `analyze.yml` | Cron-Zeiten im Kommentar stimmen nicht mit Zeit-Matching im Shell-Script überein (evaluate: `0 14` = 16:00 Berlin, Code prüft `HOUR=15`) | Niedrig |
 | B-05 | `main.py:_guess_aborted_phase()` | Gibt immer `"policy_monitor"` zurück, egal wo der Abort war | Niedrig |
 | B-06 | `config.py` vs `guardrails.py` | MAX_HOLD_DAYS=5 in config.py, aber guardrails.py und evaluator.py nutzen hardcoded 3 — Widerspruch | Niedrig |
+
+**Behoben (2026-07-09, Commit `d17c2f5`):**
+
+| # | Datei | Bug | Fix |
+|---|---|---|---|
+| B-01 | `analyze.yml` | Run-Type-Erkennung per Uhrzeit brach bei DST | Matcht jetzt `github.event.schedule`-String direkt via `case` |
+| B-02 | `main.py:run_evaluate()` | Hardcoded `YFinanceProvider()` | Nutzt jetzt `CapitalComProvider()` |
+| B-04 | `analyze.yml` | Cron-Kommentar/Code-Mismatch | Hinfällig, da Matching nicht mehr über geparste Uhrzeit läuft |
 
 ---
 
@@ -147,7 +149,7 @@ E-Mail-Versand ist implementiert aber nie live getestet. Vor erstem echten Lauf 
 | Capital.com Session-Level Auth | Ein Session-Object pro Run (lazy init); nicht je Request neu authentifizieren |
 | Fundamentals 7-Tage-Cache in SQLite | Finnhub Free hat Limits; Fundamentals ändern sich selten |
 | `extract_json_blob()` mit `raw_decode` | Claude hängt oft Text nach dem JSON; JSONDecoder.raw_decode toleriert das |
-| Provider-Hierarchie: Capital.com → Finnhub → yFinance | Fallback ist OK für MVP; Sprint 3 entfernt yFinance |
+| Provider-Hierarchie: Capital.com (alleinig) → Finnhub (nur Fundamentals) | yFinance seit Sprint 3 entfernt (Commit `d17c2f5`, 2026-07-09); kein Fallback mehr für OHLC |
 | DB-Persistenz via GitHub Releases (`db-latest`) | Kein externer Storage nötig; funktioniert mit kostenlosen GH Actions |
 | 8 Score-Dimensionen mit festem Gewicht | market_env 10%, company 18%, valuation 12%, momentum 22%, risk 10%, sector 10%, catalyst 10%, policy 8% — nicht ändern ohne A/B-Test |
 | `CostCapExceeded` bricht Phasen ab, sendet trotzdem Mail | Partielle Ergebnisse sind besser als gar keine |
@@ -160,9 +162,9 @@ E-Mail-Versand ist implementiert aber nie live getestet. Vor erstem echten Lauf 
 
 2. **Nie echte Orders ausführen** — `SIMULATION_ONLY=True` ist sakrosankt. Kein Code darf je `requests.post(...positions...)` für echte Trades aufrufen.
 
-3. **Capital.com ist Primary, yFinance ist Fallback** — kein neuer Code soll yFinance direkt aufrufen, wenn Capital.com verfügbar ist. In Sprint 3 wird yFinance komplett entfernt.
+3. **Capital.com ist alleiniger OHLC-Provider** — yFinance wurde in Sprint 3 entfernt (Commit `d17c2f5`, 2026-07-09). Kein neuer Code darf yFinance importieren oder als Fallback wieder einführen.
 
-4. **Provider-Fallback-Logik nicht umgehen** — der Pattern `CapitalComProvider() if config.CAPITAL_COM_API_KEY else YFinanceProvider()` ist überall konsistent zu halten bis yFinance entfernt ist.
+4. **Kein Fallback-Pattern mehr nötig** — `run_pipeline()`, `run_close()` und `run_evaluate()` instanziieren `CapitalComProvider()` unconditional. Nicht wieder ein `if config.CAPITAL_COM_API_KEY else ...`-Fallback einbauen.
 
 5. **Migrations-Guards in `_apply_migrations()`** — neue Spalten immer per `PRAGMA table_info()` prüfen vor `ALTER TABLE`, nie direkt ausführen.
 
