@@ -30,11 +30,11 @@ Shares_Future/
 │   ├── deep_analysis.py    # Phase 3: Claude + Web-Search
 │   ├── commodities_crypto.py # Phase 3b: Gold, Silber, Öl, BTC, ETH, SOL, XRP
 │   ├── ranking.py          # Phase 4: Ranking + SQLite
-│   ├── learning_module.py  # Long/Short Lernmodul getrennt
-│   ├── prompt_optimizer.py # Automatische Prompt-Verbesserung
 │   ├── email_sender.py     # Tages + Wochen-Mail
 │   ├── guardrails.py       # Qualitätskontrolle (Pflicht)
-│   └── utils.py
+│   ├── utils.py
+│   # learning_module.py  → noch nicht implementiert (Sprint 3, Punkt E)
+│   # prompt_optimizer.py → noch nicht implementiert (Sprint 3, Punkt F)
 ├── setup/
 │   └── historical_loader.py  # 3-Jahres-Pull via Capital.com
 ├── data/
@@ -120,14 +120,15 @@ ANTHROPIC_API_KEY=...
 SENDGRID_API_KEY=...
 EMAIL_TO=...
 EMAIL_FROM=...
-CAPITAL_COM_API_KEY=...   # Capital.com Demo API Key
-CAPITAL_COM_PASSWORD=...  # Capital.com Demo Passwort
-FINNHUB_API_KEY=...       # Finnhub Free (Fundamentals)
+CAPITAL_COM_API_KEY=...    # Capital.com Demo API Key
+CAPITAL_COM_IDENTIFIER=... # Capital.com Account-E-Mail/Login
+CAPITAL_COM_PASSWORD=...   # Capital.com Demo Passwort
+FINNHUB_API_KEY=...        # Finnhub Free (Fundamentals)
 ```
 
 ## GitHub Secrets (für Actions)
 ANTHROPIC_API_KEY, SENDGRID_API_KEY, EMAIL_TO, EMAIL_FROM,
-CAPITAL_COM_API_KEY, CAPITAL_COM_PASSWORD, FINNHUB_API_KEY
+CAPITAL_COM_API_KEY, CAPITAL_COM_IDENTIFIER, CAPITAL_COM_PASSWORD, FINNHUB_API_KEY
 
 ## Scoring
 8 Dimensionen, Gewichtung:
