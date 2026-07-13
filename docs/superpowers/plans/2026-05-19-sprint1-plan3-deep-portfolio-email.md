@@ -10,7 +10,7 @@
 
 **Tech Stack:** Python 3.11+, Anthropic SDK (Sonnet + server-side web_search tool with prompt caching), pandas, yfinance, SendGrid, sqlite3, pytest, pytest-mock, freezegun.
 
-**Spec reference:** `docs/superpowers/specs/2026-05-19-shares-future-mvp-design.md` §3, §5 (CFD-Kurzfrist-Schema), §6 (Guardrails), §7 (Cron), §9 (Tests), §10 rows 11-21.
+**Spec reference:** `docs/superpowers/specs/2026-05-19-trading-harry-mvp-design.md` §3, §5 (CFD-Kurzfrist-Schema), §6 (Guardrails), §7 (Cron), §9 (Tests), §10 rows 11-21.
 
 **Foundation reference:** Plan 2 merged as `135bac5`. Available:
 - `config.py` — incl. `SP500_MVP_TICKERS`, `COMMODITY_TICKERS`, `CRYPTO_TICKERS`, `DIMENSION_WEIGHTS`, `RR_RATIO_MIN_HARD=1.5`, `MOMENTUM_LONG_MIN=6.0`, `MOMENTUM_SHORT_MAX=4.0`, `MAX_COST_PER_RUN_EUR=4.00`, `CLAUDE_PARALLEL_CALLS=5`.

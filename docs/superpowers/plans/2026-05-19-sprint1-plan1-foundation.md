@@ -10,7 +10,7 @@
 
 **Tech Stack:** Python 3.11+, sqlite3 (stdlib), pandas, pandas-ta, yfinance, finnhub-python, anthropic SDK, pytest, pytest-cov.
 
-**Spec reference:** `docs/superpowers/specs/2026-05-19-shares-future-mvp-design.md`
+**Spec reference:** `docs/superpowers/specs/2026-05-19-trading-harry-mvp-design.md`
 
 ---
 
@@ -1734,7 +1734,7 @@ git commit -m "Add coverage tests for foundation modules"
 
 ## Self-Review Notes
 
-**Spec coverage** (against `docs/superpowers/specs/2026-05-19-shares-future-mvp-design.md`):
+**Spec coverage** (against `docs/superpowers/specs/2026-05-19-trading-harry-mvp-design.md`):
 
 | Spec section | Task | Status |
 |---|---|---|

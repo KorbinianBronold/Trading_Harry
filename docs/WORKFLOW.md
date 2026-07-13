@@ -238,7 +238,7 @@ In GitHub Repo Settings → Secrets and variables → Actions:
 | `ANTHROPIC_API_KEY` | sk-ant-... | https://console.anthropic.com |
 | `SENDGRID_API_KEY` | SG.xxx... | https://app.sendgrid.com/settings/api_keys |
 | `EMAIL_TO` | korbinian.bronold@gmail.com | Deine E-Mail |
-| `EMAIL_FROM` | noreply@shares-future.com | SendGrid Verified Sender |
+| `EMAIL_FROM` | noreply@trading-harry.com | SendGrid Verified Sender |
 | `CAPITAL_COM_API_KEY` | ... | Capital.com Demo Account |
 | `CAPITAL_COM_PASSWORD` | ... | Capital.com Demo Account |
 | `FINNHUB_API_KEY` | ... | https://finnhub.io |

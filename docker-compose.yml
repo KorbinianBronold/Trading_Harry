@@ -1,13 +1,12 @@
 services:
-  shares-future-cron:
+  trading-harry:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: shares_future_cron
+    container_name: shares_future
     environment:
       TZ: Europe/Berlin
     env_file:
       - .env
     volumes:
       - ./data:/app/data
-    restart: unless-stopped

@@ -10,7 +10,7 @@
 
 **Tech Stack:** Python 3.11+, pandas, pandas-ta (RSI/MACD/ATR/BB/SMA), yfinance + finnhub (already wrapped), Anthropic SDK with prompt caching + server-side web_search tool, sqlite3, pytest, pytest-mock, freezegun.
 
-**Spec reference:** `docs/superpowers/specs/2026-05-19-shares-future-mvp-design.md` §1, §3, §4, §6, §10 rows 8-10.
+**Spec reference:** `docs/superpowers/specs/2026-05-19-trading-harry-mvp-design.md` §1, §3, §4, §6, §10 rows 8-10.
 
 **Foundation reference:** Plan 1 merged as `7110f29`. Available: `config.py`, `src/utils.py` (`retry_with_backoff`, `call_claude`, `ClaudeResult`), `src/db.py` (schema + upsert/save helpers), `src/providers/{base,yfinance,finnhub,paid}_provider.py`, `src/guardrails.py`, `src/cost_tracker.py` (`CostTracker`, `CostCapExceeded`), `tests/conftest.py` (`in_memory_db`, `tmp_db_path`, `sample_ticker_data`).
 
@@ -1997,7 +1997,7 @@ git commit -m "Add coverage tests for collector/trend/quick-filter modules"
 
 ## Self-Review Notes
 
-**Spec coverage** (against `docs/superpowers/specs/2026-05-19-shares-future-mvp-design.md`):
+**Spec coverage** (against `docs/superpowers/specs/2026-05-19-trading-harry-mvp-design.md`):
 
 | Spec section | Task | Status |
 |---|---|---|
