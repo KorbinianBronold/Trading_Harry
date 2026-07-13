@@ -22,7 +22,7 @@ Das System folgt einer **Pipeline-Architektur** mit 6 Phasen (Phase 0–5), die 
 ┌─────────────────────────────────────────────────────────────────┐
 │                  PHASE 1: DATENSAMMLUNG                          │
 │  Input: —                                                         │
-│  Quelle: Capital.com (primary) / yfinance (fallback)            │
+│  Quelle: Capital.com (alleiniger OHLC-Provider, kein Fallback)   │
 │           500 Aktien + Commodities/Crypto                        │
 │           1 Bar täglich fetchen + letzte 200 aus DB              │
 │  Berechnen: RSI-14, MACD, ATR, SMA200, PE, Volume-Ratio, etc.   │
@@ -60,7 +60,7 @@ Das System folgt einer **Pipeline-Architektur** mit 6 Phasen (Phase 0–5), die 
 │  8-Dim Score: market_env, company_quality, valuation, momentum, │
 │              risk, sector_trend, catalyst, policy_risk           │
 │  Cost: ~2.50 EUR (biggest cost)                                  │
-│  Guardrails: R/R ≥ 1.5, hold_days ≤ 5, intraday_range ≥ 1%    │
+│  Guardrails: R/R ≥ 1.5, hold_days ≤ 3, intraday_range ≥ 1%    │
 │  Fail: ✅ Skip Ticker, continue                                   │
 │  Order: Sequential (nicht parallel) für deterministisches Cost-Tracking│
 └─────────────────────────────────────────────────────────────────┘
@@ -79,7 +79,7 @@ Das System folgt einer **Pipeline-Architektur** mit 6 Phasen (Phase 0–5), die 
                               ↓
 ┌─────────────────────────────────────────────────────────────────┐
 │       PHASE 4a: PORTFOLIO-CHECK (Offene Positionen)              │
-│  Input: db.predictions[status='open' & date ≤ 5 days ago],      │
+│  Input: db.predictions[status='open' & date ≤ 3 days ago],      │
 │         current_snapshots, trend_context, policy_context        │
 │  Claude: Sonnet × N offene Positionen + web_search              │
 │  Output: list[{prediction_id, action="HALTEN|SCHLIESSEN|..."}]  │
@@ -242,7 +242,7 @@ def analyze_asset(
     }
     
     Guardrails (nach dieser Funktion geprüft):
-    - hold_days > 5 → reject
+    - hold_days > 3 → reject
     - intraday_range < 1.0 → reject
     - R/R < 1.5 → reject
     - direction = "none" → reject (beide Scores gleich)
@@ -318,7 +318,7 @@ def analyze_commodities_and_crypto(
 
 ### 6. **`src/portfolio_check.py`** (Phase 4a)
 
-Evaluiert täglich alle offenen Positionen (max 5 Tage alt).
+Evaluiert täglich alle offenen Positionen (max 3 Tage alt).
 
 ```python
 def check_open_positions(
@@ -331,7 +331,7 @@ def check_open_positions(
     cost_tracker: CostTracker,
 ) -> list[dict]:
     """
-    Für jede offene Position (≤ 5 Tage alt):
+    Für jede offene Position (≤ 3 Tage alt):
       - Sonnet + web_search Call
       - Returns: {prediction_id, action:"HALTEN"|"SCHLIESSEN"|"ANPASSEN",
                  reason, new_sl_price, new_tp_price, market_context_changed}
@@ -360,7 +360,7 @@ def rank_and_persist(
 ) -> dict:
     """
     Logik:
-    1. Guardrail-Filter (hold_days ≤ 5, intraday_range ≥ 1%, R/R ≥ 1.5, no "none")
+    1. Guardrail-Filter (hold_days ≤ 3, intraday_range ≥ 1%, R/R ≥ 1.5, no "none")
     2. Split Long/Short
     3. Sort by probability_pct DESC
     4. Keep Top 10 each, ALL commodities/crypto
@@ -387,7 +387,7 @@ def evaluate_open_predictions(
     """
     Für jede offene & learnable & date<today Prediction:
       1. Fetch OHLC-Fenster [pred.date → today]
-      2. Walk-Forward Hit-Check (max 5 Bars)
+      2. Walk-Forward Hit-Check (max 3 Bars)
       3. Bestimme exit_reason + exit_price + days_to_close
       4. Atomisch update outcomes-Row + prediction.status
     
@@ -447,7 +447,7 @@ class GuardrailsChecker:
         1. Alle 8 Dimensionen vorhanden + scores 0-10
         2. Jede Dimension ≥ 2 Belege
         3. R/R Ratio ≥ 1.5
-        4. hold_days_recommended: 1-5
+        4. hold_days_recommended: 1-3
         5. intraday_range_pct ≥ 1.0
         6. direction ≠ "none"
         """
@@ -470,7 +470,7 @@ SQLite-Schema + Persistence.
 
 **Wichtige Helpers:**
 - `save_prediction(conn, pred_dict)` – Phase 4
-- `load_open_predictions_within_max_age_days(conn, today, max_trading_days=5)` – Phase 4a
+- `load_open_predictions_within_max_age_days(conn, today, max_trading_days=3)` – Phase 4a
 - `update_outcome_close(conn, pred_id, exit_reason, exit_price, ...)` – Evaluator
 - `load_recent_outcomes(conn, days=7)` – Weekly Email
 
@@ -517,7 +517,7 @@ heute = 2026-05-20, run_type = "close"
 
   ↓
 [Phase 1] collect(provider, sp500_tickers)
-  → yfinance × 500 (0.8s/Ticker, 12s/30er-Batch)
+  → Capital.com × 500 (incremental: 1 Bar/Ticker, Indikatoren aus DB)
   ← 487 OK, 13 skipped
   ✓ costs ~0.00 EUR
 
@@ -574,7 +574,7 @@ TOTAL: ~3.50 EUR
 ## Invarianten (Never Violated)
 
 1. **SIMULATION_ONLY=True** – Niemals echte Order-Ausführung
-2. **CFD-Kurzfristfokus** – hold_days ≤ 5 (`MAX_HOLD_DAYS = 5`), intraday_range ≥ 1%; SP500_MIN_ATR_PCT = 2.0
+2. **CFD-Kurzfristfokus** – hold_days ≤ 3 in der Code-Realität (hardcoded in `guardrails.py`, `evaluator.py`, `portfolio_check.py`); `config.py` deklariert davon abweichend `MAX_HOLD_DAYS = 5` — bekannte, ungelöste Diskrepanz (siehe `PROJECT_STATUS.md` Bug B-06, Entscheidung steht noch aus). intraday_range ≥ 1%; SP500_MIN_ATR_PCT = 2.0
 3. **Phase 0 ist fatal** – TrendAnalyzerError → no email
 4. **Billing vor Parse** – `cost_tracker.add_from_result()` VOR JSON-Extraktion
 5. **Guardrail-Pflicht** – Vor Phase 4 Ranking MÜSSEN alle Analysen durch Checks

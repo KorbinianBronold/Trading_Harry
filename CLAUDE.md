@@ -11,7 +11,6 @@ Kein automatisches Trading. Nur Research und Paper-Trading Simulation.
 - Anthropic Claude API (claude-sonnet-4-6)
 - Capital.com Demo API (primary OHLC, 600 Calls/Min, kostenlos)
 - Finnhub Free (Fundamentals, 7-Tage Cache)
-- yfinance (Fallback wenn Capital.com nicht verfügbar)
 - SQLite für Tracking und Lernmodul
 - SendGrid für E-Mail Reports
 - GitHub Actions für Scheduling (6 Run-Types täglich)
@@ -23,8 +22,7 @@ Shares_Future/
 ├── src/
 │   ├── providers/          # DataProvider Interface
 │   │   ├── base.py
-│   │   ├── capital_provider.py  # Capital.com (primary OHLC + positions)
-│   │   ├── yfinance_provider.py # Fallback
+│   │   ├── capital_provider.py  # Capital.com (alleiniger OHLC-Provider + positions)
 │   │   └── finnhub_provider.py  # Fundamentals (gecacht)
 │   ├── data_collector.py   # Phase 1: Datenabruf
 │   ├── trend_analyzer.py   # Phase 0: Megatrend-Analyse
@@ -52,7 +50,7 @@ Shares_Future/
 ## Analyse-Pipeline
 ```
 Phase 0: Trend-Analyse     → Megatrends identifizieren
-Phase 1: Datenabruf        → Capital.com (primary) / yfinance (fallback)
+Phase 1: Datenabruf        → Capital.com (alleiniger OHLC-Provider)
                              500 Aktien + Commodities + Crypto
                              1 Bar täglich fetchen + letzte 200 aus DB
 Phase 2: Quick-Filter      → Batches à 30, kein Web-Search, Top 80
@@ -63,7 +61,7 @@ Phase 5: E-Mail            → 3 Sektionen: Aktien, Trends, Commodities/Crypto
 ```
 
 ## Wichtige Designentscheidungen
-- Provider-Hierarchie: Capital.com (primary OHLC) → Finnhub (Fundamentals, gecacht) → yfinance (Fallback)
+- Provider-Hierarchie: Capital.com (alleiniger OHLC-Provider) → Finnhub (Fundamentals, gecacht) — yfinance seit Sprint 3 entfernt (2026-07-09)
 - Guardrails: jede Analyse braucht min. 2 Belege je Score-Dimension
 - Long/Short getrennt tracken und optimieren
 - Übersprungene Aktien: learnable=False, nie ins Lernmodul
@@ -74,14 +72,19 @@ Phase 5: E-Mail            → 3 Sektionen: Aktien, Trends, Commodities/Crypto
 - Prompts versioniert mit A/B-Testing
 
 ## Cron-Jobs (Berliner Zeit)
-| Run-Type         | Zeit (Berlin) | Kosten   | Beschreibung                              |
-|------------------|---------------|----------|-------------------------------------------|
-| pre_market       | 14:00         | ~3,20 EUR | Vollständige Pipeline Phase 0–4, Mail      |
-| evaluate         | 15:00         | ~0,00 EUR | Nur TP/SL-Check, kein Claude, kein Mail   |
-| midday           | 16:15         | ~3,20 EUR | Vollständige Pipeline Phase 0–4, Mail      |
-| position_check   | 17:30 (NEU)   | ~0,20 EUR | Capital.com GET /positions + Claude + Mail |
-| close            | 22:30         | ~0,00 EUR | NUR DB-Pflege, kein Claude, kein Mail     |
-| weekly           | So 20:00      | ~0,00 EUR | Wochenperformance-Mail                    |
+Ist-Zustand, aus `.github/workflows/analyze.yml` (Cron ist UTC-fix, GitHub Actions
+passt nicht an DST an — Zeiten unten gelten für CEST/Sommer, im Winter (CET) läuft
+alles 1h früher). Diese Struktur ist als veraltet markiert und soll laut
+Sprint-3-Backlog (`docs/superpowers/specs/PROJECT_STATUS.md`, Punkt B) umgebaut werden.
+
+| Run-Type         | Zeit (Berlin, CEST) | Kosten   | Beschreibung                              |
+|------------------|----------------------|----------|-------------------------------------------|
+| pre_market       | 15:00                | ~3,20 EUR | Vollständige Pipeline Phase 0–4, Mail      |
+| evaluate         | 16:00                | ~0,00 EUR | Nur TP/SL-Check, kein Claude, kein Mail   |
+| midday           | 19:00                | ~3,20 EUR | Vollständige Pipeline Phase 0–4, Mail      |
+| position_check   | 17:30                | ~0,20 EUR | Capital.com GET /positions + Claude + Mail |
+| close            | 22:30                | ~0,00 EUR | NUR DB-Pflege, kein Claude, kein Mail     |
+| weekly           | So 20:00              | ~0,00 EUR | Wochenperformance-Mail                    |
 
 **Gesamt/Tag:** ~6,60 EUR | **Gesamt/Monat (500 Ticker):** ~145 EUR | **MVP (20 Ticker):** ~29 EUR
 
@@ -136,10 +139,12 @@ CFD Simulation: 500 EUR Margin, 5:1 Hebel = 2500 EUR Exposure
 
 ## Sprint-Übersicht
 - **Sprint 1:** ERLEDIGT — 159 Tests, 89.62% Coverage, gemerged in main (2026-05-20)
-- **Sprint 2 / Plan 1:** Plan geschrieben (2026-05-22), Implementierung ausstehend
+- **Sprint 2 / Plan 1:** ERLEDIGT — gemerged 2026-05-22
   - Plan: `docs/superpowers/plans/2026-05-21-sprint2-plan1-capital-provider-db-incremental.md`
   - Scope: capital_provider.py, fundamentals_cache, DB-Incremental, position_check, Timezone-Fix, historical_loader
-- **Sprint 3:** offen — Learning Module, Prompt-Optimizer, A/B-Testing
+- **Sprint 3:** in Arbeit — aktueller Stand siehe `docs/superpowers/specs/PROJECT_STATUS.md` (dort vor jeder neuen Implementierung lesen)
+  - Bereits erledigt: yfinance-Entfernung, DST-Bug-Fix (beide 2026-07-09)
+  - Noch offen: Cron-Struktur-Umbau, Learning Module, Prompt-Optimizer, volle 500-Ticker-Liste
 
 ## Vollständige Spezifikation
 Siehe docs/SPECIFICATION.md für alle Details zu:
