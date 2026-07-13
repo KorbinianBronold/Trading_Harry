@@ -67,6 +67,7 @@ Bereits erledigt, obwohl noch keine Sprint-3-Abschlussmeldung erfolgt ist:
 | yFinance komplett entfernt | `d17c2f5` (2026-07-09) | `src/providers/yfinance_provider.py` gelöscht, `yfinance` aus `requirements.txt`, `config.py` (`YFINANCE_*` → `CAPITAL_COM_BATCH_PAUSE`), `main.py` (`run_pipeline()`, `run_close()`, `run_evaluate()` instanziieren jetzt unconditional `CapitalComProvider()`), Tests entsprechend angepasst. Capital.com ist seither alleiniger OHLC-Provider ohne Fallback. |
 | DST-Bug (ehem. Bug B-01) mitgefixt | `d17c2f5` (2026-07-09) | `analyze.yml`: Run-Type-Erkennung matcht jetzt `github.event.schedule`-String direkt per `case`, statt Uhrzeit zu parsen. Damit auch Bug B-04 (Kommentar/Code-Mismatch) hinfällig. |
 | Toter Code entfernt | `e198520`, `b3d743c` (2026-07-09) | `src/providers/paid_provider.py` + zugehöriger Test gelöscht (unbenutzter Stub, nicht Teil der dokumentierten Architektur). |
+| Lokaler Docker-Cron-Runner hinzugefügt | (2026-07-13) | `Dockerfile`, `docker-compose.yml`, `docker/crontab`, `docker/entrypoint.sh` — spiegelt `analyze.yml` als echte Berlin-Lokalzeit für lokales Testen ohne GitHub Actions. **`docker/crontab` muss bei jeder Änderung an Punkt B (Cron-Struktur-Umbau) mit aktualisiert werden.** |
 
 Noch offen aus dem ursprünglichen Sprint-3-Scope: Punkte B, E, F, G unten sowie Bugs B-03, B-05, B-06.
 

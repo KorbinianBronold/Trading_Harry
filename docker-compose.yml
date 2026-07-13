@@ -1,0 +1,13 @@
+services:
+  shares-future-cron:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: shares_future_cron
+    environment:
+      TZ: Europe/Berlin
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped

@@ -114,6 +114,26 @@ pytest tests/ --cov=src --cov-fail-under=80
 pytest tests/unit/test_guardrails.py -v
 ```
 
+## Lokales Docker-Setup
+Spiegelt `.github/workflows/analyze.yml` fuer lokales Testen ohne GitHub Actions.
+Dateien: `Dockerfile`, `docker-compose.yml`, `docker/crontab`, `docker/entrypoint.sh`.
+
+```bash
+# Cron-Container bauen + im Hintergrund laufen lassen (alle 6 Run-Types nach Zeitplan)
+docker compose up -d --build
+
+# Einzelnen Run-Type manuell ausloesen (Container muss nicht laufen)
+docker compose run --rm shares-future-cron python main.py --run-type pre_market
+
+# Logs verfolgen
+tail -f data/cron.log
+```
+
+**Wichtig:** `docker/crontab` dupliziert die Run-Type-Zeiten aus `analyze.yml` als
+echte Berlin-Lokalzeit (kein UTC/DST-Drift wie bei GH Actions). Bei jeder Aenderung
+an Cron-Struktur oder Run-Types (Sprint-3-Punkt B) **muss `docker/crontab` mit
+aktualisiert werden** — s. Sync-Hinweis in der Datei selbst.
+
 ## Environment Variables (.env)
 ```
 ANTHROPIC_API_KEY=...

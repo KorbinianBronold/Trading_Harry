@@ -7,9 +7,10 @@ __pycache__/
 htmlcov/
 data/tracking.db
 data/*.json
+data/*.log
 *.egg-info/
 .venv/
 venv/
 .worktrees/
 notes
-claude_commands.txt
+claude_commands.md

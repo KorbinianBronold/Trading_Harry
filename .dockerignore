@@ -1,0 +1,15 @@
+.git
+.gitignore
+.env
+venv/
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.coverage
+htmlcov/
+data/
+.worktrees/
+notes
+claude_commands.txt
+.claude/
