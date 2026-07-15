@@ -65,6 +65,8 @@ def _build_user_message(
     trend_context: dict,
     policy_context: dict,
 ) -> str:
+    """Serializes trend/policy context, the quick-filter pre-score, and one ticker
+    snapshot into the user message sent to Claude for a single deep analysis."""
     parts = [
         "TREND CONTEXT:", json.dumps(trend_context, ensure_ascii=False),
         "\nPOLICY CONTEXT:", json.dumps(policy_context, ensure_ascii=False),

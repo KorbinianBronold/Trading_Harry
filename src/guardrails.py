@@ -1,3 +1,6 @@
+"""Quality gate every deep-analysis/commodities-crypto result must pass before it's
+eligible for ranking — enforces required fields, evidence counts, R/R ratio, signal
+consistency, and CFD-specific hold-day/intraday-range limits."""
 from dataclasses import dataclass
 import config
 
@@ -20,6 +23,9 @@ class GuardrailsChecker:
     )
 
     def check_analysis(self, a: dict) -> tuple[bool, list[str]]:
+        """Validates one analysis dict against all guardrail rules and returns
+        (passed, error_messages). Short-circuits with just the missing-field
+        errors if any required field is absent."""
         errors: list[str] = []
 
         for f in self.REQUIRED_FIELDS:

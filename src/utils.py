@@ -1,3 +1,6 @@
+"""Cross-cutting helpers used by every Claude-calling module: retry decorator,
+the Anthropic API wrapper with prompt caching, and tolerant JSON extraction from
+Claude's text responses."""
 import logging
 import time
 from functools import wraps
@@ -15,6 +18,8 @@ def retry_with_backoff(
     base_delay: float = 1.0,
     exceptions: tuple = (Exception,),
 ) -> Callable:
+    """Decorator factory: retries the wrapped function up to max_retries times with
+    exponential backoff, re-raising the last exception if all attempts fail."""
     def decorator(fn: Callable) -> Callable:
         @wraps(fn)
         def wrapper(*args, **kwargs):
@@ -64,6 +69,9 @@ def call_claude(
     max_tokens: int = 4096,
     tools: list | None = None,
 ) -> ClaudeResult:
+    """Calls the Anthropic API with the system prompt cached (ephemeral), retries
+    on transient failures, and returns a ClaudeResult with text, token, and
+    web-search-call counts."""
     if _anthropic_client is None:
         raise RuntimeError("ANTHROPIC_API_KEY not configured")
 

@@ -31,11 +31,15 @@ class CapitalComProvider(DataProvider):
     _source_name = "capital.com"
 
     def __init__(self) -> None:
+        """Initializes an unauthenticated instance; the session is created lazily
+        on the first API call."""
         self._cst: str | None = None
         self._security_token: str | None = None
         self._auth_failed: bool = False
 
     def _ensure_session(self) -> None:
+        """Authenticates once (POST /session) and caches the CST/security-token
+        headers; skips re-authenticating if a prior attempt already failed."""
         if self._auth_failed:
             raise RuntimeError("Capital.com session auth previously failed — skipping")
         if self._cst:
@@ -61,6 +65,8 @@ class CapitalComProvider(DataProvider):
         self._security_token = resp.headers.get("X-SECURITY-TOKEN")
 
     def _headers(self) -> dict:
+        """Returns the auth headers required on every Capital.com API call,
+        triggering session creation first if needed."""
         self._ensure_session()
         return {
             "X-CAP-API-KEY":    config.CAPITAL_COM_API_KEY,
@@ -69,9 +75,13 @@ class CapitalComProvider(DataProvider):
         }
 
     def _map(self, ticker: str) -> str:
+        """Translates an internal ticker symbol to its Capital.com epic, or
+        returns it unchanged if no mapping exists."""
         return TICKER_MAP.get(ticker, ticker)
 
     def _parse_prices(self, prices: list[dict]) -> pd.DataFrame | None:
+        """Converts Capital.com's raw price list into a bid-price OHLCV
+        DataFrame indexed by date, or None if the input is empty."""
         if not prices:
             return None
         rows = []
@@ -92,6 +102,8 @@ class CapitalComProvider(DataProvider):
         return df if not df.empty else None
 
     def get_price_history(self, ticker: str, days: int = 90) -> pd.DataFrame | None:
+        """Fetches the last `days` daily bars for `ticker`; returns None on any
+        request/parse failure instead of raising."""
         epic = self._map(ticker)
         try:
             resp = requests.get(
@@ -109,6 +121,8 @@ class CapitalComProvider(DataProvider):
     def get_ohlc_after(
         self, ticker: str, start_date: str, end_date: str,
     ) -> pd.DataFrame | None:
+        """Fetches daily bars for `ticker` between start_date and end_date
+        (inclusive); returns None on any request/parse failure."""
         epic = self._map(ticker)
         # Capital.com filters by snapshotTimeUTC. 'to=DATE T00:00:00' includes that
         # date's bar. 'to' must not exceed today's midnight — future dates → 400.
@@ -137,12 +151,16 @@ class CapitalComProvider(DataProvider):
             return None
 
     def get_last_available_date(self, ticker: str) -> str | None:
+        """Returns the most recent date Capital.com has a bar for `ticker`, or
+        None if no data is available."""
         df = self.get_price_history(ticker, days=5)
         if df is None or df.empty:
             return None
         return df.index[-1].strftime("%Y-%m-%d")
 
     def get_premarket_price(self, ticker: str) -> float | None:
+        """Returns the current bid price for `ticker` from the live market
+        snapshot, or None on failure."""
         epic = self._map(ticker)
         try:
             resp = requests.get(
@@ -158,6 +176,8 @@ class CapitalComProvider(DataProvider):
             return None
 
     def get_open_positions(self) -> list[dict]:
+        """Returns all currently open demo-account positions as a list of dicts
+        (ticker, direction, entry/current price, TP/SL, P&L); empty list on failure."""
         try:
             resp = requests.get(
                 f"{config.CAPITAL_COM_BASE_URL}/api/v1/positions",
@@ -185,6 +205,8 @@ class CapitalComProvider(DataProvider):
             return []
 
     def get_closed_positions(self, date: str) -> list[dict]:
+        """Returns positions that were closed on `date`, filtered from the account
+        activity log; empty list on failure or if none closed."""
         try:
             resp = requests.get(
                 f"{config.CAPITAL_COM_BASE_URL}/api/v1/history/activity",
@@ -218,7 +240,11 @@ class CapitalComProvider(DataProvider):
             return []
 
     def get_fundamentals(self, ticker: str) -> dict:
+        """Not supported by Capital.com — always returns {}; FinnhubProvider
+        supplies fundamentals instead."""
         return {}
 
     def get_earnings_calendar(self, ticker: str) -> dict:
+        """Not supported by Capital.com — always returns {}; FinnhubProvider
+        supplies the earnings calendar instead."""
         return {}

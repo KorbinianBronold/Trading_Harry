@@ -42,6 +42,7 @@ RUN_TYPES = ["pre_market", "midday", "close", "evaluate", "weekly", "position_ch
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    """Parses CLI args: --run-type (required), --date, --db-path."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--run-type", required=True, choices=RUN_TYPES)
     parser.add_argument("--date", default=None,
@@ -62,6 +63,8 @@ def build_commodity_crypto_inputs() -> list[dict]:
 
 
 def _aggregate_yesterday_outcomes(conn, today: str) -> dict:
+    """Aggregates yesterday's evaluated outcomes into long/short hit counts and
+    total P&L, for the daily e-mail's performance footer."""
     yesterday = (date_cls.fromisoformat(today) - timedelta(days=1)).isoformat()
     rows = conn.execute(
         """SELECT pred_direction, COUNT(*) AS n,
@@ -321,6 +324,8 @@ def run_position_check(date: str, db_path: str) -> None:
 
 
 def run_evaluate(date: str, db_path: str) -> None:
+    """Walk-forward evaluates open predictions against fresh OHLC via Capital.com.
+    No Claude calls, no e-mail — pure DB maintenance."""
     conn = db.connect(db_path)
     db.init_schema(conn)
     price_provider = CapitalComProvider()
@@ -350,6 +355,8 @@ def run_weekly(date: str, db_path: str) -> None:
 
 
 def main(argv: list[str] | None = None) -> None:
+    """CLI entry point: dispatches to the right run_* function by --run-type and
+    e-mails a traceback (then exits 1) if the run raises unexpectedly."""
     ns = parse_args(argv)
     date = ns.date or datetime.now(BERLIN).date().isoformat()
     try:

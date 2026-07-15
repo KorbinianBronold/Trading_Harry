@@ -1,3 +1,6 @@
+"""Central configuration: env vars, ticker universes, scoring weights, and all
+trading/guardrail constants (CFD margin, hold-day limits, cost caps). No functions —
+pure module-level constants loaded once at import time."""
 import os
 from pathlib import Path
 from dotenv import load_dotenv

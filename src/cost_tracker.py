@@ -1,3 +1,5 @@
+"""Per-run Claude API cost accounting: prices every model call in EUR, tracks
+running totals, and raises once the configured hard cap is exceeded."""
 from dataclasses import dataclass, field
 import config
 
@@ -14,7 +16,7 @@ WEB_SEARCH_USD_PER_CALL = 0.01  # Approx Anthropic web search billing
 
 
 class CostCapExceeded(Exception):
-    pass
+    """Raised by CostTracker.add_call() once total_eur exceeds hard_cap_eur."""
 
 
 @dataclass
@@ -41,6 +43,8 @@ class CostTracker:
         cache_creation_tokens: int = 0,
         web_search_calls: int = 0,
     ) -> None:
+        """Prices one Claude call, adds it to the running totals, and raises
+        CostCapExceeded if the run's total cost now exceeds hard_cap_eur."""
         pricing = MODEL_PRICING.get(model)
         if pricing is None:
             raise ValueError(f"Unknown model pricing: {model}")
@@ -84,6 +88,8 @@ class CostTracker:
         )
 
     def summary(self, run_type: str, date: str) -> dict:
+        """Returns a flat dict of the run's cost totals, ready for db.save_cost_tracking()
+        or the e-mail footer."""
         hit_rate = 0.0
         if self.input_tokens > 0:
             hit_rate = self.cache_read_tokens / self.input_tokens

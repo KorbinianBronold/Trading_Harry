@@ -1,3 +1,5 @@
+"""SQLite schema definition, migrations, and every DB read/write helper used by
+the pipeline. All SQL lives here — phase modules never write raw SQL themselves."""
 import sqlite3
 from pathlib import Path
 from typing import Any
@@ -190,6 +192,7 @@ def _apply_migrations(conn: sqlite3.Connection) -> None:
 
 
 def connect(db_path: str | Path) -> sqlite3.Connection:
+    """Opens a SQLite connection with row_factory=sqlite3.Row and foreign keys enabled."""
     conn = sqlite3.connect(str(db_path))
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
@@ -197,12 +200,15 @@ def connect(db_path: str | Path) -> sqlite3.Connection:
 
 
 def init_schema(conn: sqlite3.Connection) -> None:
+    """Creates every table/index if missing and applies pending migrations.
+    Safe to call on every run — idempotent."""
     conn.executescript(SCHEMA_SQL)
     conn.commit()
     _apply_migrations(conn)
 
 
 def get_tables(conn: sqlite3.Connection) -> list[str]:
+    """Returns the names of all tables currently in the database."""
     rows = conn.execute(
         "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
     ).fetchall()
@@ -214,6 +220,7 @@ def upsert_price_history(
     open_: float, high: float, low: float, close: float, volume: int,
     source: str = "yfinance",
 ) -> None:
+    """Inserts or overwrites one price_history row for `ticker`/`date`."""
     conn.execute(
         """INSERT OR REPLACE INTO price_history
            (ticker, date, open, high, low, close, volume, source)
@@ -223,6 +230,7 @@ def upsert_price_history(
 
 
 def save_prediction(conn: sqlite3.Connection, pred: dict) -> int:
+    """Inserts one predictions row from a flat dict and returns its new id."""
     cols = [
         "date", "run_type", "asset_class", "ticker", "direction",
         "entry_price", "tp_price", "tp_pct", "sl_price", "sl_pct", "rr_ratio",
@@ -246,6 +254,7 @@ def save_prediction(conn: sqlite3.Connection, pred: dict) -> int:
 
 
 def load_open_predictions(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    """Returns every prediction still open and eligible for learning."""
     return conn.execute(
         "SELECT * FROM predictions WHERE status = 'open' AND learnable = 1"
     ).fetchall()
@@ -255,6 +264,7 @@ def close_prediction(
     conn: sqlite3.Connection, pred_id: int, status: str,
     closed_date: str, closed_price: float | None,
 ) -> None:
+    """Marks one prediction as closed with its final status, date, and price."""
     conn.execute(
         "UPDATE predictions SET status=?, closed_date=?, closed_price=? WHERE id=?",
         (status, closed_date, closed_price, pred_id),
@@ -263,6 +273,7 @@ def close_prediction(
 
 
 def save_outcome(conn: sqlite3.Connection, outcome: dict) -> int:
+    """Inserts one outcomes row from a flat dict and returns its new id."""
     cols = [
         "prediction_id", "direction", "evaluated_date",
         "price_after_eod", "price_change_eod_pct", "correct_direction_eod",
@@ -279,6 +290,7 @@ def save_outcome(conn: sqlite3.Connection, outcome: dict) -> int:
 
 
 def save_cost_tracking(conn: sqlite3.Connection, row: dict) -> None:
+    """Inserts one cost_tracking row from a CostTracker.summary() dict."""
     cols = [
         "date", "run_type", "total_eur", "claude_eur", "web_search_eur",
         "input_tokens", "output_tokens", "cache_read_tokens", "cache_hit_rate",
@@ -294,6 +306,8 @@ def save_cost_tracking(conn: sqlite3.Connection, row: dict) -> None:
 
 
 def cleanup_old_data(conn: sqlite3.Connection) -> None:
+    """Deletes news/trend/skipped-ticker rows past their retention window
+    (90/180/30 days respectively)."""
     conn.executescript(
         """
         DELETE FROM news_summaries WHERE date < date('now', '-90 days');
@@ -305,6 +319,7 @@ def cleanup_old_data(conn: sqlite3.Connection) -> None:
 
 
 def upsert_technical_indicators(conn: sqlite3.Connection, row: dict) -> None:
+    """Inserts or overwrites one technical_indicators row for a ticker/date."""
     cols = [
         "ticker", "date", "rsi_14", "macd_signal", "atr_pct",
         "bb_position", "above_sma20", "above_sma50", "above_sma200",
@@ -344,6 +359,8 @@ def log_skipped_ticker(
     ticker: str, date: str, run_type: str,
     reason: str, learnable: bool = False,
 ) -> None:
+    """Records that `ticker` was skipped on `date` and why, so it's excluded
+    from the learning module unless learnable=True."""
     conn.execute(
         """INSERT INTO skipped_tickers
            (ticker, date, run_type, reason, learnable)
@@ -354,6 +371,8 @@ def log_skipped_ticker(
 
 
 def save_position_recommendation(conn: sqlite3.Connection, row: dict) -> int:
+    """Inserts or overwrites one Phase-4a position_recommendations row and
+    returns its id."""
     cols = [
         "date", "run_type", "prediction_id", "action", "reason",
         "new_sl_price", "new_tp_price", "market_context_changed",
@@ -424,6 +443,7 @@ def update_outcome_close(
 def load_predictions_for_date(
     conn: sqlite3.Connection, date: str, run_type: str,
 ) -> list[sqlite3.Row]:
+    """Returns all predictions for a given date/run_type, best score first."""
     return conn.execute(
         """SELECT * FROM predictions
            WHERE date=? AND run_type=?
@@ -435,6 +455,8 @@ def load_predictions_for_date(
 def load_position_recommendations_for_date(
     conn: sqlite3.Connection, date: str, run_type: str,
 ) -> list[sqlite3.Row]:
+    """Returns Phase-4a recommendations for a date/run_type joined with their
+    underlying prediction (ticker, direction, entry/TP/SL)."""
     return conn.execute(
         """SELECT pr.*, p.ticker, p.direction, p.entry_price,
                   p.tp_price, p.sl_price
@@ -449,6 +471,8 @@ def load_position_recommendations_for_date(
 def load_recent_outcomes(
     conn: sqlite3.Connection, since_date: str,
 ) -> list[sqlite3.Row]:
+    """Returns outcomes evaluated on/after since_date, joined with their
+    prediction's ticker/direction/score/entry price, newest first."""
     return conn.execute(
         """SELECT o.*, p.ticker, p.direction AS pred_direction,
                   p.total_score, p.entry_price
@@ -468,6 +492,8 @@ def get_cached_fundamentals(
     ticker: str,
     today: str | None = None,
 ) -> dict | None:
+    """Returns cached fundamentals for `ticker` if fetched within the last
+    7 days, else None (caller should re-fetch and re-cache)."""
     from datetime import date as _d, timedelta
     _today = today or _d.today().isoformat()
     cutoff = (_d.fromisoformat(_today) - timedelta(days=_FUNDAMENTALS_TTL_DAYS)).isoformat()
@@ -484,6 +510,8 @@ def save_fundamentals_cache(
     data: dict,
     fetched_date: str | None = None,
 ) -> None:
+    """Inserts or overwrites `ticker`'s cached fundamentals with today's (or
+    the given) fetch date, resetting its 7-day TTL."""
     from datetime import date as _d
     _fetched = fetched_date or _d.today().isoformat()
     conn.execute(
@@ -507,6 +535,8 @@ def insert_price_bar_if_missing(
     open_: float, high: float, low: float, close: float,
     volume: int, source: str = "capital.com",
 ) -> None:
+    """Inserts one price_history bar only if that ticker/date doesn't already
+    exist — used for incremental daily updates, never overwrites."""
     conn.execute(
         """INSERT OR IGNORE INTO price_history
            (ticker, date, open, high, low, close, volume, source)
@@ -521,6 +551,9 @@ def load_price_history_from_db(
     as_of_date: str,
     limit: int = 200,
 ) -> "pd.DataFrame | None":
+    """Loads up to `limit` most recent price_history rows for `ticker` on/before
+    as_of_date as an OHLCV DataFrame, for local indicator computation instead of
+    a fresh provider fetch. None if no rows exist."""
     import pandas as pd
     rows = conn.execute(
         """SELECT date, open, high, low, close, volume

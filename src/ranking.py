@@ -27,6 +27,8 @@ def score_total(analysis: dict) -> float:
 
 
 def _guardrail_filter(analyses: Iterable[dict]) -> list[dict]:
+    """Drops analyses with direction='none' or that fail GuardrailsChecker, logging
+    the reason for each rejection."""
     checker = GuardrailsChecker()
     kept: list[dict] = []
     for a in analyses:
@@ -45,6 +47,8 @@ def _guardrail_filter(analyses: Iterable[dict]) -> list[dict]:
 def _to_prediction_row(
     analysis: dict, date: str, run_type: str, market_context: dict,
 ) -> dict:
+    """Maps one guardrail-passing analysis dict onto the flat column layout
+    expected by db.save_prediction()."""
     scores = analysis.get("scores", {})
     return {
         "date": date, "run_type": run_type,

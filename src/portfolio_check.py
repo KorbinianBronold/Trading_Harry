@@ -35,6 +35,8 @@ def _build_user_message(
     trend_context: dict,
     policy_context: dict,
 ) -> str:
+    """Serializes the original prediction, current snapshot, and trend/policy
+    context into the user message sent to Claude for one portfolio check."""
     pred_dict = {k: prediction[k] for k in prediction.keys()}
     parts = [
         "ORIGINAL PREDICTION:", json.dumps(pred_dict, ensure_ascii=False, default=str),

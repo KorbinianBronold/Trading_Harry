@@ -31,16 +31,9 @@ def analyze_trends(
     run_type: str,
     cost_tracker: CostTracker,
 ) -> dict:
-    """Returns the parsed dict {trends, sector_rotation, trend_summary}.
-
-    Side effects:
-      - One row in trend_analyses per trend (replace-on-conflict).
-      - cost_tracker.add_call() called once for the Claude billing.
-
-    Raises:
-      TrendAnalyzerError if the response is unparseable or has zero trends.
-      CostCapExceeded propagates from cost_tracker.add_call().
-    """
+    """Runs Phase 0: fetches current market trends via Claude + web search and
+    persists one row per trend to `trend_analyses`. Raises TrendAnalyzerError if
+    the response is unparseable or has zero trends."""
     user_msg = (
         f"Today is {date}. Run type: {run_type}. "
         "Use web_search 3-5 times to gather evidence on dominant short-term "

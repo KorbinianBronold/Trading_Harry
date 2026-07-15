@@ -24,6 +24,8 @@ MIN_BARS_MACD = 35
 
 
 def _last_finite(series: pd.Series) -> float | None:
+    """Returns the last value of `series` as a float, or None if the series is
+    empty or the last value is NaN."""
     if series is None or len(series) == 0:
         return None
     val = series.iloc[-1]
@@ -33,6 +35,7 @@ def _last_finite(series: pd.Series) -> float | None:
 
 
 def compute_rsi_14(df: pd.DataFrame) -> float | None:
+    """Returns the latest 14-period RSI, or None if there's not enough history."""
     if len(df) < MIN_BARS_RSI:
         return None
     rsi = ta.rsi(df["Close"], length=14)
@@ -80,6 +83,8 @@ def compute_macd_signal(df: pd.DataFrame) -> str:
 
 
 def compute_atr_pct(df: pd.DataFrame) -> float | None:
+    """Returns the latest 14-period ATR as a percentage of closing price, or
+    None if there's not enough history."""
     if len(df) < MIN_BARS_ATR:
         return None
     atr = ta.atr(df["High"], df["Low"], df["Close"], length=14)
@@ -93,6 +98,8 @@ def compute_atr_pct(df: pd.DataFrame) -> float | None:
 
 
 def compute_bb_position(df: pd.DataFrame) -> float | None:
+    """Returns where the close sits within its 20-period Bollinger Bands, as a
+    0-1 fraction (0 = lower band, 1 = upper band); None if not enough history."""
     if len(df) < MIN_BARS_BB:
         return None
     bb = ta.bbands(df["Close"], length=20)
@@ -108,6 +115,8 @@ def compute_bb_position(df: pd.DataFrame) -> float | None:
 
 
 def compute_sma_distance_pct(df: pd.DataFrame, length: int) -> float | None:
+    """Returns how far the close is above/below its `length`-period SMA, as a
+    percentage; None if there's not enough history."""
     if len(df) < length:
         return None
     sma = ta.sma(df["Close"], length=length)
@@ -174,6 +183,8 @@ BATCH_PAUSE_EVERY = 30
 
 
 def _classify_data_quality(td: dict) -> str:
+    """Classifies a ticker's data as 'low' (missing core indicators), 'medium'
+    (missing peripheral fundamentals), or 'high' (everything present)."""
     required   = ("rsi_14", "atr_pct")
     peripheral = ("pe_ratio", "market_cap_b", "sector", "above_sma200")
     if any(td.get(k) is None for k in required):
@@ -236,6 +247,8 @@ def _ensure_today_bar(
 
 
 def _persist_indicators(conn, ticker: str, date: str, td: dict) -> None:
+    """Writes one row of computed technical indicators for `ticker`/`date` to
+    the technical_indicators table."""
     db.upsert_technical_indicators(conn, {
         "ticker": ticker, "date": date,
         "rsi_14": td.get("rsi_14"),
@@ -258,6 +271,10 @@ def _process_ticker(
     date: str,
     run_type: str,
 ) -> dict | None:
+    """Runs the full Phase-1 pipeline for one ticker: ensures today's bar exists,
+    computes indicators from the last 200 DB days, and fetches fundamentals/earnings
+    (cache-first). Returns the TickerData dict, or None (with a skipped_tickers row)
+    if there's insufficient or low-quality data."""
     # Step 1: Ensure today's bar is in DB
     _ensure_today_bar(ticker, price_provider, conn, date)
 

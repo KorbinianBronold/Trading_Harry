@@ -46,6 +46,8 @@ def _build_user_message(
     policy_context: dict,
     extra_context: dict,
 ) -> str:
+    """Serializes trend/policy/extra context plus one asset snapshot into the
+    user message sent to Claude for a single commodity/crypto analysis."""
     parts = [
         "TREND CONTEXT:", json.dumps(trend_context, ensure_ascii=False),
         "\nPOLICY CONTEXT:", json.dumps(policy_context, ensure_ascii=False),

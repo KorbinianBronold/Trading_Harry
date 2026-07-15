@@ -37,6 +37,7 @@ _DISCLAIMER = (
 
 
 def _h(s: Any) -> str:
+    """HTML-escapes `s`, returning an empty string for None."""
     if s is None:
         return ""
     return html.escape(str(s))
@@ -72,6 +73,7 @@ def generate_daily_briefing(trend_context: dict, policy_context: dict) -> list[s
 
 
 def _section_briefing(bullets: list[str]) -> str:
+    """Renders the dark 'Was heute zaehlt' briefing box, or '' if there are no bullets."""
     if not bullets:
         return ""
     items = "".join(f"<li>{_h(b)}</li>" for b in bullets)
@@ -85,6 +87,8 @@ def _section_briefing(bullets: list[str]) -> str:
 
 
 def _section_portfolio(recs: list[dict]) -> str:
+    """Renders the Phase-4a portfolio-recommendations table (HALTEN/SCHLIESSEN/
+    ANPASSEN), the first section of the daily e-mail."""
     if not recs:
         return ('<h2>Portfolio-Empfehlungen</h2>'
                 '<p><i>Keine offenen Positionen.</i></p>')
@@ -109,6 +113,7 @@ def _section_portfolio(recs: list[dict]) -> str:
 
 
 def _row_for_setup(rank: int, a: dict) -> str:
+    """Renders one <tr> for a single ranked stock setup, with trend/policy flag icons."""
     scores = a.get("scores", {})
     trend_flag = "🔥" if a.get("trend_boost") else ""
     policy_flag = "⚠️" if scores.get("policy_risk", {}).get("value", 10) <= 4 else ""
@@ -128,6 +133,7 @@ def _row_for_setup(rank: int, a: dict) -> str:
 
 
 def _section_stocks(top_long: list[dict], top_short: list[dict]) -> str:
+    """Renders the Top-10 Long and Top-10 Short stock tables."""
     if not top_long and not top_short:
         return '<h2>Aktien Top-10</h2><p><i>Keine Setups gefunden.</i></p>'
     head = (
@@ -148,6 +154,7 @@ def _section_stocks(top_long: list[dict], top_short: list[dict]) -> str:
 
 
 def _section_trends(trends: list[dict]) -> str:
+    """Renders the dark-card trends section (megatrends + sector rotation)."""
     if not trends:
         return '<h2>Trends</h2><p><i>Keine Trends erkannt.</i></p>'
     cards = []
@@ -168,6 +175,8 @@ def _section_trends(trends: list[dict]) -> str:
 
 
 def _section_commodities_crypto(items: list[dict]) -> str:
+    """Renders the commodities/crypto table plus the gold/silver-ratio and
+    BTC-dominance footnote when available."""
     if not items:
         return ('<h2>Commodities + Crypto</h2>'
                 '<p><i>Keine Daten.</i></p>')
@@ -210,6 +219,8 @@ def _section_commodities_crypto(items: list[dict]) -> str:
 
 
 def _section_footer(payload: dict) -> str:
+    """Renders the e-mail footer: abort warning (if any), yesterday's performance,
+    skipped tickers, run cost, and the disclaimer."""
     cost = payload.get("cost_summary") or {}
     y = payload.get("yesterday_outcomes") or {}
     skipped = payload.get("skipped_tickers") or []
@@ -296,6 +307,7 @@ def render_weekly_html(payload: dict) -> str:
 def send_daily_email(
     payload: dict, api_key: str, email_from: str, email_to: str,
 ) -> None:
+    """Renders and sends the daily pre_market/midday e-mail via SendGrid."""
     html_body = render_daily_html(payload)
     subject = (
         f"[Shares_Future] {payload.get('date')} {payload.get('run_type')} — "
@@ -308,6 +320,7 @@ def send_daily_email(
 def send_weekly_email(
     payload: dict, api_key: str, email_from: str, email_to: str,
 ) -> None:
+    """Renders and sends the Sunday weekly-performance e-mail via SendGrid."""
     html_body = render_weekly_html(payload)
     subject = (
         f"[Shares_Future] {payload.get('week_label')} — Wochen-Summary"
@@ -317,6 +330,8 @@ def send_weekly_email(
 
 def _send(api_key: str, email_from: str, email_to: str,
           subject: str, html_body: str) -> None:
+    """Shared SendGrid delivery call used by every send_*_email(); raises
+    EmailSendError on a non-2xx response."""
     mail = Mail(
         from_email=email_from, to_emails=email_to,
         subject=subject, html_content=html_body,
@@ -334,6 +349,8 @@ def _send(api_key: str, email_from: str, email_to: str,
 # ---------- Position-Check HTML ----------
 
 def render_position_check_html(payload: dict) -> str:
+    """Renders the position_check status-mail body: one row per open position
+    with a status icon and note."""
     checks = payload.get("checks") or []
     _icons = {"on_track": "[OK]", "near_sl": "[WARN]", "signal_fallen": "[ALERT]"}
     rows = "".join(
@@ -359,6 +376,7 @@ def render_position_check_html(payload: dict) -> str:
 def send_position_check_email(
     payload: dict, api_key: str, email_from: str, email_to: str,
 ) -> None:
+    """Renders and sends the position_check status e-mail via SendGrid."""
     html_body = render_position_check_html(payload)
     checks = payload.get("checks") or []
     n_warn = sum(1 for c in checks if c.get("status") in ("near_sl", "signal_fallen"))
@@ -374,6 +392,8 @@ def send_position_check_email(
 def render_error_html(
     run_type: str, date: str, exc: BaseException, traceback_text: str,
 ) -> str:
+    """Renders the failure-notification e-mail body with the exception type,
+    message, and full traceback."""
     exc_type = type(exc).__name__
     exc_msg = _h(str(exc))
     tb_html = _h(traceback_text).replace("\n", "<br>").replace(" ", "&nbsp;")
@@ -397,6 +417,8 @@ def send_error_email(
     email_from: str,
     email_to: str,
 ) -> None:
+    """Renders and sends the run-failure notification e-mail via SendGrid; called
+    by main.py's top-level exception handler."""
     html_body = render_error_html(run_type, date, exc, traceback_text)
     subject = f"[Shares_Future] FEHLER {date} {run_type} — {type(exc).__name__}"
     _send(api_key, email_from, email_to, subject, html_body)

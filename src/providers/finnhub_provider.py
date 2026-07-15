@@ -1,3 +1,6 @@
+"""Fundamentals + earnings-calendar provider via the Finnhub free tier. Does NOT
+supply OHLC price data — that's CapitalComProvider's job; this provider only
+implements the fundamentals/earnings half of the DataProvider interface."""
 import logging
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -20,12 +23,16 @@ class FinnhubProvider(DataProvider):
     LOOKAHEAD_DAYS = 60
 
     def get_price_history(self, ticker, days=90):
+        """Not supported — Finnhub is earnings/fundamentals-only in this project."""
         raise NotImplementedError("FinnhubProvider only supplies earnings")
 
     def get_ohlc_after(self, ticker, start_date, end_date):
+        """Not supported — use CapitalComProvider for OHLC data instead."""
         raise NotImplementedError("Finnhub provider is earnings-only; use CapitalComProvider for OHLC")
 
     def get_fundamentals(self, ticker: str) -> dict:
+        """Fetches PE, market cap, sector, and analyst consensus for `ticker` from
+        Finnhub. Returns an empty dict if no API key is configured or any call fails."""
         if _client is None:
             return {}
         try:
@@ -62,9 +69,12 @@ class FinnhubProvider(DataProvider):
         }
 
     def get_last_available_date(self, ticker):
+        """Not applicable — Finnhub doesn't supply price history here. Always None."""
         return None
 
     def get_earnings_calendar(self, ticker: str) -> dict:
+        """Returns the number of days until `ticker`'s next earnings report and the
+        % EPS beat/miss of its last report, or Nones if unavailable/no API key."""
         if _client is None:
             return {"days_to_next": None, "last_beat_pct": None}
         today = datetime.now(BERLIN).date()

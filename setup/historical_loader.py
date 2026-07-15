@@ -80,6 +80,8 @@ def load_all(
 
 
 def main() -> None:
+    """CLI entry point: parses --tickers/--all/--full-sp500 and runs load_all()
+    over the selected ticker universe."""
     parser = argparse.ArgumentParser(description="Load 3-year Capital.com price history")
     group  = parser.add_mutually_exclusive_group()
     group.add_argument("--tickers",    nargs="+", help="Specific tickers to load")

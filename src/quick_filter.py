@@ -42,15 +42,9 @@ def quick_filter_batch(
     trend_context: dict,
     cost_tracker: CostTracker,
 ) -> list[dict]:
-    """Score a batch of tickers in a single Haiku call.
-
-    Returns a list of dicts, each: {ticker, long_score, short_score, confidence,
-    evidence, exclude}. Output preserves input ordering by ticker.
-
-    Raises:
-      QuickFilterError on unparseable JSON or missing tickers in response.
-      CostCapExceeded propagates from cost_tracker.add_call().
-    """
+    """Scores a batch of tickers in a single Haiku call, returning one long/short
+    score dict per ticker in input order. Raises QuickFilterError if the response
+    is unparseable or missing tickers."""
     if not batch:
         return []
 
