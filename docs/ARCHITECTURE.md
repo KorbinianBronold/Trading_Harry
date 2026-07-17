@@ -60,7 +60,7 @@ Das System folgt einer **Pipeline-Architektur** mit 6 Phasen (Phase 0–5), die 
 │  8-Dim Score: market_env, company_quality, valuation, momentum, │
 │              risk, sector_trend, catalyst, policy_risk           │
 │  Cost: ~2.50 EUR (biggest cost)                                  │
-│  Guardrails: R/R ≥ 1.5, hold_days ≤ 3, intraday_range ≥ 1%    │
+│  Guardrails: R/R ≥ 1.5, hold_days ≤ 5, intraday_range ≥ 1%    │
 │  Fail: ✅ Skip Ticker, continue                                   │
 │  Order: Sequential (nicht parallel) für deterministisches Cost-Tracking│
 └─────────────────────────────────────────────────────────────────┘
@@ -79,7 +79,7 @@ Das System folgt einer **Pipeline-Architektur** mit 6 Phasen (Phase 0–5), die 
                               ↓
 ┌─────────────────────────────────────────────────────────────────┐
 │       PHASE 4a: PORTFOLIO-CHECK (Offene Positionen)              │
-│  Input: db.predictions[status='open' & date ≤ 3 days ago],      │
+│  Input: db.predictions[status='open' & date ≤ 5 days ago],      │
 │         current_snapshots, trend_context, policy_context        │
 │  Claude: Sonnet × N offene Positionen + web_search              │
 │  Output: list[{prediction_id, action="HALTEN|SCHLIESSEN|..."}]  │
@@ -235,14 +235,14 @@ def analyze_asset(
             company_quality: {value, evidence[]},
             ...  (8 dimensions)
         },
-        hold_days_recommended: 1-3,
+        hold_days_recommended: 1-5,
         intraday_range_pct: 1.0+,
         technical_indicators: {...},
         sources_used: []
     }
     
     Guardrails (nach dieser Funktion geprüft):
-    - hold_days > 3 → reject
+    - hold_days > 5 → reject
     - intraday_range < 1.0 → reject
     - R/R < 1.5 → reject
     - direction = "none" → reject (beide Scores gleich)
@@ -318,7 +318,7 @@ def analyze_commodities_and_crypto(
 
 ### 6. **`src/portfolio_check.py`** (Phase 4a)
 
-Evaluiert täglich alle offenen Positionen (max 3 Tage alt).
+Evaluiert täglich alle offenen Positionen (max 5 Tage alt).
 
 ```python
 def check_open_positions(
@@ -331,7 +331,7 @@ def check_open_positions(
     cost_tracker: CostTracker,
 ) -> list[dict]:
     """
-    Für jede offene Position (≤ 3 Tage alt):
+    Für jede offene Position (≤ 5 Tage alt):
       - Sonnet + web_search Call
       - Returns: {prediction_id, action:"HALTEN"|"SCHLIESSEN"|"ANPASSEN",
                  reason, new_sl_price, new_tp_price, market_context_changed}
@@ -360,7 +360,7 @@ def rank_and_persist(
 ) -> dict:
     """
     Logik:
-    1. Guardrail-Filter (hold_days ≤ 3, intraday_range ≥ 1%, R/R ≥ 1.5, no "none")
+    1. Guardrail-Filter (hold_days ≤ 5, intraday_range ≥ 1%, R/R ≥ 1.5, no "none")
     2. Split Long/Short
     3. Sort by probability_pct DESC
     4. Keep Top 10 each, ALL commodities/crypto
@@ -447,7 +447,7 @@ class GuardrailsChecker:
         1. Alle 8 Dimensionen vorhanden + scores 0-10
         2. Jede Dimension ≥ 2 Belege
         3. R/R Ratio ≥ 1.5
-        4. hold_days_recommended: 1-3
+        4. hold_days_recommended: 1-5
         5. intraday_range_pct ≥ 1.0
         6. direction ≠ "none"
         """
@@ -574,7 +574,7 @@ TOTAL: ~3.50 EUR
 ## Invarianten (Never Violated)
 
 1. **SIMULATION_ONLY=True** – Niemals echte Order-Ausführung
-2. **CFD-Kurzfristfokus** – hold_days ≤ 3 in der Code-Realität (hardcoded in `guardrails.py`, `evaluator.py`, `portfolio_check.py`); `config.py` deklariert davon abweichend `MAX_HOLD_DAYS = 5` — bekannte, ungelöste Diskrepanz (siehe `PROJECT_STATUS.md` Bug B-06, Entscheidung steht noch aus). intraday_range ≥ 1%; SP500_MIN_ATR_PCT = 2.0
+2. **CFD-Kurzfristfokus** – hold_days ≤ 5 (`config.MAX_HOLD_DAYS`); `guardrails.py`, `evaluator.py`, `portfolio_check.py` und `db.py` referenzieren seit 2026-07-17 alle denselben Wert statt eigener hardcodierter Konstanten (Bug B-06 behoben). intraday_range ≥ 1%; SP500_MIN_ATR_PCT = 2.0
 3. **Phase 0 ist fatal** – TrendAnalyzerError → no email
 4. **Billing vor Parse** – `cost_tracker.add_from_result()` VOR JSON-Extraktion
 5. **Guardrail-Pflicht** – Vor Phase 4 Ranking MÜSSEN alle Analysen durch Checks

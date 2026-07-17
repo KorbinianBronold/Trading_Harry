@@ -19,6 +19,14 @@ SYSTEM_PROMPT = (Path(__file__).resolve().parent.parent
 MODEL = "claude-haiku-4-5"
 MAX_TOKENS = 4096
 
+# TODO(Sprint 3 Learning Module): Score-Schwellenwert-Optimierung. Aktuell gibt
+# es hier keine numerische Schwellenwert-Filterung im Code — long_score/
+# short_score/exclude kommen rein promptgetrieben aus quick_filter_v1.txt.
+# Das Learning Modul soll dynamische Long/Short-Schwellenwerte aus
+# data/learnings.json laden (analog zur urspruenglich geplanten
+# get_thresholds()/update_dynamic_thresholds()-Logik) und hier auf die
+# geparsten Scores anwenden, statt sie allein dem Prompt zu ueberlassen.
+
 
 class QuickFilterError(RuntimeError):
     """Quick-filter output unparseable or incomplete."""

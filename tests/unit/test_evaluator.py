@@ -204,3 +204,22 @@ def test_walk_forward_helper_tp_first():
     assert reason == "tp_hit"
     assert exit_price == 105.0
     assert day == 2
+
+
+def test_walk_forward_helper_honors_five_day_cap():
+    """MAX_HOLD_DAYS now tracks config.MAX_HOLD_DAYS (5) instead of a hardcoded 3 —
+    a hit on day 5 must still be detected, not cut off early."""
+    from src.evaluator import MAX_HOLD_DAYS
+    assert MAX_HOLD_DAYS == 5
+
+    idx = pd.date_range("2026-06-01", periods=5, freq="B")
+    df = pd.DataFrame({
+        "High":  [101, 101, 101, 101, 111],
+        "Low":   [99, 99, 99, 99, 100],
+        "Close": [100, 100, 100, 100, 110],
+    }, index=idx)
+
+    reason, exit_price, day = _walk_forward_hit(df, direction="long", tp=110.0, sl=90.0)
+    assert reason == "tp_hit"
+    assert exit_price == 110.0
+    assert day == 5

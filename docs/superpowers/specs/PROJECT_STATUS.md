@@ -1,6 +1,6 @@
 # PROJECT_STATUS.md — Shares_Future (Trading_Harry)
 
-**Zuletzt aktualisiert:** 2026-07-13  
+**Zuletzt aktualisiert:** 2026-07-17  
 **Aktueller Branch:** main  
 **Letzter Merge:** Sprint 2 / Plan 1 (2026-05-22) — Sprint 3 in Arbeit, Teilfortschritt s. Abschnitt 2
 
@@ -68,8 +68,10 @@ Bereits erledigt, obwohl noch keine Sprint-3-Abschlussmeldung erfolgt ist:
 | DST-Bug (ehem. Bug B-01) mitgefixt | `d17c2f5` (2026-07-09) | `analyze.yml`: Run-Type-Erkennung matcht jetzt `github.event.schedule`-String direkt per `case`, statt Uhrzeit zu parsen. Damit auch Bug B-04 (Kommentar/Code-Mismatch) hinfällig. |
 | Toter Code entfernt | `e198520`, `b3d743c` (2026-07-09) | `src/providers/paid_provider.py` + zugehöriger Test gelöscht (unbenutzter Stub, nicht Teil der dokumentierten Architektur). |
 | Lokales Docker-Test-Image hinzugefügt | (2026-07-13) | `Dockerfile`, `docker-compose.yml` — führt einzelne Run-Types manuell aus (`docker compose run --rm trading-harry --run-type X`) zum lokalen Testen. Kein Scheduler/Cron im Container; automatisierte Ausführung bleibt ausschließlich GitHub Actions (`analyze.yml`) vorbehalten. |
+| Intraday-Widerspruch in Prompts behoben | (2026-07-17) | `prompts/deep_analysis_v1.txt` + `prompts/commodities_crypto_v1.txt`: "hold 1-3 trading days"-Framing entfernt. Intraday ist jetzt explizit das primäre UND einzige Ziel — Setups, die nicht klar intraday funktionieren, müssen `direction='none'` sein, statt auf einen Mehrtages-Call auszuweichen. `hold_days_recommended` bleibt als Pflichtfeld erhalten (für das Learning Modul), ist aber kein Akzeptanzkriterium mehr. |
+| Bug B-06 behoben: MAX_HOLD_DAYS vereinheitlicht | (2026-07-17) | `guardrails.py`, `evaluator.py`, `portfolio_check.py`, `db.py` nutzen jetzt `config.MAX_HOLD_DAYS` (=5) als einzige Quelle der Wahrheit statt eigener hardcodierter `3`. Tests entsprechend angepasst + neuer Test beweist die 5-Tage-Ausweitung im Walk-Forward-Evaluator. |
 
-Noch offen aus dem ursprünglichen Sprint-3-Scope: Punkte B, E, F, G unten sowie Bugs B-03, B-05, B-06.
+Noch offen aus dem ursprünglichen Sprint-3-Scope: Punkte B, E, F, G unten sowie Bugs B-03, B-05.
 
 ## 2. Was in Sprint 3 noch offen ist
 
@@ -104,6 +106,12 @@ E-Mail-Versand ist implementiert aber nie live getestet. Vor erstem echten Lauf 
 - Schreibt `data/learnings.json` mit Format `{long: {...}, short: {...}}`
 - Wird von `ranking.py` geladen und als Kontext in Deep-Analysis-Prompts eingebaut
 - `learnable=False`-Predictions nie ins Lernmodul
+- **Tagesgenaue TP/SL-Auswertung (Intraday bis Tag 5):** TODO-Kommentar in `src/evaluator.py`
+  bei `MAX_HOLD_DAYS` — `_walk_forward_hit()` prüft aktuell nur Tages-High/Low statt echter
+  Intraday-Bars, daher der `pessimistic_overlap`-Fallback bei TP/SL im selben Tag
+- **Score-Schwellenwert-Optimierung in `quick_filter.py`:** TODO-Kommentar dort — aktuell keine
+  numerische Threshold-Filterung im Code (rein promptgetrieben); Lernmodul soll dynamische
+  Long/Short-Schwellenwerte aus `data/learnings.json` laden und anwenden
 
 ### F — `prompt_optimizer.py` bauen
 - Liest `prompt_versions`-Tabelle aus SQLite
@@ -125,7 +133,6 @@ E-Mail-Versand ist implementiert aber nie live getestet. Vor erstem echten Lauf 
 |---|---|---|---|
 | B-03 | `config.py:SP500_FULL_TICKERS` | Ist Stub (= MVP-Liste), `USE_FULL_SP500=true` würde nur 20 Ticker laufen lassen | Mittel |
 | B-05 | `main.py:_guess_aborted_phase()` | Gibt immer `"policy_monitor"` zurück, egal wo der Abort war | Niedrig |
-| B-06 | `config.py` vs `guardrails.py` | MAX_HOLD_DAYS=5 in config.py, aber guardrails.py und evaluator.py nutzen hardcoded 3 — Widerspruch | Niedrig |
 
 **Behoben (2026-07-09, Commit `d17c2f5`):**
 
@@ -134,6 +141,12 @@ E-Mail-Versand ist implementiert aber nie live getestet. Vor erstem echten Lauf 
 | B-01 | `analyze.yml` | Run-Type-Erkennung per Uhrzeit brach bei DST | Matcht jetzt `github.event.schedule`-String direkt via `case` |
 | B-02 | `main.py:run_evaluate()` | Hardcoded `YFinanceProvider()` | Nutzt jetzt `CapitalComProvider()` |
 | B-04 | `analyze.yml` | Cron-Kommentar/Code-Mismatch | Hinfällig, da Matching nicht mehr über geparste Uhrzeit läuft |
+
+**Behoben (2026-07-17):**
+
+| # | Datei | Bug | Fix |
+|---|---|---|---|
+| B-06 | `guardrails.py`, `evaluator.py`, `portfolio_check.py`, `db.py` | MAX_HOLD_DAYS=5 in config.py, aber hardcoded 3 in vier Modulen — Widerspruch | Alle vier referenzieren jetzt `config.MAX_HOLD_DAYS` (=5) statt eigener hardcodierter Konstanten. Guardrail-Tests auf neue Grenze (5) angepasst, neuer Test in `test_evaluator.py` beweist, dass der Walk-Forward-Evaluator jetzt tatsächlich 5 Tage statt 3 abdeckt. |
 
 ---
 

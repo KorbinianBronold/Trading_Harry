@@ -12,7 +12,7 @@ class GuardrailsChecker:
     min_rr_hard: float = config.RR_RATIO_MIN_HARD
     momentum_long_min: float = config.MOMENTUM_LONG_MIN
     momentum_short_max: float = config.MOMENTUM_SHORT_MAX
-    max_hold_days: int = 3
+    max_hold_days: int = config.MAX_HOLD_DAYS
     min_intraday_range_pct: float = 1.0
 
     REQUIRED_FIELDS = (

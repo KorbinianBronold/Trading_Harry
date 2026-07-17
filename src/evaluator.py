@@ -6,7 +6,7 @@ outcomes row and the prediction status via db.update_outcome_close().
 
 Trading-day precision is intentionally approximated by calendar days: Capital.com
 returns weekday-only bars, so iterating bars in order corresponds to trading-day
-order. We cap at 3 bars (== 3 trading days)."""
+order. We cap at config.MAX_HOLD_DAYS bars (currently 5 trading days)."""
 import logging
 import pandas as pd
 
@@ -15,7 +15,13 @@ import config
 
 log = logging.getLogger("shares_future.evaluator")
 
-MAX_HOLD_DAYS = 3
+# TODO(Sprint 3 Learning Module): Tagesgenaue TP/SL-Auswertung. Aktuell prueft
+# _walk_forward_hit() nur, ob TP/SL irgendwo innerhalb der Tages-High/Low-Range
+# lag (daher der "pessimistic_overlap"-Fallback, wenn beide im selben Tag treffen
+# wuerden) — das ist keine echte Intraday-Praezision. Das Learning Modul soll
+# echte Intraday-Bars (statt Tages-OHLC) nutzen, um TP/SL-Reihenfolge exakt zu
+# bestimmen (ueber alle config.MAX_HOLD_DAYS Tage hinweg).
+MAX_HOLD_DAYS = config.MAX_HOLD_DAYS
 
 
 def _walk_forward_hit(

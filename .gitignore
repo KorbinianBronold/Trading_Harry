@@ -13,4 +13,5 @@ data/*.log
 venv/
 .worktrees/
 notes
-claude_commands.md
+random/
+

@@ -74,7 +74,7 @@ def test_rank_and_persist_top_10_long_and_short(in_memory_db):
 def test_rank_drops_guardrail_failures(in_memory_db):
     db.init_schema(in_memory_db)
     good = _analysis("AAPL", momentum=8.0)
-    bad_hold = _analysis("BAD1", momentum=8.0, hold_days=5)
+    bad_hold = _analysis("BAD1", momentum=8.0, hold_days=6)
     bad_range = _analysis("BAD2", momentum=8.0, intraday=0.5)
     bad_momentum = _analysis("BAD3", direction="long", momentum=3.0)
     out = rank_and_persist(

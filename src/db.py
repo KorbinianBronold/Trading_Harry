@@ -4,6 +4,8 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
+import config
+
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS price_history (
     ticker TEXT NOT NULL, date TEXT NOT NULL,
@@ -389,7 +391,7 @@ def save_position_recommendation(conn: sqlite3.Connection, row: dict) -> int:
 
 
 def load_open_predictions_within_max_age_days(
-    conn: sqlite3.Connection, today: str, max_trading_days: int = 3,
+    conn: sqlite3.Connection, today: str, max_trading_days: int = config.MAX_HOLD_DAYS,
 ) -> list[sqlite3.Row]:
     """Returns open, learnable predictions whose calendar age <= max_trading_days
     days from `today`. We use a calendar approximation (sqlite julianday); the

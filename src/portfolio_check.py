@@ -1,7 +1,7 @@
 """Phase 4a: Daily portfolio check.
 
-For every open prediction <= 3 trading days old, decide HALTEN / SCHLIESSEN /
-ANPASSEN given the current snapshot, trend, and policy context. Writes one
+For every open prediction <= config.MAX_HOLD_DAYS trading days old, decide HALTEN /
+SCHLIESSEN / ANPASSEN given the current snapshot, trend, and policy context. Writes one
 position_recommendations row per call. Output is rendered as the FIRST
 section of the daily e-mail (spec §3 CFD-Kurzfristfokus). Per-position
 failures are caught — a single broken call must not abort the loop."""
@@ -10,6 +10,7 @@ import logging
 import sqlite3
 from pathlib import Path
 
+import config
 from src import db
 from src.cost_tracker import CostTracker
 from src.utils import call_claude, extract_json_blob, WEB_SEARCH_TOOL
@@ -21,7 +22,7 @@ SYSTEM_PROMPT = (Path(__file__).resolve().parent.parent
 
 MODEL = "claude-sonnet-4-6"
 MAX_TOKENS = 2048
-MAX_HOLD_DAYS = 3
+MAX_HOLD_DAYS = config.MAX_HOLD_DAYS
 VALID_ACTIONS = {"HALTEN", "SCHLIESSEN", "ANPASSEN"}
 
 
@@ -85,9 +86,9 @@ def check_open_positions(
     policy_context: dict,
     cost_tracker: CostTracker,
 ) -> list[dict]:
-    """Loop all open <= 3-day-old predictions, run portfolio_check per row,
-    persist one position_recommendations row each. Returns the list of parsed
-    response dicts."""
+    """Loop all open predictions <= config.MAX_HOLD_DAYS days old, run portfolio_check
+    per row, persist one position_recommendations row each. Returns the list of
+    parsed response dicts."""
     open_preds = db.load_open_predictions_within_max_age_days(
         conn, today=today, max_trading_days=MAX_HOLD_DAYS,
     )

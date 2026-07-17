@@ -146,16 +146,22 @@ def test_required_fields_now_include_hold_days_and_intraday_range():
     assert any("hold_days_recommended" in e for e in errs)
 
 
-def test_guardrail_rejects_hold_days_above_3():
+def test_guardrail_rejects_hold_days_above_5():
     c = GuardrailsChecker()
-    ok, errs = c.check_analysis(_valid_analysis(hold_days_recommended=4))
+    ok, errs = c.check_analysis(_valid_analysis(hold_days_recommended=6))
     assert not ok
-    assert any("Haltedauer" in e and "3" in e for e in errs)
+    assert any("Haltedauer" in e and "5" in e for e in errs)
 
 
 def test_guardrail_accepts_hold_days_3():
     c = GuardrailsChecker()
     ok, errs = c.check_analysis(_valid_analysis(hold_days_recommended=3))
+    assert ok, errs
+
+
+def test_guardrail_accepts_hold_days_5():
+    c = GuardrailsChecker()
+    ok, errs = c.check_analysis(_valid_analysis(hold_days_recommended=5))
     assert ok, errs
 
 
