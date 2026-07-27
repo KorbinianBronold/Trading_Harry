@@ -15,6 +15,10 @@ from src.providers.base import DataProvider
 
 log = logging.getLogger("shares_future.capital")
 
+# Capital.com beantwortet /prices mit max>1000 per HTTP 400. Empirisch am
+# 2026-07-27 ermittelt: max=1000 liefert 1000 Bars, max=1001 einen 400er.
+MAX_BARS_PER_REQUEST = 1000
+
 TICKER_MAP: dict[str, str] = {
     "GC=F":    "GOLD",
     "SI=F":    "SILVER",
@@ -103,13 +107,23 @@ class CapitalComProvider(DataProvider):
 
     def get_price_history(self, ticker: str, days: int = 90) -> pd.DataFrame | None:
         """Fetches the last `days` daily bars for `ticker`; returns None on any
-        request/parse failure instead of raising."""
+        request/parse failure instead of raising.
+
+        `days` is clamped to MAX_BARS_PER_REQUEST — Capital.com rejects anything
+        above with HTTP 400, and a silent 400 per ticker is far worse than a
+        slightly shorter history."""
         epic = self._map(ticker)
+        capped = min(days, MAX_BARS_PER_REQUEST)
+        if capped < days:
+            log.info(
+                f"{ticker}: {days} Bars angefragt, auf {capped} gedeckelt "
+                f"(Capital.com-Limit)"
+            )
         try:
             resp = requests.get(
                 f"{config.CAPITAL_COM_BASE_URL}/api/v1/prices/{epic}",
                 headers=self._headers(),
-                params={"resolution": "DAY", "max": days},
+                params={"resolution": "DAY", "max": capped},
                 timeout=30,
             )
             resp.raise_for_status()

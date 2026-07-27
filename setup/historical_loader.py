@@ -23,12 +23,18 @@ if __package__ in (None, ""):
 
 import config  # noqa: E402
 from src import db  # noqa: E402
-from src.providers.capital_provider import CapitalComProvider  # noqa: E402
+from src.providers.capital_provider import (  # noqa: E402
+    CapitalComProvider, MAX_BARS_PER_REQUEST,
+)
 
 log = logging.getLogger("shares_future.historical_loader")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
-DAYS_3_YEARS          = 1095
+# Capital.com liefert BARS, nicht Kalendertage — 1000 Tagesbars sind rund vier
+# Handelsjahre und damit mehr als die angepeilten drei. Der frueher hier stehende
+# Wert 1095 (Kalendertage) ueberschritt das API-Limit und liess jeden Abruf mit
+# HTTP 400 scheitern, s. capital_provider.MAX_BARS_PER_REQUEST.
+DAYS_3_YEARS          = MAX_BARS_PER_REQUEST
 PAUSE_BETWEEN_TICKERS = 0.5  # 0.5s → 120 req/min; Capital.com allows 600/min
 
 

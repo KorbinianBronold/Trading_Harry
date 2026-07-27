@@ -191,6 +191,42 @@ def test_get_ohlc_after_same_day_steps_from_back(monkeypatch):
     assert captured.get("to") == "2026-05-22T00:00:00"
 
 
+# ---------- max-Deckel der Prices-API ----------
+
+def test_get_price_history_clamps_days_to_api_maximum(monkeypatch):
+    """Capital.com beantwortet max>1000 mit HTTP 400.
+
+    Regression: historical_loader forderte 1095 Tage an und bekam fuer JEDEN
+    Ticker einen 400er — der dokumentierte Setup-Pull schrieb 0 Zeilen, ohne
+    dass der Fehler als solcher sichtbar wurde.
+    """
+    monkeypatch.setattr("requests.post", _mock_post)
+    captured = {}
+
+    def _capture(url, **kwargs):
+        captured.update(kwargs.get("params", {}))
+        return _mock_prices_get(url, **kwargs)
+
+    monkeypatch.setattr("requests.get", _capture)
+    from src.providers.capital_provider import CapitalComProvider, MAX_BARS_PER_REQUEST
+    CapitalComProvider().get_price_history("AAPL", days=1095)
+    assert captured["max"] == MAX_BARS_PER_REQUEST == 1000
+
+
+def test_get_price_history_leaves_small_day_counts_untouched(monkeypatch):
+    monkeypatch.setattr("requests.post", _mock_post)
+    captured = {}
+
+    def _capture(url, **kwargs):
+        captured.update(kwargs.get("params", {}))
+        return _mock_prices_get(url, **kwargs)
+
+    monkeypatch.setattr("requests.get", _capture)
+    from src.providers.capital_provider import CapitalComProvider
+    CapitalComProvider().get_price_history("AAPL", days=200)
+    assert captured["max"] == 200
+
+
 # ---------- search_markets (Sprint 3B / Plan 1, Task 1) ----------
 
 _MARKETS = {
