@@ -27,14 +27,18 @@ Shares_Future/
 │   ├── data_collector.py   # Phase 1: Datenabruf
 │   ├── trend_analyzer.py   # Phase 0: Megatrend-Analyse
 │   ├── quick_filter.py     # Phase 2: Batch-Analyse ohne Web-Search
-│   ├── deep_analysis.py    # Phase 3: Claude + Web-Search
+│   ├── deep_analysis.py    # Phase 3: Claude + Web-Search + Policy-Monitor
 │   ├── commodities_crypto.py # Phase 3b: Gold, Silber, Öl, BTC, ETH, SOL, XRP
+│   ├── portfolio_check.py  # Phase 4a: offene Positionen HALTEN/SCHLIESSEN/ANPASSEN
 │   ├── ranking.py          # Phase 4: Ranking + SQLite
+│   ├── evaluator.py        # Walk-Forward TP/SL/Timeout-Auswertung
 │   ├── email_sender.py     # Tages + Wochen-Mail
 │   ├── guardrails.py       # Qualitätskontrolle (Pflicht)
+│   ├── cost_tracker.py     # Kosten-Tracking + Hard-Cap
+│   ├── db.py               # SQLite-Schema, Migrationen, alle DB-Helper
 │   ├── utils.py
-│   # learning_module.py  → noch nicht implementiert (Sprint 3, Punkt E)
-│   # prompt_optimizer.py → noch nicht implementiert (Sprint 3, Punkt F)
+│   # learning_module.py  → noch nicht implementiert (Sprint 3D)
+│   # prompt_optimizer.py → noch nicht implementiert (Sprint 3D/3E)
 ├── setup/
 │   └── historical_loader.py  # 3-Jahres-Pull via Capital.com
 ├── data/
@@ -48,17 +52,27 @@ Shares_Future/
 ```
 
 ## Analyse-Pipeline
+**Ist-Zustand** (`main.py:run_pipeline()`):
 ```
-Phase 0: Trend-Analyse     → Megatrends identifizieren
-Phase 1: Datenabruf        → Capital.com (alleiniger OHLC-Provider)
-                             500 Aktien + Commodities + Crypto
+Phase 0:  Trend-Analyse    → Megatrends identifizieren (fatal wenn sie fehlschlägt)
+Phase 1:  Datenabruf       → Capital.com (alleiniger OHLC-Provider), Aktien
                              1 Bar täglich fetchen + letzte 200 aus DB
-Phase 2: Quick-Filter      → Batches à 30, kein Web-Search, Top 80
-Phase 3: Tiefenanalyse     → Web-Search + Policy Risk Monitor, Top 80
+Phase 1b: Datenabruf       → Commodities + Crypto (separater collect-Aufruf)
+Phase 2:  Quick-Filter     → Batches à 30, kein Web-Search, Top 80
+Phase 3:  Policy-Monitor   → 1× pro Run, Web-Search
+Phase 3:  Tiefenanalyse    → Web-Search, 8 Score-Dimensionen, Top 80
 Phase 3b: Feste Assets     → Gold, Silber, Öl, BTC, ETH, SOL, XRP immer
-Phase 4: Ranking           → Top 10 Long + Top 10 Short + Learnings
-Phase 5: E-Mail            → 3 Sektionen: Aktien, Trends, Commodities/Crypto
+Phase 4a: Portfolio-Check  → offene Positionen: HALTEN/SCHLIESSEN/ANPASSEN
+Phase 4:  Ranking          → Top 10 Long + Top 10 Short, persist predictions
+Phase 5:  E-Mail           → Briefing, Portfolio, Aktien, Trends, Commodities/Crypto
 ```
+
+**Geplante Änderungen in Sprint 3B** (noch nicht implementiert, s. PROJECT_STATUS.md):
+- **Phase 1c neu** nach 1b: offene Capital.com-Positionen laden, deren Ticker als
+  Pflicht-Kandidaten für Phase 3 markieren (überspringen den Quick-Filter-Ausschluss)
+- **Phase 4 und 4a tauschen**: erst Ranking, dann Portfolio-Check — Phase 4a nutzt dann die
+  fertigen Phase-3-Ergebnisse (Claude-Call ohne Web-Search) statt eigener Web-Searches.
+  Die Mail-Reihenfolge bleibt davon unberührt: Portfolio-Sektion steht weiterhin zuerst.
 
 ## Wichtige Designentscheidungen
 - Provider-Hierarchie: Capital.com (alleiniger OHLC-Provider) → Finnhub (Fundamentals, gecacht) — yfinance seit Sprint 3 entfernt (2026-07-09)
@@ -72,21 +86,42 @@ Phase 5: E-Mail            → 3 Sektionen: Aktien, Trends, Commodities/Crypto
 - Prompts versioniert mit A/B-Testing
 
 ## Cron-Jobs (Berliner Zeit)
-Ist-Zustand, aus `.github/workflows/analyze.yml` (Cron ist UTC-fix, GitHub Actions
+**Ist-Zustand**, aus `.github/workflows/analyze.yml` (Cron ist UTC-fix, GitHub Actions
 passt nicht an DST an — Zeiten unten gelten für CEST/Sommer, im Winter (CET) läuft
-alles 1h früher). Diese Struktur ist als veraltet markiert und soll laut
-Sprint-3-Backlog (`docs/superpowers/specs/PROJECT_STATUS.md`, Punkt B) umgebaut werden.
+alles 1h früher).
 
 | Run-Type         | Zeit (Berlin, CEST) | Kosten   | Beschreibung                              |
 |------------------|----------------------|----------|-------------------------------------------|
-| pre_market       | 15:00                | ~3,20 EUR | Vollständige Pipeline Phase 0–4, Mail      |
+| pre_market       | 15:00                | ~3,20 EUR | Vollständige Pipeline Phase 0–5, Mail      |
 | evaluate         | 16:00                | ~0,00 EUR | Nur TP/SL-Check, kein Claude, kein Mail   |
-| midday           | 19:00                | ~3,20 EUR | Vollständige Pipeline Phase 0–4, Mail      |
+| midday           | 19:00                | ~3,20 EUR | Vollständige Pipeline Phase 0–5, Mail      |
 | position_check   | 17:30                | ~0,20 EUR | Capital.com GET /positions + Claude + Mail |
-| close            | 22:30                | ~0,00 EUR | NUR DB-Pflege, kein Claude, kein Mail     |
+| close            | 22:30                | ~0,00 EUR | TP/SL-Check + DB-Pflege, kein Claude, kein Mail |
 | weekly           | So 20:00              | ~0,00 EUR | Wochenperformance-Mail                    |
 
 **Gesamt/Tag:** ~6,60 EUR | **Gesamt/Monat (500 Ticker):** ~145 EUR | **MVP (20 Ticker):** ~29 EUR
+
+### Geplanter Umbau (Sprint 3B — noch NICHT implementiert)
+Spezifikation: `docs/superpowers/specs/PROJECT_STATUS.md`, Abschnitt "Sprint 3B".
+
+| Run-Type | Zeit | Änderung |
+|---|---|---|
+| `pre_market` | 15:00 | unverändert |
+| `trade_proposals` | 16:10 | **NEU** — ersetzt `evaluate`; prüft nach dem Opening-Rauschen, ob die pre_market-Signale noch gültig sind |
+| `close` | 22:30 | vereinfacht (Schlusskurse aller Ticker + DB-Cleanup; TP/SL bleibt bis Sprint 3D) |
+| `weekly` | So 20:00 | Struktur gleich, Inhalt erweitert |
+| ~~`midday`~~ | — | entfällt |
+| ~~`position_check`~~ | — | entfällt (Capital.com live am Handy einsehbar) |
+
+Erwartete Kosten danach: ~4,20 EUR/Tag → **~88 EUR/Monat** (500 Ticker).
+
+**Neue DB-Tabellen in 3B:**
+- `ticker_status` — kumulativer `skip_count` pro Ticker + `inactive`-Flag (ab >20 Skips)
+- `sectors` — 11 GICS-Sektoren mit zugehörigem Sektor-ETF (Technology→XLK, Energy→XLE, …),
+  einmalig beim DB-Setup befüllt
+- `ticker_sectors` — Mapping Ticker → Sektor, wird **organisch in Phase 1** aus dem
+  Finnhub-Fundamentals-Cache befüllt (kein statisches Mapping im Code).
+  Genutzt von `trade_proposals` + `weekly` für den Sektor-ETF-Momentum-Check via JOIN.
 
 ## Wichtige Befehle
 ```bash
@@ -150,13 +185,24 @@ CFD Simulation: 500 EUR Margin, 5:1 Hebel = 2500 EUR Exposure
 1% Bewegung = 25 EUR Gewinn/Verlust (simuliert)
 
 ## Sprint-Übersicht
+**Vor jeder Implementierung `docs/superpowers/specs/PROJECT_STATUS.md` lesen** — dort steht
+der verbindliche Stand inkl. Spezifikation aller Sprint-3-Teilschritte.
+
 - **Sprint 1:** ERLEDIGT — 159 Tests, 89.62% Coverage, gemerged in main (2026-05-20)
 - **Sprint 2 / Plan 1:** ERLEDIGT — gemerged 2026-05-22
   - Plan: `docs/superpowers/plans/2026-05-21-sprint2-plan1-capital-provider-db-incremental.md`
   - Scope: capital_provider.py, fundamentals_cache, DB-Incremental, position_check, Timezone-Fix, historical_loader
-- **Sprint 3:** in Arbeit — aktueller Stand siehe `docs/superpowers/specs/PROJECT_STATUS.md` (dort vor jeder neuen Implementierung lesen)
-  - Bereits erledigt: yfinance-Entfernung, DST-Bug-Fix (beide 2026-07-09)
-  - Noch offen: Cron-Struktur-Umbau, Learning Module, Prompt-Optimizer, volle 500-Ticker-Liste
+- **Sprint 3** — in Arbeit, aufgeteilt in Teilsprints:
+  - **3A** ERLEDIGT (2026-07-27) — Roadmap + Doku aktualisiert
+  - Vorab erledigt: yfinance-Entfernung + DST-Fix (2026-07-09), Docker-Test-Image (2026-07-13),
+    Code-Dokumentation (2026-07-15), Intraday-Prompt-Fix + Bug B-06 (2026-07-17)
+  - **3B** OFFEN — Cron-Struktur + Pipeline-Umbau (`trade_proposals`, Phase 1c, Phase-4/4a-Tausch,
+    close-Vereinfachung, Gap-Erkennung, B-05)
+  - **3C** OFFEN — Ranking-Überarbeitung (fehlende Indikator-Werte, kombinierter `ranking_score`,
+    R/R-Ziel 2.0, technischer Pre-Filter)
+  - **3D** PLATZHALTER — Learning Modul ⚠️ braucht eigene Planungssession vor Implementierung
+  - **3E** PLATZHALTER — Human-in-the-Loop ⚠️ braucht eigene Planungssession
+  - **3F** PLATZHALTER — volle 500-Ticker-Skalierung ⚠️ braucht eigene Planungssession
 
 ## Vollständige Spezifikation
 Siehe docs/SPECIFICATION.md für alle Details zu:

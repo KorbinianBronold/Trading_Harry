@@ -1,5 +1,12 @@
 # Shares_Future – Architektur & Design
 
+> **Dieses Dokument beschreibt den IST-Zustand des Codes.** Die in Sprint 3B/3C geplanten
+> Änderungen (neuer Run-Type `trade_proposals`, Phase 1c, getauschte Phase-4/4a-Reihenfolge,
+> Wegfall von `midday` + `position_check`, kombinierter `ranking_score`) sind hier bewusst
+> **noch nicht** eingearbeitet — sie stehen in
+> `docs/superpowers/specs/PROJECT_STATUS.md`, Abschnitt "Sprint-3-Roadmap".
+> Nach der Implementierung eines Teilsprints wird dieses Dokument nachgezogen.
+
 ## Überblick
 
 Das System folgt einer **Pipeline-Architektur** mit 6 Phasen (Phase 0–5), die sequenziell ausgeführt werden. Jede Phase ist entkoppelt über klare Daten-Schnittstellen und kann unabhängig getestet werden.
@@ -468,9 +475,15 @@ SQLite-Schema + Persistence.
 - `fundamentals_cache` – Finnhub-Fundamentals mit 7-Tage TTL (UNIQUE per ticker)
 - `price_history` – OHLCV inkl. premarket_price (nullable)
 
+**Geplant in Sprint 3B/3C** (noch nicht angelegt):
+- `ticker_status` – kumulativer `skip_count` + `inactive`-Flag pro Ticker
+- `sectors` – 11 GICS-Sektoren mit Sektor-ETF (Technology→XLK, Energy→XLE, …), Seed beim DB-Setup
+- `ticker_sectors` – Ticker→Sektor-Mapping, organisch in Phase 1 aus dem Finnhub-Cache befüllt
+- `predictions.ranking_score` – neue Spalte für den kombinierten Score (3C)
+
 **Wichtige Helpers:**
 - `save_prediction(conn, pred_dict)` – Phase 4
-- `load_open_predictions_within_max_age_days(conn, today, max_trading_days=3)` – Phase 4a
+- `load_open_predictions_within_max_age_days(conn, today, max_trading_days=config.MAX_HOLD_DAYS)` – Phase 4a
 - `update_outcome_close(conn, pred_id, exit_reason, exit_price, ...)` – Evaluator
 - `load_recent_outcomes(conn, days=7)` – Weekly Email
 
@@ -588,24 +601,44 @@ TOTAL: ~3.50 EUR
 
 - **Unit Tests** (155): Isolierte Module, Mock-Claude, Fixtures
 - **Integration Tests** (3): Volle Pipeline mit 5 Aktien + E2E HTML-Render
-- **Coverage Gate**: 80% Minimum (aktuell 89.62%)
-- **Baseline**: `pytest tests/ -q` → 159 passed, 0 failures
+- **Coverage Gate**: 80% Minimum (aktuell 91%)
+- **Baseline**: `pytest tests/ -q` → 197 passed, 0 failures (Stand 2026-07-27)
 
 ---
 
-## Skalierung für Sprint 2
+## Sprint 2 / Plan 1 — umgesetzt (2026-05-22)
 
-Scope: Sprint 2 / Plan 1 (Capital Provider + DB Incremental + Position Check).
 Plan: `docs/superpowers/plans/2026-05-21-sprint2-plan1-capital-provider-db-incremental.md`
 
-- **capital_provider.py** – CapitalComProvider (primary OHLC, GET /positions, premarket)
+- **capital_provider.py** – CapitalComProvider (alleiniger OHLC-Provider, GET /positions, premarket)
 - **fundamentals_cache** – Finnhub-Fundamentals mit 7-Tage TTL
 - **DB-Incremental-Update** – täglich nur 1 Bar fetchen, Indikatoren aus DB (200 Tage)
 - **position_check Run-Type** – Capital.com Position-Read + Claude + Status-Mail
-- **Timezone-Fix** – doppelte Crons + ZoneInfo("Europe/Berlin") in Python
+  *(wird in Sprint 3B wieder entfernt)*
+- **Timezone-Fix** – `ZoneInfo("Europe/Berlin")` in Python, `TZ="Europe/Berlin"` in Bash
 - **historical_loader.py** – 3-Jahres-Pull via Capital.com (`--all`, `--full-sp500`, `--tickers`)
-- **500-Ticker Scaling** – USE_FULL_SP500 Flag
+- **500-Ticker Scaling** – `USE_FULL_SP500`-Flag (Ticker-Liste noch Stub, s. Bug B-03)
 
 ---
 
-Siehe auch: `WORKFLOW.md` für Live-Betrieb, `docs/superpowers/plans/` für detaillierte Task-Plans.
+## Geplante Architektur-Änderungen (Sprint 3B / 3C)
+
+Vollständige Spezifikation: `docs/superpowers/specs/PROJECT_STATUS.md`.
+Kurzüberblick, was sich an der oben beschriebenen Architektur ändern wird:
+
+| Bereich | Änderung | Sprint |
+|---|---|---|
+| Run-Types | `midday` + `position_check` entfallen; `evaluate` wird durch `trade_proposals` (16:10 Berlin) ersetzt | 3B |
+| Pipeline | **Phase 1c neu**: offene Capital.com-Positionen laden, deren Ticker als Pflicht-Kandidaten für Phase 3 markieren | 3B |
+| Pipeline | **Phase 4 und 4a tauschen** — Phase 4a nutzt danach die fertigen Phase-3-Ergebnisse (Claude-Call ohne Web-Search). Mail-Reihenfolge bleibt: Portfolio zuerst. | 3B |
+| `close` | Holt Schlusskurse aller Ticker; TP/SL-Auswertung bleibt bis Sprint 3D erhalten; neue Cleanup-Regeln (news 30d, skipped_tickers nicht mehr löschen sondern zählen) | 3B |
+| `data_collector` | Gap-Erkennung mit Handelstags-Logik + automatisches Nachladen fehlender Bars | 3B |
+| Schema | Neue Tabelle `ticker_status` (skip_count, inactive); neue Spalte `predictions.ranking_score` | 3B / 3C |
+| Schema | **Sektor-Struktur**: `sectors` (11 GICS-Sektoren + Sektor-ETF, z.B. Technology→XLK) und `ticker_sectors` (Ticker→Sektor-Mapping). Befüllung organisch in Phase 1 aus dem Finnhub-Fundamentals-Cache, kein statisches Mapping im Code. Basis für den Sektor-ETF-Momentum-Guardrail. | 3B |
+| `ranking` | `atr_pct`/`rsi_at_entry`/`volume_ratio` korrekt befüllen; kombinierter `ranking_score` **zusätzlich** zu `total_score` | 3C |
+| Phase 2 | Technischer Python-Pre-Filter (ATR/RSI/Volume/Market-Cap) vor dem Haiku-Batching | 3C |
+
+---
+
+Siehe auch: `PROJECT_STATUS.md` für Roadmap + Sprint-Spezifikationen,
+`docs/superpowers/plans/` für abgeschlossene Task-Pläne.
