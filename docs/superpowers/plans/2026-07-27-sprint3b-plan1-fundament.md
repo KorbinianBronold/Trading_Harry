@@ -29,6 +29,7 @@ Diese Entscheidungen schliessen die in PROJECT_STATUS.md offen markierten Punkte
 | D3 | B.7 — Reset des `inactive`-Flags | Zweigleisig: automatischer Retry nach 30 Tagen über `ticker_status.retry_after` **plus** manuelles CLI-Kommando `--reactivate`. |
 | D4 | B.7 — Retention | `news_summaries` 90 → 30 Tage, `trend_analyses` unverändert 180, `skipped_tickers`-Events 30 → 90 Tage, `ticker_status` nie automatisch zurückgesetzt. |
 | D5 | B.10 — Finnhub → Sub-Sektor Normalisierung | Alias-Dict `config.SECTOR_ALIASES` im Code (in git versioniert, unit-testbar). Unauflösbare Werte: `sector_id` NULL + WARN-Log mit dem Rohwert. **Bewusst ungemappt**, weil Capital.com keinen passenden ETF führt: Communication-Werte (`Communication Services`, `Media`, `Entertainment`, `Interactive Media & Services`, `Telecommunication*`) sowie Chemie/Verpackung/Papier (`Chemicals`, `Packaging`, `Paper & Forest*`, `Construction Materials`). Grundregel: lieber ungemappt als falsch gemappt. |
+| D9 | B.3 — Sektor-Momentum | **Hybrid aus zwei unabhängigen Signalen** (Entscheidung 2026-07-27): `etf_momentum` aus dem Sub-Sektor-ETF von Capital.com, `db_momentum` als Ø Tagesperformance aller Ticker des Sub-Sektors per SQL über `price_history` × `ticker_sectors` (min. 3 Ticker, sonst NULL). Getrennt gespeichert in neuer Tabelle `sector_momentum`, zusätzlich als Spalten an `predictions` und `guardrail_rejects`. Hartes Reject nur, wenn beide vorliegen **und** übereinstimmen; sonst weiche Warnung mit `enforced=0`. Kosten des DB-Signals: 0 EUR. |
 | D8 | B.3 — Epic-Verifikation | Lauf vom 2026-07-27: von den ursprünglich 21 gewünschten ETFs führt Capital.com **8 nicht** (IGV, IHI, IYT, KBE, KIE, XLB, XLC, XPH). Ersetzt durch verifizierte Alternativen (VGT, XLV, XTN, KBWB, XLF, XME); Communication ersatzlos gestrichen. Endstand: 21 Sub-Sektoren auf 19 ETFs, **20/20 Epics bestätigt**, alle TRADEABLE, kein `TICKER_MAP`-Eintrag nötig. |
 | D6 | B.10 — Guardrail bei unbekanntem Sektor | `config.SECTOR_GUARDRAIL_STRICT`, initial `False` (weich: durchlassen + Reject-Row mit `enforced=0`). **Die Durchsetzung selbst gehört in Plan 2** — dieser Plan legt nur die Infrastruktur (`guardrail_rejects`) und den Sektor-Lookup. |
 
@@ -71,9 +72,10 @@ Trading_Harry/
 │   └── market_context_v1.txt                  [create — System-Prompt für den Markt-Kontext-Call]
 ├── src/
 │   ├── db.py                                  [modify — sectors, ticker_sectors, ticker_status,
-│   │                                                    guardrail_rejects, Retention, Sektor-/Status-Helper,
-│   │                                                    save_market_context]
+│   │                                                    guardrail_rejects, sector_momentum, Retention,
+│   │                                                    Sektor-/Status-Helper, save_market_context]
 │   ├── market_context.py                      [create — Phase 0b: Markt-Kontext via Claude + web_search]
+│   ├── sector_momentum.py                     [create — D9: ETF- + DB-Momentum je Sub-Sektor]
 │   ├── data_collector.py                      [modify — ticker_sectors organisch füllen, inaktive Ticker
 │   │                                                    überspringen, Gap-Erkennung]
 │   ├── ranking.py                             [modify — guardrail_rejects persistieren, Sektor aus DB]
@@ -86,6 +88,7 @@ Trading_Harry/
     └── unit/
         ├── test_verify_epics.py               [create]
         ├── test_market_context.py             [create]
+        ├── test_sector_momentum.py            [create]
         ├── test_capital_provider.py           [modify — search_markets, TICKER_MAP-Abdeckung]
         ├── test_db.py                         [modify — neue Tabellen, Sektor-/Status-Helper, Retention]
         ├── test_data_collector.py             [modify — ticker_sectors, inactive-Skip, Gap-Erkennung]
@@ -97,6 +100,7 @@ Trading_Harry/
 **Verantwortlichkeiten der neuen Dateien:**
 - `src/market_context.py` — **eine** Aufgabe: den tagesaktuellen Marktkontext (VIX, A/D-Ratio, Regime, Sektor-Rotation) beschaffen und als validiertes Dict zurückgeben. Kennt weder DB noch E-Mail; der Aufrufer persistiert.
 - `setup/verify_epics.py` — **eine** Aufgabe: Capital.com nach Epics durchsuchen und einen kopierfertigen Report ausgeben. Kein Pipeline-Code, wird nie automatisch aufgerufen.
+- `src/sector_momentum.py` — **eine** Aufgabe: beide Momentum-Signale je Sub-Sektor erheben und persistieren. Bewertet nichts; die Guardrail-Logik lebt in Plan 2.
 
 ---
 
@@ -1225,15 +1229,17 @@ Expected: FAIL mit `ImportError: cannot import name 'log_guardrail_reject' from 
 # src/db.py — SCHEMA_SQL erweitern:
 
 CREATE TABLE IF NOT EXISTS guardrail_rejects (
-    id         INTEGER PRIMARY KEY AUTOINCREMENT,
-    date       TEXT NOT NULL,
-    run_type   TEXT NOT NULL,
-    ticker     TEXT NOT NULL,
-    direction  TEXT,
-    rule       TEXT NOT NULL,
-    detail     TEXT,
-    enforced   INTEGER NOT NULL DEFAULT 1,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+    date                 TEXT NOT NULL,
+    run_type             TEXT NOT NULL,
+    ticker               TEXT NOT NULL,
+    direction            TEXT,
+    rule                 TEXT NOT NULL,
+    detail               TEXT,
+    enforced             INTEGER NOT NULL DEFAULT 1,
+    sector_etf_momentum  REAL,   -- D9: Momentum-Snapshot zum Reject-Zeitpunkt
+    sector_db_momentum   REAL,   -- D9: dito, DB-basiert
+    created_at           TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE INDEX IF NOT EXISTS idx_guardrail_rejects_date ON guardrail_rejects(date);
@@ -1590,6 +1596,510 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 ```
 
 ---
+
+## Task 9a: Sektor-Momentum (Hybrid, D9)
+
+Erhebt beide Momentum-Signale je Sub-Sektor und persistiert sie getrennt. **Nur die
+Datenerhebung** — die Guardrail-Auswertung (hart/weich) gehört zu B.3 und damit in Plan 2.
+
+**Files:**
+- Modify: `config.py` (`SECTOR_DB_MOMENTUM_MIN_TICKERS`)
+- Modify: `src/db.py` (`SCHEMA_SQL`, `_apply_migrations`, neue Helper)
+- Create: `src/sector_momentum.py`
+- Test: `tests/unit/test_db.py`, `tests/unit/test_sector_momentum.py` (neu)
+
+**Interfaces:**
+- Consumes: `db.get_ticker_sector()` (Task 3), `config.SUB_SECTOR_ETFS`,
+  `price_provider.get_price_history()`, `db.insert_price_bar_if_missing()`
+- Produces:
+  - `db.compute_sector_db_momentum(conn, date, min_tickers=3) -> dict[int, dict]`
+    — `{sector_id: {"momentum": float | None, "ticker_count": int}}`
+  - `db.save_sector_momentum(conn, row: dict) -> None` — Keys `date`, `run_type`,
+    `sector_id`, `etf_momentum`, `db_momentum`, `ticker_count`
+  - `db.load_sector_momentum(conn, date, run_type) -> dict[int, sqlite3.Row]`
+  - `sector_momentum.collect_sector_momentum(conn, date, run_type, price_provider) -> dict[int, dict]`
+  - Tabelle `sector_momentum`; neue Spalten `sector_etf_momentum` / `sector_db_momentum`
+    in `predictions`
+
+**Wichtig — Datenvoraussetzung:** Das ETF-Signal braucht die ETF-Bars in `price_history`.
+Die 19 ETF-Symbole stehen **nicht** in den Ticker-Listen der Phase 1. `collect_sector_momentum()`
+holt sie deshalb selbst per `get_price_history(etf, days=5)` und schreibt sie über
+`insert_price_bar_if_missing()` weg — 19 zusätzliche Capital.com-Calls pro Run, bei 600
+Calls/Min kostenlos und unkritisch.
+
+- [ ] **Step 9a.1: Konstante in `config.py` ergänzen**
+
+```python
+# config.py — direkt nach VIX_TICKER einfügen:
+
+# Mindestzahl Ticker in einem Sub-Sektor, damit das DB-basierte Momentum-Signal
+# (D9) berechnet wird. Darunter ist der Durchschnitt statistisch wertlos und
+# sector_momentum.db_momentum bleibt NULL.
+SECTOR_DB_MOMENTUM_MIN_TICKERS = 3
+```
+
+- [ ] **Step 9a.2: Failing Tests für die DB-Seite schreiben**
+
+```python
+# tests/unit/test_db.py — anhängen:
+from src.db import (
+    compute_sector_db_momentum, save_sector_momentum, load_sector_momentum,
+)
+
+
+def _bar(conn, ticker: str, date: str, close: float) -> None:
+    from src import db as _db
+    _db.insert_price_bar_if_missing(
+        conn, ticker=ticker, date=date, open_=close, high=close,
+        low=close, close=close, volume=1000, source="capital.com",
+    )
+
+
+def test_init_schema_creates_sector_momentum(in_memory_db):
+    init_schema(in_memory_db)
+    assert "sector_momentum" in get_tables(in_memory_db)
+
+
+def test_predictions_has_sector_momentum_columns(in_memory_db):
+    init_schema(in_memory_db)
+    cols = {r["name"] for r in in_memory_db.execute(
+        "PRAGMA table_info(predictions)").fetchall()}
+    assert {"sector_etf_momentum", "sector_db_momentum"}.issubset(cols)
+
+
+def test_compute_sector_db_momentum_averages_daily_change(in_memory_db):
+    """Drei Pharma-Ticker mit +2%, +4% und +6% ergeben +4% Sektor-Momentum."""
+    init_schema(in_memory_db)
+    sid = resolve_sector_id(in_memory_db, "Pharmaceuticals")
+    for t, prev, today in (("JNJ", 100.0, 102.0), ("LLY", 100.0, 104.0),
+                           ("ABBV", 100.0, 106.0)):
+        upsert_ticker_sector(in_memory_db, t, sid)
+        _bar(in_memory_db, t, "2026-07-24", prev)
+        _bar(in_memory_db, t, "2026-07-27", today)
+    in_memory_db.commit()
+
+    out = compute_sector_db_momentum(in_memory_db, date="2026-07-27")
+    assert out[sid]["ticker_count"] == 3
+    assert round(out[sid]["momentum"], 4) == 4.0
+
+
+def test_compute_sector_db_momentum_is_none_below_minimum(in_memory_db):
+    """Zwei Ticker reichen nicht — der Durchschnitt waere statistisch wertlos."""
+    init_schema(in_memory_db)
+    sid = resolve_sector_id(in_memory_db, "Semiconductors")
+    for t in ("NVDA", "AVGO"):
+        upsert_ticker_sector(in_memory_db, t, sid)
+        _bar(in_memory_db, t, "2026-07-24", 100.0)
+        _bar(in_memory_db, t, "2026-07-27", 105.0)
+    in_memory_db.commit()
+
+    out = compute_sector_db_momentum(in_memory_db, date="2026-07-27")
+    assert out[sid]["momentum"] is None
+    assert out[sid]["ticker_count"] == 2
+
+
+def test_compute_sector_db_momentum_honours_custom_minimum(in_memory_db):
+    init_schema(in_memory_db)
+    sid = resolve_sector_id(in_memory_db, "Semiconductors")
+    for t in ("NVDA", "AVGO"):
+        upsert_ticker_sector(in_memory_db, t, sid)
+        _bar(in_memory_db, t, "2026-07-24", 100.0)
+        _bar(in_memory_db, t, "2026-07-27", 105.0)
+    in_memory_db.commit()
+    out = compute_sector_db_momentum(in_memory_db, date="2026-07-27", min_tickers=2)
+    assert round(out[sid]["momentum"], 4) == 5.0
+
+
+def test_compute_sector_db_momentum_skips_tickers_without_previous_bar(in_memory_db):
+    init_schema(in_memory_db)
+    sid = resolve_sector_id(in_memory_db, "Pharmaceuticals")
+    for t in ("JNJ", "LLY", "ABBV"):
+        upsert_ticker_sector(in_memory_db, t, sid)
+        _bar(in_memory_db, t, "2026-07-27", 105.0)
+    _bar(in_memory_db, "JNJ", "2026-07-24", 100.0)
+    in_memory_db.commit()
+    out = compute_sector_db_momentum(in_memory_db, date="2026-07-27")
+    assert out.get(sid, {}).get("ticker_count", 0) == 1
+
+
+def test_save_and_load_sector_momentum_upserts(in_memory_db):
+    init_schema(in_memory_db)
+    sid = resolve_sector_id(in_memory_db, "Semiconductors")
+    row = {"date": "2026-07-27", "run_type": "pre_market", "sector_id": sid,
+           "etf_momentum": 1.5, "db_momentum": None, "ticker_count": 2}
+    save_sector_momentum(in_memory_db, row)
+    save_sector_momentum(in_memory_db, {**row, "etf_momentum": 2.5})
+    loaded = load_sector_momentum(in_memory_db, "2026-07-27", "pre_market")
+    assert len(loaded) == 1
+    assert loaded[sid]["etf_momentum"] == 2.5
+    assert loaded[sid]["db_momentum"] is None
+```
+
+- [ ] **Step 9a.3: Tests laufen lassen, Fehlschlag bestätigen**
+
+Run: `pytest tests/unit/test_db.py -k sector_momentum -v`
+Expected: FAIL mit `ImportError: cannot import name 'compute_sector_db_momentum' from 'src.db'`
+
+- [ ] **Step 9a.4: Schema, Migration und DB-Helper implementieren**
+
+```python
+# src/db.py — SCHEMA_SQL erweitern:
+
+CREATE TABLE IF NOT EXISTS sector_momentum (
+    date         TEXT NOT NULL,
+    run_type     TEXT NOT NULL,
+    sector_id    INTEGER NOT NULL REFERENCES sectors(id),
+    etf_momentum REAL,
+    db_momentum  REAL,
+    ticker_count INTEGER NOT NULL DEFAULT 0,
+    created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(date, run_type, sector_id)
+);
+```
+
+```python
+# src/db.py — in _apply_migrations() ergänzen (zum bestehenden pred_cols-Block):
+
+    if "sector_etf_momentum" not in pred_cols:
+        conn.execute("ALTER TABLE predictions ADD COLUMN sector_etf_momentum REAL")
+    if "sector_db_momentum" not in pred_cols:
+        conn.execute("ALTER TABLE predictions ADD COLUMN sector_db_momentum REAL")
+
+    gr_cols = {r["name"] for r in conn.execute(
+        "PRAGMA table_info(guardrail_rejects)"
+    ).fetchall()}
+    if gr_cols and "sector_etf_momentum" not in gr_cols:
+        conn.execute("ALTER TABLE guardrail_rejects ADD COLUMN sector_etf_momentum REAL")
+    if gr_cols and "sector_db_momentum" not in gr_cols:
+        conn.execute("ALTER TABLE guardrail_rejects ADD COLUMN sector_db_momentum REAL")
+```
+
+```python
+# src/db.py — neue Funktionen, nach get_ticker_sector() einfügen:
+
+def compute_sector_db_momentum(
+    conn: sqlite3.Connection,
+    date: str,
+    min_tickers: int = config.SECTOR_DB_MOMENTUM_MIN_TICKERS,
+) -> dict[int, dict]:
+    """Berechnet je Sub-Sektor die durchschnittliche Tagesperformance aller
+    zugeordneten Ticker aus price_history — reines SQL, keine API-Calls, 0 EUR.
+
+    Gibt {sector_id: {"momentum": float | None, "ticker_count": int}} zurück.
+    `momentum` ist None, wenn weniger als `min_tickers` Ticker des Sub-Sektors
+    einen Vortagesbar haben; der Durchschnitt wäre dann statistisch wertlos.
+    Ticker ohne Vortagesbar zählen nicht mit."""
+    rows = conn.execute(
+        """SELECT ts.sector_id AS sector_id,
+                  AVG((cur.close - prev.close) / prev.close * 100.0) AS momentum,
+                  COUNT(*) AS n
+           FROM ticker_sectors ts
+           JOIN price_history cur
+             ON cur.ticker = ts.ticker AND cur.date = ?
+           JOIN price_history prev
+             ON prev.ticker = ts.ticker
+            AND prev.date = (SELECT MAX(p.date) FROM price_history p
+                             WHERE p.ticker = ts.ticker AND p.date < ?)
+           WHERE prev.close > 0
+           GROUP BY ts.sector_id""",
+        (date, date),
+    ).fetchall()
+    out: dict[int, dict] = {}
+    for r in rows:
+        n = int(r["n"])
+        out[int(r["sector_id"])] = {
+            "momentum": float(r["momentum"]) if n >= min_tickers else None,
+            "ticker_count": n,
+        }
+    return out
+
+
+def save_sector_momentum(conn: sqlite3.Connection, row: dict) -> None:
+    """Schreibt oder überschreibt die beiden Momentum-Signale eines Sub-Sektors
+    für einen Run (UNIQUE date+run_type+sector_id)."""
+    cols = ["date", "run_type", "sector_id", "etf_momentum",
+            "db_momentum", "ticker_count"]
+    placeholders = ", ".join(["?"] * len(cols))
+    conn.execute(
+        f"INSERT OR REPLACE INTO sector_momentum ({', '.join(cols)}) "
+        f"VALUES ({placeholders})",
+        [row.get(c) for c in cols],
+    )
+    conn.commit()
+
+
+def load_sector_momentum(
+    conn: sqlite3.Connection, date: str, run_type: str,
+) -> dict[int, sqlite3.Row]:
+    """Gibt die gespeicherten Momentum-Zeilen eines Runs als {sector_id: Row} zurück."""
+    rows = conn.execute(
+        "SELECT * FROM sector_momentum WHERE date = ? AND run_type = ?",
+        (date, run_type),
+    ).fetchall()
+    return {int(r["sector_id"]): r for r in rows}
+```
+
+- [ ] **Step 9a.5: Tests laufen lassen, grün bestätigen**
+
+Run: `pytest tests/unit/test_db.py -v`
+Expected: PASS
+
+- [ ] **Step 9a.6: Failing Tests für `src/sector_momentum.py` schreiben**
+
+```python
+# tests/unit/test_sector_momentum.py — neue Datei:
+from unittest.mock import MagicMock
+
+import pandas as pd
+
+from src import db
+
+
+def _etf_frame(prev_close: float, close: float) -> pd.DataFrame:
+    return pd.DataFrame(
+        {"Open": [prev_close, close], "High": [prev_close, close],
+         "Low": [prev_close, close], "Close": [prev_close, close],
+         "Volume": [0, 0]},
+        index=pd.to_datetime(["2026-07-24", "2026-07-27"]),
+    )
+
+
+def _bar(conn, ticker, date, close):
+    db.insert_price_bar_if_missing(
+        conn, ticker=ticker, date=date, open_=close, high=close,
+        low=close, close=close, volume=1000, source="capital.com",
+    )
+
+
+def test_collect_writes_one_row_per_sub_sector(in_memory_db):
+    import config
+    from src.sector_momentum import collect_sector_momentum
+    db.init_schema(in_memory_db)
+    provider = MagicMock()
+    provider._source_name = "capital.com"
+    provider.get_price_history.return_value = _etf_frame(100.0, 101.0)
+
+    out = collect_sector_momentum(
+        conn=in_memory_db, date="2026-07-27", run_type="pre_market",
+        price_provider=provider,
+    )
+    assert len(out) == len(config.SUB_SECTOR_ETFS)
+    stored = db.load_sector_momentum(in_memory_db, "2026-07-27", "pre_market")
+    assert len(stored) == len(config.SUB_SECTOR_ETFS)
+
+
+def test_collect_computes_etf_momentum_from_fetched_bars(in_memory_db):
+    from src.sector_momentum import collect_sector_momentum
+    db.init_schema(in_memory_db)
+    provider = MagicMock()
+    provider._source_name = "capital.com"
+    provider.get_price_history.return_value = _etf_frame(100.0, 102.0)
+
+    collect_sector_momentum(
+        conn=in_memory_db, date="2026-07-27", run_type="pre_market",
+        price_provider=provider,
+    )
+    sid = db.resolve_sector_id(in_memory_db, "Semiconductors")
+    stored = db.load_sector_momentum(in_memory_db, "2026-07-27", "pre_market")
+    assert round(stored[sid]["etf_momentum"], 4) == 2.0
+
+
+def test_collect_leaves_etf_momentum_none_when_fetch_fails(in_memory_db):
+    from src.sector_momentum import collect_sector_momentum
+    db.init_schema(in_memory_db)
+    provider = MagicMock()
+    provider._source_name = "capital.com"
+    provider.get_price_history.return_value = None
+
+    collect_sector_momentum(
+        conn=in_memory_db, date="2026-07-27", run_type="pre_market",
+        price_provider=provider,
+    )
+    sid = db.resolve_sector_id(in_memory_db, "Semiconductors")
+    stored = db.load_sector_momentum(in_memory_db, "2026-07-27", "pre_market")
+    assert stored[sid]["etf_momentum"] is None
+
+
+def test_collect_fetches_each_etf_only_once(in_memory_db):
+    """MedTech, Pharma und Healthcare Rest teilen sich XLV — ein Call genuegt."""
+    import config
+    from src.sector_momentum import collect_sector_momentum
+    db.init_schema(in_memory_db)
+    provider = MagicMock()
+    provider._source_name = "capital.com"
+    provider.get_price_history.return_value = _etf_frame(100.0, 101.0)
+
+    collect_sector_momentum(
+        conn=in_memory_db, date="2026-07-27", run_type="pre_market",
+        price_provider=provider,
+    )
+    assert provider.get_price_history.call_count == len(set(config.SUB_SECTOR_ETFS.values()))
+
+
+def test_collect_fills_db_momentum_when_enough_tickers(in_memory_db):
+    from src.sector_momentum import collect_sector_momentum
+    db.init_schema(in_memory_db)
+    sid = db.resolve_sector_id(in_memory_db, "Pharmaceuticals")
+    for t, today in (("JNJ", 102.0), ("LLY", 104.0), ("ABBV", 106.0)):
+        db.upsert_ticker_sector(in_memory_db, t, sid)
+        _bar(in_memory_db, t, "2026-07-24", 100.0)
+        _bar(in_memory_db, t, "2026-07-27", today)
+    in_memory_db.commit()
+
+    provider = MagicMock()
+    provider._source_name = "capital.com"
+    provider.get_price_history.return_value = _etf_frame(100.0, 101.0)
+
+    collect_sector_momentum(
+        conn=in_memory_db, date="2026-07-27", run_type="pre_market",
+        price_provider=provider,
+    )
+    stored = db.load_sector_momentum(in_memory_db, "2026-07-27", "pre_market")
+    assert round(stored[sid]["db_momentum"], 4) == 4.0
+    assert stored[sid]["ticker_count"] == 3
+```
+
+- [ ] **Step 9a.7: Tests laufen lassen, Fehlschlag bestätigen**
+
+Run: `pytest tests/unit/test_sector_momentum.py -v`
+Expected: FAIL mit `ModuleNotFoundError: No module named 'src.sector_momentum'`
+
+- [ ] **Step 9a.8: `src/sector_momentum.py` implementieren**
+
+```python
+# src/sector_momentum.py — neue Datei:
+"""Sektor-Momentum: zwei unabhaengige Signale je Sub-Sektor.
+
+Der ETF-Pfad holt die Tagesperformance des Sub-Sektor-ETF von Capital.com. Der
+DB-Pfad mittelt die Tagesperformance aller Ticker desselben Sub-Sektors aus
+price_history — reines SQL, kostenlos, aber erst ab config.SECTOR_DB_MOMENTUM_MIN_TICKERS
+Tickern aussagekraeftig. Beide Werte werden getrennt gespeichert, nie verrechnet:
+Sprint 3D soll datenbasiert messen koennen, welches Signal besser predictet.
+
+Das Modul erhebt und persistiert nur. Die Guardrail-Auswertung (hartes Reject nur
+bei uebereinstimmenden Signalen, sonst weiche Warnung) gehoert zu Phase B.3.
+Eingefuehrt in Sprint 3B / Plan 1 (Entscheidung D9)."""
+import logging
+
+import pandas as pd
+
+import config
+from src import db
+from src.providers.base import DataProvider
+
+log = logging.getLogger("shares_future.sector_momentum")
+
+
+def _daily_change_pct(df: pd.DataFrame | None) -> float | None:
+    """Tagesperformance in Prozent aus den letzten zwei Bars, oder None wenn
+    weniger als zwei Bars vorliegen bzw. der Vortagesschluss 0 ist."""
+    if df is None or len(df) < 2:
+        return None
+    prev = float(df["Close"].iloc[-2])
+    cur = float(df["Close"].iloc[-1])
+    if prev <= 0:
+        return None
+    return (cur - prev) / prev * 100.0
+
+
+def _fetch_etf_momentum(
+    price_provider: DataProvider, conn, etf: str, date: str,
+) -> float | None:
+    """Holt die letzten Bars des Sektor-ETF, schreibt sie in price_history und
+    gibt die Tagesperformance zurueck. None bei jedem Abruf- oder Datenproblem."""
+    try:
+        df = price_provider.get_price_history(etf, days=5)
+    except Exception as e:
+        log.warning(f"{etf}: ETF-Momentum-Abruf fehlgeschlagen: {e}")
+        return None
+    if df is None or df.empty:
+        log.warning(f"{etf}: keine Bars fuer ETF-Momentum")
+        return None
+
+    _raw = getattr(price_provider, "_source_name", None)
+    source = _raw if isinstance(_raw, str) else "capital.com"
+    for ts, row in df.iterrows():
+        d = ts.strftime("%Y-%m-%d") if hasattr(ts, "strftime") else str(ts)[:10]
+        if d > date:
+            continue
+        db.insert_price_bar_if_missing(
+            conn, ticker=etf, date=d,
+            open_=float(row.get("Open", 0)), high=float(row.get("High", 0)),
+            low=float(row.get("Low", 0)), close=float(row.get("Close", 0)),
+            volume=int(row.get("Volume", 0) or 0), source=source,
+        )
+    conn.commit()
+    return _daily_change_pct(df)
+
+
+def collect_sector_momentum(
+    conn, date: str, run_type: str, price_provider: DataProvider,
+) -> dict[int, dict]:
+    """Erhebt beide Momentum-Signale fuer jeden Sub-Sektor und persistiert sie.
+
+    Gibt {sector_id: {"etf_momentum": ..., "db_momentum": ..., "ticker_count": ...}}
+    zurueck. Jeder ETF wird nur einmal abgerufen, auch wenn sich mehrere
+    Sub-Sektoren einen teilen (MedTech/Pharma/Healthcare Rest -> XLV)."""
+    db_by_sector = db.compute_sector_db_momentum(conn, date=date)
+
+    etf_cache: dict[str, float | None] = {}
+    out: dict[int, dict] = {}
+
+    for name, etf in config.SUB_SECTOR_ETFS.items():
+        row = conn.execute(
+            "SELECT id FROM sectors WHERE name = ?", (name,),
+        ).fetchone()
+        if row is None:
+            log.warning(f"Sub-Sektor {name!r} fehlt in der sectors-Tabelle")
+            continue
+        sector_id = int(row["id"])
+
+        if etf not in etf_cache:
+            etf_cache[etf] = _fetch_etf_momentum(price_provider, conn, etf, date)
+
+        agg = db_by_sector.get(sector_id, {"momentum": None, "ticker_count": 0})
+        entry = {
+            "etf_momentum": etf_cache[etf],
+            "db_momentum":  agg["momentum"],
+            "ticker_count": agg["ticker_count"],
+        }
+        db.save_sector_momentum(conn, {
+            "date": date, "run_type": run_type, "sector_id": sector_id, **entry,
+        })
+        out[sector_id] = entry
+
+    both = sum(1 for e in out.values()
+               if e["etf_momentum"] is not None and e["db_momentum"] is not None)
+    log.info(
+        f"Sektor-Momentum: {len(out)} Sub-Sektoren, {both} mit beiden Signalen "
+        f"(nur dort kann der Guardrail hart greifen)"
+    )
+    return out
+```
+
+- [ ] **Step 9a.9: Tests laufen lassen, grün bestätigen**
+
+Run: `pytest tests/unit/test_sector_momentum.py tests/unit/test_db.py -v`
+Expected: PASS
+
+- [ ] **Step 9a.10: Commit**
+
+```bash
+git add config.py src/db.py src/sector_momentum.py \
+        tests/unit/test_sector_momentum.py tests/unit/test_db.py
+git commit -m "feat: collect hybrid sector momentum (ETF + DB)
+
+Sprint 3B / Plan 1, Task 9a (decision D9). Two independent signals per
+sub-sector, stored separately and never merged: etf_momentum from the
+sub-sector ETF, db_momentum as the average daily change of all tickers in
+that sub-sector (pure SQL, no API cost, NULL below 3 tickers). Sprint 3D
+decides which one predicts better; the guardrail logic itself is Plan 2.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
+```
+
+---
+
 
 ## Task 10: Markt-Kontext-Modul
 
@@ -2553,10 +3063,12 @@ python setup/historical_loader.py --reactivate AAPL MSFT
 
 - [ ] **Step 14.6: `docs/ARCHITECTURE.md` aktualisieren**
 
-Die vier neuen Tabellen (`sectors`, `ticker_sectors`, `ticker_status`,
-`guardrail_rejects`), die neue Spalte `market_context.advance_decline_ratio`
-und das neue Modul `src/market_context.py` im Datenmodell- bzw. Modul-Abschnitt
-ergänzen.
+Die fünf neuen Tabellen (`sectors`, `ticker_sectors`, `ticker_status`,
+`guardrail_rejects`, `sector_momentum`), die neuen Spalten
+(`market_context.advance_decline_ratio`, `predictions.sector_etf_momentum`,
+`predictions.sector_db_momentum` und die beiden gleichnamigen in
+`guardrail_rejects`) sowie die neuen Module `src/market_context.py` und
+`src/sector_momentum.py` im Datenmodell- bzw. Modul-Abschnitt ergänzen.
 
 > **Nicht anfassen:** `README.md`, `docs/WORKFLOW.md`, `docs/SPECIFICATION.md`,
 > `docs/superpowers/specs/2026-05-19-shares-future-mvp-design.md` — bekannt
@@ -2583,13 +3095,13 @@ das Fundament steht und der `verify_epics`-Output aus Task 2 / Step 2.4 vorliegt
 |---|---|---|
 | B.1 | `midday` + `position_check` entfernen, Cron-Umbau in `analyze.yml` | Destruktiv; erst sinnvoll, wenn `trade_proposals` existiert |
 | B.2 | Run-Type `trade_proposals` (16:10) | Braucht die B.3-Checks, die wiederum die verifizierten ETF-Epics brauchen |
-| B.3 | Die sieben Checks (Sektor-ETF-Momentum, Relative Stärke, VIX-Filter, Opening-Gap, Entry-Fenster, Korrelation) | Hängen direkt am `verify_epics`-Ergebnis. Marktbreite und VIX werden von Plan 1 bereits **beschafft**, aber noch nicht **angewendet** |
+| B.3 | Die sieben Checks (Sektor-Momentum, Relative Stärke, VIX-Filter, Opening-Gap, Entry-Fenster, Korrelation) | Plan 1 **beschafft** die Daten (Markt-Kontext, beide Momentum-Signale), **wendet sie aber nicht an**. Insbesondere die D9-Guardrail-Logik — hartes Reject nur bei zwei übereinstimmenden Signalen, sonst weiche Warnung mit `enforced=0` — gehört vollständig in Plan 2 |
 | B.4 | Phase 1c — offene Positionen als Pflicht-Kandidaten | Teil des Pipeline-Umbaus |
 | B.5 | Phase 4 / 4a tauschen, `portfolio_check` ohne `web_search` | Teil des Pipeline-Umbaus |
 | B.6 | `close` vereinfachen | Teil des Pipeline-Umbaus |
 | B.9 | Weekly-Mail erweitern | Datenbasis (`guardrail_rejects`, `ticker_status`) entsteht hier, die Auswertung kommt in Plan 2 |
 | B.11 | `hold_days_recommended` als Mail-Spalte | Reine Mail-Änderung, gehört zu den übrigen Mail-Arbeiten |
-| D6 | `config.SECTOR_GUARDRAIL_STRICT` + Durchsetzung | Das Flag wird dort eingeführt, wo es auch gelesen wird — der Sektor-Guardrail ist Teil von B.3 |
+| D6/D9 | `config.SECTOR_GUARDRAIL_STRICT` + Auswertung der beiden Momentum-Signale | Das Flag wird dort eingeführt, wo es auch gelesen wird. Plan 2 füllt dabei auch `predictions.sector_etf_momentum` / `sector_db_momentum` und die gleichnamigen Spalten in `guardrail_rejects` — Plan 1 legt nur die Spalten an |
 
 ---
 
@@ -2608,6 +3120,7 @@ das Fundament steht und der `verify_epics`-Output aus Task 2 / Step 2.4 vorliegt
 | B.7 — Retention / unbegrenztes Wachstum | 9 | ✅ als D4 entschieden und umgesetzt |
 | B.8 — Gap-Erkennung | 12 | ✅ inkl. dokumentierter Feiertags-Einschränkung |
 | B.9 — Guardrail-Reject-Persistenz | 8 | ✅ Datenbasis gelegt (Auswertung → Plan 2) |
+| B.3 — Sektor-Momentum hybrid | 9a | ✅ als D9 entschieden; Erhebung + Persistenz hier, Guardrail-Auswertung → Plan 2 |
 | B.10 — `sectors` + `ticker_sectors` | 3 | ✅ |
 | B.10 — organische Befüllung in Phase 1 | 4 | ✅ |
 | B.10 — Finnhub↔GICS-Normalisierung (offene Frage) | 3 | ✅ als D5 entschieden und umgesetzt |
