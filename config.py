@@ -85,6 +85,11 @@ SUB_SECTOR_ETFS: dict[str, str] = {
 # Internes Ticker-Symbol für den Volatilitätsindex (CBOE VIX).
 VIX_TICKER = "VIX"
 
+# Mindestzahl Ticker in einem Sub-Sektor, damit das DB-basierte Momentum-Signal
+# (Sprint 3B / D9) berechnet wird. Darunter ist der Durchschnitt statistisch
+# wertlos und sector_momentum.db_momentum bleibt NULL.
+SECTOR_DB_MOMENTUM_MIN_TICKERS = 3
+
 # Normalisierung: Finnhub liefert im Feld `finnhubIndustry` ein gemischtes
 # Vokabular — teils Sektor-Ebene ("Consumer Cyclical"), teils Industrie-Ebene
 # ("Semiconductors"), teils Yahoo-Bezeichnungen. Dieses Dict bildet alle bekannten

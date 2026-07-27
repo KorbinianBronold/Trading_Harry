@@ -188,6 +188,17 @@ CREATE TABLE IF NOT EXISTS guardrail_rejects (
 );
 
 CREATE INDEX IF NOT EXISTS idx_guardrail_rejects_date ON guardrail_rejects(date);
+
+CREATE TABLE IF NOT EXISTS sector_momentum (
+    date         TEXT NOT NULL,
+    run_type     TEXT NOT NULL,
+    sector_id    INTEGER NOT NULL REFERENCES sectors(id),
+    etf_momentum REAL,      -- NULL wenn kein ETF verfuegbar
+    db_momentum  REAL,      -- NULL wenn < SECTOR_DB_MOMENTUM_MIN_TICKERS Ticker
+    ticker_count INTEGER NOT NULL DEFAULT 0,
+    created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(date, run_type, sector_id)
+);
 """
 
 
@@ -209,6 +220,22 @@ def _apply_migrations(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE predictions ADD COLUMN hold_days_recommended INTEGER")
     if "intraday_range_pct" not in pred_cols:
         conn.execute("ALTER TABLE predictions ADD COLUMN intraday_range_pct REAL")
+    # D9: der Momentum-Snapshot haengt an der Prediction, weil nur sie ueber
+    # outcomes mit echten Trade-Ergebnissen verknuepft ist.
+    if "sector_etf_momentum" not in pred_cols:
+        conn.execute("ALTER TABLE predictions ADD COLUMN sector_etf_momentum REAL")
+    if "sector_db_momentum" not in pred_cols:
+        conn.execute("ALTER TABLE predictions ADD COLUMN sector_db_momentum REAL")
+
+    # guardrail_rejects existiert erst seit Task 8 — bei aelteren DBs legt der
+    # SCHEMA_SQL-Lauf davor die Tabelle bereits mit beiden Spalten an.
+    gr_cols = {r["name"] for r in conn.execute(
+        "PRAGMA table_info(guardrail_rejects)"
+    ).fetchall()}
+    if gr_cols and "sector_etf_momentum" not in gr_cols:
+        conn.execute("ALTER TABLE guardrail_rejects ADD COLUMN sector_etf_momentum REAL")
+    if gr_cols and "sector_db_momentum" not in gr_cols:
+        conn.execute("ALTER TABLE guardrail_rejects ADD COLUMN sector_db_momentum REAL")
 
     out_cols = {r["name"] for r in conn.execute(
         "PRAGMA table_info(outcomes)"
@@ -309,6 +336,69 @@ def get_ticker_sector(conn: sqlite3.Connection, ticker: str) -> sqlite3.Row | No
            WHERE ts.ticker = ?""",
         (ticker,),
     ).fetchone()
+
+
+def compute_sector_db_momentum(
+    conn: sqlite3.Connection,
+    date: str,
+    min_tickers: int = config.SECTOR_DB_MOMENTUM_MIN_TICKERS,
+) -> dict[int, dict]:
+    """Berechnet je Sub-Sektor die durchschnittliche Tagesperformance aller
+    zugeordneten Ticker aus price_history — reines SQL, keine API-Calls, 0 EUR.
+
+    Gibt {sector_id: {"momentum": float | None, "ticker_count": int}} zurueck.
+    `momentum` ist None, wenn weniger als `min_tickers` Ticker des Sub-Sektors
+    einen Vortagesbar haben; der Durchschnitt waere dann statistisch wertlos.
+    Ticker ohne Vortagesbar zaehlen nicht mit."""
+    rows = conn.execute(
+        """SELECT ts.sector_id AS sector_id,
+                  AVG((cur.close - prev.close) / prev.close * 100.0) AS momentum,
+                  COUNT(*) AS n
+           FROM ticker_sectors ts
+           JOIN price_history cur
+             ON cur.ticker = ts.ticker AND cur.date = ?
+           JOIN price_history prev
+             ON prev.ticker = ts.ticker
+            AND prev.date = (SELECT MAX(p.date) FROM price_history p
+                             WHERE p.ticker = ts.ticker AND p.date < ?)
+           WHERE prev.close > 0
+           GROUP BY ts.sector_id""",
+        (date, date),
+    ).fetchall()
+    out: dict[int, dict] = {}
+    for r in rows:
+        n = int(r["n"])
+        out[int(r["sector_id"])] = {
+            "momentum": float(r["momentum"]) if n >= min_tickers else None,
+            "ticker_count": n,
+        }
+    return out
+
+
+def save_sector_momentum(conn: sqlite3.Connection, row: dict) -> None:
+    """Schreibt oder ueberschreibt die beiden Momentum-Signale eines Sub-Sektors
+    fuer einen Run (UNIQUE date + run_type + sector_id)."""
+    cols = ["date", "run_type", "sector_id", "etf_momentum",
+            "db_momentum", "ticker_count"]
+    placeholders = ", ".join(["?"] * len(cols))
+    conn.execute(
+        f"INSERT OR REPLACE INTO sector_momentum ({', '.join(cols)}) "
+        f"VALUES ({placeholders})",
+        [row.get(c) for c in cols],
+    )
+    conn.commit()
+
+
+def load_sector_momentum(
+    conn: sqlite3.Connection, date: str, run_type: str,
+) -> dict[int, sqlite3.Row]:
+    """Gibt die gespeicherten Momentum-Zeilen eines Runs als {sector_id: Row}
+    zurueck."""
+    rows = conn.execute(
+        "SELECT * FROM sector_momentum WHERE date = ? AND run_type = ?",
+        (date, run_type),
+    ).fetchall()
+    return {int(r["sector_id"]): r for r in rows}
 
 
 def get_tables(conn: sqlite3.Connection) -> list[str]:

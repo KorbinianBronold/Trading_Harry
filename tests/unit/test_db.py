@@ -719,3 +719,143 @@ def test_cleanup_keeps_trend_analyses_for_180_days(in_memory_db):
     left = [r["trend_name"] for r in in_memory_db.execute(
         "SELECT trend_name FROM trend_analyses").fetchall()]
     assert left == ["jung"]
+
+
+# ---------- sector_momentum (Sprint 3B / Plan 1, Task 9a — Entscheidung D9) ----------
+
+from src.db import (
+    compute_sector_db_momentum, save_sector_momentum, load_sector_momentum,
+)
+
+
+def _bar(conn, ticker: str, date: str, close: float) -> None:
+    from src import db as _db
+    _db.insert_price_bar_if_missing(
+        conn, ticker=ticker, date=date, open_=close, high=close,
+        low=close, close=close, volume=1000, source="capital.com",
+    )
+
+
+def test_init_schema_creates_sector_momentum(in_memory_db):
+    init_schema(in_memory_db)
+    assert "sector_momentum" in get_tables(in_memory_db)
+
+
+def test_predictions_has_sector_momentum_columns(in_memory_db):
+    init_schema(in_memory_db)
+    cols = {r["name"] for r in in_memory_db.execute(
+        "PRAGMA table_info(predictions)").fetchall()}
+    assert {"sector_etf_momentum", "sector_db_momentum"}.issubset(cols)
+
+
+def test_guardrail_rejects_has_sector_momentum_columns(in_memory_db):
+    init_schema(in_memory_db)
+    cols = {r["name"] for r in in_memory_db.execute(
+        "PRAGMA table_info(guardrail_rejects)").fetchall()}
+    assert {"sector_etf_momentum", "sector_db_momentum"}.issubset(cols)
+
+
+def test_compute_sector_db_momentum_averages_daily_change(in_memory_db):
+    """Drei Pharma-Ticker mit +2%, +4% und +6% ergeben +4% Sektor-Momentum."""
+    init_schema(in_memory_db)
+    sid = resolve_sector_id(in_memory_db, "Pharmaceuticals")
+    for t, prev, today in (("JNJ", 100.0, 102.0), ("LLY", 100.0, 104.0),
+                           ("ABBV", 100.0, 106.0)):
+        upsert_ticker_sector(in_memory_db, t, sid)
+        _bar(in_memory_db, t, "2026-07-24", prev)
+        _bar(in_memory_db, t, "2026-07-27", today)
+    in_memory_db.commit()
+
+    out = compute_sector_db_momentum(in_memory_db, date="2026-07-27")
+    assert out[sid]["ticker_count"] == 3
+    assert round(out[sid]["momentum"], 4) == 4.0
+
+
+def test_compute_sector_db_momentum_is_none_below_minimum(in_memory_db):
+    """Zwei Ticker reichen nicht — der Durchschnitt waere statistisch wertlos."""
+    init_schema(in_memory_db)
+    sid = resolve_sector_id(in_memory_db, "Semiconductors")
+    for t in ("NVDA", "AVGO"):
+        upsert_ticker_sector(in_memory_db, t, sid)
+        _bar(in_memory_db, t, "2026-07-24", 100.0)
+        _bar(in_memory_db, t, "2026-07-27", 105.0)
+    in_memory_db.commit()
+
+    out = compute_sector_db_momentum(in_memory_db, date="2026-07-27")
+    assert out[sid]["momentum"] is None
+    assert out[sid]["ticker_count"] == 2
+
+
+def test_compute_sector_db_momentum_honours_custom_minimum(in_memory_db):
+    init_schema(in_memory_db)
+    sid = resolve_sector_id(in_memory_db, "Semiconductors")
+    for t in ("NVDA", "AVGO"):
+        upsert_ticker_sector(in_memory_db, t, sid)
+        _bar(in_memory_db, t, "2026-07-24", 100.0)
+        _bar(in_memory_db, t, "2026-07-27", 105.0)
+    in_memory_db.commit()
+    out = compute_sector_db_momentum(in_memory_db, date="2026-07-27", min_tickers=2)
+    assert round(out[sid]["momentum"], 4) == 5.0
+
+
+def test_compute_sector_db_momentum_skips_tickers_without_previous_bar(in_memory_db):
+    init_schema(in_memory_db)
+    sid = resolve_sector_id(in_memory_db, "Pharmaceuticals")
+    for t in ("JNJ", "LLY", "ABBV"):
+        upsert_ticker_sector(in_memory_db, t, sid)
+        _bar(in_memory_db, t, "2026-07-27", 105.0)
+    _bar(in_memory_db, "JNJ", "2026-07-24", 100.0)
+    in_memory_db.commit()
+    out = compute_sector_db_momentum(in_memory_db, date="2026-07-27")
+    assert out.get(sid, {}).get("ticker_count", 0) == 1
+
+
+def test_compute_sector_db_momentum_ignores_bars_after_the_date(in_memory_db):
+    """Der Vortagesbar muss echt vor `date` liegen — sonst wuerde ein spaeter
+    nachgeladener Bar die Tagesperformance verfaelschen."""
+    init_schema(in_memory_db)
+    sid = resolve_sector_id(in_memory_db, "Pharmaceuticals")
+    for t in ("JNJ", "LLY", "ABBV"):
+        upsert_ticker_sector(in_memory_db, t, sid)
+        _bar(in_memory_db, t, "2026-07-24", 100.0)
+        _bar(in_memory_db, t, "2026-07-27", 102.0)
+        _bar(in_memory_db, t, "2026-07-28", 200.0)
+    in_memory_db.commit()
+    out = compute_sector_db_momentum(in_memory_db, date="2026-07-27")
+    assert round(out[sid]["momentum"], 4) == 2.0
+
+
+def test_compute_sector_db_momentum_ignores_unmapped_tickers(in_memory_db):
+    init_schema(in_memory_db)
+    _bar(in_memory_db, "NOSECTOR", "2026-07-24", 100.0)
+    _bar(in_memory_db, "NOSECTOR", "2026-07-27", 110.0)
+    in_memory_db.commit()
+    assert compute_sector_db_momentum(in_memory_db, date="2026-07-27") == {}
+
+
+def test_save_and_load_sector_momentum_upserts(in_memory_db):
+    init_schema(in_memory_db)
+    sid = resolve_sector_id(in_memory_db, "Semiconductors")
+    row = {"date": "2026-07-27", "run_type": "pre_market", "sector_id": sid,
+           "etf_momentum": 1.5, "db_momentum": None, "ticker_count": 2}
+    save_sector_momentum(in_memory_db, row)
+    save_sector_momentum(in_memory_db, {**row, "etf_momentum": 2.5})
+    loaded = load_sector_momentum(in_memory_db, "2026-07-27", "pre_market")
+    assert len(loaded) == 1
+    assert loaded[sid]["etf_momentum"] == 2.5
+    assert loaded[sid]["db_momentum"] is None
+
+
+def test_load_sector_momentum_is_scoped_to_date_and_run_type(in_memory_db):
+    init_schema(in_memory_db)
+    sid = resolve_sector_id(in_memory_db, "Semiconductors")
+    base = {"sector_id": sid, "etf_momentum": 1.0,
+            "db_momentum": None, "ticker_count": 0}
+    save_sector_momentum(in_memory_db, {**base, "date": "2026-07-27",
+                                        "run_type": "pre_market"})
+    save_sector_momentum(in_memory_db, {**base, "date": "2026-07-27",
+                                        "run_type": "trade_proposals"})
+    save_sector_momentum(in_memory_db, {**base, "date": "2026-07-26",
+                                        "run_type": "pre_market"})
+    assert len(load_sector_momentum(in_memory_db, "2026-07-27", "pre_market")) == 1
+    assert load_sector_momentum(in_memory_db, "2026-07-25", "pre_market") == {}
