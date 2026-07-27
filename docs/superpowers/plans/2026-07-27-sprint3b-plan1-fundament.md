@@ -28,7 +28,8 @@ Diese Entscheidungen schliessen die in PROJECT_STATUS.md offen markierten Punkte
 | D2 | B.3 — Marktbreite (A/D-Ratio) | Eigener Claude-Call mit `web_search` (`src/market_context.py`), liefert strukturiertes JSON. Befüllt die bereits existierende, aber leere `market_context`-Tabelle **und** ersetzt das hardcodierte `market_ctx`-Dict in `main.py:226`. Läuft in `pre_market` **und** `trade_proposals` (also in `run_pipeline`). |
 | D3 | B.7 — Reset des `inactive`-Flags | Zweigleisig: automatischer Retry nach 30 Tagen über `ticker_status.retry_after` **plus** manuelles CLI-Kommando `--reactivate`. |
 | D4 | B.7 — Retention | `news_summaries` 90 → 30 Tage, `trend_analyses` unverändert 180, `skipped_tickers`-Events 30 → 90 Tage, `ticker_status` nie automatisch zurückgesetzt. |
-| D5 | B.10 — Finnhub → Sub-Sektor Normalisierung | Alias-Dict `config.SECTOR_ALIASES` im Code (in git versioniert, unit-testbar). Unauflösbare Werte: `sector_id` NULL + WARN-Log mit dem Rohwert. **Bewusst unge­mappt**, weil kein passender ETF existiert: `Financial Services` / `Diversified Financial Services` (V, MA, BRK-B) und `Health Care` / `Health Care Providers & Services` (UNH). Ein Fehl-Mapping auf KBE bzw. XPH würde aktiv falsche Momentum-Signale erzeugen — schlechter als gar kein Check. |
+| D5 | B.10 — Finnhub → Sub-Sektor Normalisierung | Alias-Dict `config.SECTOR_ALIASES` im Code (in git versioniert, unit-testbar). Unauflösbare Werte: `sector_id` NULL + WARN-Log mit dem Rohwert. **Bewusst ungemappt**, weil Capital.com keinen passenden ETF führt: Communication-Werte (`Communication Services`, `Media`, `Entertainment`, `Interactive Media & Services`, `Telecommunication*`) sowie Chemie/Verpackung/Papier (`Chemicals`, `Packaging`, `Paper & Forest*`, `Construction Materials`). Grundregel: lieber ungemappt als falsch gemappt. |
+| D8 | B.3 — Epic-Verifikation | Lauf vom 2026-07-27: von den ursprünglich 21 gewünschten ETFs führt Capital.com **8 nicht** (IGV, IHI, IYT, KBE, KIE, XLB, XLC, XPH). Ersetzt durch verifizierte Alternativen (VGT, XLV, XTN, KBWB, XLF, XME); Communication ersatzlos gestrichen. Endstand: 21 Sub-Sektoren auf 19 ETFs, **20/20 Epics bestätigt**, alle TRADEABLE, kein `TICKER_MAP`-Eintrag nötig. |
 | D6 | B.10 — Guardrail bei unbekanntem Sektor | `config.SECTOR_GUARDRAIL_STRICT`, initial `False` (weich: durchlassen + Reject-Row mit `enforced=0`). **Die Durchsetzung selbst gehört in Plan 2** — dieser Plan legt nur die Infrastruktur (`guardrail_rejects`) und den Sektor-Lookup. |
 
 ---
@@ -126,12 +127,15 @@ scheitert mit `ModuleNotFoundError: No module named 'config'`, obwohl `CLAUDE.md
 diesen Aufruf dokumentiert — dem Loader fehlt derselbe Bootstrap. Funktioniert aktuell
 nur als `python -m setup.historical_loader`. Kandidat für Plan 2 oder einen eigenen Fix.
 
-## Task 2: Sub-Sektor-ETF- und VIX-Konstanten + TICKER_MAP-Abgleich 🟡 TEILWEISE
+## Task 2: Sub-Sektor-ETF- und VIX-Konstanten + TICKER_MAP-Abgleich ✅ ERLEDIGT
 
-> **Konstanten implementiert am 2026-07-27** (`7a11a00`): `config.SUB_SECTOR_ETFS`
-> (21 Sub-Sektoren), `config.VIX_TICKER`, `config.SECTOR_ALIASES`.
-> **Offen bleibt allein Step 2.5** — der `TICKER_MAP`-Abgleich, sobald der
-> `verify_epics`-Output vorliegt.
+> **Erledigt am 2026-07-27.** `config.SUB_SECTOR_ETFS` (21 Sub-Sektoren auf 19
+> ETFs), `config.VIX_TICKER` und `config.SECTOR_ALIASES` (104 Einträge) stehen.
+> Der Verify-Lauf meldet **20/20 bestätigt, alle TRADEABLE** — `TICKER_MAP`
+> bleibt unverändert, weil jedes Symbol bei Capital.com exakt so heisst.
+>
+> Die Schritte unten sind historisch. Der ursprüngliche Entwurf ging von 21
+> Wunsch-ETFs aus; acht davon existieren nicht (s. D8). Maßgeblich ist `config.py`.
 
 **Files:**
 - Modify: `config.py`
@@ -302,7 +306,7 @@ def test_resolve_sector_id_splits_broad_finnhub_values_into_sub_sectors(in_memor
         r["etf"] for r in in_memory_db.execute(
             "SELECT etf FROM sectors WHERE id IN (?, ?)", (soft, semi)).fetchall()
     }
-    assert etfs == {"IGV", "SOXX"}
+    assert etfs == {"VGT", "SOXX"}
 
 
 def test_resolve_sector_id_returns_none_for_deliberately_unmapped_values(in_memory_db):

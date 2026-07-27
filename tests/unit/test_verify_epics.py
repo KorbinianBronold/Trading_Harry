@@ -4,7 +4,8 @@ from unittest.mock import MagicMock
 
 import config
 from setup.verify_epics import (
-    etf_candidates, format_report, main, pick_best, resolve, search_terms,
+    etf_candidates, format_report, looks_like_fund, main, pick_best,
+    resolve, search_terms,
 )
 
 
@@ -120,6 +121,30 @@ def test_format_report_marks_confirmed_and_missing():
     report = format_report(resolved, _SUB_SECTORS)
     assert "XLK    OK" in report
     assert "KBE    KEIN TREFFER" in report
+
+
+# ---------- looks_like_fund: der PPH-Fall ----------
+
+def test_looks_like_fund_accepts_etfs_and_indices():
+    for name in ("iShares Semiconductor ETF", "Technology Select Sector SPDR Fund",
+                 "Volatility Index", "KKR Real Estate Finance Trust Inc"):
+        assert looks_like_fund(_market("X", name)) is True
+
+
+def test_looks_like_fund_rejects_operating_companies():
+    for name in ("PPHE Hotel Group Ltd", "KB Home", "Alcon Inc."):
+        assert looks_like_fund(_market("X", name)) is False
+
+
+def test_format_report_flags_exact_epic_with_non_fund_name():
+    """Regression: Capital.com fuehrt das Epic 'PPH' fuer die PPHE Hotel Group,
+    nicht fuer den gleichnamigen Pharma-ETF. Exakter Treffer, falsches Papier."""
+    report = format_report({"PPH": [_market("PPH", "PPHE Hotel Group Ltd")]},
+                           {"Pharma": "PPH"})
+    assert "NAME PRUEFEN" in report
+    assert "nicht nach Fonds" in report
+    assert "bestaetigt:          0" in report
+    assert "NAME PRUEFEN:        1  (PPH)" in report
 
 
 def test_format_report_never_suggests_a_ticker_map_entry_for_missing_symbols():

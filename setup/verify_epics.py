@@ -54,16 +54,23 @@ def pick_best(symbol: str, markets: list[dict]) -> dict | None:
     return None
 
 
+FUND_WORDS = ("ETF", "FUND", "INDEX", "TRUST", "SPDR", "ISHARES", "SELECT SECTOR")
+
+
+def looks_like_fund(market: dict) -> bool:
+    """True, wenn der Instrumentenname nach Fonds/Index klingt.
+
+    Ein exakter Epic-Treffer allein genügt nicht: Capital.com führt das Epic 'PPH'
+    für die PPHE Hotel Group, nicht für den gleichnamigen Pharma-ETF. Ohne diese
+    Prüfung wäre ein Hotelbetreiber als Pharma-Sektor-Proxy durchgerutscht."""
+    name = (market.get("instrumentName") or "").upper()
+    return any(w in name for w in FUND_WORDS)
+
+
 def etf_candidates(markets: list[dict], limit: int = 8) -> list[dict]:
     """Filtert aus den Suchtreffern die heraus, die dem Namen nach ein Fonds sind
-    (ETF / Fund / Index / Trust) — Kandidaten für einen Ersatz-Ticker, wenn das
-    gesuchte Symbol bei Capital.com nicht existiert."""
-    words = ("ETF", "FUND", "INDEX", "TRUST", "SPDR", "ISHARES", "SELECT SECTOR")
-    hits = [
-        m for m in markets
-        if any(w in (m.get("instrumentName") or "").upper() for w in words)
-    ]
-    return hits[:limit]
+    — Kandidaten für einen Ersatz-Ticker, wenn das gesuchte Symbol fehlt."""
+    return [m for m in markets if looks_like_fund(m)][:limit]
 
 
 def resolve(provider, terms: list[str]) -> dict[str, list[dict]]:
@@ -93,6 +100,7 @@ def format_report(resolved: dict[str, list[dict]], sub_sectors: dict[str, str]) 
     confirmed: list[str] = []
     missing: list[str] = []
     not_tradeable: list[str] = []
+    suspicious: list[str] = []
 
     for symbol, markets in resolved.items():
         sectors = ", ".join(sorted(by_etf.get(symbol, []))) or "VIX / Volatilitaet"
@@ -115,21 +123,35 @@ def format_report(resolved: dict[str, list[dict]], sub_sectors: dict[str, str]) 
             lines.append("")
             continue
 
-        confirmed.append(symbol)
         status = (best.get("marketStatus") or "?").upper()
         if status != TRADEABLE:
             not_tradeable.append(symbol)
+
+        if looks_like_fund(best):
+            confirmed.append(symbol)
+            verdict = "OK          "
+        else:
+            suspicious.append(symbol)
+            verdict = "NAME PRUEFEN"
+
         lines.append(
-            f"{symbol:<6} OK            {status:<12} "
+            f"{symbol:<6} {verdict}  {status:<12} "
             f"{best.get('instrumentType') or '?'}"
         )
         lines.append(f"{'':<9} {best.get('instrumentName') or '?'}")
         lines.append(f"{'':<9} Sub-Sektor: {sectors}")
+        if symbol in suspicious:
+            lines.append(
+                f"{'':<9} !! Epic passt, Name klingt aber nicht nach Fonds — "
+                f"vermutlich ein fremdes Instrument."
+            )
         lines.append("")
 
     lines += ["-" * 78, "ZUSAMMENFASSUNG", "-" * 78]
     lines.append(f"geprueft:            {len(resolved)}")
     lines.append(f"bestaetigt:          {len(confirmed)}")
+    lines.append(f"NAME PRUEFEN:        {len(suspicious)}"
+                 + (f"  ({', '.join(suspicious)})" if suspicious else ""))
     lines.append(f"KEIN TREFFER:        {len(missing)}"
                  + (f"  ({', '.join(missing)})" if missing else ""))
     lines.append(f"nicht handelbar:     {len(not_tradeable)}"
