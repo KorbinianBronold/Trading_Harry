@@ -1,10 +1,19 @@
 """SQLite schema definition, migrations, and every DB read/write helper used by
 the pipeline. All SQL lives here — phase modules never write raw SQL themselves."""
+import logging
 import sqlite3
 from pathlib import Path
 from typing import Any
 
 import config
+
+log = logging.getLogger("shares_future.db")
+
+# Case-insensitiver Lookup über config.SECTOR_ALIASES. Einmal beim Import gebaut,
+# damit resolve_sector_id() nicht bei jedem Ticker neu normalisieren muss.
+_SECTOR_ALIAS_LOOKUP: dict[str, str] = {
+    raw.strip().casefold(): sub for raw, sub in config.SECTOR_ALIASES.items()
+}
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS price_history (
@@ -140,6 +149,19 @@ CREATE TABLE IF NOT EXISTS fundamentals_cache (
     consensus TEXT,
     UNIQUE(ticker)
 );
+
+CREATE TABLE IF NOT EXISTS sectors (
+    id   INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE,
+    etf  TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS ticker_sectors (
+    ticker     TEXT PRIMARY KEY,
+    sector_id  INTEGER REFERENCES sectors(id),
+    source     TEXT DEFAULT 'finnhub',
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
 """
 
 
@@ -202,11 +224,65 @@ def connect(db_path: str | Path) -> sqlite3.Connection:
 
 
 def init_schema(conn: sqlite3.Connection) -> None:
-    """Creates every table/index if missing and applies pending migrations.
-    Safe to call on every run — idempotent."""
+    """Creates every table/index if missing, seeds reference data, and applies
+    pending migrations. Safe to call on every run — idempotent."""
     conn.executescript(SCHEMA_SQL)
     conn.commit()
     _apply_migrations(conn)
+    _seed_sectors(conn)
+
+
+def _seed_sectors(conn: sqlite3.Connection) -> None:
+    """Befüllt die sectors-Tabelle mit den Sub-Sektoren aus config.SUB_SECTOR_ETFS.
+    Idempotent über ON CONFLICT auf name UNIQUE; ein geänderter ETF wird nachgezogen."""
+    for name, etf in config.SUB_SECTOR_ETFS.items():
+        conn.execute(
+            "INSERT INTO sectors (name, etf) VALUES (?, ?) "
+            "ON CONFLICT(name) DO UPDATE SET etf = excluded.etf",
+            (name, etf),
+        )
+    conn.commit()
+
+
+def resolve_sector_id(conn: sqlite3.Connection, raw_sector: str | None) -> int | None:
+    """Normalisiert einen Finnhub-Sektorwert über config.SECTOR_ALIASES auf einen
+    Sub-Sektornamen und gibt dessen sectors.id zurück. Nicht auflösbare Werte ergeben
+    None und werden mit WARN geloggt, damit die Alias-Liste iterativ wachsen kann."""
+    if not raw_sector:
+        return None
+    sub_sector = _SECTOR_ALIAS_LOOKUP.get(raw_sector.strip().casefold())
+    if sub_sector is None:
+        log.warning(f"unknown sector value from provider: {raw_sector!r}")
+        return None
+    row = conn.execute("SELECT id FROM sectors WHERE name = ?", (sub_sector,)).fetchone()
+    return int(row["id"]) if row else None
+
+
+def upsert_ticker_sector(
+    conn: sqlite3.Connection, ticker: str, sector_id: int, source: str = "finnhub",
+) -> None:
+    """Schreibt oder aktualisiert die Sub-Sektor-Zuordnung eines Tickers."""
+    conn.execute(
+        """INSERT INTO ticker_sectors (ticker, sector_id, source, updated_at)
+           VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+           ON CONFLICT(ticker) DO UPDATE SET
+               sector_id  = excluded.sector_id,
+               source     = excluded.source,
+               updated_at = CURRENT_TIMESTAMP""",
+        (ticker, sector_id, source),
+    )
+    conn.commit()
+
+
+def get_ticker_sector(conn: sqlite3.Connection, ticker: str) -> sqlite3.Row | None:
+    """Gibt sector_id, Sub-Sektorname und Sektor-ETF für `ticker` zurück (JOIN über
+    ticker_sectors -> sectors), oder None wenn kein Mapping existiert."""
+    return conn.execute(
+        """SELECT ts.sector_id AS sector_id, s.name AS name, s.etf AS etf
+           FROM ticker_sectors ts JOIN sectors s ON s.id = ts.sector_id
+           WHERE ts.ticker = ?""",
+        (ticker,),
+    ).fetchone()
 
 
 def get_tables(conn: sqlite3.Connection) -> list[str]:

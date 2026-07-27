@@ -360,3 +360,112 @@ def test_fundamentals_cache_upsert_overwrites_stale(in_memory_db):
     result = get_cached_fundamentals(in_memory_db, "AAPL", today="2026-05-21")
     assert result is not None
     assert result["pe_ratio"] == 25.0
+
+
+# ---------- Sub-Sektor-Tabellen (Sprint 3B / Plan 1, Task 3) ----------
+
+from src.db import (
+    resolve_sector_id, upsert_ticker_sector, get_ticker_sector,
+)
+
+
+def test_init_schema_creates_sector_tables(in_memory_db):
+    init_schema(in_memory_db)
+    tables = set(get_tables(in_memory_db))
+    assert {"sectors", "ticker_sectors"}.issubset(tables)
+
+
+def test_sectors_table_is_seeded_with_all_sub_sectors(in_memory_db):
+    import config
+    init_schema(in_memory_db)
+    rows = in_memory_db.execute("SELECT name, etf FROM sectors ORDER BY name").fetchall()
+    assert len(rows) == 21
+    assert {r["name"]: r["etf"] for r in rows} == config.SUB_SECTOR_ETFS
+
+
+def test_sector_seeding_is_idempotent(in_memory_db):
+    init_schema(in_memory_db)
+    init_schema(in_memory_db)
+    n = in_memory_db.execute("SELECT COUNT(*) AS n FROM sectors").fetchone()["n"]
+    assert n == 21
+
+
+def test_resolve_sector_id_maps_exact_sub_sector_name(in_memory_db):
+    init_schema(in_memory_db)
+    sid = resolve_sector_id(in_memory_db, "Semiconductors")
+    assert sid is not None
+    row = in_memory_db.execute("SELECT name FROM sectors WHERE id=?", (sid,)).fetchone()
+    assert row["name"] == "Semiconductors"
+
+
+def test_resolve_sector_id_maps_finnhub_alias(in_memory_db):
+    init_schema(in_memory_db)
+    sid = resolve_sector_id(in_memory_db, "Consumer Cyclical")
+    row = in_memory_db.execute("SELECT name FROM sectors WHERE id=?", (sid,)).fetchone()
+    assert row["name"] == "Consumer Discretionary Rest"
+
+
+def test_resolve_sector_id_splits_broad_finnhub_values_into_sub_sectors(in_memory_db):
+    """Der Kern von D7: 'Software' und 'Semiconductors' duerfen NICHT beide im
+    breiten Technologie-Eimer landen."""
+    init_schema(in_memory_db)
+    soft = resolve_sector_id(in_memory_db, "Software")
+    semi = resolve_sector_id(in_memory_db, "Semiconductors")
+    assert soft != semi
+    etfs = {
+        r["etf"] for r in in_memory_db.execute(
+            "SELECT etf FROM sectors WHERE id IN (?, ?)", (soft, semi)).fetchall()
+    }
+    assert etfs == {"VGT", "SOXX"}
+
+
+def test_resolve_sector_id_returns_none_for_deliberately_unmapped_values(in_memory_db):
+    """D5: Werte ohne passenden ETF bleiben ungemappt statt falsch geroutet."""
+    init_schema(in_memory_db)
+    for raw in ("Media", "Chemicals"):
+        assert resolve_sector_id(in_memory_db, raw) is None
+
+
+def test_resolve_sector_id_is_case_and_whitespace_insensitive(in_memory_db):
+    init_schema(in_memory_db)
+    assert resolve_sector_id(in_memory_db, "  semiconductors ") == \
+           resolve_sector_id(in_memory_db, "Semiconductors")
+
+
+def test_resolve_sector_id_returns_none_for_unknown_and_logs(in_memory_db, caplog):
+    init_schema(in_memory_db)
+    with caplog.at_level("WARNING"):
+        assert resolve_sector_id(in_memory_db, "Underwater Basket Weaving") is None
+    assert "Underwater Basket Weaving" in caplog.text
+
+
+def test_resolve_sector_id_returns_none_for_none_without_logging(in_memory_db, caplog):
+    init_schema(in_memory_db)
+    with caplog.at_level("WARNING"):
+        assert resolve_sector_id(in_memory_db, None) is None
+    assert "unknown sector" not in caplog.text
+
+
+def test_upsert_ticker_sector_inserts_then_updates(in_memory_db):
+    init_schema(in_memory_db)
+    hardware = resolve_sector_id(in_memory_db, "Technology Hardware")
+    semi = resolve_sector_id(in_memory_db, "Semiconductors")
+    upsert_ticker_sector(in_memory_db, "AAPL", hardware)
+    upsert_ticker_sector(in_memory_db, "AAPL", semi)
+    rows = in_memory_db.execute("SELECT * FROM ticker_sectors WHERE ticker='AAPL'").fetchall()
+    assert len(rows) == 1
+    assert rows[0]["sector_id"] == semi
+
+
+def test_get_ticker_sector_joins_name_and_etf(in_memory_db):
+    init_schema(in_memory_db)
+    sid = resolve_sector_id(in_memory_db, "Semiconductors")
+    upsert_ticker_sector(in_memory_db, "NVDA", sid)
+    row = get_ticker_sector(in_memory_db, "NVDA")
+    assert row["name"] == "Semiconductors"
+    assert row["etf"] == "SOXX"
+
+
+def test_get_ticker_sector_returns_none_when_unmapped(in_memory_db):
+    init_schema(in_memory_db)
+    assert get_ticker_sector(in_memory_db, "NOPE") is None
