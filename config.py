@@ -37,6 +37,180 @@ CRYPTO_TICKERS = {
     "Solana": "SOL-USD", "XRP": "XRP-USD",
 }
 
+# Sub-Sektor -> Sektor-ETF-Symbol. Bewusst feiner als die 11 GICS-Sektoren: ein
+# Halbleiter-Setup soll gegen SOXX geprüft werden, nicht gegen den breiten XLK,
+# in dem Software und Hardware das Signal verwässern. Quelle für die
+# sectors-Tabelle und für den Sektor-ETF-Momentum-Check (Sprint 3B / B.3).
+# Die Capital.com-Epics dahinter löst capital_provider.TICKER_MAP auf —
+# verifiziert per setup/verify_epics.py.
+SUB_SECTOR_ETFS: dict[str, str] = {
+    "Semiconductors":               "SOXX",
+    "Software":                     "IGV",
+    "Technology Hardware":          "XLK",
+    "Biotech":                      "XBI",
+    "MedTech":                      "IHI",
+    "Pharma":                       "XPH",
+    "Oil & Gas":                    "XOP",
+    "Clean Energy":                 "ICLN",
+    "Banks":                        "KBE",
+    "Insurance":                    "KIE",
+    "Retail":                       "XRT",
+    "Auto":                         "CARZ",
+    "Aerospace & Defense":          "ITA",
+    "Transport":                    "IYT",
+    "Industrials Rest":             "XLI",
+    "Communication":                "XLC",
+    "Materials":                    "XLB",
+    "Real Estate":                  "XLRE",
+    "Utilities":                    "XLU",
+    "Consumer Staples":             "XLP",
+    "Consumer Discretionary Rest":  "XLY",
+}
+
+# Internes Ticker-Symbol für den Volatilitätsindex (CBOE VIX).
+VIX_TICKER = "VIX"
+
+# Normalisierung: Finnhub liefert im Feld `finnhubIndustry` ein gemischtes
+# Vokabular — teils Sektor-Ebene ("Consumer Cyclical"), teils Industrie-Ebene
+# ("Semiconductors"), teils Yahoo-Bezeichnungen. Dieses Dict bildet alle bekannten
+# Varianten auf die Sub-Sektor-Namen aus SUB_SECTOR_ETFS ab.
+# Nicht auflösbare Werte werden in src/db.py mit WARN geloggt (sector_id bleibt
+# NULL), damit die Liste bewusst per Commit wächst statt still zu versagen.
+# Der Lookup ist case- und whitespace-insensitiv (s. db._SECTOR_ALIAS_LOOKUP).
+#
+# BEWUSST NICHT GEMAPPT (kein passender ETF in SUB_SECTOR_ETFS): "Financial
+# Services" / "Diversified Financial Services" (Zahlungsnetzwerke wie V, MA;
+# Konglomerate wie BRK-B) und "Health Care" / "Health Care Providers & Services"
+# (Versicherer/Dienstleister wie UNH). Diese Ticker laufen bis auf Weiteres ohne
+# Sektor-Guardrail — ein Fehl-Mapping auf KBE bzw. XPH würde aktiv falsche
+# Momentum-Signale erzeugen, was schlechter ist als gar kein Check.
+SECTOR_ALIASES: dict[str, str] = {
+    # --- Sub-Sektor-Namen auf sich selbst (Direkttreffer) ---
+    "Semiconductors":              "Semiconductors",
+    "Software":                    "Software",
+    "Technology Hardware":         "Technology Hardware",
+    "Biotech":                     "Biotech",
+    "MedTech":                     "MedTech",
+    "Pharma":                      "Pharma",
+    "Oil & Gas":                   "Oil & Gas",
+    "Clean Energy":                "Clean Energy",
+    "Banks":                       "Banks",
+    "Insurance":                   "Insurance",
+    "Retail":                      "Retail",
+    "Auto":                        "Auto",
+    "Aerospace & Defense":         "Aerospace & Defense",
+    "Transport":                   "Transport",
+    "Industrials Rest":            "Industrials Rest",
+    "Communication":               "Communication",
+    "Materials":                   "Materials",
+    "Real Estate":                 "Real Estate",
+    "Utilities":                   "Utilities",
+    "Consumer Staples":            "Consumer Staples",
+    "Consumer Discretionary Rest": "Consumer Discretionary Rest",
+    # --- Technologie ---
+    "Semiconductors & Semiconductor Equipment":   "Semiconductors",
+    "IT Services":                                "Software",
+    "Internet":                                   "Software",
+    "Information Technology Services":            "Software",
+    "Technology":                                 "Technology Hardware",
+    "Information Technology":                     "Technology Hardware",
+    "Electronic Equipment":                       "Technology Hardware",
+    "Computers & Peripherals":                    "Technology Hardware",
+    "Communications Equipment":                   "Technology Hardware",
+    "Technology Hardware, Storage & Peripherals": "Technology Hardware",
+    # --- Gesundheit ---
+    "Biotechnology":                    "Biotech",
+    "Medical Devices":                  "MedTech",
+    "Health Care Equipment & Supplies": "MedTech",
+    "Life Sciences Tools & Services":   "MedTech",
+    "Pharmaceuticals":                  "Pharma",
+    "Drug Manufacturers":               "Pharma",
+    # --- Energie ---
+    "Energy":                         "Oil & Gas",
+    "Oil, Gas & Consumable Fuels":    "Oil & Gas",
+    "Energy Equipment & Services":    "Oil & Gas",
+    "Renewable Energy":               "Clean Energy",
+    "Alternative Energy":             "Clean Energy",
+    "Solar":                          "Clean Energy",
+    # --- Finanzen ---
+    "Banking":                       "Banks",
+    "Banks":                         "Banks",
+    "Capital Markets":               "Banks",
+    "Thrifts & Mortgage Finance":    "Banks",
+    # --- Konsum zyklisch ---
+    "Multiline Retail":                       "Retail",
+    "Specialty Retail":                       "Retail",
+    "Internet & Direct Marketing Retail":     "Retail",
+    "Distributors":                           "Retail",
+    "Automobiles":                            "Auto",
+    "Auto Components":                        "Auto",
+    "Automobiles & Components":               "Auto",
+    "Consumer Discretionary":                 "Consumer Discretionary Rest",
+    "Consumer Cyclical":                      "Consumer Discretionary Rest",
+    "Hotels, Restaurants & Leisure":          "Consumer Discretionary Rest",
+    "Textiles, Apparel & Luxury Goods":       "Consumer Discretionary Rest",
+    "Leisure Products":                       "Consumer Discretionary Rest",
+    "Diversified Consumer Services":          "Consumer Discretionary Rest",
+    "Household Durables":                     "Consumer Discretionary Rest",
+    "Homebuilding":                           "Consumer Discretionary Rest",
+    # --- Konsum defensiv ---
+    "Consumer Defensive":       "Consumer Staples",
+    "Consumer products":        "Consumer Staples",
+    "Food Products":            "Consumer Staples",
+    "Beverages":                "Consumer Staples",
+    "Tobacco":                  "Consumer Staples",
+    "Household Products":       "Consumer Staples",
+    "Personal Products":        "Consumer Staples",
+    "Food & Staples Retailing": "Consumer Staples",
+    # --- Industrie ---
+    "Airlines":                          "Transport",
+    "Road & Rail":                       "Transport",
+    "Logistics & Transportation":        "Transport",
+    "Transportation":                    "Transport",
+    "Air Freight & Logistics":           "Transport",
+    "Marine":                            "Transport",
+    "Transportation Infrastructure":     "Transport",
+    "Industrials":                       "Industrials Rest",
+    "Machinery":                         "Industrials Rest",
+    "Industrial Conglomerates":          "Industrials Rest",
+    "Electrical Equipment":              "Industrials Rest",
+    "Building":                          "Industrials Rest",
+    "Building Products":                 "Industrials Rest",
+    "Construction":                      "Industrials Rest",
+    "Commercial Services & Supplies":    "Industrials Rest",
+    "Professional Services":             "Industrials Rest",
+    "Business Services":                 "Industrials Rest",
+    "Trading Companies & Distributors":  "Industrials Rest",
+    # --- Kommunikation ---
+    "Communication Services":                 "Communication",
+    "Telecommunication":                      "Communication",
+    "Telecommunication Services":             "Communication",
+    "Diversified Telecommunication Services": "Communication",
+    "Wireless Telecommunication Services":    "Communication",
+    "Media":                                  "Communication",
+    "Entertainment":                          "Communication",
+    "Interactive Media & Services":           "Communication",
+    # --- Rohstoffe ---
+    "Basic Materials":          "Materials",
+    "Chemicals":                "Materials",
+    "Metals & Mining":          "Materials",
+    "Packaging":                "Materials",
+    "Containers & Packaging":   "Materials",
+    "Paper & Forest":           "Materials",
+    "Paper & Forest Products":  "Materials",
+    "Constr. Mat.":             "Materials",
+    "Construction Materials":   "Materials",
+    # --- Immobilien ---
+    "REITs":                                        "Real Estate",
+    "Equity Real Estate Investment Trusts (REITs)": "Real Estate",
+    "Real Estate Management & Development":         "Real Estate",
+    # --- Versorger ---
+    "Electric Utilities":  "Utilities",
+    "Gas Utilities":       "Utilities",
+    "Water Utilities":     "Utilities",
+    "Multi-Utilities":     "Utilities",
+}
+
 SP500_MIN_MARKET_CAP_B = 5
 SP500_MIN_ATR_PCT = 2.0
 MAX_HOLD_DAYS = 5

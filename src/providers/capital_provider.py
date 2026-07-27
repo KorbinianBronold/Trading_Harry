@@ -118,6 +118,23 @@ class CapitalComProvider(DataProvider):
             log.warning(f"{ticker}: Capital.com price fetch failed: {e}")
             return None
 
+    def search_markets(self, search_term: str) -> list[dict]:
+        """Searches Capital.com's instrument catalogue for `search_term` and returns
+        the raw market dicts (epic, instrumentName, instrumentType, marketStatus);
+        empty list on any failure. Read-only — used by setup/verify_epics.py."""
+        try:
+            resp = requests.get(
+                f"{config.CAPITAL_COM_BASE_URL}/api/v1/markets",
+                headers=self._headers(),
+                params={"searchTerm": search_term},
+                timeout=30,
+            )
+            resp.raise_for_status()
+            return resp.json().get("markets", [])
+        except Exception as e:
+            log.warning(f"Capital.com market search for '{search_term}' failed: {e}")
+            return []
+
     def get_ohlc_after(
         self, ticker: str, start_date: str, end_date: str,
     ) -> pd.DataFrame | None:

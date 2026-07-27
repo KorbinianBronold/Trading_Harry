@@ -189,3 +189,90 @@ def test_get_ohlc_after_same_day_steps_from_back(monkeypatch):
     assert captured.get("from") == "2026-05-21T00:00:00", \
         f"Expected 'from' stepped back 1 day, got: {captured.get('from')}"
     assert captured.get("to") == "2026-05-22T00:00:00"
+
+
+# ---------- search_markets (Sprint 3B / Plan 1, Task 1) ----------
+
+_MARKETS = {
+    "markets": [
+        {
+            "epic": "XLK",
+            "instrumentName": "Technology Select Sector SPDR Fund",
+            "instrumentType": "SHARES",
+            "marketStatus": "TRADEABLE",
+        }
+    ]
+}
+
+
+def _mock_markets_get(url, **kwargs):
+    m = MagicMock()
+    m.raise_for_status = MagicMock()
+    m.json.return_value = _MARKETS
+    return m
+
+
+def test_search_markets_returns_market_dicts(monkeypatch):
+    monkeypatch.setattr("requests.post", _mock_post)
+    monkeypatch.setattr("requests.get", _mock_markets_get)
+    from src.providers.capital_provider import CapitalComProvider
+    assert CapitalComProvider().search_markets("XLK") == _MARKETS["markets"]
+
+
+def test_search_markets_passes_search_term_as_param(monkeypatch):
+    monkeypatch.setattr("requests.post", _mock_post)
+    captured = {}
+
+    def _capture(url, **kwargs):
+        captured["url"] = url
+        captured.update(kwargs.get("params", {}))
+        return _mock_markets_get(url, **kwargs)
+
+    monkeypatch.setattr("requests.get", _capture)
+    from src.providers.capital_provider import CapitalComProvider
+    CapitalComProvider().search_markets("SOXX")
+    assert captured.get("searchTerm") == "SOXX"
+    assert captured["url"].endswith("/api/v1/markets")
+
+
+def test_search_markets_returns_empty_list_on_error(monkeypatch):
+    monkeypatch.setattr("requests.post", _mock_post)
+
+    def _boom(url, **kwargs):
+        raise RuntimeError("network down")
+
+    monkeypatch.setattr("requests.get", _boom)
+    from src.providers.capital_provider import CapitalComProvider
+    assert CapitalComProvider().search_markets("XLK") == []
+
+
+# ---------- Sub-Sektor-ETF-Konstanten ----------
+
+def test_every_sub_sector_etf_and_vix_maps_to_a_non_empty_epic():
+    """Jedes ETF-Symbol und der VIX müssen über _map() auf ein nicht-leeres Epic
+    zeigen — entweder identisch oder über einen TICKER_MAP-Eintrag."""
+    import config
+    from src.providers.capital_provider import CapitalComProvider
+    provider = CapitalComProvider()
+    for symbol in list(config.SUB_SECTOR_ETFS.values()) + [config.VIX_TICKER]:
+        epic = provider._map(symbol)
+        assert isinstance(epic, str) and epic, f"{symbol} maps to empty epic"
+
+
+def test_sub_sector_etfs_are_complete_and_consistent():
+    import config
+    assert len(config.SUB_SECTOR_ETFS) == 21
+    assert all(config.SUB_SECTOR_ETFS.values()), "kein Sub-Sektor ohne ETF"
+    # Jeder Sub-Sektor-Name muss sich selbst über SECTOR_ALIASES auflösen lassen,
+    # sonst wäre er per Finnhub-Wert nie erreichbar.
+    for name in config.SUB_SECTOR_ETFS:
+        assert config.SECTOR_ALIASES.get(name) == name, f"{name} fehlt in SECTOR_ALIASES"
+
+
+def test_every_sector_alias_target_is_a_known_sub_sector():
+    import config
+    unknown = {
+        target for target in config.SECTOR_ALIASES.values()
+        if target not in config.SUB_SECTOR_ETFS
+    }
+    assert not unknown, f"SECTOR_ALIASES zeigt auf unbekannte Sub-Sektoren: {unknown}"
