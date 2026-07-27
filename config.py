@@ -230,6 +230,14 @@ HOLD_TARGET = "intraday"
 MAX_DEEP_ANALYSIS = 80
 BATCH_SIZE_QUICK = 30
 
+# Ticker-Deaktivierung (Sprint 3B / B.7, Entscheidung D3): ein Ticker, der
+# wiederholt keine brauchbaren Daten liefert, wird nach TICKER_MAX_SKIPS Skips
+# deaktiviert und erst nach TICKER_RETRY_AFTER_DAYS Tagen automatisch erneut
+# versucht. Sofortiges Zuruecksetzen von Hand:
+#   python setup/historical_loader.py --reactivate TICKER
+TICKER_MAX_SKIPS = 20
+TICKER_RETRY_AFTER_DAYS = 30
+
 RR_RATIO_DEFAULT = 2.0
 RR_RATIO_MIN_HARD = 1.5
 MOMENTUM_LONG_MIN = 6.0

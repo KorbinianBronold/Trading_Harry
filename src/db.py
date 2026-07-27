@@ -2,6 +2,7 @@
 the pipeline. All SQL lives here — phase modules never write raw SQL themselves."""
 import logging
 import sqlite3
+from datetime import date as _date_cls, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -161,6 +162,15 @@ CREATE TABLE IF NOT EXISTS ticker_sectors (
     sector_id  INTEGER REFERENCES sectors(id),
     source     TEXT DEFAULT 'finnhub',
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS ticker_status (
+    ticker          TEXT PRIMARY KEY,
+    skip_count      INTEGER NOT NULL DEFAULT 0,
+    inactive        INTEGER NOT NULL DEFAULT 0,
+    first_skip_date TEXT,
+    last_skip_date  TEXT,
+    retry_after     TEXT
 );
 """
 
@@ -438,14 +448,87 @@ def log_skipped_ticker(
     reason: str, learnable: bool = False,
 ) -> None:
     """Records that `ticker` was skipped on `date` and why, so it's excluded
-    from the learning module unless learnable=True."""
+    from the learning module unless learnable=True.
+
+    Zusätzlich wird der kumulative Zähler in ticker_status hochgezählt; über
+    config.TICKER_MAX_SKIPS hinaus wird der Ticker deaktiviert und ein Retry-Datum
+    gesetzt (Sprint 3B / B.7). Das Event-Log bleibt davon unberührt — die
+    Weekly-Mail braucht die Einzelereignisse mit Datum und Grund."""
     conn.execute(
         """INSERT INTO skipped_tickers
            (ticker, date, run_type, reason, learnable)
            VALUES (?, ?, ?, ?, ?)""",
         (ticker, date, run_type, reason, 1 if learnable else 0),
     )
+    conn.execute(
+        """INSERT INTO ticker_status
+               (ticker, skip_count, first_skip_date, last_skip_date)
+           VALUES (?, 1, ?, ?)
+           ON CONFLICT(ticker) DO UPDATE SET
+               skip_count     = ticker_status.skip_count + 1,
+               last_skip_date = excluded.last_skip_date""",
+        (ticker, date, date),
+    )
+    row = conn.execute(
+        "SELECT skip_count FROM ticker_status WHERE ticker = ?", (ticker,),
+    ).fetchone()
+    if row and int(row["skip_count"]) > config.TICKER_MAX_SKIPS:
+        retry_after = (
+            _date_cls.fromisoformat(date)
+            + timedelta(days=config.TICKER_RETRY_AFTER_DAYS)
+        ).isoformat()
+        conn.execute(
+            "UPDATE ticker_status SET inactive = 1, retry_after = ? WHERE ticker = ?",
+            (retry_after, ticker),
+        )
+        log.warning(
+            f"{ticker}: deaktiviert nach {row['skip_count']} Skips "
+            f"(> {config.TICKER_MAX_SKIPS}), Retry ab {retry_after}"
+        )
     conn.commit()
+
+
+def get_ticker_status(conn: sqlite3.Connection, ticker: str) -> sqlite3.Row | None:
+    """Gibt die ticker_status-Zeile eines Tickers zurück, oder None wenn er noch
+    nie übersprungen wurde."""
+    return conn.execute(
+        "SELECT * FROM ticker_status WHERE ticker = ?", (ticker,),
+    ).fetchone()
+
+
+def is_ticker_inactive(conn: sqlite3.Connection, ticker: str, today: str) -> bool:
+    """True, wenn `ticker` deaktiviert ist UND sein Retry-Datum noch in der Zukunft
+    liegt. Ab dem Retry-Datum gilt er wieder als aktiv, damit die Pipeline ihn
+    erneut versucht — sonst fiele ein Ticker nach einem Ausfall dauerhaft raus."""
+    row = conn.execute(
+        "SELECT inactive, retry_after FROM ticker_status WHERE ticker = ?", (ticker,),
+    ).fetchone()
+    if row is None or not row["inactive"]:
+        return False
+    retry_after = row["retry_after"]
+    if retry_after is None:
+        return True
+    return today < retry_after
+
+
+def reactivate_ticker(conn: sqlite3.Connection, ticker: str) -> bool:
+    """Setzt skip_count, inactive und retry_after für `ticker` zurück. Gibt True
+    zurück, wenn tatsächlich etwas zurückgesetzt wurde."""
+    cur = conn.execute(
+        """UPDATE ticker_status
+           SET skip_count = 0, inactive = 0, retry_after = NULL
+           WHERE ticker = ? AND (skip_count > 0 OR inactive = 1)""",
+        (ticker,),
+    )
+    conn.commit()
+    return cur.rowcount > 0
+
+
+def list_inactive_tickers(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    """Gibt alle aktuell deaktivierten Ticker zurück, alphabetisch sortiert."""
+    return conn.execute(
+        "SELECT * FROM ticker_status WHERE inactive = 1 ORDER BY ticker"
+    ).fetchall()
 
 
 def save_position_recommendation(conn: sqlite3.Connection, row: dict) -> int:

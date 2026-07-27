@@ -469,3 +469,146 @@ def test_get_ticker_sector_joins_name_and_etf(in_memory_db):
 def test_get_ticker_sector_returns_none_when_unmapped(in_memory_db):
     init_schema(in_memory_db)
     assert get_ticker_sector(in_memory_db, "NOPE") is None
+
+
+# ---------- ticker_status (Sprint 3B / Plan 1, Task 5) ----------
+
+from src.db import (
+    log_skipped_ticker, get_ticker_status, is_ticker_inactive,
+    reactivate_ticker, list_inactive_tickers, cleanup_old_data,
+)
+
+
+def _skip(conn, ticker: str, date: str = "2026-07-27", times: int = 1) -> None:
+    for _ in range(times):
+        log_skipped_ticker(
+            conn, ticker=ticker, date=date, run_type="pre_market",
+            reason="insufficient bars: 0 < 20",
+        )
+
+
+def test_init_schema_creates_ticker_status(in_memory_db):
+    init_schema(in_memory_db)
+    assert "ticker_status" in get_tables(in_memory_db)
+
+
+def test_log_skipped_ticker_still_writes_event_row(in_memory_db):
+    init_schema(in_memory_db)
+    _skip(in_memory_db, "XYZ")
+    rows = in_memory_db.execute(
+        "SELECT * FROM skipped_tickers WHERE ticker='XYZ'").fetchall()
+    assert len(rows) == 1
+    assert rows[0]["reason"].startswith("insufficient bars")
+
+
+def test_log_skipped_ticker_accumulates_skip_count(in_memory_db):
+    init_schema(in_memory_db)
+    for d in ("2026-07-25", "2026-07-26", "2026-07-27"):
+        _skip(in_memory_db, "XYZ", date=d)
+    st = get_ticker_status(in_memory_db, "XYZ")
+    assert st["skip_count"] == 3
+    assert st["first_skip_date"] == "2026-07-25"
+    assert st["last_skip_date"] == "2026-07-27"
+    assert st["inactive"] == 0
+
+
+def test_ticker_becomes_inactive_past_threshold(in_memory_db):
+    import config
+    init_schema(in_memory_db)
+    _skip(in_memory_db, "DEAD", times=config.TICKER_MAX_SKIPS + 1)
+    st = get_ticker_status(in_memory_db, "DEAD")
+    assert st["skip_count"] == config.TICKER_MAX_SKIPS + 1
+    assert st["inactive"] == 1
+    assert st["retry_after"] == "2026-08-26"   # 2026-07-27 + 30 Tage
+
+
+def test_ticker_stays_active_exactly_at_threshold(in_memory_db):
+    """Deaktivierung erst BEI UEBERSCHREITEN, nicht beim Erreichen."""
+    import config
+    init_schema(in_memory_db)
+    _skip(in_memory_db, "EDGE", times=config.TICKER_MAX_SKIPS)
+    st = get_ticker_status(in_memory_db, "EDGE")
+    assert st["skip_count"] == config.TICKER_MAX_SKIPS
+    assert st["inactive"] == 0
+    assert st["retry_after"] is None
+
+
+def test_is_ticker_inactive_true_before_retry_date(in_memory_db):
+    import config
+    init_schema(in_memory_db)
+    _skip(in_memory_db, "DEAD", times=config.TICKER_MAX_SKIPS + 1)
+    assert is_ticker_inactive(in_memory_db, "DEAD", today="2026-08-01") is True
+
+
+def test_is_ticker_inactive_false_on_and_after_retry_date(in_memory_db):
+    import config
+    init_schema(in_memory_db)
+    _skip(in_memory_db, "DEAD", times=config.TICKER_MAX_SKIPS + 1)
+    assert is_ticker_inactive(in_memory_db, "DEAD", today="2026-08-26") is False
+    assert is_ticker_inactive(in_memory_db, "DEAD", today="2026-09-30") is False
+
+
+def test_is_ticker_inactive_false_for_unknown_ticker(in_memory_db):
+    init_schema(in_memory_db)
+    assert is_ticker_inactive(in_memory_db, "AAPL", today="2026-07-27") is False
+
+
+def test_is_ticker_inactive_false_for_skipped_but_active_ticker(in_memory_db):
+    init_schema(in_memory_db)
+    _skip(in_memory_db, "XYZ", times=3)
+    assert is_ticker_inactive(in_memory_db, "XYZ", today="2026-07-27") is False
+
+
+def test_failed_retry_pushes_retry_after_forward(in_memory_db):
+    """Schlaegt der Retry erneut fehl, verlaengert sich die Sperre um 30 Tage."""
+    import config
+    init_schema(in_memory_db)
+    _skip(in_memory_db, "DEAD", times=config.TICKER_MAX_SKIPS + 1)
+    _skip(in_memory_db, "DEAD", date="2026-08-26")
+    st = get_ticker_status(in_memory_db, "DEAD")
+    assert st["retry_after"] == "2026-09-25"   # 2026-08-26 + 30 Tage
+    assert st["inactive"] == 1
+
+
+def test_reactivate_ticker_resets_counter_and_flag(in_memory_db):
+    import config
+    init_schema(in_memory_db)
+    _skip(in_memory_db, "DEAD", times=config.TICKER_MAX_SKIPS + 1)
+    assert reactivate_ticker(in_memory_db, "DEAD") is True
+    st = get_ticker_status(in_memory_db, "DEAD")
+    assert st["skip_count"] == 0
+    assert st["inactive"] == 0
+    assert st["retry_after"] is None
+
+
+def test_reactivate_ticker_returns_false_when_nothing_to_reset(in_memory_db):
+    init_schema(in_memory_db)
+    assert reactivate_ticker(in_memory_db, "AAPL") is False
+
+
+def test_reactivate_ticker_returns_false_on_already_clean_status(in_memory_db):
+    init_schema(in_memory_db)
+    _skip(in_memory_db, "XYZ")
+    reactivate_ticker(in_memory_db, "XYZ")
+    assert reactivate_ticker(in_memory_db, "XYZ") is False
+
+
+def test_list_inactive_tickers(in_memory_db):
+    import config
+    init_schema(in_memory_db)
+    _skip(in_memory_db, "DEAD", times=config.TICKER_MAX_SKIPS + 1)
+    _skip(in_memory_db, "OK")
+    names = [r["ticker"] for r in list_inactive_tickers(in_memory_db)]
+    assert names == ["DEAD"]
+
+
+def test_cleanup_never_touches_ticker_status(in_memory_db):
+    """Der kumulative Zaehler muss die Event-Retention ueberleben (B.7 / D4)."""
+    import config
+    init_schema(in_memory_db)
+    _skip(in_memory_db, "DEAD", date="2020-01-01", times=config.TICKER_MAX_SKIPS + 1)
+    cleanup_old_data(in_memory_db)
+    st = get_ticker_status(in_memory_db, "DEAD")
+    assert st is not None
+    assert st["skip_count"] == config.TICKER_MAX_SKIPS + 1
+    assert st["inactive"] == 1
