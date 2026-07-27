@@ -663,3 +663,59 @@ def test_log_guardrail_reject_defaults_missing_keys_to_null(in_memory_db):
     row = load_guardrail_rejects_since(in_memory_db, since="2026-07-27")[0]
     assert row["direction"] is None
     assert row["detail"] is None
+
+
+# ---------- Retention (Sprint 3B / Plan 1, Task 9 — Entscheidung D4) ----------
+
+
+def test_cleanup_deletes_news_older_than_30_days(in_memory_db):
+    init_schema(in_memory_db)
+    # news_summaries.summary ist NOT NULL — muss mitgegeben werden.
+    in_memory_db.execute(
+        "INSERT INTO news_summaries (ticker, date, summary) "
+        "VALUES ('AAPL', date('now','-45 days'), 'alt')"
+    )
+    in_memory_db.execute(
+        "INSERT INTO news_summaries (ticker, date, summary) "
+        "VALUES ('MSFT', date('now','-10 days'), 'frisch')"
+    )
+    in_memory_db.commit()
+    cleanup_old_data(in_memory_db)
+    left = [r["ticker"] for r in in_memory_db.execute(
+        "SELECT ticker FROM news_summaries").fetchall()]
+    assert left == ["MSFT"]
+
+
+def test_cleanup_keeps_skipped_events_for_90_days(in_memory_db):
+    init_schema(in_memory_db)
+    in_memory_db.execute(
+        "INSERT INTO skipped_tickers (ticker, date, run_type, reason) "
+        "VALUES ('OLD', date('now','-100 days'), 'pre_market', 'x')"
+    )
+    in_memory_db.execute(
+        "INSERT INTO skipped_tickers (ticker, date, run_type, reason) "
+        "VALUES ('RECENT', date('now','-60 days'), 'pre_market', 'x')"
+    )
+    in_memory_db.commit()
+    cleanup_old_data(in_memory_db)
+    left = [r["ticker"] for r in in_memory_db.execute(
+        "SELECT ticker FROM skipped_tickers ORDER BY ticker").fetchall()]
+    assert left == ["RECENT"]
+
+
+def test_cleanup_keeps_trend_analyses_for_180_days(in_memory_db):
+    """trend_analyses bleibt bei 180 Tagen — D4 aendert nur news und skipped."""
+    init_schema(in_memory_db)
+    in_memory_db.execute(
+        "INSERT INTO trend_analyses (date, run_type, trend_name) "
+        "VALUES (date('now','-200 days'), 'pre_market', 'alt')"
+    )
+    in_memory_db.execute(
+        "INSERT INTO trend_analyses (date, run_type, trend_name) "
+        "VALUES (date('now','-150 days'), 'pre_market', 'jung')"
+    )
+    in_memory_db.commit()
+    cleanup_old_data(in_memory_db)
+    left = [r["trend_name"] for r in in_memory_db.execute(
+        "SELECT trend_name FROM trend_analyses").fetchall()]
+    assert left == ["jung"]

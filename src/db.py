@@ -410,13 +410,21 @@ def save_cost_tracking(conn: sqlite3.Connection, row: dict) -> None:
 
 
 def cleanup_old_data(conn: sqlite3.Connection) -> None:
-    """Deletes news/trend/skipped-ticker rows past their retention window
-    (90/180/30 days respectively)."""
+    """Loescht abgelaufene Zeilen: news_summaries > 30 Tage, trend_analyses
+    > 180 Tage, skipped_tickers-Events > 90 Tage (Sprint 3B / B.7, D4).
+
+    Die Skip-Events halten laenger als frueher, weil die Weekly-Mail auswerten
+    soll, welcher Ticker wie oft und warum uebersprungen wurde. News altern
+    dagegen schneller aus — aeltere Zusammenfassungen sind wertlos.
+
+    ticker_status wird bewusst NIE angefasst: der kumulative Skip-Zaehler und das
+    inactive-Flag muessen die Event-Retention ueberleben. Zurueckgesetzt wird nur
+    ueber reactivate_ticker() oder das automatische retry_after-Datum."""
     conn.executescript(
         """
-        DELETE FROM news_summaries WHERE date < date('now', '-90 days');
+        DELETE FROM news_summaries WHERE date < date('now', '-30 days');
         DELETE FROM trend_analyses WHERE date < date('now', '-180 days');
-        DELETE FROM skipped_tickers WHERE date < date('now', '-30 days');
+        DELETE FROM skipped_tickers WHERE date < date('now', '-90 days');
         """
     )
     conn.commit()
