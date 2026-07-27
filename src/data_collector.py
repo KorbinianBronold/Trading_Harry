@@ -332,6 +332,14 @@ def _process_ticker(
         "analyst_consensus":     fundamentals.get("consensus"),
     })
 
+    # Sub-Sektor-Mapping organisch pflegen (Sprint 3B / B.10): der Finnhub-Rohwert
+    # wird normalisiert und in ticker_sectors geschrieben — kein statisches
+    # Ticker->Sektor-Mapping im Code. Unbekannte Werte loggt db.resolve_sector_id();
+    # der Ticker bleibt dann schlicht ungemappt und laeuft ohne Sektor-Guardrail.
+    _sector_id = db.resolve_sector_id(conn, fundamentals.get("sector"))
+    if _sector_id is not None:
+        db.upsert_ticker_sector(conn, ticker, _sector_id, source="finnhub")
+
     # Earnings
     try:
         earnings = earnings_provider.get_earnings_calendar(ticker) or {}

@@ -461,3 +461,118 @@ def test_incremental_fallback_to_full_history_when_ohlc_after_none(in_memory_db,
 
     mock_price.get_price_history.assert_called_once()
     assert td is not None
+
+
+# ---------- Sub-Sektor-Verknuepfung (Sprint 3B / Plan 1, Task 4) ----------
+
+def _run_ticker(conn, ticker: str, raw_sector: str | None, date: str = "2026-05-19"):
+    """Laesst _process_ticker fuer `ticker` mit dem gegebenen Finnhub-Rohsektor
+    laufen und gibt das TickerData-Dict zurueck."""
+    ep = _earnings_provider()
+    ep.get_fundamentals.return_value = {
+        "pe_ratio": 28.4, "market_cap_b": 2800.0, "sector": raw_sector,
+        "analyst_upside": 8.5, "consensus": "buy",
+    }
+    return _process_ticker(
+        ticker=ticker,
+        price_provider=_good_provider(_df_monotonic_up(250)),
+        earnings_provider=ep,
+        conn=conn,
+        date=date,
+        run_type="pre_market",
+    )
+
+
+def test_process_ticker_links_industry_level_sector(in_memory_db):
+    """Der Finnhub-Rohwert wird normalisiert und landet in ticker_sectors."""
+    from src import db
+    init_schema(in_memory_db)
+    _run_ticker(in_memory_db, "NVDA", "Semiconductors")
+    row = db.get_ticker_sector(in_memory_db, "NVDA")
+    assert row is not None
+    assert row["name"] == "Semiconductors"
+    assert row["etf"] == "SOXX"
+
+
+def test_process_ticker_maps_broad_finnhub_value_to_sub_sector(in_memory_db):
+    """'Technology' ist ein Sammelwert und landet im Hardware-Eimer, nicht bei SOXX."""
+    from src import db
+    init_schema(in_memory_db)
+    _run_ticker(in_memory_db, "AAPL", "Technology")
+    row = db.get_ticker_sector(in_memory_db, "AAPL")
+    assert row["name"] == "Technology Hardware"
+    assert row["etf"] == "XLK"
+
+
+def test_process_ticker_leaves_sector_unmapped_when_unknown(in_memory_db):
+    from src import db
+    init_schema(in_memory_db)
+    _run_ticker(in_memory_db, "WEIRD", "Quantum Basketry")
+    assert db.get_ticker_sector(in_memory_db, "WEIRD") is None
+
+
+def test_process_ticker_leaves_sector_unmapped_when_absent(in_memory_db):
+    from src import db
+    init_schema(in_memory_db)
+    _run_ticker(in_memory_db, "NOSECTOR", None)
+    assert db.get_ticker_sector(in_memory_db, "NOSECTOR") is None
+
+
+def test_process_ticker_still_returns_ticker_data_when_sector_unknown(in_memory_db):
+    """Ein unbekannter Sektor darf Phase 1 nicht abbrechen."""
+    init_schema(in_memory_db)
+    td = _run_ticker(in_memory_db, "WEIRD", "Quantum Basketry")
+    assert td is not None
+    assert td["ticker"] == "WEIRD"
+
+
+def test_process_ticker_updates_sector_mapping_on_change(in_memory_db):
+    """Wechselt Finnhub die Branche, zieht ticker_sectors nach.
+
+    Der zweite Lauf liegt bewusst hinter der 7-Tage-TTL des Fundamentals-Cache —
+    innerhalb der TTL wuerde der Cache den alten Sektor liefern und die Zuordnung
+    bliebe unveraendert. Das Mapping folgt also der Cache-Frequenz, nicht dem Run.
+    """
+    from src import db
+    init_schema(in_memory_db)
+    _run_ticker(in_memory_db, "AVGO", "Technology", date="2026-05-19")
+    _run_ticker(in_memory_db, "AVGO", "Semiconductors", date="2026-05-30")
+    row = db.get_ticker_sector(in_memory_db, "AVGO")
+    assert row["name"] == "Semiconductors"
+    assert in_memory_db.execute(
+        "SELECT COUNT(*) AS n FROM ticker_sectors WHERE ticker='AVGO'"
+    ).fetchone()["n"] == 1
+
+
+def test_process_ticker_keeps_sector_stable_within_cache_ttl(in_memory_db):
+    """Innerhalb der Cache-TTL bleibt die Zuordnung stehen — dokumentiert, dass
+    das Sektor-Mapping an der Fundamentals-Cache-Frequenz haengt."""
+    from src import db
+    init_schema(in_memory_db)
+    _run_ticker(in_memory_db, "AVGO", "Technology", date="2026-05-19")
+    _run_ticker(in_memory_db, "AVGO", "Semiconductors", date="2026-05-20")
+    assert db.get_ticker_sector(in_memory_db, "AVGO")["name"] == "Technology Hardware"
+
+
+def test_process_ticker_links_sector_from_fundamentals_cache(in_memory_db):
+    """Zweiter Lauf trifft den 7-Tage-Cache — die Zuordnung muss trotzdem stehen."""
+    from src import db
+    init_schema(in_memory_db)
+    db.save_fundamentals_cache(
+        in_memory_db, "JNJ",
+        {"pe_ratio": 15.0, "market_cap_b": 400.0, "sector": "Pharmaceuticals"},
+        fetched_date="2026-05-19",
+    )
+    ep = _earnings_provider()
+    _process_ticker(
+        ticker="JNJ",
+        price_provider=_good_provider(_df_monotonic_up(250)),
+        earnings_provider=ep,
+        conn=in_memory_db,
+        date="2026-05-19",
+        run_type="pre_market",
+    )
+    ep.get_fundamentals.assert_not_called()
+    row = db.get_ticker_sector(in_memory_db, "JNJ")
+    assert row["name"] == "Pharma"
+    assert row["etf"] == "XLV"
