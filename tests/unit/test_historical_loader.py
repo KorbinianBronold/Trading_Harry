@@ -85,3 +85,40 @@ def test_load_ticker_history_returns_zero_on_empty_df(tmp_path):
         result = load_ticker_history("UNKNOWN", db_path=db_path)
 
     assert result == 0
+
+
+# ---------- Direktaufruf (Sprint 3B / Plan 1, Schnitt 1) ----------
+
+def test_script_runs_when_invoked_directly():
+    """CLAUDE.md dokumentiert `python setup/historical_loader.py --all`.
+
+    Beim Direktaufruf legt Python nur setup/ auf sys.path, nicht das Projekt-Root —
+    ohne Bootstrap scheitert `import config` mit ModuleNotFoundError. Dieser Test
+    ruft das Skript als echten Subprozess auf, weil sich der Fehler in-process
+    nicht reproduzieren laesst (pytest hat das Root laengst im Pfad).
+    """
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[2]
+    proc = subprocess.run(
+        [sys.executable, str(root / "setup" / "historical_loader.py"), "--help"],
+        capture_output=True, text=True, cwd=str(root), timeout=60,
+    )
+    assert proc.returncode == 0, f"stderr: {proc.stderr}"
+    assert "--full-sp500" in proc.stdout
+
+
+def test_script_runs_as_module():
+    """Die -m-Variante muss weiterhin funktionieren."""
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[2]
+    proc = subprocess.run(
+        [sys.executable, "-m", "setup.historical_loader", "--help"],
+        capture_output=True, text=True, cwd=str(root), timeout=60,
+    )
+    assert proc.returncode == 0, f"stderr: {proc.stderr}"

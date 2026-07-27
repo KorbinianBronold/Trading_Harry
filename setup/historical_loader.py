@@ -10,11 +10,20 @@ Each ticker: get_price_history(days=1095) → INSERT OR IGNORE into price_histor
 import argparse
 import logging
 import sqlite3
+import sys
 import time
+from pathlib import Path
 
-import config
-from src import db
-from src.providers.capital_provider import CapitalComProvider
+# Direktaufruf ("python setup/historical_loader.py") legt nur setup/ auf sys.path —
+# ohne diesen Bootstrap schlaegt "import config" fehl, obwohl CLAUDE.md genau
+# diesen Aufruf dokumentiert. Bei "python -m setup.historical_loader" ist
+# __package__ gesetzt und der Block greift nicht.
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+import config  # noqa: E402
+from src import db  # noqa: E402
+from src.providers.capital_provider import CapitalComProvider  # noqa: E402
 
 log = logging.getLogger("shares_future.historical_loader")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
