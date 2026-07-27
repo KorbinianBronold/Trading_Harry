@@ -125,6 +125,10 @@ Erwartete Kosten danach: ~4,20 EUR/Tag → **~88 EUR/Monat** (500 Ticker).
 
 ## Wichtige Befehle
 ```bash
+# historical_loader.py: genau EIN Modus-Flag ist Pflicht (--tickers / --all /
+# --full-sp500 / --reactivate / --list-inactive). Ein Aufruf ohne Flag bricht mit
+# argparse-Fehler ab und startet NICHT mehr stillschweigend den MVP-Pull.
+
 # Historischer Setup-Pull – alle SP500-Ticker (3 Jahre via Capital.com)
 python setup/historical_loader.py --all
 

@@ -616,7 +616,9 @@ Plan: `docs/superpowers/plans/2026-05-21-sprint2-plan1-capital-provider-db-incre
 - **position_check Run-Type** – Capital.com Position-Read + Claude + Status-Mail
   *(wird in Sprint 3B wieder entfernt)*
 - **Timezone-Fix** – `ZoneInfo("Europe/Berlin")` in Python, `TZ="Europe/Berlin"` in Bash
-- **historical_loader.py** – 3-Jahres-Pull via Capital.com (`--all`, `--full-sp500`, `--tickers`)
+- **historical_loader.py** – 3-Jahres-Pull via Capital.com (`--all`, `--full-sp500`, `--tickers`).
+  Seit Sprint 3B zusätzlich die reinen Status-Modi `--reactivate` / `--list-inactive`;
+  die Modus-Gruppe ist `required=True` (Aufruf ohne Flag ist ein Fehler, kein Default-Pull).
 - **500-Ticker Scaling** – `USE_FULL_SP500`-Flag (Ticker-Liste noch Stub, s. Bug B-03)
 
 ---
