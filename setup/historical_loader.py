@@ -94,17 +94,60 @@ def load_all(
     return results
 
 
-def main() -> None:
-    """CLI entry point: parses --tickers/--all/--full-sp500 and runs load_all()
-    over the selected ticker universe."""
-    parser = argparse.ArgumentParser(description="Load 3-year Capital.com price history")
-    group  = parser.add_mutually_exclusive_group()
+def _run_list_inactive(db_path: str) -> None:
+    """Gibt alle deaktivierten Ticker mit Skip-Zahl und Retry-Datum aus."""
+    conn = db.connect(db_path)
+    db.init_schema(conn)
+    rows = db.list_inactive_tickers(conn)
+    if not rows:
+        print("Keine deaktivierten Ticker.")
+    else:
+        print(f"{len(rows)} deaktivierte Ticker "
+              f"(> {config.TICKER_MAX_SKIPS} Skips):\n")
+        for r in rows:
+            print(f"  {r['ticker']:<10} skips={r['skip_count']:<4} "
+                  f"letzter Skip={r['last_skip_date']}  "
+                  f"Retry ab={r['retry_after']}")
+        print("\nSofort reaktivieren:  "
+              "python setup/historical_loader.py --reactivate TICKER")
+    conn.close()
+
+
+def _run_reactivate(db_path: str, tickers: list[str]) -> None:
+    """Setzt skip_count und inactive-Flag der genannten Ticker zurueck."""
+    conn = db.connect(db_path)
+    db.init_schema(conn)
+    for t in tickers:
+        changed = db.reactivate_ticker(conn, t)
+        print(f"{t}: {'reaktiviert' if changed else 'kein Skip-Status — nichts zu tun'}")
+    conn.close()
+
+
+def main(argv: list[str] | None = None) -> None:
+    """CLI entry point: laedt historische Bars oder verwaltet den Ticker-Status.
+    Genau eine der Modus-Optionen ist Pflicht."""
+    parser = argparse.ArgumentParser(
+        description="Capital.com price history loader + ticker status management",
+    )
+    group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--tickers",    nargs="+", help="Specific tickers to load")
     group.add_argument("--all",        action="store_true", help="Load SP500_MVP_TICKERS")
     group.add_argument("--full-sp500", action="store_true", help="Load SP500_FULL_TICKERS (~500)")
+    group.add_argument("--reactivate", nargs="+", metavar="TICKER",
+                       help="Reset skip_count/inactive for these tickers (no data load)")
+    group.add_argument("--list-inactive", action="store_true",
+                       help="List deactivated tickers with their retry date (no data load)")
     parser.add_argument("--db-path", default=str(config.DB_PATH))
     parser.add_argument("--days",    type=int, default=DAYS_3_YEARS)
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
+
+    # Status-Modi: reine DB-Operationen, kein einziger Capital.com-Call.
+    if args.list_inactive:
+        _run_list_inactive(args.db_path)
+        return
+    if args.reactivate:
+        _run_reactivate(args.db_path, args.reactivate)
+        return
 
     if args.tickers:
         tickers = args.tickers

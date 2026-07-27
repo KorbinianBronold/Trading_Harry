@@ -87,6 +87,110 @@ def test_load_ticker_history_returns_zero_on_empty_df(tmp_path):
     assert result == 0
 
 
+# ---------- Ticker-Status-CLI (Sprint 3B / Plan 1, Task 7) ----------
+
+def _deactivate(conn, ticker: str, date: str = "2026-07-27"):
+    import config
+    from src import db
+    for _ in range(config.TICKER_MAX_SKIPS + 1):
+        db.log_skipped_ticker(conn, ticker=ticker, date=date,
+                              run_type="pre_market", reason="x")
+
+
+def test_reactivate_flag_resets_named_tickers(tmp_db_path, capsys):
+    from src import db
+    conn = db.connect(str(tmp_db_path))
+    db.init_schema(conn)
+    _deactivate(conn, "DEAD")
+    conn.close()
+
+    from setup.historical_loader import main
+    main(["--reactivate", "DEAD", "--db-path", str(tmp_db_path)])
+
+    conn = db.connect(str(tmp_db_path))
+    assert db.is_ticker_inactive(conn, "DEAD", today="2026-07-28") is False
+    assert db.get_ticker_status(conn, "DEAD")["skip_count"] == 0
+    conn.close()
+    assert "DEAD" in capsys.readouterr().out
+
+
+def test_reactivate_flag_handles_multiple_tickers(tmp_db_path, capsys):
+    from src import db
+    conn = db.connect(str(tmp_db_path))
+    db.init_schema(conn)
+    _deactivate(conn, "DEAD")
+    _deactivate(conn, "ALSODEAD")
+    conn.close()
+
+    from setup.historical_loader import main
+    main(["--reactivate", "DEAD", "ALSODEAD", "--db-path", str(tmp_db_path)])
+
+    conn = db.connect(str(tmp_db_path))
+    assert db.list_inactive_tickers(conn) == []
+    conn.close()
+
+
+def test_reactivate_flag_reports_unknown_ticker(tmp_db_path, capsys):
+    from src import db
+    conn = db.connect(str(tmp_db_path))
+    db.init_schema(conn)
+    conn.close()
+
+    from setup.historical_loader import main
+    main(["--reactivate", "NEVERSKIPPED", "--db-path", str(tmp_db_path)])
+    out = capsys.readouterr().out
+    assert "NEVERSKIPPED" in out
+    assert "nichts zu tun" in out
+
+
+def test_list_inactive_flag_prints_deactivated_tickers(tmp_db_path, capsys):
+    from src import db
+    conn = db.connect(str(tmp_db_path))
+    db.init_schema(conn)
+    _deactivate(conn, "DEAD")
+    conn.close()
+
+    from setup.historical_loader import main
+    main(["--list-inactive", "--db-path", str(tmp_db_path)])
+    out = capsys.readouterr().out
+    assert "DEAD" in out
+    assert "2026-08-26" in out          # retry_after
+
+
+def test_list_inactive_flag_says_so_when_empty(tmp_db_path, capsys):
+    from src import db
+    conn = db.connect(str(tmp_db_path))
+    db.init_schema(conn)
+    conn.close()
+
+    from setup.historical_loader import main
+    main(["--list-inactive", "--db-path", str(tmp_db_path)])
+    assert "Keine deaktivierten Ticker" in capsys.readouterr().out
+
+
+def test_status_flags_do_not_load_any_history(tmp_db_path, capsys):
+    """--reactivate/--list-inactive duerfen keine Capital.com-Calls ausloesen."""
+    from src import db
+    conn = db.connect(str(tmp_db_path))
+    db.init_schema(conn)
+    _deactivate(conn, "DEAD")
+    conn.close()
+
+    from setup.historical_loader import main
+    with patch("setup.historical_loader.load_all") as mock_load:
+        main(["--reactivate", "DEAD", "--db-path", str(tmp_db_path)])
+        main(["--list-inactive", "--db-path", str(tmp_db_path)])
+    mock_load.assert_not_called()
+
+
+def test_a_mode_flag_is_required(capsys):
+    """Ohne Modus-Flag bricht argparse ab, statt stillschweigend die MVP-Liste
+    zu laden — sonst loest ein Tippfehler einen 500-Ticker-Pull aus."""
+    from setup.historical_loader import main
+    with pytest.raises(SystemExit):
+        main([])
+
+
 # ---------- Direktaufruf (Sprint 3B / Plan 1, Schnitt 1) ----------
 
 def test_script_runs_when_invoked_directly():
