@@ -227,7 +227,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 
 ---
 
-## Task 3: Sektor-Tabellen + Finnhub-Normalisierung
+## Task 3: Sektor-Tabellen + Finnhub-Normalisierung ✅ ERLEDIGT (`a4211d5`, Schnitt 1)
 
 Setzt B.10 und D5 um.
 
@@ -500,7 +500,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 
 ---
 
-## Task 4: `ticker_sectors` organisch in Phase 1 befüllen
+## Task 4: `ticker_sectors` organisch in Phase 1 befüllen ✅ ERLEDIGT (`990597f`, Schnitt 1)
 
 **Files:**
 - Modify: `src/data_collector.py` (`_process_ticker`, ~Zeile 325)
@@ -624,7 +624,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 
 ---
 
-## Task 5: `ticker_status` — kumulativer Skip-Zähler
+## Task 5: `ticker_status` — kumulativer Skip-Zähler ✅ ERLEDIGT (`c035f6c`, Schnitt 2)
 
 Setzt B.7 und D3 um (Datenschicht).
 
@@ -907,7 +907,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 
 ---
 
-## Task 6: Inaktive Ticker in Phase 1 überspringen + bei Erfolg reaktivieren
+## Task 6: Inaktive Ticker in Phase 1 überspringen + bei Erfolg reaktivieren ✅ ERLEDIGT (`031868d`, Schnitt 2)
 
 **Files:**
 - Modify: `src/data_collector.py` (`collect`)
@@ -1032,7 +1032,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 
 ---
 
-## Task 7: `--reactivate` CLI-Flag im historical_loader
+## Task 7: `--reactivate` CLI-Flag im historical_loader ✅ ERLEDIGT (`18aa1cb`, Schnitt 2)
 
 Zweiter Teil von D3: der manuelle Override.
 
@@ -1167,7 +1167,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 
 ---
 
-## Task 8: `guardrail_rejects` persistieren + Sektor aus der DB ins Prediction-Row
+## Task 8: `guardrail_rejects` persistieren + Sektor aus der DB ins Prediction-Row ✅ ERLEDIGT (`6ab199d`, Schnitt 3)
 
 Legt die Datenbasis für die Guardrail-Reject-Statistik der Weekly-Mail (B.9) und
 für den weichen Sektor-Guardrail aus D6. Behebt gleichzeitig, dass `predictions.sector`
@@ -1482,7 +1482,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 
 ---
 
-## Task 9: Retention-Regeln anpassen
+## Task 9: Retention-Regeln anpassen ✅ ERLEDIGT (`6c42cc2`, Schnitt 3)
 
 Setzt D4 um.
 
@@ -1597,7 +1597,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 
 ---
 
-## Task 9a: Sektor-Momentum (Hybrid, D9)
+## Task 9a: Sektor-Momentum (Hybrid, D9) ✅ ERLEDIGT (`6fb3290`, Schnitt 3)
 
 Erhebt beide Momentum-Signale je Sub-Sektor und persistiert sie getrennt. **Nur die
 Datenerhebung** — die Guardrail-Auswertung (hart/weich) gehört zu B.3 und damit in Plan 2.

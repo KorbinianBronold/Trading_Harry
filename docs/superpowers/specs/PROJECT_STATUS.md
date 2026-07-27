@@ -65,6 +65,7 @@
 | Vollständige Code-Dokumentation | `e3b6e86` (2026-07-15) | Jedes Modul hat eine Modul-Beschreibung, jede Funktion einen 1-2-Satz-Docstring. Gilt ab jetzt als Standard für neuen Code. |
 | Intraday-Widerspruch in Prompts behoben | (2026-07-17) | `prompts/deep_analysis_v1.txt` + `prompts/commodities_crypto_v1.txt`: "hold 1-3 trading days"-Framing entfernt. Intraday ist explizit das primäre UND einzige Ziel — Setups, die nicht klar intraday funktionieren, müssen `direction='none'` sein. `hold_days_recommended` bleibt Pflichtfeld (für das Learning Modul), ist aber kein Akzeptanzkriterium mehr. |
 | Bug B-06 behoben: MAX_HOLD_DAYS vereinheitlicht | `c2c8e1c` (2026-07-17) | `guardrails.py`, `evaluator.py`, `portfolio_check.py`, `db.py` nutzen `config.MAX_HOLD_DAYS` (=5) als einzige Quelle der Wahrheit statt eigener hardcodierter `3`. Tests angepasst + neuer Test beweist die 5-Tage-Ausweitung im Walk-Forward-Evaluator. |
+| **Sprint 3B / Plan 1, Schnitt 3: Tasks 8, 9, 9a** | `6ab199d`, `6c42cc2`, `6fb3290` (2026-07-28) | `guardrail_rejects` mit gruppiertem Regelnamen (`_rule_name()` deckt alle 12 Meldungen von `GuardrailsChecker` ab); `predictions.sector` kommt jetzt aus `ticker_sectors` statt aus dem marktweiten Kontext-Dict, wo der Key nie gesetzt war; Retention auf 30/180/90 umgestellt; `sector_momentum` + `collect_sector_momentum()` erheben beide D9-Signale. Live gegen Capital.com + Finnhub verifiziert (s. Abschnitt B.3.1). 329 Tests, 92.09% Coverage. |
 | **Sprint 3B / Plan 1, Schnitt 2: Tasks 5–7** | `c035f6c`, `031868d`, `18aa1cb` (2026-07-27) | `ticker_status` mit kumulativem Skip-Zähler, Deaktivierung ab >20 Skips, Auto-Retry nach 30 Tagen; `collect()` überspringt inaktive Ticker ohne API-Call und heilt den Zähler bei Erfolg; CLI `--reactivate` / `--list-inactive`. **Verhaltensänderung:** die Modus-Gruppe von `historical_loader.py` ist jetzt `required=True` — ein Aufruf ohne Flag (oder mit vertipptem Flag) bricht mit argparse-Fehler ab, statt wie bisher stillschweigend den vollen `SP500_MVP_TICKERS`-Pull zu starten. Gegen die echte Capital.com-API mit `FAKEXXXX` verifiziert: Zähler 1→21, Umschlag bei 21, 0 Calls bis `retry_after`, Retry danach, Fehlschlag verlängert die Sperre. 280 Tests, 91.95% Coverage. |
 | **Sprint 3B / Plan 1, Schnitt 1: Tasks 3–4 + zwei Loader-Fixes** | `a4211d5`, `990597f`, `ea624ef`, `0e539c4` (2026-07-27) | `sectors` + `ticker_sectors` inkl. Seeding und `resolve_sector_id`; organische Befüllung in Phase 1. Dazu zwei unabhängige `historical_loader`-Bugs behoben (s. Abschnitt 3). Live-Lauf bestätigt 18/20 MVP-Ticker gemappt. 254 Tests, 91.8% Coverage. |
 | **Sprint 3B / Plan 1, Tasks 1–2: Sub-Sektor-Taxonomie** | `7a11a00`, `aec7a2f`, `89f9c04` (2026-07-27) | `config.SUB_SECTOR_ETFS` (21 Sub-Sektoren auf 19 ETFs), `config.SECTOR_ALIASES` (104 Finnhub-Aliase), `CapitalComProvider.search_markets()`, `setup/verify_epics.py`. Alle 19 ETFs + VIX gegen die Capital.com Demo-API verifiziert. Branch `sprint3b/plan1-fundament`. |
@@ -81,7 +82,7 @@
 | Sprint | Inhalt | Status |
 |---|---|---|
 | 3A | Roadmap + Doku aktualisieren | ✅ erledigt (dieses Dokument) |
-| 3B | Cron-Struktur + Pipeline-Umbau | 🟡 Plan 1 (Fundament) Tasks 1–2 implementiert, 3–14 offen; Plan 2 (Pipeline) noch nicht geschrieben |
+| 3B | Cron-Struktur + Pipeline-Umbau | 🟡 Plan 1 (Fundament) Tasks 1–9a implementiert (Schnitte 1–3), **10–14 offen**; Plan 2 (Pipeline) noch nicht geschrieben |
 | 3C | Ranking-Überarbeitung | 📋 spezifiziert, Implementierung offen |
 | 3D | Learning Modul | ⚠️ **Platzhalter — Planungssession ausstehend** |
 | 3E | Human-in-the-Loop | ⚠️ **Platzhalter — Planungssession ausstehend** |
@@ -177,6 +178,21 @@ Signale besser mit den tatsächlichen Trade-Ergebnissen korreliert.
 > Bis Sprint 3F die volle Ticker-Liste aktiviert, ist `db_momentum` also fast durchweg
 > NULL und der Hybrid degradiert meist auf „nur ETF vorhanden" → weiche Warnung.
 > Akzeptiert: die Struktur kostet nichts und trägt sofort, sobald 3F läuft.
+
+> **Live bestätigt am 2026-07-28** (echter Capital.com-Pull, Handelstag 2026-07-27,
+> 18/20 Ticker via Finnhub gemappt). Die Prognose oben stimmt exakt: **21/21
+> Sub-Sektoren liefern `etf_momentum`** (alle 19 ETF-Epics antworten), aber nur
+> **2 von 21** erreichen die 3-Ticker-Grenze für `db_momentum` — Retail
+> (+2,89% ETF / +1,17% DB) und Financials Rest (+1,00% / +2,07%). Beide Paare
+> zeigen in dieselbe Richtung, der harte Guardrail wäre also in genau 2 von 21
+> Sub-Sektoren scharf.
+>
+> Zwei Beobachtungen für 3D, solange die Signale noch nicht bewertet werden:
+> - Die Beträge weichen deutlich voneinander ab (Retail ETF ≈ 2,5× DB). XRT ist
+>   gleichgewichtet und small-cap-lastig, unsere Retail-Ticker sind AMZN/WMT/HD.
+>   Bei der Bewertung in Plan 2 zählt daher die **Richtung**, nicht der Betrag.
+> - Ausgerechnet der größte Tagesmove hat keinen Gegencheck: Semiconductors
+>   −2,50% (SOXX) mit nur 2 Tickern (NVDA, AVGO) → `db_momentum` NULL.
 
 **Erledigte Detailfragen** (waren offen, entschieden am 2026-07-27):
 - ✅ Datenquelle Sektor-ETFs + VIX: Capital.com, verifiziert per `setup/verify_epics.py`.
