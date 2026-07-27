@@ -134,6 +134,14 @@ python setup/historical_loader.py --full-sp500
 # Historischer Setup-Pull – einzelner Ticker
 python setup/historical_loader.py --tickers AAPL MSFT NVDA
 
+# Ticker-Status (Sprint 3B / B.7) – reine DB-Operationen, keine Capital.com-Calls
+python setup/historical_loader.py --list-inactive          # stillgelegte Ticker + Retry-Datum
+python setup/historical_loader.py --reactivate AAPL MSFT   # sofort zurücksetzen
+
+# Capital.com-Epics der Sub-Sektor-ETFs + VIX prüfen (manuell, read-only)
+python setup/verify_epics.py
+python setup/verify_epics.py --symbols SOXX VGT            # einzelne Symbole
+
 # Manueller Run
 python main.py --run-type pre_market
 python main.py --run-type evaluate
