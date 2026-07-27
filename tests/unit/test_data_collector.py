@@ -554,6 +554,96 @@ def test_process_ticker_keeps_sector_stable_within_cache_ttl(in_memory_db):
     assert db.get_ticker_sector(in_memory_db, "AVGO")["name"] == "Technology Hardware"
 
 
+# ---------- Inaktive Ticker in collect() (Sprint 3B / Plan 1, Task 6) ----------
+
+def test_collect_skips_inactive_tickers_without_any_api_call(in_memory_db):
+    """Ein deaktivierter Ticker darf keinen einzigen Capital.com-Call ausloesen —
+    genau darin liegt die Kostenersparnis von B.7."""
+    import config
+    from src import db
+    from src.data_collector import collect
+    init_schema(in_memory_db)
+    for _ in range(config.TICKER_MAX_SKIPS + 1):
+        db.log_skipped_ticker(in_memory_db, ticker="DEAD", date="2026-07-01",
+                              run_type="pre_market", reason="x")
+
+    price_provider = MagicMock()
+    price_provider._source_name = "capital.com"
+
+    results, skipped = collect(
+        tickers=["DEAD"], price_provider=price_provider,
+        earnings_provider=_earnings_provider(), conn=in_memory_db,
+        date="2026-07-27", run_type="pre_market",
+    )
+    assert results == []
+    assert skipped == 1
+    price_provider.get_ohlc_after.assert_not_called()
+    price_provider.get_price_history.assert_not_called()
+
+
+def test_collect_retries_inactive_ticker_after_retry_date(in_memory_db):
+    """Ab dem retry_after-Datum wird der Ticker wieder normal versucht."""
+    import config
+    from src import db
+    from src.data_collector import collect
+    init_schema(in_memory_db)
+    for _ in range(config.TICKER_MAX_SKIPS + 1):
+        db.log_skipped_ticker(in_memory_db, ticker="BACK", date="2026-07-01",
+                              run_type="pre_market", reason="x")
+
+    results, _ = collect(
+        tickers=["BACK"], price_provider=_good_provider(_df_monotonic_up(250)),
+        earnings_provider=_earnings_provider(), conn=in_memory_db,
+        date="2026-08-01",   # retry_after = 2026-07-31
+        run_type="pre_market",
+    )
+    assert len(results) == 1
+    assert db.get_ticker_status(in_memory_db, "BACK")["skip_count"] == 0
+
+
+def test_collect_resets_skip_counter_after_successful_run(in_memory_db):
+    """Ein erfolgreicher Abruf heilt den Zaehler — sonst liefe ein Ticker durch
+    verstreute Einzelausfaelle ueber Monate in die Deaktivierung."""
+    from src import db
+    from src.data_collector import collect
+    init_schema(in_memory_db)
+    db.log_skipped_ticker(in_memory_db, ticker="AAPL", date="2026-07-01",
+                          run_type="pre_market", reason="x")
+    assert db.get_ticker_status(in_memory_db, "AAPL")["skip_count"] == 1
+
+    results, _ = collect(
+        tickers=["AAPL"], price_provider=_good_provider(_df_monotonic_up(250)),
+        earnings_provider=_earnings_provider(), conn=in_memory_db,
+        date="2026-07-27", run_type="pre_market",
+    )
+    assert len(results) == 1
+    assert db.get_ticker_status(in_memory_db, "AAPL")["skip_count"] == 0
+
+
+def test_collect_counts_inactive_and_failing_tickers_together(in_memory_db):
+    """Die skipped-Zahl im Rueckgabewert deckt beide Faelle ab."""
+    import config
+    from src import db
+    from src.data_collector import collect
+    init_schema(in_memory_db)
+    for _ in range(config.TICKER_MAX_SKIPS + 1):
+        db.log_skipped_ticker(in_memory_db, ticker="DEAD", date="2026-07-01",
+                              run_type="pre_market", reason="x")
+
+    provider = MagicMock()
+    provider._source_name = "capital.com"
+    provider.get_ohlc_after.return_value = None
+    provider.get_price_history.return_value = None
+
+    results, skipped = collect(
+        tickers=["DEAD", "ALSOBAD"], price_provider=provider,
+        earnings_provider=_earnings_provider(), conn=in_memory_db,
+        date="2026-07-27", run_type="pre_market",
+    )
+    assert results == []
+    assert skipped == 2
+
+
 def test_process_ticker_links_sector_from_fundamentals_cache(in_memory_db):
     """Zweiter Lauf trifft den 7-Tage-Cache — die Zuordnung muss trotzdem stehen."""
     from src import db

@@ -378,6 +378,17 @@ def collect(
     results: list[dict] = []
     skipped = 0
     for i, t in enumerate(tickers):
+        # Sprint 3B / B.7: dauerhaft datenlose Ticker kosten keine API-Calls mehr,
+        # bis ihr retry_after-Datum erreicht ist.
+        if db.is_ticker_inactive(conn, t, today=date):
+            status = db.get_ticker_status(conn, t)
+            log.info(
+                f"{t}: inaktiv nach {status['skip_count']} Skips — uebersprungen, "
+                f"Retry ab {status['retry_after']}"
+            )
+            skipped += 1
+            continue
+
         td = _process_ticker(
             ticker=t,
             price_provider=price_provider,
@@ -389,6 +400,9 @@ def collect(
         if td is None:
             skipped += 1
         else:
+            # Erfolgreicher Abruf heilt den Zaehler — sonst liefe ein Ticker durch
+            # verstreute Einzelausfaelle ueber Monate in die Deaktivierung.
+            db.reactivate_ticker(conn, t)
             results.append(td)
 
         if (i + 1) % BATCH_PAUSE_EVERY == 0 and (i + 1) < len(tickers):
