@@ -65,6 +65,7 @@
 | Vollständige Code-Dokumentation | `e3b6e86` (2026-07-15) | Jedes Modul hat eine Modul-Beschreibung, jede Funktion einen 1-2-Satz-Docstring. Gilt ab jetzt als Standard für neuen Code. |
 | Intraday-Widerspruch in Prompts behoben | (2026-07-17) | `prompts/deep_analysis_v1.txt` + `prompts/commodities_crypto_v1.txt`: "hold 1-3 trading days"-Framing entfernt. Intraday ist explizit das primäre UND einzige Ziel — Setups, die nicht klar intraday funktionieren, müssen `direction='none'` sein. `hold_days_recommended` bleibt Pflichtfeld (für das Learning Modul), ist aber kein Akzeptanzkriterium mehr. |
 | Bug B-06 behoben: MAX_HOLD_DAYS vereinheitlicht | `c2c8e1c` (2026-07-17) | `guardrails.py`, `evaluator.py`, `portfolio_check.py`, `db.py` nutzen `config.MAX_HOLD_DAYS` (=5) als einzige Quelle der Wahrheit statt eigener hardcodierter `3`. Tests angepasst + neuer Test beweist die 5-Tage-Ausweitung im Walk-Forward-Evaluator. |
+| **Sprint 3B / Plan 1, Schnitt 1: Tasks 3–4 + zwei Loader-Fixes** | `a4211d5`, `990597f`, `ea624ef`, `0e539c4` (2026-07-27) | `sectors` + `ticker_sectors` inkl. Seeding und `resolve_sector_id`; organische Befüllung in Phase 1. Dazu zwei unabhängige `historical_loader`-Bugs behoben (s. Abschnitt 3). Live-Lauf bestätigt 18/20 MVP-Ticker gemappt. 254 Tests, 91.8% Coverage. |
 | **Sprint 3B / Plan 1, Tasks 1–2: Sub-Sektor-Taxonomie** | `7a11a00`, `aec7a2f`, `89f9c04` (2026-07-27) | `config.SUB_SECTOR_ETFS` (21 Sub-Sektoren auf 19 ETFs), `config.SECTOR_ALIASES` (104 Finnhub-Aliase), `CapitalComProvider.search_markets()`, `setup/verify_epics.py`. Alle 19 ETFs + VIX gegen die Capital.com Demo-API verifiziert. Branch `sprint3b/plan1-fundament`. |
 | **Sprint 3A: Roadmap-Überarbeitung** | (2026-07-27) | Dieses Dokument. Der alte Plan "Cron-Struktur umbauen (pre_open/post_open-Split)" wurde in einer Review-Session **verworfen** und durch die Sprints 3B–3F unten ersetzt. |
 
@@ -168,11 +169,13 @@ Beide Werte werden zusätzlich an jeder Prediction und an jedem Guardrail-Reject
 mitgeschrieben, damit Sprint 3D datenbasiert messen kann, welches der beiden
 Signale besser mit den tatsächlichen Trade-Ergebnissen korreliert.
 
-> **Reichweite bei MVP-Größe:** von 21 Sub-Sektoren erreichen bei der 20-Ticker-MVP-Liste
-> nur **drei** (Retail, Financials Rest, Pharma) die 3-Ticker-Mindestgrenze. Bis Sprint 3F
-> die volle Ticker-Liste aktiviert, ist `db_momentum` also überwiegend NULL und der
-> Hybrid degradiert meist auf „nur ETF vorhanden" → weiche Warnung. Das ist akzeptiert:
-> die Struktur kostet nichts und trägt sofort, sobald 3F läuft.
+> **Reichweite bei MVP-Größe — gemessen am 2026-07-27:** von 21 Sub-Sektoren erreichen
+> bei der 20-Ticker-MVP-Liste nur **zwei** die 3-Ticker-Mindestgrenze: Retail
+> (AMZN, WMT, HD) und Financials Rest (BRK-B, V, MA). Technology Hardware,
+> Semiconductors und Pharma liegen bei je 2 Tickern, der Rest bei 1.
+> Bis Sprint 3F die volle Ticker-Liste aktiviert, ist `db_momentum` also fast durchweg
+> NULL und der Hybrid degradiert meist auf „nur ETF vorhanden" → weiche Warnung.
+> Akzeptiert: die Struktur kostet nichts und trägt sofort, sobald 3F läuft.
 
 **Erledigte Detailfragen** (waren offen, entschieden am 2026-07-27):
 - ✅ Datenquelle Sektor-ETFs + VIX: Capital.com, verifiziert per `setup/verify_epics.py`.
@@ -377,6 +380,15 @@ Zusätzlich bekommen **`predictions`** und **`guardrail_rejects`** je die Spalte
   die von Sprint 3D geforderte Korrelation „welches Signal predictet besser" ist
   ausschliesslich über `predictions` berechenbar.
 
+**Verifiziert am Live-Lauf (2026-07-27):** Phase 1 gegen Capital.com + Finnhub über
+alle 20 MVP-Ticker — 20 verarbeitet, **18 gemappt**, 0 übersprungen. Einziger nicht
+auflösbarer Rohwert: `Media` (GOOGL, META), und zwar erwartungsgemäß, weil Communication
+mangels ETF gestrichen wurde. **Entscheidung bestätigt (2026-07-27): bleibt ungemappt.**
+
+Zwei Rohwerte wichen von der Erwartung ab und sind hier festgehalten, damit sie nicht
+erneut geraten werden: **ABBV meldet `Biotechnology`** (nicht `Pharmaceuticals`) und
+landet daher bei XBI, **WMT meldet `Retail`** (nicht Consumer Staples) und landet bei XRT.
+
 **Nutzung:** `trade_proposals` und `weekly` lesen den Sub-Sektor-ETF per JOIN
 `ticker → ticker_sectors → sectors.etf`.
 
@@ -513,6 +525,13 @@ Offene Punkte:
 |---|---|---|---|---|
 | B-03 | `config.py:SP500_FULL_TICKERS` | Ist Stub (= MVP-Liste), `USE_FULL_SP500=true` würde nur 20 Ticker laufen lassen | Mittel | Sprint 3F |
 | B-05 | `main.py:_guess_aborted_phase()` | Gibt immer `"policy_monitor"` zurück, egal wo der Abort war | Niedrig | Sprint 3B |
+
+**Behoben (2026-07-27, Sprint 3B / Plan 1, Schnitt 1):**
+
+| # | Datei | Bug | Fix |
+|---|---|---|---|
+| B-07 | `setup/historical_loader.py` | `python setup/historical_loader.py --all` scheiterte mit `ModuleNotFoundError: No module named 'config'` — genau der in CLAUDE.md dokumentierte Aufruf. Beim Direktaufruf liegt nur `setup/` auf `sys.path`. Nur `python -m setup.historical_loader` funktionierte. | `sys.path`-Bootstrap, auf `__package__` geguardet. Beide Aufrufvarianten per Subprozess-Test abgedeckt. (`ea624ef`) |
+| B-08 | `setup/historical_loader.py`, `src/providers/capital_provider.py` | Der Setup-Pull schrieb **0 Zeilen**: Capital.com beantwortet `/prices` mit `max>1000` per HTTP 400, `DAYS_3_YEARS` stand auf 1095. Die Konstante verwechselte Kalendertage mit Bars. Der 400er war unsichtbar, weil er nur als „no data returned" durchkam. | `capital_provider.MAX_BARS_PER_REQUEST = 1000` deckelt in `get_price_history()`; `DAYS_3_YEARS` leitet sich davon ab. Pull liefert jetzt 20 000 Zeilen. (`0e539c4`) |
 
 **Behoben (2026-07-09, Commit `d17c2f5`):**
 
