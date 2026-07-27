@@ -40,21 +40,30 @@ def search_terms() -> list[str]:
 
 
 def pick_best(symbol: str, markets: list[dict]) -> dict | None:
-    """Wählt aus den Suchtreffern den plausibelsten aus: exaktes Epic schlägt
-    Epic-mit-Präfix, handelbar schlägt ausgesetzt. None, wenn nichts passt."""
-    if not markets:
-        return None
+    """Gibt den Treffer zurück, dessen Epic EXAKT dem Symbol entspricht — sonst None.
 
-    def rank(m: dict) -> tuple:
-        epic = (m.get("epic") or "").upper()
-        sym = symbol.upper()
-        exact = epic == sym
-        prefix = epic.startswith(sym)
-        tradeable = (m.get("marketStatus") or "").upper() == TRADEABLE
-        # sort() ist aufsteigend -> negieren, damit "besser" nach vorn wandert
-        return (not exact, not prefix, not tradeable, epic)
+    Bewusst kein Fuzzy-Fallback: Capital.coms Marktsuche ist eine Volltextsuche und
+    liefert zu jedem Kürzel irgendetwas. Ein "plausibelster Treffer" führte im Lauf
+    vom 2026-07-27 dazu, dass KBE (Bank-ETF) auf KBH (KB Home, Hausbauer) und XLB
+    (Materials) auf ACI (Albertsons) abgebildet wurden. Für einen Momentum-Guardrail
+    ist ein falsches Instrument schlimmer als gar keins — deshalb: exakt oder nichts."""
+    sym = symbol.strip().upper()
+    for m in markets:
+        if (m.get("epic") or "").strip().upper() == sym:
+            return m
+    return None
 
-    return sorted(markets, key=rank)[0]
+
+def etf_candidates(markets: list[dict], limit: int = 8) -> list[dict]:
+    """Filtert aus den Suchtreffern die heraus, die dem Namen nach ein Fonds sind
+    (ETF / Fund / Index / Trust) — Kandidaten für einen Ersatz-Ticker, wenn das
+    gesuchte Symbol bei Capital.com nicht existiert."""
+    words = ("ETF", "FUND", "INDEX", "TRUST", "SPDR", "ISHARES", "SELECT SECTOR")
+    hits = [
+        m for m in markets
+        if any(w in (m.get("instrumentName") or "").upper() for w in words)
+    ]
+    return hits[:limit]
 
 
 def resolve(provider, terms: list[str]) -> dict[str, list[dict]]:
@@ -67,8 +76,8 @@ def resolve(provider, terms: list[str]) -> dict[str, list[dict]]:
 
 
 def format_report(resolved: dict[str, list[dict]], sub_sectors: dict[str, str]) -> str:
-    """Rendert den Auflösungs-Report inklusive kopierfertigem TICKER_MAP-Block für
-    alle Symbole, deren Epic vom Symbol abweicht."""
+    """Rendert den Auflösungs-Report: bestätigte Epics, fehlende Symbole samt
+    Fonds-Kandidaten als Ersatz, und eine Zusammenfassung."""
     by_etf: dict[str, list[str]] = {}
     for sector, etf in sub_sectors.items():
         by_etf.setdefault(etf, []).append(sector)
@@ -77,66 +86,67 @@ def format_report(resolved: dict[str, list[dict]], sub_sectors: dict[str, str]) 
         "",
         "=" * 78,
         "Capital.com Epic-Aufloesung — Sub-Sektor-ETFs + VIX",
+        "(nur EXAKTE Epic-Treffer gelten; Fuzzy-Treffer sind bei dieser",
+        " Volltextsuche wertlos, s. pick_best-Docstring)",
         "=" * 78,
     ]
-    needs_mapping: dict[str, str] = {}
+    confirmed: list[str] = []
     missing: list[str] = []
     not_tradeable: list[str] = []
 
     for symbol, markets in resolved.items():
         sectors = ", ".join(sorted(by_etf.get(symbol, []))) or "VIX / Volatilitaet"
         best = pick_best(symbol, markets)
+
         if best is None:
             missing.append(symbol)
-            lines.append(f"{symbol:<6} KEIN TREFFER".ljust(58) + f"[{sectors}]")
+            lines.append(f"{symbol:<6} KEIN TREFFER  —  Sub-Sektor: {sectors}")
+            cands = etf_candidates(markets)
+            if cands:
+                lines.append(f"{'':<9} Fonds-Kandidaten bei Capital.com:")
+                for c in cands:
+                    lines.append(
+                        f"{'':<11} {c.get('epic', '?'):<12} "
+                        f"{(c.get('marketStatus') or '?').upper():<11} "
+                        f"{c.get('instrumentName', '?')}"
+                    )
+            else:
+                lines.append(f"{'':<9} (kein Fonds unter den Suchtreffern)")
+            lines.append("")
             continue
 
-        epic = best.get("epic") or "?"
+        confirmed.append(symbol)
         status = (best.get("marketStatus") or "?").upper()
-        itype = best.get("instrumentType") or "?"
-        name = best.get("instrumentName") or "?"
-        flag = "exakt" if epic.upper() == symbol.upper() else "ABWEICHEND"
         if status != TRADEABLE:
             not_tradeable.append(symbol)
-        if epic.upper() != symbol.upper():
-            needs_mapping[symbol] = epic
-
-        lines.append(f"{symbol:<6} -> {epic:<18} [{flag:<10}] {status:<12} {itype}")
-        lines.append(f"{'':<9} {name}")
+        lines.append(
+            f"{symbol:<6} OK            {status:<12} "
+            f"{best.get('instrumentType') or '?'}"
+        )
+        lines.append(f"{'':<9} {best.get('instrumentName') or '?'}")
         lines.append(f"{'':<9} Sub-Sektor: {sectors}")
-        if len(markets) > 1:
-            others = ", ".join(
-                m.get("epic", "?") for m in markets[1:6] if m.get("epic") != epic
-            )
-            if others:
-                lines.append(f"{'':<9} weitere Treffer: {others}")
         lines.append("")
 
     lines += ["-" * 78, "ZUSAMMENFASSUNG", "-" * 78]
-    total = len(resolved)
-    lines.append(f"geprueft:            {total}")
-    lines.append(f"exakt aufgeloest:    {total - len(needs_mapping) - len(missing)}")
-    lines.append(f"abweichendes Epic:   {len(needs_mapping)}"
-                 + (f"  ({', '.join(needs_mapping)})" if needs_mapping else ""))
+    lines.append(f"geprueft:            {len(resolved)}")
+    lines.append(f"bestaetigt:          {len(confirmed)}")
     lines.append(f"KEIN TREFFER:        {len(missing)}"
                  + (f"  ({', '.join(missing)})" if missing else ""))
     lines.append(f"nicht handelbar:     {len(not_tradeable)}"
                  + (f"  ({', '.join(not_tradeable)})" if not_tradeable else ""))
 
-    lines += ["", "-" * 78, "In capital_provider.TICKER_MAP eintragen:", "-" * 78]
-    if needs_mapping:
-        for symbol, epic in needs_mapping.items():
-            lines.append(f'    "{symbol}": "{epic}",')
-    else:
-        lines.append("    (nichts — alle Epics entsprechen dem Symbol)")
-
     if missing:
         lines += [
             "",
-            "HINWEIS: Fuer Symbole ohne Treffer existiert bei Capital.com kein",
-            "abrufbares Instrument. Der betroffene Sub-Sektor laeuft dann ohne",
-            "ETF-Momentum-Check (weiches Verhalten, s. Entscheidung D6) — oder es",
-            "wird ein Ersatz-ETF gewaehlt.",
+            "-" * 78,
+            "HINWEIS zu den fehlenden Symbolen",
+            "-" * 78,
+            "Capital.com fuehrt diese Instrumente nicht. Zwei Wege:",
+            "  1. Ersatz-ETF aus den Kandidaten oben waehlen und in",
+            "     config.SUB_SECTOR_ETFS eintragen.",
+            "  2. Sub-Sektor auf einen breiteren, bestaetigten ETF zusammenlegen.",
+            "Ein TICKER_MAP-Eintrag hilft hier NICHT — das Instrument fehlt",
+            "vollstaendig, es heisst nicht bloss anders.",
         ]
     lines.append("")
     return "\n".join(lines)

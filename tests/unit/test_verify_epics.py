@@ -4,14 +4,15 @@ from unittest.mock import MagicMock
 
 import config
 from setup.verify_epics import (
-    format_report, main, pick_best, resolve, search_terms,
+    etf_candidates, format_report, main, pick_best, resolve, search_terms,
 )
 
 
-def _market(epic: str, status: str = "TRADEABLE", itype: str = "SHARES") -> dict:
+def _market(epic: str, name: str | None = None,
+            status: str = "TRADEABLE", itype: str = "SHARES") -> dict:
     return {
         "epic": epic,
-        "instrumentName": f"{epic} Fund",
+        "instrumentName": name if name is not None else f"{epic} ETF",
         "instrumentType": itype,
         "marketStatus": status,
     }
@@ -31,25 +32,65 @@ def test_search_terms_deduplicates_shared_etfs():
     assert len(terms) == len(set(terms))
 
 
-# ---------- pick_best ----------
+# ---------- pick_best: nur exakte Treffer ----------
 
 def test_pick_best_returns_none_without_markets():
     assert pick_best("XLK", []) is None
 
 
-def test_pick_best_prefers_exact_epic_over_prefix():
+def test_pick_best_returns_exact_epic_match():
     markets = [_market("XLKQ"), _market("XLK")]
     assert pick_best("XLK", markets)["epic"] == "XLK"
 
 
-def test_pick_best_prefers_tradeable_when_no_exact_match():
-    markets = [_market("XLK_A", status="SUSPENDED"), _market("XLK_B")]
-    assert pick_best("XLK", markets)["epic"] == "XLK_B"
+def test_pick_best_is_case_and_whitespace_insensitive():
+    assert pick_best(" xlk ", [_market("XLK")])["epic"] == "XLK"
 
 
-def test_pick_best_falls_back_to_first_plausible_hit():
-    markets = [_market("SOMETHINGELSE")]
-    assert pick_best("XLK", markets)["epic"] == "SOMETHINGELSE"
+def test_pick_best_returns_none_without_exact_match():
+    """Kein Fuzzy-Fallback: ein Präfix-Treffer ist KEIN Treffer."""
+    assert pick_best("XLK", [_market("XLKQ"), _market("ALKT")]) is None
+
+
+def test_pick_best_never_returns_an_unrelated_instrument():
+    """Regression zum Lauf vom 2026-07-27: die Volltextsuche lieferte für KBE
+    (Bank-ETF) unter anderem KBH (KB Home, Hausbauer). Ein Momentum-Guardrail
+    gegen das falsche Instrument ist schlimmer als gar keiner."""
+    markets = [
+        _market("KBH", "KB Home"),
+        _market("KBWB", "Invesco KBW Bank ETF"),
+        _market("UBER", "Uber Technologies"),
+    ]
+    assert pick_best("KBE", markets) is None
+
+
+def test_pick_best_returns_match_even_when_not_tradeable():
+    """Handelbarkeit ist eine Warnung im Report, kein Ausschlusskriterium für
+    die Identifikation des Instruments."""
+    hit = pick_best("KIE", [_market("KIE", status="CLOSED")])
+    assert hit is not None and hit["marketStatus"] == "CLOSED"
+
+
+# ---------- etf_candidates ----------
+
+def test_etf_candidates_keeps_only_fund_like_names():
+    markets = [
+        _market("KBH", "KB Home"),
+        _market("KBWB", "Invesco KBW Bank ETF"),
+        _market("XLF", "Financial Select Sector SPDR Fund"),
+        _market("UBER", "Uber Technologies"),
+    ]
+    epics = [c["epic"] for c in etf_candidates(markets)]
+    assert epics == ["KBWB", "XLF"]
+
+
+def test_etf_candidates_respects_limit():
+    markets = [_market(f"E{i}", f"Fund {i}") for i in range(20)]
+    assert len(etf_candidates(markets, limit=3)) == 3
+
+
+def test_etf_candidates_empty_when_nothing_fund_like():
+    assert etf_candidates([_market("KBH", "KB Home")]) == []
 
 
 # ---------- resolve ----------
@@ -67,47 +108,68 @@ def test_resolve_queries_every_symbol():
 _SUB_SECTORS = {
     "Technology Hardware": "XLK",
     "Semiconductors": "SOXX",
-    "Utilities": "XLU",
+    "Banks": "KBE",
 }
 
 
-def test_format_report_marks_exact_deviating_and_missing():
+def test_format_report_marks_confirmed_and_missing():
     resolved = {
-        "XLK":  [_market("XLK")],
-        "SOXX": [_market("SOXX_US")],
-        "XLU":  [],
+        "XLK": [_market("XLK", "Technology Select Sector SPDR Fund")],
+        "KBE": [_market("KBH", "KB Home")],
     }
     report = format_report(resolved, _SUB_SECTORS)
-    assert "exakt" in report
-    assert "ABWEICHEND" in report
-    assert "KEIN TREFFER" in report
-    assert "SOXX_US" in report
+    assert "XLK    OK" in report
+    assert "KBE    KEIN TREFFER" in report
 
 
-def test_format_report_emits_ticker_map_line_only_for_deviating_epic():
-    resolved = {"XLK": [_market("XLK")], "SOXX": [_market("SOXX_US")]}
+def test_format_report_never_suggests_a_ticker_map_entry_for_missing_symbols():
+    """Ein fehlendes Instrument ist kein Umbenennungs-Problem — TICKER_MAP hilft nicht."""
+    resolved = {"KBE": [_market("KBH", "KB Home")]}
     report = format_report(resolved, _SUB_SECTORS)
-    mapping_block = report.split("TICKER_MAP eintragen:")[-1]
-    assert '"SOXX": "SOXX_US",' in mapping_block
-    assert '"XLK"' not in mapping_block
+    assert "KBH" not in report          # der Fehltreffer taucht gar nicht erst auf
+    assert "TICKER_MAP-Eintrag hilft hier NICHT" in report
 
 
-def test_format_report_says_nothing_to_map_when_all_exact():
-    resolved = {"XLK": [_market("XLK")]}
+def test_format_report_lists_fund_candidates_for_missing_symbols():
+    resolved = {"KBE": [_market("KBH", "KB Home"),
+                        _market("KBWB", "Invesco KBW Bank ETF")]}
     report = format_report(resolved, _SUB_SECTORS)
-    assert "alle Epics entsprechen dem Symbol" in report
+    assert "Fonds-Kandidaten" in report
+    assert "KBWB" in report
+    assert "Invesco KBW Bank ETF" in report
+
+
+def test_format_report_says_when_no_candidate_exists():
+    resolved = {"KBE": [_market("KBH", "KB Home")]}
+    report = format_report(resolved, _SUB_SECTORS)
+    assert "kein Fonds unter den Suchtreffern" in report
+
+
+def test_format_report_counts_summary_correctly():
+    resolved = {
+        "XLK":  [_market("XLK")],
+        "SOXX": [_market("SOXX")],
+        "KBE":  [_market("KBH", "KB Home")],
+    }
+    report = format_report(resolved, _SUB_SECTORS)
+    assert "geprueft:            3" in report
+    assert "bestaetigt:          2" in report
+    assert "KEIN TREFFER:        1  (KBE)" in report
 
 
 def test_format_report_names_the_sub_sector_behind_each_etf():
-    resolved = {"SOXX": [_market("SOXX")]}
-    report = format_report(resolved, _SUB_SECTORS)
+    report = format_report({"SOXX": [_market("SOXX")]}, _SUB_SECTORS)
     assert "Semiconductors" in report
 
 
 def test_format_report_flags_non_tradeable_markets():
-    resolved = {"XLK": [_market("XLK", status="SUSPENDED")]}
-    report = format_report(resolved, _SUB_SECTORS)
+    report = format_report({"XLK": [_market("XLK", status="SUSPENDED")]}, _SUB_SECTORS)
     assert "nicht handelbar:     1" in report
+
+
+def test_format_report_omits_hint_block_when_nothing_missing():
+    report = format_report({"XLK": [_market("XLK")]}, _SUB_SECTORS)
+    assert "HINWEIS zu den fehlenden Symbolen" not in report
 
 
 # ---------- main ----------
@@ -122,12 +184,9 @@ def test_main_prints_report_for_explicit_symbols(monkeypatch, capsys):
     monkeypatch.setattr(config, "CAPITAL_COM_API_KEY", "dummy")
     provider = MagicMock()
     provider.search_markets.return_value = [_market("XLK")]
-    monkeypatch.setattr(
-        "setup.verify_epics.CapitalComProvider", lambda: provider,
-    )
+    monkeypatch.setattr("setup.verify_epics.CapitalComProvider", lambda: provider)
     assert main(["--symbols", "XLK"]) == 0
-    out = capsys.readouterr().out
-    assert "XLK" in out
+    assert "XLK" in capsys.readouterr().out
     assert provider.search_markets.call_count == 1
 
 
@@ -135,8 +194,6 @@ def test_main_returns_1_when_session_fails(monkeypatch, capsys):
     monkeypatch.setattr(config, "CAPITAL_COM_API_KEY", "dummy")
     provider = MagicMock()
     provider.search_markets.side_effect = RuntimeError("auth failed")
-    monkeypatch.setattr(
-        "setup.verify_epics.CapitalComProvider", lambda: provider,
-    )
+    monkeypatch.setattr("setup.verify_epics.CapitalComProvider", lambda: provider)
     assert main(["--symbols", "XLK"]) == 1
     assert "Capital.com-Session fehlgeschlagen" in capsys.readouterr().out
