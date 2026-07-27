@@ -26,9 +26,39 @@ def score_total(analysis: dict) -> float:
     return round(total, 3)
 
 
-def _guardrail_filter(analyses: Iterable[dict]) -> list[dict]:
-    """Drops analyses with direction='none' or that fail GuardrailsChecker, logging
-    the reason for each rejection."""
+def _rule_name(error_message: str) -> str:
+    """Leitet aus einer Guardrail-Fehlermeldung einen kurzen, gruppierbaren
+    Regelnamen ab, damit die Weekly-Mail nach Regel aggregieren kann."""
+    msg = error_message.lower()
+    if msg.startswith("required field missing"):
+        return "required_field"
+    if msg.startswith("too few sources"):
+        return "sources"
+    if "too few evidence" in msg:
+        return "evidence"
+    if msg.startswith("r/r"):
+        return "rr_ratio"
+    if "signal consistency" in msg:
+        return "momentum_consistency"
+    if "haltedauer" in msg:
+        return "hold_days"
+    if "intraday-range" in msg:
+        return "intraday_range"
+    if "confidence" in msg:
+        return "confidence_data_quality"
+    if "not above entry" in msg or "not below entry" in msg:
+        return "tp_sl_direction"
+    return "other"
+
+
+def _guardrail_filter(
+    analyses: Iterable[dict], conn, date: str, run_type: str,
+) -> list[dict]:
+    """Drops analyses with direction='none' or that fail GuardrailsChecker.
+
+    Jede Ablehnung wird zusaetzlich als guardrail_rejects-Zeile persistiert, damit
+    die Weekly-Mail auswerten kann, welche Regeln wie oft greifen (Sprint 3B / B.9).
+    direction='none' ist dabei kein Reject, sondern eine bewusste Enthaltung."""
     checker = GuardrailsChecker()
     kept: list[dict] = []
     for a in analyses:
@@ -36,20 +66,29 @@ def _guardrail_filter(analyses: Iterable[dict]) -> list[dict]:
             continue
         ok, errs = checker.check_analysis(a)
         if not ok:
-            log.info(
-                f"{a.get('ticker', '?')}: dropped by guardrails: {'; '.join(errs)}"
-            )
+            ticker = a.get("ticker", "?")
+            log.info(f"{ticker}: dropped by guardrails: {'; '.join(errs)}")
+            db.log_guardrail_reject(conn, {
+                "date": date, "run_type": run_type, "ticker": ticker,
+                "direction": a.get("direction"),
+                "rule": _rule_name(errs[0]),
+                "detail": "; ".join(errs),
+                "enforced": 1,
+            })
             continue
         kept.append(a)
     return kept
 
 
 def _to_prediction_row(
-    analysis: dict, date: str, run_type: str, market_context: dict,
+    analysis: dict, date: str, run_type: str, market_context: dict, conn,
 ) -> dict:
     """Maps one guardrail-passing analysis dict onto the flat column layout
-    expected by db.save_prediction()."""
+    expected by db.save_prediction(). Der Sektor kommt aus ticker_sectors
+    (Sprint 3B / B.10), nicht mehr aus dem marktweiten market_context-Dict —
+    dort stand nie ein Wert, weshalb predictions.sector bisher immer NULL war."""
     scores = analysis.get("scores", {})
+    sector_row = db.get_ticker_sector(conn, analysis["ticker"])
     return {
         "date": date, "run_type": run_type,
         "asset_class": analysis.get("asset_class"),
@@ -72,7 +111,7 @@ def _to_prediction_row(
         "atr_pct": None, "rsi_at_entry": None, "volume_ratio": None,
         "market_regime": market_context.get("market_regime"),
         "vix_at_prediction": market_context.get("vix_level"),
-        "sector": market_context.get("sector"),
+        "sector": sector_row["name"] if sector_row else None,
         "trend_boost": None,
         "earnings_warning": bool(analysis.get("earnings_warning")),
         "summary": analysis.get("summary"),
@@ -93,8 +132,8 @@ def rank_and_persist(
     """Returns {top_long, top_short, commodities_crypto} (each a list of dicts)
     and writes a predictions row per selected analysis. Order within each list
     is by probability_pct descending."""
-    kept_stocks = _guardrail_filter(stock_analyses)
-    kept_cc     = _guardrail_filter(commodity_crypto_analyses)
+    kept_stocks = _guardrail_filter(stock_analyses, conn, date, run_type)
+    kept_cc     = _guardrail_filter(commodity_crypto_analyses, conn, date, run_type)
 
     longs  = sorted(
         [a for a in kept_stocks if a["direction"] == "long"],
@@ -108,6 +147,7 @@ def rank_and_persist(
     for a in (*longs, *shorts, *kept_cc):
         db.save_prediction(conn, _to_prediction_row(
             a, date=date, run_type=run_type, market_context=market_context,
+            conn=conn,
         ))
 
     log.info(

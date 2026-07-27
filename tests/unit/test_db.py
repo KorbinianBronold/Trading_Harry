@@ -612,3 +612,54 @@ def test_cleanup_never_touches_ticker_status(in_memory_db):
     assert st is not None
     assert st["skip_count"] == config.TICKER_MAX_SKIPS + 1
     assert st["inactive"] == 1
+
+
+# ---------- guardrail_rejects (Sprint 3B / Plan 1, Task 8) ----------
+
+from src.db import log_guardrail_reject, load_guardrail_rejects_since
+
+
+def test_init_schema_creates_guardrail_rejects(in_memory_db):
+    init_schema(in_memory_db)
+    assert "guardrail_rejects" in get_tables(in_memory_db)
+
+
+def test_log_and_load_guardrail_rejects(in_memory_db):
+    init_schema(in_memory_db)
+    log_guardrail_reject(in_memory_db, {
+        "date": "2026-07-27", "run_type": "pre_market", "ticker": "AAPL",
+        "direction": "long", "rule": "rr_ratio",
+        "detail": "R/R 1.2 below hard minimum 1.5", "enforced": 1,
+    })
+    log_guardrail_reject(in_memory_db, {
+        "date": "2026-07-20", "run_type": "pre_market", "ticker": "MSFT",
+        "direction": "short", "rule": "sector_unknown",
+        "detail": "no sector mapping", "enforced": 0,
+    })
+    rows = load_guardrail_rejects_since(in_memory_db, since="2026-07-25")
+    assert len(rows) == 1
+    assert rows[0]["ticker"] == "AAPL"
+    assert rows[0]["rule"] == "rr_ratio"
+    assert rows[0]["enforced"] == 1
+
+
+def test_load_guardrail_rejects_includes_the_since_date_itself(in_memory_db):
+    init_schema(in_memory_db)
+    log_guardrail_reject(in_memory_db, {
+        "date": "2026-07-25", "run_type": "pre_market", "ticker": "AAPL",
+        "direction": "long", "rule": "rr_ratio", "detail": "x", "enforced": 1,
+    })
+    assert len(load_guardrail_rejects_since(in_memory_db, since="2026-07-25")) == 1
+
+
+def test_log_guardrail_reject_defaults_missing_keys_to_null(in_memory_db):
+    """Ein Reject ohne direction/detail darf nicht knallen — die Weekly-Mail
+    gruppiert nach rule, alles andere ist optional."""
+    init_schema(in_memory_db)
+    log_guardrail_reject(in_memory_db, {
+        "date": "2026-07-27", "run_type": "pre_market", "ticker": "AAPL",
+        "rule": "other", "enforced": 0,
+    })
+    row = load_guardrail_rejects_since(in_memory_db, since="2026-07-27")[0]
+    assert row["direction"] is None
+    assert row["detail"] is None

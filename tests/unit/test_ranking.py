@@ -38,7 +38,9 @@ def _analysis(ticker: str, direction: str = "long", momentum: float = 7.0,
 
 
 def _market_ctx() -> dict:
-    return {"vix_level": 14.0, "market_regime": "risk_on", "sector": "Technology"}
+    # Kein "sector"-Key mehr: der Sektor kommt seit Task 8 aus ticker_sectors,
+    # nicht aus dem marktweiten Kontext-Dict (dort war er ohnehin immer leer).
+    return {"vix_level": 14.0, "market_regime": "risk_on"}
 
 
 def test_score_total_uses_dimension_weights():
@@ -131,3 +133,153 @@ def test_rank_persists_predictions_with_score_dimensions(in_memory_db):
     assert row["hold_days_recommended"] == 2
     assert row["intraday_range_pct"] == 1.5
     assert row["learnable"] == 1
+
+
+# ---------- guardrail_rejects + Sektor aus der DB (Sprint 3B / Plan 1, Task 8) ----------
+
+
+def test_guardrail_reject_is_persisted(in_memory_db):
+    db.init_schema(in_memory_db)
+    rank_and_persist(
+        conn=in_memory_db, date="2026-07-27", run_type="pre_market",
+        stock_analyses=[_analysis("BAD", momentum=8.0, rr=1.0)],
+        commodity_crypto_analyses=[], market_context=_market_ctx(),
+    )
+    rows = db.load_guardrail_rejects_since(in_memory_db, since="2026-07-27")
+    assert len(rows) == 1
+    assert rows[0]["ticker"] == "BAD"
+    assert rows[0]["direction"] == "long"
+    assert rows[0]["run_type"] == "pre_market"
+    assert rows[0]["rule"] == "rr_ratio"
+    assert rows[0]["enforced"] == 1
+    assert "R/R" in rows[0]["detail"]
+
+
+def test_rejected_analysis_is_not_persisted_as_prediction(in_memory_db):
+    """Ein Reject wird protokolliert, aber niemals zur Prediction."""
+    db.init_schema(in_memory_db)
+    rank_and_persist(
+        conn=in_memory_db, date="2026-07-27", run_type="pre_market",
+        stock_analyses=[_analysis("BAD", momentum=8.0, rr=1.0)],
+        commodity_crypto_analyses=[], market_context=_market_ctx(),
+    )
+    n = in_memory_db.execute(
+        "SELECT COUNT(*) AS n FROM predictions").fetchone()["n"]
+    assert n == 0
+
+
+def test_direction_none_is_not_logged_as_guardrail_reject(in_memory_db):
+    """direction='none' ist eine bewusste Enthaltung, kein Regelverstoss."""
+    db.init_schema(in_memory_db)
+    a = _analysis("NEUTRAL", momentum=8.0)
+    a["direction"] = "none"
+    rank_and_persist(
+        conn=in_memory_db, date="2026-07-27", run_type="pre_market",
+        stock_analyses=[a], commodity_crypto_analyses=[],
+        market_context=_market_ctx(),
+    )
+    assert db.load_guardrail_rejects_since(in_memory_db, since="2026-07-27") == []
+
+
+def test_commodity_crypto_rejects_are_persisted_too(in_memory_db):
+    db.init_schema(in_memory_db)
+    rank_and_persist(
+        conn=in_memory_db, date="2026-07-27", run_type="pre_market",
+        stock_analyses=[],
+        commodity_crypto_analyses=[
+            _analysis("GC=F", asset_class="commodity", intraday=0.2),
+        ],
+        market_context=_market_ctx(),
+    )
+    rows = db.load_guardrail_rejects_since(in_memory_db, since="2026-07-27")
+    assert [r["ticker"] for r in rows] == ["GC=F"]
+    assert rows[0]["rule"] == "intraday_range"
+
+
+def test_guardrail_reject_rule_names_are_grouped_per_violation(in_memory_db):
+    """Die Weekly-Mail aggregiert nach `rule` — jede Verletzung braucht daher
+    einen stabilen, kurzen Namen statt der rohen Fehlermeldung."""
+    db.init_schema(in_memory_db)
+    rank_and_persist(
+        conn=in_memory_db, date="2026-07-27", run_type="pre_market",
+        stock_analyses=[
+            _analysis("R", momentum=8.0, rr=1.0),
+            _analysis("H", momentum=8.0, hold_days=9),
+            _analysis("I", momentum=8.0, intraday=0.3),
+            _analysis("M", direction="long", momentum=2.0),
+        ],
+        commodity_crypto_analyses=[], market_context=_market_ctx(),
+    )
+    rows = db.load_guardrail_rejects_since(in_memory_db, since="2026-07-27")
+    by_ticker = {r["ticker"]: r["rule"] for r in rows}
+    assert by_ticker == {
+        "R": "rr_ratio",
+        "H": "hold_days",
+        "I": "intraday_range",
+        "M": "momentum_consistency",
+    }
+
+
+def test_guardrail_reject_rule_name_for_missing_field(in_memory_db):
+    db.init_schema(in_memory_db)
+    a = _analysis("NOSUM", momentum=8.0)
+    a["summary"] = None
+    rank_and_persist(
+        conn=in_memory_db, date="2026-07-27", run_type="pre_market",
+        stock_analyses=[a], commodity_crypto_analyses=[],
+        market_context=_market_ctx(),
+    )
+    rows = db.load_guardrail_rejects_since(in_memory_db, since="2026-07-27")
+    assert rows[0]["rule"] == "required_field"
+
+
+def test_prediction_row_takes_sector_from_ticker_sectors(in_memory_db):
+    db.init_schema(in_memory_db)
+    sid = db.resolve_sector_id(in_memory_db, "Semiconductors")
+    db.upsert_ticker_sector(in_memory_db, "NVDA", sid)
+
+    rank_and_persist(
+        conn=in_memory_db, date="2026-07-27", run_type="pre_market",
+        stock_analyses=[_analysis("NVDA", momentum=8.0)],
+        commodity_crypto_analyses=[], market_context=_market_ctx(),
+    )
+    row = in_memory_db.execute(
+        "SELECT sector, vix_at_prediction, market_regime "
+        "FROM predictions WHERE ticker='NVDA'"
+    ).fetchone()
+    assert row["sector"] == "Semiconductors"
+    assert row["vix_at_prediction"] == 14.0
+    assert row["market_regime"] == "risk_on"
+
+
+def test_prediction_row_sector_is_none_when_unmapped(in_memory_db):
+    db.init_schema(in_memory_db)
+    rank_and_persist(
+        conn=in_memory_db, date="2026-07-27", run_type="pre_market",
+        stock_analyses=[_analysis("UNMAPPED", momentum=8.0)],
+        commodity_crypto_analyses=[], market_context=_market_ctx(),
+    )
+    row = in_memory_db.execute(
+        "SELECT sector FROM predictions WHERE ticker='UNMAPPED'"
+    ).fetchone()
+    assert row["sector"] is None
+
+
+@pytest.mark.parametrize("message, expected", [
+    ("Required field missing: summary",                        "required_field"),
+    ("Too few sources: 1 < 2",                                 "sources"),
+    ("Dimension momentum: too few evidence items (1 < 2)",     "evidence"),
+    ("R/R 1.2 below hard minimum 1.5",                         "rr_ratio"),
+    ("Signal consistency: long momentum 3.0 < 6.0",            "momentum_consistency"),
+    ("Haltedauer > 5 Tage - nicht CFD-geeignet",               "hold_days"),
+    ("Intraday-Range < 1.0% - nicht CFD-geeignet",             "intraday_range"),
+    ("Confidence 'high' incompatible with data_quality 'low'", "confidence_data_quality"),
+    ("Long TP 99 not above entry 100",                         "tp_sl_direction"),
+    ("Short SL 99 not above entry 100",                        "tp_sl_direction"),
+    ("Etwas voellig Neues",                                    "other"),
+])
+def test_rule_name_maps_every_guardrail_message(message, expected):
+    """Jede Meldung aus GuardrailsChecker.check_analysis() muss auf einen
+    stabilen Regelnamen fallen — 'other' ist der Auffangfall, nicht der Normalfall."""
+    from src.ranking import _rule_name
+    assert _rule_name(message) == expected

@@ -172,6 +172,22 @@ CREATE TABLE IF NOT EXISTS ticker_status (
     last_skip_date  TEXT,
     retry_after     TEXT
 );
+
+CREATE TABLE IF NOT EXISTS guardrail_rejects (
+    id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+    date                 TEXT NOT NULL,
+    run_type             TEXT NOT NULL,
+    ticker               TEXT NOT NULL,
+    direction            TEXT,
+    rule                 TEXT NOT NULL,
+    detail               TEXT,
+    enforced             INTEGER NOT NULL DEFAULT 1,
+    sector_etf_momentum  REAL,   -- D9: Momentum-Snapshot zum Reject-Zeitpunkt
+    sector_db_momentum   REAL,   -- D9: dito, DB-basiert
+    created_at           TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_guardrail_rejects_date ON guardrail_rejects(date);
 """
 
 
@@ -486,6 +502,30 @@ def log_skipped_ticker(
             f"(> {config.TICKER_MAX_SKIPS}), Retry ab {retry_after}"
         )
     conn.commit()
+
+
+def log_guardrail_reject(conn: sqlite3.Connection, row: dict) -> None:
+    """Persistiert eine verworfene (oder bei enforced=0 nur markierte) Analyse mit
+    Regelname und Detailtext, damit die Weekly-Mail auswerten kann, welche
+    Guardrails wie oft greifen (Sprint 3B / B.9)."""
+    cols = ["date", "run_type", "ticker", "direction", "rule", "detail", "enforced"]
+    placeholders = ", ".join(["?"] * len(cols))
+    conn.execute(
+        f"INSERT INTO guardrail_rejects ({', '.join(cols)}) VALUES ({placeholders})",
+        [row.get(c) for c in cols],
+    )
+    conn.commit()
+
+
+def load_guardrail_rejects_since(
+    conn: sqlite3.Connection, since: str,
+) -> list[sqlite3.Row]:
+    """Gibt alle Guardrail-Rejects ab (einschliesslich) `since` zurueck,
+    neueste zuerst."""
+    return conn.execute(
+        "SELECT * FROM guardrail_rejects WHERE date >= ? ORDER BY date DESC, ticker",
+        (since,),
+    ).fetchall()
 
 
 def get_ticker_status(conn: sqlite3.Connection, ticker: str) -> sqlite3.Row | None:
