@@ -65,6 +65,7 @@
 | Vollständige Code-Dokumentation | `e3b6e86` (2026-07-15) | Jedes Modul hat eine Modul-Beschreibung, jede Funktion einen 1-2-Satz-Docstring. Gilt ab jetzt als Standard für neuen Code. |
 | Intraday-Widerspruch in Prompts behoben | (2026-07-17) | `prompts/deep_analysis_v1.txt` + `prompts/commodities_crypto_v1.txt`: "hold 1-3 trading days"-Framing entfernt. Intraday ist explizit das primäre UND einzige Ziel — Setups, die nicht klar intraday funktionieren, müssen `direction='none'` sein. `hold_days_recommended` bleibt Pflichtfeld (für das Learning Modul), ist aber kein Akzeptanzkriterium mehr. |
 | Bug B-06 behoben: MAX_HOLD_DAYS vereinheitlicht | `c2c8e1c` (2026-07-17) | `guardrails.py`, `evaluator.py`, `portfolio_check.py`, `db.py` nutzen `config.MAX_HOLD_DAYS` (=5) als einzige Quelle der Wahrheit statt eigener hardcodierter `3`. Tests angepasst + neuer Test beweist die 5-Tage-Ausweitung im Walk-Forward-Evaluator. |
+| **Sprint 3B / Plan 1, Tasks 1–2: Sub-Sektor-Taxonomie** | `7a11a00`, `aec7a2f`, `89f9c04` (2026-07-27) | `config.SUB_SECTOR_ETFS` (21 Sub-Sektoren auf 19 ETFs), `config.SECTOR_ALIASES` (104 Finnhub-Aliase), `CapitalComProvider.search_markets()`, `setup/verify_epics.py`. Alle 19 ETFs + VIX gegen die Capital.com Demo-API verifiziert. Branch `sprint3b/plan1-fundament`. |
 | **Sprint 3A: Roadmap-Überarbeitung** | (2026-07-27) | Dieses Dokument. Der alte Plan "Cron-Struktur umbauen (pre_open/post_open-Split)" wurde in einer Review-Session **verworfen** und durch die Sprints 3B–3F unten ersetzt. |
 
 ---
@@ -78,7 +79,7 @@
 | Sprint | Inhalt | Status |
 |---|---|---|
 | 3A | Roadmap + Doku aktualisieren | ✅ erledigt (dieses Dokument) |
-| 3B | Cron-Struktur + Pipeline-Umbau | 📋 spezifiziert, Implementierung offen |
+| 3B | Cron-Struktur + Pipeline-Umbau | 🟡 Plan 1 (Fundament) Tasks 1–2 implementiert, 3–14 offen; Plan 2 (Pipeline) noch nicht geschrieben |
 | 3C | Ranking-Überarbeitung | 📋 spezifiziert, Implementierung offen |
 | 3D | Learning Modul | ⚠️ **Platzhalter — Planungssession ausstehend** |
 | 3E | Human-in-the-Loop | ⚠️ **Platzhalter — Planungssession ausstehend** |
@@ -134,18 +135,50 @@ noch gültig sind, und konkrete Handlungsempfehlungen für den Tag geben.
 
 | Check | Beschreibung | Wirkung |
 |---|---|---|
-| **Sektor-ETF-Momentum** | Long nur wenn zugehöriger Sektor-ETF positiv, Short nur wenn negativ | **Pflicht-Guardrail** (hartes Reject) |
-| **Relative Stärke** | Performance des Tickers vs. seinem Sektor | Score-Input |
+| **Sektor-Momentum (hybrid)** | Zwei unabhängige Signale, s. Detailabschnitt unten | Hart **nur bei Übereinstimmung**, sonst weiche Warnung |
+| **Relative Stärke** | Performance des Tickers vs. seinem Sub-Sektor | Score-Input |
 | **Marktbreite** | Advancing/Declining-Ratio im S&P 500 | Kontext / Warnung |
 | **VIX-Level** | >25: nur noch `confidence='high'`-Signale ausgeben. >35: **keine neuen Long-Signale** | Hartes Filter-Kriterium |
 | **Opening-Gap-Check** | Großer Gap zwischen `pre_market`-Kurs und aktuellem Kurs | Warnhinweis in der Mail |
 | **Entry-Fenster** | Empfehlung eines Pullback-Levels statt reinem Market-Entry | Zusatzfeld in der Mail |
-| **Korrelations-Check** | Klumpenrisiko-Warnung wenn mehrere Signale im selben Sektor liegen | Warnhinweis in der Mail |
+| **Korrelations-Check** | Klumpenrisiko-Warnung wenn mehrere Signale im selben Sub-Sektor liegen | Warnhinweis in der Mail |
 
-**Offene Detailfragen für die 3B-Planungssession** (nicht blockierend für dieses Dokument):
-- Datenquelle für Sektor-ETFs (XLK, XLF, …) und VIX — Capital.com-Epics prüfen, ggf. TICKER_MAP erweitern
-- Marktbreite (A/D-Ratio) ist über Capital.com vermutlich nicht direkt verfügbar → Alternative
-  nötig (z.B. Ableitung aus den eigenen 500 Tickern in der DB, sobald 3F läuft)
+#### B.3.1 — Sektor-Momentum als Hybrid *(Entscheidung 2026-07-27)*
+
+Statt eines einzelnen ETF-Signals werden **zwei unabhängige Momentum-Signale** je
+Sub-Sektor erhoben und **getrennt gespeichert**:
+
+| Signal | Quelle | NULL wenn |
+|---|---|---|
+| `etf_momentum` | Tagesperformance des Sub-Sektor-ETF von Capital.com | kein ETF für den Sub-Sektor verfügbar (z.B. Communication) |
+| `db_momentum` | Ø Tagesperformance aller Ticker desselben Sub-Sektors, per SQL über `price_history` × `ticker_sectors` | weniger als **3 Ticker** im Sub-Sektor vorhanden |
+
+Das DB-Signal kostet **0 EUR** — reine SQL-Aggregation, kein API-Call, kein Claude.
+
+**Guardrail-Logik:**
+
+| Lage | Verhalten |
+|---|---|
+| beide vorhanden, **gleiche Richtung** | hartes Signal — blockiert, wenn `SECTOR_GUARDRAIL_STRICT=True` |
+| beide vorhanden, **widersprüchlich** | weiche Warnung, `guardrail_rejects.enforced = 0` |
+| **nur eines** vorhanden | weiche Warnung, `guardrail_rejects.enforced = 0` |
+| **keines** vorhanden | kein Check, **kein** Log-Eintrag |
+
+Beide Werte werden zusätzlich an jeder Prediction und an jedem Guardrail-Reject
+mitgeschrieben, damit Sprint 3D datenbasiert messen kann, welches der beiden
+Signale besser mit den tatsächlichen Trade-Ergebnissen korreliert.
+
+> **Reichweite bei MVP-Größe:** von 21 Sub-Sektoren erreichen bei der 20-Ticker-MVP-Liste
+> nur **drei** (Retail, Financials Rest, Pharma) die 3-Ticker-Mindestgrenze. Bis Sprint 3F
+> die volle Ticker-Liste aktiviert, ist `db_momentum` also überwiegend NULL und der
+> Hybrid degradiert meist auf „nur ETF vorhanden" → weiche Warnung. Das ist akzeptiert:
+> die Struktur kostet nichts und trägt sofort, sobald 3F läuft.
+
+**Erledigte Detailfragen** (waren offen, entschieden am 2026-07-27):
+- ✅ Datenquelle Sektor-ETFs + VIX: Capital.com, verifiziert per `setup/verify_epics.py`.
+  20/20 Epics bestätigt, alle TRADEABLE, kein `TICKER_MAP`-Eintrag nötig.
+- ✅ Marktbreite (A/D-Ratio): eigener Claude-Call mit Websuche (`src/market_context.py`),
+  schreibt in die bestehende `market_context`-Tabelle.
 
 ### B.4 — Phase 1c (neu, nach Phase 1b)
 
@@ -209,13 +242,19 @@ immer auf `1` und wird nie erhöht. Für die neue Anforderung braucht es beides:
 Geprüft wird das Flag in `data_collector.collect()`, bevor ein Ticker verarbeitet wird.
 Migration über `_apply_migrations()` mit `PRAGMA table_info()`-Guard (Regel 5).
 
-**Offen:** Soll `inactive` je zurückgesetzt werden (z.B. manuell oder nach N Tagen)? Ohne
-Reset-Pfad fällt ein Ticker nach 20 Skips dauerhaft raus — bei temporären Capital.com-Ausfällen
-womöglich zu hart. Vorschlag für die Planungssession: Reset-Kommando im `historical_loader`
-oder automatischer Retry alle 30 Tage.
+**✅ Entschieden (2026-07-27) — Reset des `inactive`-Flags:** zweigleisig.
+`ticker_status.retry_after` setzt beim Deaktivieren ein Datum 30 Tage in der Zukunft;
+ab diesem Tag versucht `data_collector.collect()` den Ticker wieder. Erfolg setzt
+`skip_count = 0`, erneuter Fehlschlag verschiebt `retry_after` um weitere 30 Tage.
+Zusätzlich `python setup/historical_loader.py --reactivate TICKER …` für den sofortigen
+manuellen Override, plus `--list-inactive` zur Übersicht. Konstanten:
+`config.TICKER_MAX_SKIPS = 20`, `config.TICKER_RETRY_AFTER_DAYS = 30`.
 
-**Nebenwirkung:** `skipped_tickers` wächst ohne Löschung unbegrenzt. Vorschlag: Event-Rows
-nach 90 Tagen löschen, den Aggregat-Zähler in `ticker_status` aber **nie** zurücksetzen.
+**✅ Entschieden (2026-07-27) — Retention:** `skipped_tickers`-Events werden nach
+**90 Tagen** gelöscht (statt bisher 30), `news_summaries` nach **30 Tagen**
+(statt 90), `trend_analyses` unverändert nach 180. Der Aggregat-Zähler in
+`ticker_status` wird **nie** automatisch gelöscht oder zurückgesetzt — nur über
+`retry_after` oder `--reactivate`.
 
 ### B.8 — Gap-Erkennung in Phase 1
 
@@ -248,12 +287,16 @@ Zusätzlich zum heutigen Inhalt (Long/Short-Trefferquote, Ø P&L, Trade-Liste, G
 (z.B. neue Tabelle `guardrail_rejects` oder Wiederverwendung von `skipped_tickers` mit
 eigenem `reason`-Präfix).
 
-### B.10 — Sektor-Datenbank-Struktur
+### B.10 — Sub-Sektor-Datenbank-Struktur
 
-Grundlage für den Sektor-ETF-Momentum-Check (B.3) und die Sektor-Auswertung in der
-Weekly-Mail. Zwei neue Tabellen in `src/db.py`:
+> **Überarbeitet 2026-07-27.** Die ursprüngliche Fassung sah 11 GICS-Sektoren vor.
+> Ersetzt durch **21 Sub-Sektoren**: ein Halbleiter-Setup gehört gegen SOXX geprüft,
+> nicht gegen den breiten XLK, in dem Software und Hardware das Signal verwässern.
 
-**1. `sectors`** — Referenztabelle aller GICS-Sektoren mit zugehörigem Sektor-ETF:
+Grundlage für den Sektor-Momentum-Check (B.3.1) und die Sektor-Auswertung in der
+Weekly-Mail. Drei neue Tabellen in `src/db.py`:
+
+**1. `sectors`** — Referenztabelle der Sub-Sektoren mit zugehörigem ETF:
 
 ```sql
 CREATE TABLE IF NOT EXISTS sectors (
@@ -263,23 +306,36 @@ CREATE TABLE IF NOT EXISTS sectors (
 );
 ```
 
-Wird beim ersten DB-Setup mit den 11 Standard-GICS-Sektoren befüllt:
+Wird beim DB-Setup aus `config.SUB_SECTOR_ETFS` befüllt (21 Sub-Sektoren auf 19 ETFs —
+MedTech, Pharma und Healthcare Rest teilen sich XLV):
 
-| Sektor | ETF |
-|---|---|
-| Technology | XLK |
-| Energy | XLE |
-| Financials | XLF |
-| Healthcare | XLV |
-| Industrials | XLI |
-| Communication | XLC |
-| Consumer Discretionary | XLY |
-| Consumer Staples | XLP |
-| Materials | XLB |
-| Real Estate | XLRE |
-| Utilities | XLU |
+| Sub-Sektor | ETF | | Sub-Sektor | ETF |
+|---|---|---|---|---|
+| Semiconductors | SOXX | | Aerospace & Defense | ITA |
+| Software | VGT | | Transport | XTN |
+| Technology Hardware | XLK | | Industrials Rest | XLI |
+| Biotech | XBI | | Metals & Mining | XME |
+| MedTech | XLV | | Real Estate | XLRE |
+| Pharma | XLV | | Utilities | XLU |
+| Healthcare Rest | XLV | | Consumer Staples | XLP |
+| Oil & Gas | XOP | | Consumer Discretionary Rest | XLY |
+| Clean Energy | ICLN | | Banks | KBWB |
+| Retail | XRT | | Financials Rest | XLF |
+| Auto | CARZ | | | |
 
-**2. `ticker_sectors`** — Mapping Ticker → Sektor:
+**Alle 19 ETFs + VIX sind am 2026-07-27 gegen die Capital.com Demo-API verifiziert**
+(exakter Epic-Treffer, TRADEABLE, Instrumentenname gegengelesen). Neue Einträge nie
+ungeprüft ergänzen: Capital.com führt z.B. das Epic `PPH` für die PPHE Hotel Group,
+nicht für den gleichnamigen Pharma-ETF.
+
+**Nicht abbildbar**, weil Capital.com keinen passenden ETF führt:
+- **Communication** — weder XLC noch VOX, FCOM, IXP, XTL oder IYZ vorhanden.
+  GOOGL/META laufen dauerhaft ohne ETF-Signal.
+- **Chemie / Verpackung / Papier** — XLB, VAW und IYM fehlen. Nur der Bergbauteil ist
+  über XME abgedeckt, deshalb heisst der Sub-Sektor „Metals & Mining" und nicht
+  „Materials" — er misst genau das und nicht mehr.
+
+**2. `ticker_sectors`** — Mapping Ticker → Sub-Sektor:
 
 ```sql
 CREATE TABLE IF NOT EXISTS ticker_sectors (
@@ -290,36 +346,55 @@ CREATE TABLE IF NOT EXISTS ticker_sectors (
 );
 ```
 
-**Befüllung: organisch in Phase 1** (`data_collector.py`). Wenn Finnhub den Sektor für einen
-Ticker zurückgibt, wird er automatisch in `ticker_sectors` geschrieben. Kein manueller Import,
-kein statisches Mapping im Code. Sektor-Information kommt aus dem
-**Finnhub-Fundamentals-Cache** (Option A), nicht aus einer hartcodierten Tabelle.
+**Befüllung: organisch in Phase 1** (`data_collector.py`) aus dem
+Finnhub-Fundamentals-Cache. Kein statisches Ticker→Sektor-Mapping im Code.
 
-**Nutzung:** `trade_proposals` und `weekly` lesen den zugehörigen Sektor-ETF-Ticker per JOIN:
+**3. `sector_momentum`** *(neu, 2026-07-27)* — die beiden Momentum-Signale je
+Sub-Sektor und Run, getrennt gespeichert (s. B.3.1):
+
+```sql
+CREATE TABLE IF NOT EXISTS sector_momentum (
+    date          TEXT NOT NULL,
+    run_type      TEXT NOT NULL,
+    sector_id     INTEGER NOT NULL REFERENCES sectors(id),
+    etf_momentum  REAL,      -- NULL wenn kein ETF verfuegbar
+    db_momentum   REAL,      -- NULL wenn < 3 Ticker im Sub-Sektor
+    ticker_count  INTEGER NOT NULL DEFAULT 0,
+    created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(date, run_type, sector_id)
+);
+```
+
+> **Warum nicht in `market_context`:** die Tabelle hat `UNIQUE(date, run_type)`, hält also
+> genau eine marktweite Zeile pro Run. Sektor-Momentum fällt pro Sub-Sektor an — 21 Werte
+> je Run. Zwei Spalten in `market_context` könnten davon nur einen einzigen aufnehmen.
+
+Zusätzlich bekommen **`predictions`** und **`guardrail_rejects`** je die Spalten
+`sector_etf_momentum` und `sector_db_momentum` (REAL, nullable):
+- in `guardrail_rejects`, um auswerten zu können, ob die weichen Warnungen richtig lagen
+- in `predictions`, weil **nur** diese über `outcomes` mit echten Trade-Ergebnissen
+  verknüpft sind. Verworfene Signale werden nie zu Trades und haben keine Outcomes —
+  die von Sprint 3D geforderte Korrelation „welches Signal predictet besser" ist
+  ausschliesslich über `predictions` berechenbar.
+
+**Nutzung:** `trade_proposals` und `weekly` lesen den Sub-Sektor-ETF per JOIN
 `ticker → ticker_sectors → sectors.etf`.
 
-**⚠️ Offener Punkt — Namensabgleich Finnhub ↔ GICS:**
-`FinnhubProvider.get_fundamentals()` liefert das Feld `finnhubIndustry`, und dessen Werte sind
-**keine GICS-Sektornamen**. Zwei Abweichungsklassen:
+**✅ Entschieden (2026-07-27) — Namensabgleich Finnhub ↔ Sub-Sektoren:**
+`config.SECTOR_ALIASES` (104 Einträge) bildet Finnhubs gemischtes `finnhubIndustry`-Vokabular
+— Sektor-Ebene, Industrie-Ebene und Yahoo-Bezeichnungen — auf die 21 Sub-Sektoren ab.
+Alias-Dict im Code statt in der DB: in git versioniert, unit-testbar, bei DB-Verlust nicht weg.
+Der Lookup ist case- und whitespace-insensitiv. Nicht auflösbare Werte lassen `sector_id`
+auf NULL und erzeugen einen WARN-Log mit dem exakten Rohwert, damit die Liste bewusst per
+Commit wächst. Grundregel: **lieber ungemappt als falsch gemappt** — ein Momentum-Check
+gegen ein fremdes Instrument erzeugt aktiv falsche Signale, ein fehlender Check nur keine.
 
-1. *Abweichende Sektor-Bezeichnungen* — z.B. `Consumer Cyclical` statt `Consumer Discretionary`,
-   `Consumer Defensive` statt `Consumer Staples`, `Basic Materials` statt `Materials`,
-   `Financial Services` statt `Financials`, `Communication Services` statt `Communication`
-2. *Granularität auf Industrie- statt Sektor-Ebene* — z.B. `Semiconductors`, `Banking`,
-   `Pharmaceuticals` statt des übergeordneten Sektors
-
-Ein direkter String-Match gegen `sectors.name` würde also für einen erheblichen Teil der Ticker
-fehlschlagen — `sector_id` bliebe leer und der als **Pflicht-Guardrail** definierte
-Sektor-ETF-Momentum-Check (B.3) liefe für diese Ticker ins Leere.
-
-**Vorschlag für die 3B-Planungssession** (noch nicht entschieden):
-- Normalisierungs-Layer zwischen Finnhub-Wert und `sectors.name` — entweder als
-  Alias-Spalte/-Tabelle in der DB oder als Dict in `data_collector.py`
-- Nicht auflösbare Werte: `sector_id` NULL lassen, Vorkommen **loggen** (nicht still schlucken),
-  damit die Alias-Liste iterativ wächst
-- Explizit festlegen, wie sich der Sektor-ETF-Guardrail bei unbekanntem Sektor verhält:
-  Ticker durchlassen (Guardrail greift nicht) oder verwerfen? Bei "Pflicht-Guardrail" wäre
-  Verwerfen konsequent — würde aber bei lückenhaftem Mapping viele valide Signale killen.
+**✅ Entschieden (2026-07-27) — Guardrail bei unbekanntem Sektor:**
+`config.SECTOR_GUARDRAIL_STRICT`, initial `False`. Bei NULL-Sektor greift der Guardrail
+nicht; das Signal geht mit Warnhinweis durch und bekommt eine `guardrail_rejects`-Zeile
+mit `rule='sector_unknown'`, `enforced=0`. Die Weekly-Mail weist die Mapping-Abdeckung aus;
+bei stabil hoher Quote wird das Flag auf `True` gestellt. Auch dann bleibt hartes Rejecten
+auf den Fall beschränkt, dass **beide** Momentum-Signale vorliegen und übereinstimmen (B.3.1).
 
 ### B.11 — Kleinere Fixes in 3B
 
@@ -472,6 +547,7 @@ Offene Punkte:
 | **8 Score-Dimensionen mit festem Gewicht** | market_env 10%, company 18%, valuation 12%, momentum 22%, risk 10%, sector 10%, catalyst 10%, policy 8% — nicht ändern ohne A/B-Test. Der kombinierte `ranking_score` aus 3C kommt **zusätzlich** dazu, ersetzt `total_score` nicht. |
 | **Portfolio-Sektion zuerst in der Mail** | Direkt umsetzbar beim Aufwachen. Gilt unabhängig davon, dass Phase 4a ab 3B *nach* Phase 4 ausgeführt wird. |
 | `CostCapExceeded` bricht Phasen ab, sendet trotzdem Mail | Partielle Ergebnisse sind besser als gar keine |
+| **Sektor-ETFs nur verifiziert aufnehmen** | Jedes Symbol in `config.SUB_SECTOR_ETFS` muss per `setup/verify_epics.py` bestätigt sein: exakter Epic-Treffer, TRADEABLE, Instrumentenname gegengelesen. Capital.coms Marktsuche ist eine Volltextsuche und liefert zu jedem Kürzel irgendetwas — ungeprüft übernommen ergab das u.a. KBE→KB Home und PPH→PPHE Hotel Group. Lieber ungemappt als falsch gemappt. |
 | **Intraday ist das einzige Ziel** | Setups, die nicht klar intraday funktionieren, müssen `direction='none'` liefern — kein Ausweichen auf Mehrtages-Calls. `hold_days_recommended` bleibt reines Learning-Modul-Feld. |
 
 ---
