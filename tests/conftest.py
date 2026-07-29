@@ -3,37 +3,44 @@ import pytest
 from pathlib import Path
 
 # --- Live-Tests -------------------------------------------------------------
-# Tests mit @pytest.mark.live_email verschicken eine ECHTE E-Mail ueber SendGrid.
-# Sie laufen deshalb nur, wenn --run-live-email ausdruecklich gesetzt ist. Ohne
-# das Flag werden sie uebersprungen, damit `pytest tests/` niemals ungefragt
-# Post verschickt — weder lokal noch im normalen CI-Lauf.
+# Tests unter tests/live/ sprechen echte Fremdsysteme an. Sie laufen nur mit
+# --run-live, damit `pytest tests/` niemals ungefragt nach draussen telefoniert.
+#
+# Zwei Marker, weil sich die Nebenwirkungen unterscheiden:
+#   live_api   — rein lesende Verbindungspruefung, keine sichtbare Wirkung
+#   live_email — verschickt echte Post und verbraucht SendGrid-Kontingent
+# So laesst sich die Verbindung pruefen, ohne sich selbst zuzuspammen:
+#   pytest tests/live --run-live -m live_api
+LIVE_MARKERS = ("live_api", "live_email")
 
 
 def pytest_addoption(parser):
-    """Registriert --run-live-email; ohne dieses Flag bleiben Live-Tests aus."""
+    """Registriert --run-live; ohne dieses Flag bleiben alle Live-Tests aus."""
     parser.addoption(
-        "--run-live-email", action="store_true", default=False,
-        help="Live-Tests ausfuehren, die echte E-Mails ueber SendGrid verschicken",
+        "--run-live", action="store_true", default=False,
+        help="Live-Tests gegen echte APIs ausfuehren (Verbindung + Mailversand)",
     )
 
 
 def pytest_configure(config):
-    """Meldet den live_email-Marker an, damit --strict-markers nicht stolpert."""
+    """Meldet die Live-Marker an, damit --strict-markers nicht stolpert."""
     config.addinivalue_line(
-        "markers",
-        "live_email: verschickt eine echte E-Mail; braucht --run-live-email",
+        "markers", "live_api: echte, lesende API-Verbindungspruefung; braucht --run-live",
+    )
+    config.addinivalue_line(
+        "markers", "live_email: verschickt eine echte E-Mail; braucht --run-live",
     )
 
 
 def pytest_collection_modifyitems(config, items):
-    """Ueberspringt alle live_email-Tests, solange --run-live-email fehlt."""
-    if config.getoption("--run-live-email"):
+    """Ueberspringt alle Live-Tests, solange --run-live fehlt."""
+    if config.getoption("--run-live"):
         return
     skip = pytest.mark.skip(
-        reason="Live-Mailversand: nur mit --run-live-email (verschickt echte Post)"
+        reason="Live-Test gegen echte APIs: nur mit --run-live"
     )
     for item in items:
-        if "live_email" in item.keywords:
+        if any(m in item.keywords for m in LIVE_MARKERS):
             item.add_marker(skip)
 
 

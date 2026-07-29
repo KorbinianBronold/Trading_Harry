@@ -23,20 +23,25 @@ jobs:
         run: |
           pytest tests/ --cov=src --cov=main --cov-report=term-missing --cov-fail-under=80
 
-  # Eigener Job, bewusst getrennt vom Coverage-Lauf: er verschickt eine ECHTE
-  # E-Mail und prueft damit den SENDGRID_API_KEY aus den GitHub-Secrets. Das ist
-  # ein anderer Wert als der lokale .env-Key -- nur dieser hier entscheidet, ob
-  # im Produktivbetrieb Mails ankommen. Anlass: am 2026-07-29 lief ein
-  # vollstaendiger pre_market fuer 3,31 EUR durch und scheiterte erst beim
-  # Versand mit HTTP 401, weil der Key abgelaufen war.
-  # Faellt der Job rot aus, ist die Zustellung kaputt -- der Coverage-Job oben
+  # Eigener Job, bewusst getrennt vom Coverage-Lauf: er spricht die echten APIs
+  # an und prueft die Zugangsdaten aus den GitHub-SECRETS. Das sind andere Werte
+  # als die lokalen .env-Eintraege -- im Normalfall identisch, aber sie koennen
+  # einzeln ablaufen, und nur diese hier entscheiden, ob die geplanten Laeufe
+  # durchkommen.
+  #
+  # Faellt der Job rot aus, ist eine Verbindung kaputt -- der Coverage-Job oben
   # bleibt davon unberuehrt.
-  email-delivery:
+  live-api-checks:
     runs-on: ubuntu-latest
     env:
-      SENDGRID_API_KEY: ${{ secrets.SENDGRID_API_KEY }}
-      EMAIL_FROM:       ${{ secrets.EMAIL_FROM }}
-      EMAIL_TO:         ${{ secrets.EMAIL_TO }}
+      ANTHROPIC_API_KEY:      ${{ secrets.ANTHROPIC_API_KEY }}
+      FINNHUB_API_KEY:        ${{ secrets.FINNHUB_API_KEY }}
+      CAPITAL_COM_API_KEY:    ${{ secrets.CAPITAL_COM_API_KEY }}
+      CAPITAL_COM_IDENTIFIER: ${{ secrets.CAPITAL_COM_IDENTIFIER }}
+      CAPITAL_COM_PASSWORD:   ${{ secrets.CAPITAL_COM_PASSWORD }}
+      SENDGRID_API_KEY:       ${{ secrets.SENDGRID_API_KEY }}
+      EMAIL_FROM:             ${{ secrets.EMAIL_FROM }}
+      EMAIL_TO:               ${{ secrets.EMAIL_TO }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -46,6 +51,13 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-      - name: Send test email and log the outcome
+      # Getrennte Steps, damit in der Job-Uebersicht sofort sichtbar ist, ob nur
+      # der Versand haengt oder schon die Verbindungen. Die lesenden Pruefungen
+      # laufen auch dann, wenn der Mailversand darunter scheitert.
+      - name: Check API connections (read-only)
         run: |
-          pytest tests/live --run-live-email -v
+          pytest tests/live -m live_api --run-live -v
+      - name: Send test email and log the outcome
+        if: always()
+        run: |
+          pytest tests/live -m live_email --run-live -v
