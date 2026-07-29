@@ -186,6 +186,16 @@ docker compose run --rm trading-harry --run-type pre_market
 docker compose run --rm trading-harry --run-type close
 ```
 
+**Der Run-Type ist Pflicht.** Wird der Container ohne Argument gestartet — Run-Button
+in Docker Desktop, `docker run <image>`, `docker compose up` — greift `CMD ["--help"]`
+und das Image gibt seine Hilfe aus (Exit 0). Es startet dann bewusst *keine* Pipeline:
+ein versehentlicher Klick soll nicht gegen die gemountete `data/tracking.db` laufen.
+Zum Ausführen immer den Run-Type anhängen, wie oben.
+
+`docker-compose.yml` mountet `./data` — Läufe schreiben also in die echte Datenbank.
+Für gefahrlose Experimente den Mount überschreiben:
+`docker compose run --rm -v /tmp/dbtest:/app/data trading-harry --run-type close`
+
 ## Environment Variables (.env)
 ```
 ANTHROPIC_API_KEY=...
