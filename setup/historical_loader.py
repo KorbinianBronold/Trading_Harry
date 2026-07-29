@@ -42,11 +42,16 @@ def load_ticker_history(
     ticker: str,
     db_path: str = str(config.DB_PATH),
     days: int    = DAYS_3_YEARS,
+    provider: CapitalComProvider | None = None,
 ) -> int:
     """Fetch and persist historical OHLCV for one ticker.
 
+    `provider` sollte von load_all() durchgereicht werden, damit alle Ticker
+    dieselbe Capital.com-Session teilen (s. dort). Ohne Angabe wird eine eigene
+    Instanz gebaut — praktisch fuer Einzelaufrufe.
+
     Returns the number of rows newly inserted (0 if all already existed)."""
-    provider = CapitalComProvider()
+    provider = provider or CapitalComProvider()
     df = provider.get_price_history(ticker, days=days)
     if df is None or df.empty:
         log.warning(f"{ticker}: no data returned from Capital.com")
@@ -85,11 +90,19 @@ def load_all(
     db_path: str = str(config.DB_PATH),
     days: int    = DAYS_3_YEARS,
 ) -> dict[str, int]:
-    """Load historical data for all tickers. Returns {ticker: rows_inserted}."""
+    """Load historical data for all tickers. Returns {ticker: rows_inserted}.
+
+    Baut GENAU EINEN Provider und reicht ihn durch: Capital.com limitiert den
+    /session-Endpoint, und der Provider authentifiziert lazy je Instanz. Eine
+    Instanz je Ticker liess den Lauf ab ~20 Tickern in HTTP 429 laufen und
+    verstiess gegen die Invariante 'Ein Session-Object pro Run' (B-09)."""
+    provider = CapitalComProvider()
     results: dict[str, int] = {}
     for i, ticker in enumerate(tickers):
         log.info(f"[{i + 1}/{len(tickers)}] Loading {ticker}...")
-        results[ticker] = load_ticker_history(ticker, db_path=db_path, days=days)
+        results[ticker] = load_ticker_history(
+            ticker, db_path=db_path, days=days, provider=provider,
+        )
         time.sleep(PAUSE_BETWEEN_TICKERS)
     return results
 

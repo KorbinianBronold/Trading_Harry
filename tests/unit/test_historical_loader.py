@@ -226,3 +226,67 @@ def test_script_runs_as_module():
         capture_output=True, text=True, cwd=str(root), timeout=60,
     )
     assert proc.returncode == 0, f"stderr: {proc.stderr}"
+
+
+# ---------- B-09: eine Session pro Lauf, nicht je Ticker ----------
+
+
+def test_load_all_authenticates_once_for_all_tickers(tmp_path):
+    """Capital.com limitiert den /session-Endpoint. Ein Provider je Ticker
+    laeuft ab ~20 Tickern in HTTP 429 und verletzt ausserdem die Invariante
+    'Ein Session-Object pro Run' (PROJECT_STATUS Abschnitt 4)."""
+    import pandas as pd
+    db_path = str(tmp_path / "t.db")
+    df = pd.DataFrame(
+        {"Open": [1.0], "High": [1.0], "Low": [1.0], "Close": [1.0],
+         "Volume": [10]},
+        index=pd.to_datetime(["2026-07-27"]),
+    )
+    with patch("setup.historical_loader.CapitalComProvider") as MockCap:
+        MockCap.return_value.get_price_history.return_value = df
+        from setup.historical_loader import load_all
+        load_all(tickers=["AAPL", "MSFT", "NVDA", "AMZN"], db_path=db_path)
+
+    assert MockCap.call_count == 1, (
+        f"{MockCap.call_count} Provider fuer 4 Ticker — jeder baut eine eigene "
+        f"Session auf und laeuft in das Rate-Limit"
+    )
+
+
+def test_load_all_still_fetches_every_ticker(tmp_path):
+    """Die geteilte Session darf keinen Ticker verschlucken."""
+    import pandas as pd
+    db_path = str(tmp_path / "t.db")
+    df = pd.DataFrame(
+        {"Open": [1.0], "High": [1.0], "Low": [1.0], "Close": [1.0],
+         "Volume": [10]},
+        index=pd.to_datetime(["2026-07-27"]),
+    )
+    with patch("setup.historical_loader.CapitalComProvider") as MockCap:
+        MockCap.return_value.get_price_history.return_value = df
+        from setup.historical_loader import load_all
+        out = load_all(tickers=["AAPL", "MSFT", "NVDA"], db_path=db_path)
+
+    fetched = [c.args[0] for c in
+               MockCap.return_value.get_price_history.call_args_list]
+    assert fetched == ["AAPL", "MSFT", "NVDA"]
+    assert set(out) == {"AAPL", "MSFT", "NVDA"}
+
+
+def test_load_ticker_history_reuses_a_passed_provider(tmp_path):
+    """Wird ein Provider uebergeben, darf kein neuer gebaut werden."""
+    import pandas as pd
+    db_path = str(tmp_path / "t.db")
+    provider = MagicMock()
+    provider.get_price_history.return_value = pd.DataFrame(
+        {"Open": [1.0], "High": [1.0], "Low": [1.0], "Close": [1.0],
+         "Volume": [10]},
+        index=pd.to_datetime(["2026-07-27"]),
+    )
+    with patch("setup.historical_loader.CapitalComProvider") as MockCap:
+        from setup.historical_loader import load_ticker_history
+        n = load_ticker_history("AAPL", db_path=db_path, provider=provider)
+
+    assert n == 1
+    MockCap.assert_not_called()
+    provider.get_price_history.assert_called_once()

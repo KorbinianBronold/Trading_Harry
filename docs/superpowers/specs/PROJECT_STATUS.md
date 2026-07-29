@@ -576,6 +576,12 @@ Offene Punkte:
 |---|---|---|---|---|
 | B-03 | `config.py:SP500_FULL_TICKERS` | Ist Stub (= MVP-Liste), `USE_FULL_SP500=true` würde nur 20 Ticker laufen lassen | Mittel | Sprint 3F |
 
+**Behoben (2026-07-29, beim Auffüllen der Produktions-DB gefunden):**
+
+| # | Datei | Bug | Fix |
+|---|---|---|---|
+| B-09 | `setup/historical_loader.py` | `load_ticker_history()` baute **pro Ticker** ein eigenes `CapitalComProvider()`. Da der Provider lazy je Instanz authentifiziert, waren 27 Ticker = 27 Session-Logins in 20 Sekunden → Capital.com antwortete mit **HTTP 429** auf `/session`, und alle Commodity/Crypto-Ticker kamen ohne Daten zurück. Verstiess zugleich gegen die Invariante „Ein Session-Object pro Run" (Abschnitt 4). | `load_all()` baut genau einen Provider und reicht ihn durch; `load_ticker_history()` nimmt ihn als optionalen Parameter und baut nur beim Einzelaufruf selbst einen. Test zählt die Instanzen. |
+
 **Behoben (2026-07-29, Sprint 3B / Plan 1, Schnitt 4):**
 
 | # | Datei | Bug | Fix |
