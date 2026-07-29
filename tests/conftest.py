@@ -2,6 +2,40 @@ import sqlite3
 import pytest
 from pathlib import Path
 
+# --- Live-Tests -------------------------------------------------------------
+# Tests mit @pytest.mark.live_email verschicken eine ECHTE E-Mail ueber SendGrid.
+# Sie laufen deshalb nur, wenn --run-live-email ausdruecklich gesetzt ist. Ohne
+# das Flag werden sie uebersprungen, damit `pytest tests/` niemals ungefragt
+# Post verschickt — weder lokal noch im normalen CI-Lauf.
+
+
+def pytest_addoption(parser):
+    """Registriert --run-live-email; ohne dieses Flag bleiben Live-Tests aus."""
+    parser.addoption(
+        "--run-live-email", action="store_true", default=False,
+        help="Live-Tests ausfuehren, die echte E-Mails ueber SendGrid verschicken",
+    )
+
+
+def pytest_configure(config):
+    """Meldet den live_email-Marker an, damit --strict-markers nicht stolpert."""
+    config.addinivalue_line(
+        "markers",
+        "live_email: verschickt eine echte E-Mail; braucht --run-live-email",
+    )
+
+
+def pytest_collection_modifyitems(config, items):
+    """Ueberspringt alle live_email-Tests, solange --run-live-email fehlt."""
+    if config.getoption("--run-live-email"):
+        return
+    skip = pytest.mark.skip(
+        reason="Live-Mailversand: nur mit --run-live-email (verschickt echte Post)"
+    )
+    for item in items:
+        if "live_email" in item.keywords:
+            item.add_marker(skip)
+
 
 @pytest.fixture
 def in_memory_db():
