@@ -59,6 +59,7 @@ CREATE TABLE IF NOT EXISTS market_context (
     oil_price REAL, gold_price REAL, btc_price REAL,
     fear_greed_value INTEGER, policy_risk_level TEXT,
     sector_rotation_in TEXT, sector_rotation_out TEXT, macro_summary TEXT,
+    advance_decline_ratio REAL,
     UNIQUE(date, run_type)
 );
 
@@ -236,6 +237,12 @@ def _apply_migrations(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE guardrail_rejects ADD COLUMN sector_etf_momentum REAL")
     if gr_cols and "sector_db_momentum" not in gr_cols:
         conn.execute("ALTER TABLE guardrail_rejects ADD COLUMN sector_db_momentum REAL")
+
+    mc_cols = {r["name"] for r in conn.execute(
+        "PRAGMA table_info(market_context)"
+    ).fetchall()}
+    if "advance_decline_ratio" not in mc_cols:
+        conn.execute("ALTER TABLE market_context ADD COLUMN advance_decline_ratio REAL")
 
     out_cols = {r["name"] for r in conn.execute(
         "PRAGMA table_info(outcomes)"
@@ -552,6 +559,25 @@ def save_trend_analysis(conn: sqlite3.Connection, trend: dict) -> None:
             trend.get("summary"), beneficiaries, negatives,
             trend.get("next_catalyst"),
         ),
+    )
+    conn.commit()
+
+
+def save_market_context(conn: sqlite3.Connection, row: dict) -> None:
+    """Schreibt oder ueberschreibt den Marktkontext eines Runs
+    (UNIQUE date + run_type). Fehlende Keys werden zu NULL — ein Kontext, in dem
+    nichts belegbar war, muss speicherbar bleiben."""
+    cols = [
+        "date", "run_type", "sp500_change_pct", "vix_level", "market_regime",
+        "oil_price", "gold_price", "btc_price", "fear_greed_value",
+        "policy_risk_level", "sector_rotation_in", "sector_rotation_out",
+        "macro_summary", "advance_decline_ratio",
+    ]
+    placeholders = ", ".join(["?"] * len(cols))
+    conn.execute(
+        f"INSERT OR REPLACE INTO market_context ({', '.join(cols)}) "
+        f"VALUES ({placeholders})",
+        [row.get(c) for c in cols],
     )
     conn.commit()
 

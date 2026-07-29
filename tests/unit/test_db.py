@@ -859,3 +859,148 @@ def test_load_sector_momentum_is_scoped_to_date_and_run_type(in_memory_db):
                                         "run_type": "pre_market"})
     assert len(load_sector_momentum(in_memory_db, "2026-07-27", "pre_market")) == 1
     assert load_sector_momentum(in_memory_db, "2026-07-25", "pre_market") == {}
+
+
+# ---------- market_context (Sprint 3B / Plan 1, Task 10 — Entscheidung D2) ----------
+
+from src.db import save_market_context
+
+
+def test_market_context_has_advance_decline_column(in_memory_db):
+    init_schema(in_memory_db)
+    cols = {r["name"] for r in in_memory_db.execute(
+        "PRAGMA table_info(market_context)").fetchall()}
+    assert "advance_decline_ratio" in cols
+
+
+def test_save_market_context_upserts_on_date_and_run_type(in_memory_db):
+    init_schema(in_memory_db)
+    row = {
+        "date": "2026-07-27", "run_type": "pre_market", "vix_level": 18.0,
+        "advance_decline_ratio": 1.4, "market_regime": "risk_on",
+        "sector_rotation_in": "Technology", "sector_rotation_out": "Utilities",
+        "macro_summary": "ruhig",
+    }
+    save_market_context(in_memory_db, row)
+    save_market_context(in_memory_db, {**row, "vix_level": 22.0})
+    rows = in_memory_db.execute("SELECT * FROM market_context").fetchall()
+    assert len(rows) == 1
+    assert rows[0]["vix_level"] == 22.0
+    assert rows[0]["advance_decline_ratio"] == 1.4
+
+
+def test_save_market_context_keeps_runs_of_the_same_day_apart(in_memory_db):
+    """pre_market und trade_proposals messen denselben Tag zu anderer Stunde."""
+    init_schema(in_memory_db)
+    base = {"date": "2026-07-27", "vix_level": 18.0, "market_regime": "risk_on"}
+    save_market_context(in_memory_db, {**base, "run_type": "pre_market"})
+    save_market_context(in_memory_db, {**base, "run_type": "trade_proposals",
+                                       "vix_level": 26.0})
+    rows = in_memory_db.execute(
+        "SELECT run_type, vix_level FROM market_context ORDER BY run_type").fetchall()
+    assert [(r["run_type"], r["vix_level"]) for r in rows] == [
+        ("pre_market", 18.0), ("trade_proposals", 26.0),
+    ]
+
+
+def test_save_market_context_tolerates_a_sparse_row(in_memory_db):
+    """Ein Kontext, in dem Claude nichts belegen konnte, muss speicherbar sein."""
+    init_schema(in_memory_db)
+    save_market_context(in_memory_db, {"date": "2026-07-27",
+                                       "run_type": "pre_market"})
+    row = in_memory_db.execute("SELECT * FROM market_context").fetchone()
+    assert row["vix_level"] is None
+    assert row["market_regime"] is None
+
+
+# ---------- Migrationspfad bestehender DBs (Regel 5) ----------
+
+
+_SPRINT3B_TABLES = ("sectors", "ticker_sectors", "ticker_status",
+                    "guardrail_rejects", "sector_momentum")
+_SPRINT3B_COLUMNS = (
+    ("market_context", "advance_decline_ratio"),
+    ("predictions",    "sector_etf_momentum"),
+    ("predictions",    "sector_db_momentum"),
+)
+
+
+def _legacy_db() -> sqlite3.Connection:
+    """Eine DB im Zustand VOR Sprint 3B. Aufgebaut aus dem echten Schema, dann
+    um die 3B-Zugaenge zurueckgebaut — so bleibt der Rest originalgetreu und der
+    Test bricht nicht bei jeder unabhaengigen Schema-Erweiterung.
+
+    Genau diesen Fall muss _apply_migrations() abfangen: CREATE TABLE IF NOT
+    EXISTS legt eine fehlende Tabelle an, fasst eine bestehende aber nie an —
+    neue Spalten brauchen den PRAGMA-Guard (Regel 5)."""
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    init_schema(conn)
+    for table in _SPRINT3B_TABLES:
+        conn.execute(f"DROP TABLE IF EXISTS {table}")
+    for table, column in _SPRINT3B_COLUMNS:
+        conn.execute(f"ALTER TABLE {table} DROP COLUMN {column}")
+    conn.execute(
+        "INSERT INTO market_context (date, run_type, vix_level) "
+        "VALUES ('2026-01-02', 'pre_market', 15.0)"
+    )
+    conn.commit()
+    return conn
+
+
+def test_legacy_db_really_lacks_the_sprint3b_additions():
+    """Schutz vor einem stumpfen Fixture: waeren die Zugaenge schon da, wuerden
+    die Migrationstests unten nichts mehr beweisen."""
+    conn = _legacy_db()
+    tables = set(get_tables(conn))
+    assert not tables & set(_SPRINT3B_TABLES)
+    for table, column in _SPRINT3B_COLUMNS:
+        cols = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}
+        assert column not in cols
+    conn.close()
+
+
+def test_migration_adds_advance_decline_ratio_to_existing_market_context():
+    conn = _legacy_db()
+    init_schema(conn)
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(market_context)")}
+    assert "advance_decline_ratio" in cols
+    conn.close()
+
+
+def test_migration_adds_sector_momentum_columns_to_existing_predictions():
+    conn = _legacy_db()
+    init_schema(conn)
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(predictions)")}
+    assert {"sector_etf_momentum", "sector_db_momentum"}.issubset(cols)
+    conn.close()
+
+
+def test_migration_creates_the_new_sprint3b_tables():
+    conn = _legacy_db()
+    init_schema(conn)
+    tables = set(get_tables(conn))
+    assert {"sectors", "ticker_sectors", "ticker_status",
+            "guardrail_rejects", "sector_momentum"}.issubset(tables)
+    assert conn.execute("SELECT COUNT(*) AS n FROM sectors").fetchone()["n"] == 21
+    conn.close()
+
+
+def test_migration_preserves_existing_rows():
+    """Eine Migration darf nie Daten kosten."""
+    conn = _legacy_db()
+    init_schema(conn)
+    row = conn.execute("SELECT * FROM market_context").fetchone()
+    assert row["vix_level"] == 15.0
+    assert row["advance_decline_ratio"] is None
+    conn.close()
+
+
+def test_migration_is_idempotent_on_an_already_migrated_db():
+    conn = _legacy_db()
+    init_schema(conn)
+    init_schema(conn)
+    assert conn.execute("SELECT COUNT(*) AS n FROM sectors").fetchone()["n"] == 21
+    assert conn.execute(
+        "SELECT COUNT(*) AS n FROM market_context").fetchone()["n"] == 1
+    conn.close()
