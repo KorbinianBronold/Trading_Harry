@@ -96,6 +96,15 @@ def test_full_pipeline_writes_predictions_and_sends_email(tmp_path, monkeypatch)
         cp["asset_class"] = asset_class
         return json.dumps(cp)
 
+    # Phase 0b: wie die anderen Phasen auf Modulebene gemockt, damit der
+    # Integrationstest den Markt-Kontext wirklich durchlaeuft (Parsen +
+    # DB-Schreiben) statt ihn wegzustubben.
+    market_ctx_resp = json.dumps({
+        "vix_level": 17.8, "advance_decline_ratio": 1.6,
+        "market_regime": "risk_on", "sector_rotation_in": "Technology",
+        "sector_rotation_out": "Utilities", "macro_summary": "Ruhig.",
+    })
+
     sequence = [
         _r(trend_resp, web_search_calls=4),                  # analyze_trends
         _r(quick_resp_3, web_search_calls=0, model="claude-haiku-4-5"),  # quick_filter
@@ -107,7 +116,9 @@ def test_full_pipeline_writes_predictions_and_sends_email(tmp_path, monkeypatch)
         _r(_cc_for("BTC-USD", "crypto")),                    # cc BTC
     ]
 
-    with patch("src.trend_analyzer.call_claude", side_effect=[sequence[0]]), \
+    with patch("src.market_context.call_claude",
+               side_effect=[_r(market_ctx_resp, web_search_calls=2)]), \
+         patch("src.trend_analyzer.call_claude", side_effect=[sequence[0]]), \
          patch("src.quick_filter.call_claude", side_effect=[sequence[1]]), \
          patch("src.deep_analysis.call_claude",
                side_effect=[sequence[2], sequence[3], sequence[4], sequence[5]]), \
@@ -129,4 +140,20 @@ def test_full_pipeline_writes_predictions_and_sends_email(tmp_path, monkeypatch)
     assert n_pred >= 3  # at least the 3 stocks (+ 2 commodities/crypto if guardrails pass)
     n_cost = conn.execute("SELECT COUNT(*) AS n FROM cost_tracking").fetchone()["n"]
     assert n_cost == 1
+
+    # Phase 0b hat geschrieben, und die Predictions tragen den echten Kontext
+    # statt der frueher hardcodierten None-Werte.
+    ctx = conn.execute("SELECT * FROM market_context WHERE date='2026-05-19'").fetchone()
+    assert ctx["advance_decline_ratio"] == 1.6      # aus Claudes JSON
+    assert ctx["market_regime"] == "risk_on"        # dito
+    # Der VIX kommt NICHT aus Claudes 17.8, sondern aus dem (hier gefakten)
+    # Capital.com-Bar: der numerische Wert schlaegt den recherchierten.
+    vix_from_provider = float(_mock_ohlc()["Close"].iloc[-1])
+    assert ctx["vix_level"] == vix_from_provider
+
+    pred = conn.execute(
+        "SELECT vix_at_prediction, market_regime FROM predictions LIMIT 1").fetchone()
+    assert pred["vix_at_prediction"] == vix_from_provider
+    assert pred["market_regime"] == "risk_on"
+
     mock_sg.return_value.send.assert_called_once()

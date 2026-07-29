@@ -56,6 +56,10 @@ def test_run_pipeline_calls_phases_in_order():
     fake_portfolio = []
     fake_ranking = {"top_long": fake_deep, "top_short": [],
                     "commodities_crypto": []}
+    fake_market_ctx = {"vix_level": 18.0, "vix_source": "capital.com",
+                       "advance_decline_ratio": 1.2, "market_regime": "risk_on",
+                       "sector_rotation_in": None, "sector_rotation_out": None,
+                       "macro_summary": None}
 
     patches = [
         patch("main.analyze_trends", side_effect=make_mock("trend", fake_trends)),
@@ -75,14 +79,19 @@ def test_run_pipeline_calls_phases_in_order():
         patch("main.fetch_fear_greed", return_value={"value": 50, "label": "Neutral"}),
         patch("main.send_daily_email", side_effect=make_mock("email", None)),
         patch("main.FinnhubProvider"),
+        # Phase 0b muss mitgemockt werden, sonst geht der Test echt ans Netz:
+        # fetch_market_context ruft Claude und Capital.com.
+        patch("main.fetch_market_context",
+              side_effect=make_mock("market_context", fake_market_ctx)),
+        patch("main.CapitalComProvider"),
     ]
     with patches[0], patches[1], patches[2], patches[3], patches[4], \
          patches[5], patches[6], patches[7], patches[8], patches[9], \
-         patches[10]:
+         patches[10], patches[11], patches[12]:
         run_pipeline(run_type="close", date="2026-05-19", db_path=":memory:")
 
     assert call_log == [
-        "trend", "collect", "collect", "quick_filter", "policy",
+        "trend", "market_context", "collect", "collect", "quick_filter", "policy",
         "deep", "cc", "portfolio", "ranking", "email",
     ]
 
@@ -109,6 +118,8 @@ def test_run_pipeline_partial_email_when_cost_cap_hit(tmp_db_path):
          patch("main.run_policy_monitor",
                side_effect=CostCapExceeded("cap hit")), \
          patch("main.send_daily_email") as mock_email, \
+         patch("main.fetch_market_context", return_value={}), \
+         patch("main.CapitalComProvider"), \
          patch("main.FinnhubProvider"):
         run_pipeline(run_type="close", date="2026-05-19", db_path=str(tmp_db_path))
     # Email IS sent with the partial payload + abort warning
@@ -199,3 +210,123 @@ def test_position_check_always_sends_email(tmp_db_path, mocker):
     from main import run_position_check
     run_position_check(date="2026-05-21", db_path=str(tmp_db_path))
     mock_send.assert_called_once()
+
+
+# ---------- Markt-Kontext in der Pipeline (Sprint 3B / Plan 1, Task 11) ----------
+
+
+def _stub_pipeline(mocker) -> None:
+    """Legt alle Phasen ausser dem Markt-Kontext still, damit die Tests unten
+    nur dessen Verdrahtung pruefen."""
+    mocker.patch("main.analyze_trends", return_value={"trends": []})
+    mocker.patch("main.collect", return_value=([], 0))
+    mocker.patch("main.quick_filter_batch", return_value=[])
+    mocker.patch("main.run_policy_monitor", return_value={})
+    mocker.patch("main.analyze_assets", return_value=[])
+    mocker.patch("main.analyze_commodities_and_crypto", return_value=[])
+    mocker.patch("main.fetch_fear_greed", return_value={})
+    mocker.patch("main.check_open_positions", return_value=[])
+    mocker.patch("main.generate_daily_briefing", return_value=[])
+    mocker.patch("main.send_daily_email")
+    mocker.patch("main.CapitalComProvider", return_value=mocker.MagicMock())
+    mocker.patch("main.FinnhubProvider", return_value=mocker.MagicMock())
+
+
+_CTX = {
+    "vix_level": 23.4, "vix_source": "capital.com",
+    "advance_decline_ratio": 0.8, "market_regime": "risk_off",
+    "sector_rotation_in": "Utilities", "sector_rotation_out": "Technology",
+    "macro_summary": "nervoes",
+}
+
+
+def test_pipeline_persists_market_context_and_passes_it_to_ranking(tmp_db_path, mocker):
+    """Der Markt-Kontext landet in der DB und im Ranking — nicht mehr hardcoded None."""
+    _stub_pipeline(mocker)
+    mocker.patch("main.fetch_market_context", return_value=dict(_CTX))
+    mock_rank = mocker.patch("main.rank_and_persist", return_value={
+        "top_long": [], "top_short": [], "commodities_crypto": [],
+    })
+
+    from main import run_pipeline
+    run_pipeline(run_type="pre_market", date="2026-07-27", db_path=str(tmp_db_path))
+
+    passed = mock_rank.call_args.kwargs["market_context"]
+    assert passed["vix_level"] == 23.4
+    assert passed["market_regime"] == "risk_off"
+
+    from src import db
+    conn = db.connect(str(tmp_db_path))
+    row = conn.execute(
+        "SELECT * FROM market_context WHERE date='2026-07-27'").fetchone()
+    assert row["vix_level"] == 23.4
+    assert row["advance_decline_ratio"] == 0.8
+    assert row["run_type"] == "pre_market"
+    conn.close()
+
+
+def test_pipeline_puts_market_context_into_the_mail_payload(tmp_db_path, mocker):
+    _stub_pipeline(mocker)
+    mocker.patch("main.fetch_market_context", return_value=dict(_CTX))
+    mocker.patch("main.rank_and_persist", return_value={
+        "top_long": [], "top_short": [], "commodities_crypto": [],
+    })
+    mock_mail = mocker.patch("main.send_daily_email")
+
+    from main import run_pipeline
+    run_pipeline(run_type="pre_market", date="2026-07-27", db_path=str(tmp_db_path))
+
+    payload = mock_mail.call_args.kwargs["payload"]
+    assert payload["market_context"]["market_regime"] == "risk_off"
+
+
+def test_market_context_is_called_with_the_price_provider(tmp_db_path, mocker):
+    """Ohne Provider faellt der VIX auf Claudes Schaetzwert zurueck."""
+    _stub_pipeline(mocker)
+    provider = mocker.MagicMock()
+    mocker.patch("main.CapitalComProvider", return_value=provider)
+    mock_ctx = mocker.patch("main.fetch_market_context", return_value=dict(_CTX))
+    mocker.patch("main.rank_and_persist", return_value={
+        "top_long": [], "top_short": [], "commodities_crypto": [],
+    })
+
+    from main import run_pipeline
+    run_pipeline(run_type="pre_market", date="2026-07-27", db_path=str(tmp_db_path))
+    assert mock_ctx.call_args.kwargs["price_provider"] is provider
+
+
+def test_pipeline_survives_market_context_failure(tmp_db_path, mocker):
+    """Ein fehlgeschlagener Markt-Kontext-Call darf den Run nicht abbrechen."""
+    from src.market_context import MarketContextError
+    _stub_pipeline(mocker)
+    mocker.patch("main.fetch_market_context",
+                 side_effect=MarketContextError("no json"))
+    mock_rank = mocker.patch("main.rank_and_persist", return_value={
+        "top_long": [], "top_short": [], "commodities_crypto": [],
+    })
+    mock_mail = mocker.patch("main.send_daily_email")
+
+    from main import run_pipeline
+    run_pipeline(run_type="pre_market", date="2026-07-27", db_path=str(tmp_db_path))
+
+    passed = mock_rank.call_args.kwargs["market_context"]
+    assert passed["vix_level"] is None
+    assert passed["market_regime"] is None
+    mock_mail.assert_called_once()
+
+
+def test_market_context_cost_cap_still_sends_mail(tmp_db_path, mocker):
+    """CostCapExceeded darf NICHT vom MarketContextError-Handler geschluckt
+    werden — Kosten-Abbruch beendet die Phasen, schickt aber trotzdem Mail."""
+    from src.cost_tracker import CostCapExceeded
+    _stub_pipeline(mocker)
+    mocker.patch("main.fetch_market_context",
+                 side_effect=CostCapExceeded("cap reached"))
+    mock_rank = mocker.patch("main.rank_and_persist")
+    mock_mail = mocker.patch("main.send_daily_email")
+
+    from main import run_pipeline
+    run_pipeline(run_type="pre_market", date="2026-07-27", db_path=str(tmp_db_path))
+
+    mock_rank.assert_not_called()
+    mock_mail.assert_called_once()

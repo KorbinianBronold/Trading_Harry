@@ -23,6 +23,7 @@ from src.deep_analysis import run_policy_monitor, analyze_assets
 from src.commodities_crypto import (
     analyze_commodities_and_crypto, fetch_fear_greed,
 )
+from src.market_context import fetch_market_context, MarketContextError
 from src.portfolio_check import check_open_positions
 from src.ranking import rank_and_persist
 from src.evaluator import evaluate_open_predictions
@@ -136,6 +137,7 @@ def run_pipeline(run_type: str, date: str, db_path: str) -> None:
         "portfolio_recs": [], "top_long": [], "top_short": [],
         "commodities_crypto": [], "trends": [],
         "skipped_tickers": [],
+        "market_context": {},
         "yesterday_outcomes": {},
         "cost_summary": {},
     }
@@ -147,6 +149,25 @@ def run_pipeline(run_type: str, date: str, db_path: str) -> None:
     payload["trends"] = trend_context.get("trends", [])
 
     try:
+        # Phase 0b — Markt-Kontext (VIX, A/D-Ratio, Regime). Nicht fatal: schlaegt
+        # der Call fehl, laeuft der Run mit leerem Kontext weiter. CostCapExceeded
+        # faengt der aeussere Handler — Kosten-Abbruch schickt trotzdem Mail.
+        market_ctx = {
+            "vix_level": None, "vix_source": None, "advance_decline_ratio": None,
+            "market_regime": None, "sector_rotation_in": None,
+            "sector_rotation_out": None, "macro_summary": None,
+        }
+        try:
+            market_ctx = fetch_market_context(
+                date=date, run_type=run_type, cost_tracker=cost_tracker,
+                price_provider=price_provider,
+            )
+            db.save_market_context(
+                conn, {**market_ctx, "date": date, "run_type": run_type})
+        except MarketContextError as e:
+            log.warning(f"Markt-Kontext nicht ermittelbar, Run laeuft ohne: {e}")
+        payload["market_context"] = market_ctx
+
         # Phase 1 — Stocks data
         _tickers = config.SP500_FULL_TICKERS if config.USE_FULL_SP500 else config.SP500_MVP_TICKERS
         sp500_tds, skipped_sp = collect(
@@ -222,10 +243,7 @@ def run_pipeline(run_type: str, date: str, db_path: str) -> None:
         )
         payload["portfolio_recs"] = portfolio_recs
 
-        # Phase 4 — Ranking + persist predictions
-        market_ctx = {
-            "vix_level": None, "market_regime": None, "sector": None,
-        }
+        # Phase 4 — Ranking + persist predictions (market_ctx kommt aus Phase 0b)
         ranked = rank_and_persist(
             conn=conn, date=date, run_type=run_type,
             stock_analyses=deep_stocks,
