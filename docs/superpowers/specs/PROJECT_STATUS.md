@@ -436,6 +436,42 @@ auf den Fall beschränkt, dass **beide** Momentum-Signale vorliegen und überein
 - ⏭ **E-Mail:** `hold_days_recommended` als eigene Spalte in der Top-10-Long/Short-Tabelle
   ergänzen — **gehört zu Plan 2**, zusammen mit den übrigen Mail-Arbeiten (B.9).
 
+### B.13 — Phase 3 parallelisieren *(Entscheidung 2026-07-29, gehört in Plan 2)*
+
+**Entschieden:** Die Parallelisierung von Phase 3 wird **nicht** nach 3F verschoben,
+sondern in Plan 2 gezogen. Grund: sie entscheidet mit, ob die geplante Cron-Struktur
+überhaupt tragfähig ist, und sie ist die einzige Maßnahme, die das Actions-Budget vor
+dem Umzug auf ein privates Repo entlastet.
+
+`src/deep_analysis.py` arbeitet die Ticker strikt sequenziell ab (`for td in
+ticker_datas:`). Bei gemessenen ~54 s je Analyse macht das die Laufzeit fast vollständig
+aus: von 25 Minuten Gesamtlauf entfallen 17 auf Phase 3.
+
+**Actions-Minuten** (Repo ist aktuell public → unbegrenzt; privat sind es 2 000/Monat
+im Free-Tarif, 3 000 im Pro-Tarif):
+
+| | heute | nach 3B ohne Parallelisierung | nach 3B mit 5 parallelen Analysen |
+|---|---|---|---|
+| `pre_market` | 550 | 550 | ~180 |
+| `midday` | 550 | entfällt | entfällt |
+| `trade_proposals` | — (`evaluate` 22) | ~530 | ~180 |
+| Rest | ~70 | ~22 | ~22 |
+| **Summe/Monat** | **~1 190** | **~1 100** | **~380** |
+
+> **Wichtig:** Sprint 3B senkt zwar die Euro-Kosten wie geplant, bei den Actions-Minuten
+> passiert ohne Parallelisierung aber praktisch **nichts** — `trade_proposals` frisst
+> die Einsparung aus dem entfallenen `midday` fast vollständig wieder auf, weil es
+> 27 Assets erneut durch Phase 3 schickt. Das war in der ursprünglichen 3B-Rechnung
+> nicht berücksichtigt, dort wurde nur in Euro gerechnet.
+
+**Zwei Haken, die Plan 2 lösen muss:**
+- `CostTracker` akkumuliert nicht thread-sicher
+- die `MAX_COST_PER_RUN_EUR`-Prüfung würde racy — der Deckel könnte überschritten werden
+
+**Löst nicht das Kostenproblem aus F.1.** Parallelisierung verkürzt die Laufzeit, nicht
+die Rechnung. Für 3F braucht es zusätzlich ein kleineres `MAX_DEEP_ANALYSIS`, ein
+günstigeres Modell für Phase 3 oder einen deutlich schärferen Pre-Filter aus 3C.
+
 ### B.12 — Stand der Umsetzung: Plan 1 fertig, Plan 2 offen
 
 **Plan 1 (Fundament) ist abgeschlossen** (2026-07-29, Tasks 1–14, Plan-Datei
@@ -603,15 +639,18 @@ in der Planungssession gelöst werden, bevor `USE_FULL_SP500` aktiviert wird.**
    Bei 20 Tickern (25 min) unkritisch, ab 3F ein harter Konflikt.
 
 **Der Hebel:** Phase 3 läuft strikt sequenziell (`src/deep_analysis.py`, `for td in
-ticker_datas:`). Bei 5 parallelen Analysen fallen die 72 Minuten auf ~15. Zwei Haken,
-die zur Planung gehören: `CostTracker` akkumuliert nicht thread-sicher, und die
-`MAX_COST_PER_RUN_EUR`-Prüfung würde racy — der Deckel könnte überschritten werden.
+ticker_datas:`). Bei 5 parallelen Analysen fallen die 72 Minuten auf ~15.
+**Entschieden am 2026-07-29: die Parallelisierung wird nach Plan 2 vorgezogen** —
+Details, Zahlen und die beiden Thread-Safety-Haken in Abschnitt B.13.
+
 Das löst allerdings **nur die Laufzeit, nicht die Kosten**; dafür braucht es entweder
 ein kleineres `MAX_DEEP_ANALYSIS`, ein günstigeres Modell für Phase 3, oder den
 technischen Pre-Filter aus 3C mit deutlich schärferer Wirkung.
 
-**Offen:** Ist das Repo privat? Dann kämen 95 min/Tag × 22 Handelstage ≈ 2 090 Actions-Minuten
-allein für `pre_market` — das Gratiskontingent liegt bei 2 000/Monat.
+**Actions-Minuten:** Das Repo ist derzeit **public**, damit sind die Minuten unbegrenzt
+und kostenlos. Geplant ist der Wechsel auf privat — dann greifen 2 000 Minuten/Monat
+(Free-Tarif). Bei 95 min/Tag × 22 Handelstage wären allein `pre_market` ≈ 2 090 Minuten
+fällig, also über dem Kontingent. Rechnung s. B.13.
 
 ---
 
