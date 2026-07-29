@@ -330,3 +330,78 @@ def test_market_context_cost_cap_still_sends_mail(tmp_db_path, mocker):
 
     mock_rank.assert_not_called()
     mock_mail.assert_called_once()
+
+
+# ---------- B-05: echte Abbruch-Phase melden (Sprint 3B / Plan 1, Task 13) ----------
+
+
+def test_cost_cap_abort_reports_the_actual_phase(tmp_db_path, mocker):
+    """B-05: Bricht der Run in Phase 3 ab, darf nicht 'policy_monitor' gemeldet werden."""
+    from src.cost_tracker import CostCapExceeded
+    _stub_pipeline(mocker)
+    mocker.patch("main.fetch_market_context", return_value=dict(_CTX))
+    mocker.patch("main.analyze_assets", side_effect=CostCapExceeded("cap hit"))
+
+    from main import run_pipeline
+    run_pipeline(run_type="pre_market", date="2026-07-27", db_path=str(tmp_db_path))
+
+    from src import db
+    conn = db.connect(str(tmp_db_path))
+    row = conn.execute(
+        "SELECT aborted_at_phase FROM cost_tracking WHERE date='2026-07-27'").fetchone()
+    conn.close()
+    assert row["aborted_at_phase"] == "deep_analysis"
+
+
+@pytest.mark.parametrize("phase_fn, expected", [
+    ("main.fetch_market_context",          "market_context"),
+    ("main.quick_filter_batch",            "quick_filter"),
+    ("main.run_policy_monitor",            "policy_monitor"),
+    ("main.analyze_assets",                "deep_analysis"),
+    ("main.analyze_commodities_and_crypto", "commodities_crypto"),
+    ("main.check_open_positions",          "portfolio_check"),
+    ("main.rank_and_persist",              "ranking"),
+])
+def test_every_phase_reports_itself_on_cost_cap(tmp_db_path, mocker, phase_fn, expected):
+    """Der Phasenname muss aus der tatsaechlichen Abbruchstelle stammen — sonst
+    zeigt die Fehlermail wieder pauschal auf dieselbe Phase."""
+    from src.cost_tracker import CostCapExceeded
+    _stub_pipeline(mocker)
+    mocker.patch("main.fetch_market_context", return_value=dict(_CTX))
+    mocker.patch("main.rank_and_persist", return_value={
+        "top_long": [], "top_short": [], "commodities_crypto": [],
+    })
+    mocker.patch(phase_fn, side_effect=CostCapExceeded("cap hit"))
+
+    from main import run_pipeline
+    run_pipeline(run_type="pre_market", date="2026-07-27", db_path=str(tmp_db_path))
+
+    from src import db
+    conn = db.connect(str(tmp_db_path))
+    row = conn.execute(
+        "SELECT aborted_at_phase FROM cost_tracking WHERE date='2026-07-27'").fetchone()
+    conn.close()
+    assert row["aborted_at_phase"] == expected
+
+
+def test_successful_run_reports_no_aborted_phase(tmp_db_path, mocker):
+    _stub_pipeline(mocker)
+    mocker.patch("main.fetch_market_context", return_value=dict(_CTX))
+    mocker.patch("main.rank_and_persist", return_value={
+        "top_long": [], "top_short": [], "commodities_crypto": [],
+    })
+
+    from main import run_pipeline
+    run_pipeline(run_type="pre_market", date="2026-07-27", db_path=str(tmp_db_path))
+
+    from src import db
+    conn = db.connect(str(tmp_db_path))
+    row = conn.execute(
+        "SELECT aborted_at_phase FROM cost_tracking WHERE date='2026-07-27'").fetchone()
+    conn.close()
+    assert row["aborted_at_phase"] is None
+
+
+def test_guess_aborted_phase_is_gone():
+    import main
+    assert not hasattr(main, "_guess_aborted_phase")

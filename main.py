@@ -131,6 +131,9 @@ def run_pipeline(run_type: str, date: str, db_path: str) -> None:
     earnings_provider = FinnhubProvider()
 
     aborted_at: str | None = None
+    # B-05: die Abbruch-Phase wird mitgefuehrt statt geraten. Jeder Phasenblock
+    # im try setzt sie, bevor er laeuft.
+    current_phase = "trend_analysis"
     payload = {
         "date": date, "run_type": run_type,
         "briefing": [],
@@ -149,6 +152,7 @@ def run_pipeline(run_type: str, date: str, db_path: str) -> None:
     payload["trends"] = trend_context.get("trends", [])
 
     try:
+        current_phase = "market_context"
         # Phase 0b — Markt-Kontext (VIX, A/D-Ratio, Regime). Nicht fatal: schlaegt
         # der Call fehl, laeuft der Run mit leerem Kontext weiter. CostCapExceeded
         # faengt der aeussere Handler — Kosten-Abbruch schickt trotzdem Mail.
@@ -168,6 +172,7 @@ def run_pipeline(run_type: str, date: str, db_path: str) -> None:
             log.warning(f"Markt-Kontext nicht ermittelbar, Run laeuft ohne: {e}")
         payload["market_context"] = market_ctx
 
+        current_phase = "data_collection"
         # Phase 1 — Stocks data
         _tickers = config.SP500_FULL_TICKERS if config.USE_FULL_SP500 else config.SP500_MVP_TICKERS
         sp500_tds, skipped_sp = collect(
@@ -176,6 +181,7 @@ def run_pipeline(run_type: str, date: str, db_path: str) -> None:
             earnings_provider=earnings_provider,
             conn=conn, date=date, run_type=run_type,
         )
+        current_phase = "data_collection_cc"
         # Phase 1b — Commodities + Crypto data (separate collect for asset_class tagging)
         cc_inputs = build_commodity_crypto_inputs()
         cc_tickers = [d["ticker"] for d in cc_inputs]
@@ -200,18 +206,21 @@ def run_pipeline(run_type: str, date: str, db_path: str) -> None:
             ).fetchall()
         ]
 
+        current_phase = "quick_filter"
         # Phase 2 — quick filter (stocks only)
         quick = quick_filter_batch(
             batch=sp500_tds, trend_context=trend_context,
             cost_tracker=cost_tracker,
         )
 
+        current_phase = "policy_monitor"
         # Phase 3 policy monitor (1× for all of Phase 3 + 3b + 4a)
         policy_context = run_policy_monitor(
             date=date, run_type=run_type, cost_tracker=cost_tracker,
         )
         payload["briefing"] = generate_daily_briefing(trend_context, policy_context)
 
+        current_phase = "deep_analysis"
         # Phase 3 deep analysis
         deep_stocks = analyze_assets(
             ticker_datas=sp500_tds,
@@ -221,6 +230,7 @@ def run_pipeline(run_type: str, date: str, db_path: str) -> None:
             cost_tracker=cost_tracker,
         )
 
+        current_phase = "commodities_crypto"
         # Phase 3b commodities + crypto
         fg = fetch_fear_greed() or {}
         extra_context = {
@@ -233,6 +243,7 @@ def run_pipeline(run_type: str, date: str, db_path: str) -> None:
             cost_tracker=cost_tracker,
         )
 
+        current_phase = "portfolio_check"
         # Phase 4a — Portfolio check (across all snapshots seen this run)
         snapshots_by_ticker = {td["ticker"]: td for td in (sp500_tds + cc_tds)}
         portfolio_recs = check_open_positions(
@@ -243,6 +254,7 @@ def run_pipeline(run_type: str, date: str, db_path: str) -> None:
         )
         payload["portfolio_recs"] = portfolio_recs
 
+        current_phase = "ranking"
         # Phase 4 — Ranking + persist predictions (market_ctx kommt aus Phase 0b)
         ranked = rank_and_persist(
             conn=conn, date=date, run_type=run_type,
@@ -255,9 +267,9 @@ def run_pipeline(run_type: str, date: str, db_path: str) -> None:
         payload["commodities_crypto"]  = ranked["commodities_crypto"]
 
     except CostCapExceeded as e:
-        log.warning(f"Run aborted: {e}")
-        cost_tracker.aborted_at_phase = _guess_aborted_phase(e)
-        aborted_at = cost_tracker.aborted_at_phase
+        log.warning(f"Run aborted in phase '{current_phase}': {e}")
+        cost_tracker.aborted_at_phase = current_phase
+        aborted_at = current_phase
 
     # Always: write cost summary + send mail (even on partial run)
     payload["yesterday_outcomes"] = _aggregate_yesterday_outcomes(conn, today=date)
@@ -270,12 +282,6 @@ def run_pipeline(run_type: str, date: str, db_path: str) -> None:
         email_from=config.EMAIL_FROM, email_to=config.EMAIL_TO,
     )
     conn.close()
-
-
-def _guess_aborted_phase(_exc: CostCapExceeded) -> str:
-    """We don't have a precise phase from the exception — return a stable
-    placeholder. The orchestrator could thread a phase name in later."""
-    return "policy_monitor"
 
 
 def run_close(date: str, db_path: str) -> None:
