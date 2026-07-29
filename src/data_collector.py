@@ -8,6 +8,7 @@ DataProvider interface and db.py.
 import logging
 import math
 import time
+from datetime import date as _date_cls, timedelta
 from typing import Any
 
 import pandas as pd
@@ -193,6 +194,78 @@ def _classify_data_quality(td: dict) -> str:
     return "medium" if missing_peripheral >= 1 else "high"
 
 
+def _expected_trading_days(from_date: str, to_date: str) -> list[str]:
+    """Listet alle Wochentage (Mo-Fr) NACH `from_date` bis einschliesslich `to_date`.
+
+    Bekannte Einschraenkung (Spec B.8): ohne Boersen-Feiertagskalender gelten
+    US-Feiertage wie Thanksgiving faelschlich als Handelstag. Der Nachladeversuch
+    liefert dann schlicht keine Bars — funktional unkritisch, kostet je einen
+    leeren API-Call."""
+    start = _date_cls.fromisoformat(from_date)
+    end = _date_cls.fromisoformat(to_date)
+    out: list[str] = []
+    cur = start + timedelta(days=1)
+    while cur <= end:
+        if cur.weekday() < 5:          # 0=Montag ... 4=Freitag
+            out.append(cur.isoformat())
+        cur += timedelta(days=1)
+    return out
+
+
+def _fill_price_gaps(
+    ticker: str, price_provider: DataProvider, conn, date: str,
+) -> int:
+    """Laedt fehlende Bars zwischen dem letzten DB-Datum und `date` nach und gibt
+    die Anzahl neu eingefuegter Zeilen zurueck.
+
+    Kein Nachladen, wenn der Ticker noch gar keine Historie hat (das uebernimmt
+    setup/historical_loader.py bzw. der Fallback in _ensure_today_bar) oder wenn
+    nur der heutige Bar fehlt — dafuer ist _ensure_today_bar zustaendig."""
+    row = conn.execute(
+        "SELECT MAX(date) AS last_date FROM price_history WHERE ticker = ?",
+        (ticker,),
+    ).fetchone()
+    last_date = row["last_date"] if row else None
+    if not last_date or last_date >= date:
+        return 0
+
+    missing = _expected_trading_days(last_date, date)
+    # Nur der heutige Bar fehlt -> _ensure_today_bar erledigt das ohne Extra-Call.
+    if len(missing) <= 1:
+        return 0
+
+    log.info(
+        f"{ticker}: Luecke erkannt — letzter Bar {last_date}, "
+        f"{len(missing)} Handelstage bis {date} fehlen. Lade nach."
+    )
+    try:
+        df = price_provider.get_ohlc_after(ticker, last_date, date)
+    except Exception as e:
+        log.warning(f"{ticker}: Gap-Nachladen fehlgeschlagen: {e}")
+        return 0
+    if df is None or df.empty:
+        log.warning(f"{ticker}: Gap-Nachladen lieferte keine Bars")
+        return 0
+
+    _raw_source = getattr(price_provider, "_source_name", None)
+    source = _raw_source if isinstance(_raw_source, str) else "capital.com"
+    inserted = 0
+    for ts, r in df.iterrows():
+        d = ts.strftime("%Y-%m-%d") if hasattr(ts, "strftime") else str(ts)[:10]
+        if d <= last_date or d > date:
+            continue
+        db.insert_price_bar_if_missing(
+            conn, ticker=ticker, date=d,
+            open_=float(r.get("Open", 0)), high=float(r.get("High", 0)),
+            low=float(r.get("Low", 0)), close=float(r.get("Close", 0)),
+            volume=int(r.get("Volume", 0) or 0), source=source,
+        )
+        inserted += 1
+    conn.commit()
+    log.info(f"{ticker}: {inserted} fehlende Bars nachgeladen")
+    return inserted
+
+
 def _ensure_today_bar(
     ticker: str,
     price_provider: DataProvider,
@@ -275,7 +348,8 @@ def _process_ticker(
     computes indicators from the last 200 DB days, and fetches fundamentals/earnings
     (cache-first). Returns the TickerData dict, or None (with a skipped_tickers row)
     if there's insufficient or low-quality data."""
-    # Step 1: Ensure today's bar is in DB
+    # Step 1: Luecken schliessen, dann den heutigen Bar sicherstellen (Spec B.8)
+    _fill_price_gaps(ticker, price_provider, conn, date)
     _ensure_today_bar(ticker, price_provider, conn, date)
 
     # Step 2: Load last 200 days from DB for indicator calculation

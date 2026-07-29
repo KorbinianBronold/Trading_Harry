@@ -666,3 +666,159 @@ def test_process_ticker_links_sector_from_fundamentals_cache(in_memory_db):
     row = db.get_ticker_sector(in_memory_db, "JNJ")
     assert row["name"] == "Pharma"
     assert row["etf"] == "XLV"
+
+
+# ---------- Gap-Erkennung (Sprint 3B / Plan 1, Task 12 — Spec B.8) ----------
+
+
+def test_expected_trading_days_skips_weekend():
+    from src.data_collector import _expected_trading_days
+    # Freitag 2026-07-24 -> Montag 2026-07-27: kein fehlender Handelstag dazwischen
+    assert _expected_trading_days("2026-07-24", "2026-07-27") == ["2026-07-27"]
+
+
+def test_expected_trading_days_lists_real_gap():
+    from src.data_collector import _expected_trading_days
+    # Montag 2026-07-20 -> Freitag 2026-07-24: Di/Mi/Do/Fr fehlen
+    assert _expected_trading_days("2026-07-20", "2026-07-24") == [
+        "2026-07-21", "2026-07-22", "2026-07-23", "2026-07-24",
+    ]
+
+
+def test_expected_trading_days_empty_when_up_to_date():
+    from src.data_collector import _expected_trading_days
+    assert _expected_trading_days("2026-07-27", "2026-07-27") == []
+
+
+def test_expected_trading_days_spans_a_full_weekend():
+    """Do -> Di: Fr und Mo und Di fehlen, Sa/So nicht."""
+    from src.data_collector import _expected_trading_days
+    assert _expected_trading_days("2026-07-23", "2026-07-28") == [
+        "2026-07-24", "2026-07-27", "2026-07-28",
+    ]
+
+
+def test_fill_price_gaps_backfills_missing_bars(in_memory_db, mocker):
+    from src import db
+    from src.data_collector import _fill_price_gaps
+    db.init_schema(in_memory_db)
+    db.insert_price_bar_if_missing(
+        in_memory_db, ticker="AAPL", date="2026-07-20",
+        open_=100, high=101, low=99, close=100.5, volume=1000,
+        source="capital.com",
+    )
+    in_memory_db.commit()
+
+    provider = mocker.MagicMock()
+    provider._source_name = "capital.com"
+    provider.get_ohlc_after.return_value = pd.DataFrame(
+        {"Open": [101.0, 102.0], "High": [103.0, 104.0],
+         "Low": [100.0, 101.0], "Close": [102.0, 103.0], "Volume": [900, 950]},
+        index=pd.to_datetime(["2026-07-21", "2026-07-22"]),
+    )
+
+    n = _fill_price_gaps("AAPL", provider, in_memory_db, date="2026-07-22")
+    assert n == 2
+    dates = [r["date"] for r in in_memory_db.execute(
+        "SELECT date FROM price_history WHERE ticker='AAPL' ORDER BY date").fetchall()]
+    assert dates == ["2026-07-20", "2026-07-21", "2026-07-22"]
+
+
+def test_fill_price_gaps_ignores_bars_outside_the_window(in_memory_db, mocker):
+    """Der Provider darf mehr liefern als angefragt — gespeichert wird nur die Luecke."""
+    from src import db
+    from src.data_collector import _fill_price_gaps
+    db.init_schema(in_memory_db)
+    db.insert_price_bar_if_missing(
+        in_memory_db, ticker="AAPL", date="2026-07-20",
+        open_=100, high=101, low=99, close=100.5, volume=1000,
+        source="capital.com",
+    )
+    in_memory_db.commit()
+
+    provider = mocker.MagicMock()
+    provider._source_name = "capital.com"
+    provider.get_ohlc_after.return_value = pd.DataFrame(
+        {"Open": [1.0] * 4, "High": [1.0] * 4, "Low": [1.0] * 4,
+         "Close": [1.0] * 4, "Volume": [1] * 4},
+        index=pd.to_datetime(["2026-07-17", "2026-07-21",
+                              "2026-07-22", "2026-07-29"]),
+    )
+    n = _fill_price_gaps("AAPL", provider, in_memory_db, date="2026-07-22")
+    assert n == 2
+    dates = [r["date"] for r in in_memory_db.execute(
+        "SELECT date FROM price_history WHERE ticker='AAPL' ORDER BY date").fetchall()]
+    assert dates == ["2026-07-20", "2026-07-21", "2026-07-22"]
+
+
+def test_fill_price_gaps_noop_over_weekend(in_memory_db, mocker):
+    from src import db
+    from src.data_collector import _fill_price_gaps
+    db.init_schema(in_memory_db)
+    db.insert_price_bar_if_missing(
+        in_memory_db, ticker="AAPL", date="2026-07-24",  # Freitag
+        open_=100, high=101, low=99, close=100.5, volume=1000,
+        source="capital.com",
+    )
+    in_memory_db.commit()
+    provider = mocker.MagicMock()
+    # Montag: nur der heutige Bar fehlt, den holt _ensure_today_bar — kein Gap-Fetch
+    assert _fill_price_gaps("AAPL", provider, in_memory_db, date="2026-07-27") == 0
+    provider.get_ohlc_after.assert_not_called()
+
+
+def test_fill_price_gaps_noop_on_empty_history(in_memory_db, mocker):
+    from src import db
+    from src.data_collector import _fill_price_gaps
+    db.init_schema(in_memory_db)
+    provider = mocker.MagicMock()
+    assert _fill_price_gaps("NEW", provider, in_memory_db, date="2026-07-27") == 0
+    provider.get_ohlc_after.assert_not_called()
+
+
+def test_fill_price_gaps_noop_when_db_is_ahead(in_memory_db, mocker):
+    """Ein Re-Run desselben Tages darf keinen Nachlade-Call ausloesen."""
+    from src import db
+    from src.data_collector import _fill_price_gaps
+    db.init_schema(in_memory_db)
+    db.insert_price_bar_if_missing(
+        in_memory_db, ticker="AAPL", date="2026-07-27",
+        open_=100, high=101, low=99, close=100.5, volume=1000,
+        source="capital.com",
+    )
+    in_memory_db.commit()
+    provider = mocker.MagicMock()
+    assert _fill_price_gaps("AAPL", provider, in_memory_db, date="2026-07-27") == 0
+    provider.get_ohlc_after.assert_not_called()
+
+
+def test_fill_price_gaps_survives_provider_error(in_memory_db, mocker):
+    """Ein fehlgeschlagenes Nachladen darf den Ticker nicht sprengen."""
+    from src import db
+    from src.data_collector import _fill_price_gaps
+    db.init_schema(in_memory_db)
+    db.insert_price_bar_if_missing(
+        in_memory_db, ticker="AAPL", date="2026-07-20",
+        open_=100, high=101, low=99, close=100.5, volume=1000,
+        source="capital.com",
+    )
+    in_memory_db.commit()
+    provider = mocker.MagicMock()
+    provider.get_ohlc_after.side_effect = RuntimeError("Capital.com 500")
+    assert _fill_price_gaps("AAPL", provider, in_memory_db, date="2026-07-24") == 0
+
+
+def test_fill_price_gaps_survives_empty_response(in_memory_db, mocker):
+    """Feiertags-Fall (B.8): der Nachladeversuch liefert schlicht nichts."""
+    from src import db
+    from src.data_collector import _fill_price_gaps
+    db.init_schema(in_memory_db)
+    db.insert_price_bar_if_missing(
+        in_memory_db, ticker="AAPL", date="2026-07-20",
+        open_=100, high=101, low=99, close=100.5, volume=1000,
+        source="capital.com",
+    )
+    in_memory_db.commit()
+    provider = mocker.MagicMock()
+    provider.get_ohlc_after.return_value = pd.DataFrame()
+    assert _fill_price_gaps("AAPL", provider, in_memory_db, date="2026-07-24") == 0
