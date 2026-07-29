@@ -568,6 +568,51 @@ Offene Punkte:
 - Aktivierung von `USE_FULL_SP500` in der GitHub-Actions-Env
 - `historical_loader` für alle 500 Ticker laufen lassen (Capital.com, 3 Jahre, 600 Calls/Min)
 
+### F.1 — ⚠️ Laufzeit und Kosten skalieren nicht *(gemessen 2026-07-29)*
+
+Der erste vollständige Echtlauf liefert harte Zahlen, die 3F blockieren. **Beides muss
+in der Planungssession gelöst werden, bevor `USE_FULL_SP500` aktiviert wird.**
+
+**Messung** (`pre_market`, 20 MVP-Ticker, 2026-07-29 19:27–19:52):
+
+| Kennzahl | gemessen |
+|---|---|
+| Gesamtlaufzeit | ~25 min |
+| Gesamtkosten | **3,3143 EUR** (`cost_tracking`) |
+| Tiefenanalysen | 19 Stück, ~54 s und ~0,12 EUR je Stück |
+| Phase 3 gesamt | 17 min, 2,27 EUR |
+
+**Hochrechnung auf die 80 Slots aus `MAX_DEEP_ANALYSIS`** — der Deckel greift ab
+~100 Tickern, die Tickerzahl selbst ist also *nicht* der Engpass:
+
+| | 20 Ticker (gemessen) | 500 Ticker (hochgerechnet) |
+|---|---|---|
+| Phase 3 | 17 min / 2,27 EUR | **~72 min / ~9,55 EUR** |
+| Gesamtlauf | ~25 min / 3,31 EUR | **~95 min / ~10,8 EUR** |
+| gegen `MAX_COST_PER_RUN_EUR = 4.00` | ✅ | ❌ **2,7-fach überschritten** |
+
+**Zwei Konsequenzen:**
+
+1. **Kosten-Abbruch.** Bei 80 Analysen greift `CostCapExceeded` nach etwa 30 Stück —
+   der Lauf käme nie bis Phase 4. Dank B-05 meldet die Mail immerhin korrekt
+   `deep_analysis` als Abbruchphase.
+2. **Cron-Kollision.** Die für 3B geplante Struktur legt `pre_market` auf 15:00 und
+   `trade_proposals` auf 16:10 — **70 Minuten Abstand**. Ein 95-Minuten-Lauf liefe noch,
+   wenn der nächste startet. GitHub Actions serialisiert das nicht; zwei parallele Läufe
+   auf derselben DB, und bei der Release-Persistenz gewinnt der, der zuletzt hochlädt.
+   Bei 20 Tickern (25 min) unkritisch, ab 3F ein harter Konflikt.
+
+**Der Hebel:** Phase 3 läuft strikt sequenziell (`src/deep_analysis.py`, `for td in
+ticker_datas:`). Bei 5 parallelen Analysen fallen die 72 Minuten auf ~15. Zwei Haken,
+die zur Planung gehören: `CostTracker` akkumuliert nicht thread-sicher, und die
+`MAX_COST_PER_RUN_EUR`-Prüfung würde racy — der Deckel könnte überschritten werden.
+Das löst allerdings **nur die Laufzeit, nicht die Kosten**; dafür braucht es entweder
+ein kleineres `MAX_DEEP_ANALYSIS`, ein günstigeres Modell für Phase 3, oder den
+technischen Pre-Filter aus 3C mit deutlich schärferer Wirkung.
+
+**Offen:** Ist das Repo privat? Dann kämen 95 min/Tag × 22 Handelstage ≈ 2 090 Actions-Minuten
+allein für `pre_market` — das Gratiskontingent liegt bei 2 000/Monat.
+
 ---
 
 ## 3. Bekannte Bugs (offen)
@@ -575,6 +620,12 @@ Offene Punkte:
 | # | Datei | Bug | Schwere | Geplant in |
 |---|---|---|---|---|
 | B-03 | `config.py:SP500_FULL_TICKERS` | Ist Stub (= MVP-Liste), `USE_FULL_SP500=true` würde nur 20 Ticker laufen lassen | Mittel | Sprint 3F |
+
+**Behoben (2026-07-29, im ersten echten Gesamtlauf gefunden):**
+
+| # | Datei | Bug | Fix |
+|---|---|---|---|
+| B-10 | `.github/workflows/analyze.yml`, `main.py` | Der Upload der `tracking.db` nach Release `db-latest` hing an `if: success()`. Ein fehlgeschlagener Mailversand beendet den Analyse-Schritt mit Exit 1 → **die DB wurde nicht hochgeladen und die komplette Arbeit des Laufs war verloren**, obwohl sie längst committet war. Im Lauf vom 2026-07-29 wären so 7 Trend-Analysen, der Marktkontext, 9 Predictions, das Sektor-Mapping und die Kostenzeile weggeworfen worden — für 3,31 EUR. Nicht hypothetisch: der SendGrid-Key antwortet aktuell mit 401. | Upload auf `if: always()` umgestellt (der Wochen-Snapshot bleibt bewusst auf `success()`). Zusätzlich in `main.py`: `send_daily_email` wird gefangen, loggt ausdrücklich „Analyse persistiert, nur Mailversand scheiterte" und wirft `MailDeliveryError` — der Job bleibt rot, aber die Ursache ist nicht mehr mit einem Analysefehler zu verwechseln. |
 
 **Behoben (2026-07-29, beim Auffüllen der Produktions-DB gefunden):**
 

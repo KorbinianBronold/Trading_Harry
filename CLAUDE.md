@@ -115,6 +115,15 @@ alles 1h früher).
 
 **Gesamt/Tag:** ~6,60 EUR | **Gesamt/Monat (500 Ticker):** ~145 EUR | **MVP (20 Ticker):** ~29 EUR
 
+> ⚠️ **Die Kostenspalte oben ist geschätzt und nachweislich zu niedrig.** Erster echter
+> Messlauf am 2026-07-29: ein `pre_market` mit **20** MVP-Tickern kostete **3,3143 EUR**
+> (`cost_tracking`), nicht ~3,20 EUR bei 500 Tickern. Treiber ist Phase 3 mit ~0,12 EUR
+> je Tiefenanalyse. Hochgerechnet auf die 80 Slots aus `MAX_DEEP_ANALYSIS` landet ein
+> Lauf bei ~10,8 EUR und würde am Deckel `MAX_COST_PER_RUN_EUR = 4.00` abbrechen.
+> Details, Laufzeit-Hochrechnung und der Cron-Konflikt: PROJECT_STATUS.md, Abschnitt F.1.
+> Die Tabelle wird erst korrigiert, wenn nach dem 3B-Umbau neue Messwerte vorliegen —
+> geratene Zahlen durch andere geratene Zahlen zu ersetzen bringt nichts.
+
 ### Geplanter Umbau (Sprint 3B — noch NICHT implementiert)
 Spezifikation: `docs/superpowers/specs/PROJECT_STATUS.md`, Abschnitt "Sprint 3B".
 

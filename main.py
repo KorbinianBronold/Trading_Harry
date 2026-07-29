@@ -42,6 +42,12 @@ BERLIN = ZoneInfo("Europe/Berlin")
 RUN_TYPES = ["pre_market", "midday", "close", "evaluate", "weekly", "position_check"]
 
 
+class MailDeliveryError(RuntimeError):
+    """Die Analyse lief vollstaendig durch und ist persistiert — nur der
+    Mailversand scheiterte (B-10). Eigener Typ, damit Zustellprobleme nicht mit
+    Analysefehlern verwechselt werden."""
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     """Parses CLI args: --run-type (required), --date, --db-path."""
     parser = argparse.ArgumentParser()
@@ -276,12 +282,29 @@ def run_pipeline(run_type: str, date: str, db_path: str) -> None:
     payload["cost_summary"] = cost_tracker.summary(run_type=run_type, date=date)
     db.save_cost_tracking(conn, payload["cost_summary"])
 
-    send_daily_email(
-        payload=payload,
-        api_key=config.SENDGRID_API_KEY,
-        email_from=config.EMAIL_FROM, email_to=config.EMAIL_TO,
-    )
-    conn.close()
+    # B-10: Zustellung vom Analyse-Erfolg trennen. Alles oben ist zu diesem
+    # Zeitpunkt committet; ein Mailfehler darf daran nichts aendern und soll in
+    # der Logzeile klar als Zustellproblem erkennbar sein, damit niemand die
+    # Ursache in einer Analysephase sucht. Der Fehler wird trotzdem
+    # weitergereicht — ein unbemerkter Mailausfall waere schlimmer als ein
+    # roter Job.
+    try:
+        send_daily_email(
+            payload=payload,
+            api_key=config.SENDGRID_API_KEY,
+            email_from=config.EMAIL_FROM, email_to=config.EMAIL_TO,
+        )
+    except Exception as e:
+        log.error(
+            f"Analyse vollstaendig durchgelaufen und persistiert "
+            f"({len(payload['top_long'])} long, {len(payload['top_short'])} short, "
+            f"{len(payload['commodities_crypto'])} commodity/crypto, "
+            f"{payload['cost_summary'].get('total_eur')} EUR) — "
+            f"nur der Mailversand scheiterte: {e}"
+        )
+        raise MailDeliveryError(str(e)) from e
+    finally:
+        conn.close()
 
 
 def run_close(date: str, db_path: str) -> None:

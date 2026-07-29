@@ -74,7 +74,13 @@ jobs:
         run: python main.py --run-type ${{ steps.rt.outputs.type }}
 
       - name: Upload tracking.db to Release db-latest
-        if: success()
+        # B-10: bewusst always() statt success(). Die Analyse committet phasenweise;
+        # bricht der Schritt danach ab -- etwa weil SendGrid mit 401 antwortet --
+        # waere bei success() die gesamte Arbeit des Laufs verloren (Trends,
+        # Marktkontext, Predictions, Sektor-Mapping, Kosten). Der hochgeladene
+        # Stand ist schlimmstenfalls unvollstaendig, aber nie schlechter als der
+        # vorherige. Der Job bleibt trotzdem rot, das Fehlersignal geht nicht verloren.
+        if: always()
         run: |
           gh release view db-latest >/dev/null 2>&1 \
             || gh release create db-latest --title "DB latest" \

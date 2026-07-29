@@ -405,3 +405,83 @@ def test_successful_run_reports_no_aborted_phase(tmp_db_path, mocker):
 def test_guess_aborted_phase_is_gone():
     import main
     assert not hasattr(main, "_guess_aborted_phase")
+
+
+# ---------- B-10: Mailversand vom Analyse-Erfolg trennen ----------
+
+
+def test_mail_failure_does_not_discard_the_run(tmp_db_path, mocker):
+    """Die Analyse ist zu diesem Zeitpunkt persistiert. Ein Zustellfehler darf
+    daran nichts aendern — die Kostenzeile muss in der DB stehen bleiben."""
+    _stub_pipeline(mocker)
+    mocker.patch("main.fetch_market_context", return_value=dict(_CTX))
+    mocker.patch("main.rank_and_persist", return_value={
+        "top_long": [], "top_short": [], "commodities_crypto": [],
+    })
+    mocker.patch("main.send_daily_email",
+                 side_effect=RuntimeError("HTTP Error 401: Unauthorized"))
+
+    from main import run_pipeline, MailDeliveryError
+    with pytest.raises(MailDeliveryError):
+        run_pipeline(run_type="pre_market", date="2026-07-27",
+                     db_path=str(tmp_db_path))
+
+    from src import db
+    conn = db.connect(str(tmp_db_path))
+    assert conn.execute(
+        "SELECT COUNT(*) AS n FROM cost_tracking WHERE date='2026-07-27'"
+    ).fetchone()["n"] == 1
+    assert conn.execute(
+        "SELECT COUNT(*) AS n FROM market_context WHERE date='2026-07-27'"
+    ).fetchone()["n"] == 1
+    conn.close()
+
+
+def test_mail_failure_still_fails_the_run(tmp_db_path, mocker):
+    """Der Lauf bleibt rot — ein unbemerkter Mailausfall waere schlimmer als
+    ein roter Job."""
+    _stub_pipeline(mocker)
+    mocker.patch("main.fetch_market_context", return_value=dict(_CTX))
+    mocker.patch("main.rank_and_persist", return_value={
+        "top_long": [], "top_short": [], "commodities_crypto": [],
+    })
+    mocker.patch("main.send_daily_email",
+                 side_effect=RuntimeError("HTTP Error 401: Unauthorized"))
+    mocker.patch("main.send_error_email")
+
+    from main import main as cli
+    with pytest.raises(SystemExit) as e:
+        cli(["--run-type", "pre_market", "--date", "2026-07-27",
+             "--db-path", str(tmp_db_path)])
+    assert e.value.code == 1
+
+
+def test_mail_failure_message_names_the_analysis_as_complete(tmp_db_path, mocker, caplog):
+    """Die Logzeile muss 'Analyse fertig, nur Zustellung kaputt' sagen — sonst
+    sucht man den Fehler in der falschen Phase."""
+    _stub_pipeline(mocker)
+    mocker.patch("main.fetch_market_context", return_value=dict(_CTX))
+    mocker.patch("main.rank_and_persist", return_value={
+        "top_long": [], "top_short": [], "commodities_crypto": [],
+    })
+    mocker.patch("main.send_daily_email",
+                 side_effect=RuntimeError("HTTP Error 401: Unauthorized"))
+
+    from main import run_pipeline, MailDeliveryError
+    with caplog.at_level("ERROR"):
+        with pytest.raises(MailDeliveryError):
+            run_pipeline(run_type="pre_market", date="2026-07-27",
+                         db_path=str(tmp_db_path))
+    assert "persistiert" in caplog.text
+    assert "Mailversand" in caplog.text
+
+
+def test_successful_mail_leaves_no_error(tmp_db_path, mocker):
+    _stub_pipeline(mocker)
+    mocker.patch("main.fetch_market_context", return_value=dict(_CTX))
+    mocker.patch("main.rank_and_persist", return_value={
+        "top_long": [], "top_short": [], "commodities_crypto": [],
+    })
+    from main import run_pipeline
+    run_pipeline(run_type="pre_market", date="2026-07-27",
+                 db_path=str(tmp_db_path))
