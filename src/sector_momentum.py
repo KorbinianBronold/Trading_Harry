@@ -99,6 +99,25 @@ def collect_sector_momentum(
             etf_cache[etf] = _fetch_etf_momentum(price_provider, conn, etf, date)
 
         agg = db_by_sector.get(sector_id, {"momentum": None, "ticker_count": 0})
+        # Zwei Befunde aus dem Live-Lauf vom 2026-07-28 (Handelstag 27.07.), die
+        # die Guardrail-Logik in Plan 2 kennen muss:
+        #
+        # 1. RICHTUNG VERGLEICHEN, NICHT BETRAG. Die beiden Signale messen
+        #    dieselbe Bewegung, aber nicht dieselbe Grundgesamtheit: Retail kam
+        #    auf +2,89% (XRT) gegen +1,17% (DB), Financials Rest auf +1,00%
+        #    gegen +2,07% — einmal Faktor ~2,5 nach oben, einmal nach unten.
+        #    XRT ist gleichgewichtet und small-cap-lastig, unsere Retail-Ticker
+        #    sind AMZN/WMT/HD. Ein Schwellenwert auf der Differenz der Betraege
+        #    waere damit Rauschen; belastbar ist nur das Vorzeichen.
+        #
+        # 2. SEMICONDUCTORS-LUECKE — loest sich erst mit Sprint 3F. Bei der
+        #    20-Ticker-MVP-Liste erreichen nur 2 von 21 Sub-Sektoren die
+        #    SECTOR_DB_MOMENTUM_MIN_TICKERS-Grenze. Ausgerechnet der groesste
+        #    Tagesmove hatte keinen Gegencheck: SOXX -2,50% bei nur 2 Tickern
+        #    (NVDA, AVGO) -> db_momentum NULL. Der Hybrid degradiert also genau
+        #    dort auf die weiche Warnung, wo ein harter Guardrail am meisten
+        #    brachte. Kein Fehler, sondern eine Frage der Abdeckung: erst die
+        #    volle Ticker-Liste aus 3F fuellt die Sub-Sektoren auf.
         entry = {
             "etf_momentum": etf_cache[etf],
             "db_momentum":  agg["momentum"],
