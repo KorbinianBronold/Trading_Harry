@@ -186,6 +186,53 @@ def analyze_trends(cost_tracker: CostTracker) -> dict:
 
 ---
 
+### 2b. **`src/market_context.py`** (Phase 0b, seit Sprint 3B / Plan 1)
+
+Tagesaktueller Marktzustand (einmalig pro Run).
+
+```python
+def fetch_market_context(date, run_type, cost_tracker, price_provider=None) -> dict:
+    """
+    1 Sonnet + web_search Call. Alle Keys immer vorhanden, nicht belegbare Werte None:
+    {vix_level, vix_source, advance_decline_ratio, market_regime,
+     sector_rotation_in, sector_rotation_out, macro_summary}
+    """
+```
+
+**VIX-Präzedenz:** Der numerische Capital.com-Bar schlägt Claudes recherchierte
+Zahl; `vix_source` weist aus, welche Quelle gewonnen hat.
+
+**Warum None statt Schätzung:** Die Werte steuern nachgelagert harte Risikofilter
+(VIX > 25 nur noch `confidence='high'`, VIX > 35 keine neuen Longs). Ein geratener
+Wert wäre dort schlimmer als gar keiner.
+
+**Fail-Verhalten:** `MarketContextError` wird in `run_pipeline()` gefangen → der Run
+läuft mit leerem Kontext weiter (Phase 0b ist **nicht** fatal). `CostCapExceeded`
+propagiert dagegen wie gewohnt zum äusseren Handler.
+
+---
+
+### 2c. **`src/sector_momentum.py`** (seit Sprint 3B / Plan 1)
+
+Zwei unabhängige Momentum-Signale je Sub-Sektor, getrennt gespeichert und **nie
+verrechnet** — Sprint 3D soll datenbasiert messen, welches besser predictet.
+
+```python
+def collect_sector_momentum(conn, date, run_type, price_provider) -> dict[int, dict]:
+    """{sector_id: {etf_momentum, db_momentum, ticker_count}}"""
+```
+
+- `etf_momentum` – Tagesperformance des Sub-Sektor-ETF von Capital.com. Jeder ETF
+  wird nur einmal abgerufen (21 Sub-Sektoren teilen sich 19 ETFs); die Bars landen
+  in `price_history`, weil keine Phase-1-Ticker-Liste sie enthält.
+- `db_momentum` – Ø Tagesperformance aller Ticker des Sub-Sektors, reines SQL,
+  0 EUR. NULL unterhalb `config.SECTOR_DB_MOMENTUM_MIN_TICKERS = 3`.
+
+**Nur Erhebung.** Die Guardrail-Auswertung (hartes Reject nur bei zwei
+übereinstimmenden Signalen) gehört zu Plan 2.
+
+---
+
 ### 3. **`src/quick_filter.py`** (Phase 2)
 
 Batch-Scoring ohne Web-Search (reduziert auf Top 80).
@@ -474,18 +521,44 @@ SQLite-Schema + Persistence.
 - `cost_tracking` – Claude-API Kosten pro Run
 - `fundamentals_cache` – Finnhub-Fundamentals mit 7-Tage TTL (UNIQUE per ticker)
 - `price_history` – OHLCV inkl. premarket_price (nullable)
+- `market_context` – ein Marktzustand je Run (UNIQUE date+run_type), seit 3B echt befüllt
 
-**Geplant in Sprint 3B/3C** (noch nicht angelegt):
-- `ticker_status` – kumulativer `skip_count` + `inactive`-Flag pro Ticker
-- `sectors` – 11 GICS-Sektoren mit Sektor-ETF (Technology→XLK, Energy→XLE, …), Seed beim DB-Setup
-- `ticker_sectors` – Ticker→Sektor-Mapping, organisch in Phase 1 aus dem Finnhub-Cache befüllt
-- `predictions.ranking_score` – neue Spalte für den kombinierten Score (3C)
+**Neu in Sprint 3B / Plan 1** (angelegt 2026-07-27/29):
+- `ticker_status` – kumulativer `skip_count` + `inactive`-Flag + `retry_after` pro Ticker
+- `sectors` – **21 Sub-Sektoren** auf 19 ETFs (Semiconductors→SOXX, Software→VGT, …),
+  Seed beim DB-Setup aus `config.SUB_SECTOR_ETFS`. Bewusst feiner als die
+  11 GICS-Sektoren, die hier ursprünglich geplant waren.
+- `ticker_sectors` – Ticker→Sub-Sektor-Mapping, organisch in Phase 1 aus dem Finnhub-Cache
+- `guardrail_rejects` – verworfene Analysen mit gruppiertem `rule`-Namen und `enforced`-Flag
+- `sector_momentum` – die beiden Momentum-Signale je Sub-Sektor und Run
+  (UNIQUE date+run_type+sector_id)
+
+**Neue Spalten in 3B / Plan 1:**
+- `market_context.advance_decline_ratio`
+- `predictions.sector_etf_momentum`, `predictions.sector_db_momentum`
+- `guardrail_rejects.sector_etf_momentum`, `guardrail_rejects.sector_db_momentum`
+
+> Die vier Momentum-Spalten sind angelegt, werden aber noch von niemandem
+> **befüllt** — das macht Plan 2 zusammen mit der Guardrail-Auswertung.
+
+**Geplant in 3C** (noch nicht angelegt):
+- `predictions.ranking_score` – neue Spalte für den kombinierten Score
 
 **Wichtige Helpers:**
 - `save_prediction(conn, pred_dict)` – Phase 4
 - `load_open_predictions_within_max_age_days(conn, today, max_trading_days=config.MAX_HOLD_DAYS)` – Phase 4a
 - `update_outcome_close(conn, pred_id, exit_reason, exit_price, ...)` – Evaluator
 - `load_recent_outcomes(conn, days=7)` – Weekly Email
+- `resolve_sector_id(conn, raw)` / `upsert_ticker_sector(...)` / `get_ticker_sector(...)` – Sub-Sektoren
+- `is_ticker_inactive(conn, ticker, today)` / `reactivate_ticker(...)` / `list_inactive_tickers(...)` – Skip-Logik
+- `log_guardrail_reject(conn, row)` / `load_guardrail_rejects_since(conn, since)` – Weekly-Auswertung
+- `compute_sector_db_momentum(...)` / `save_sector_momentum(...)` / `load_sector_momentum(...)` – D9
+- `save_market_context(conn, row)` – Phase 0b
+
+**Retention** (`cleanup_old_data`, seit 3B): `news_summaries` 30 Tage,
+`trend_analyses` 180 Tage, `skipped_tickers`-Events 90 Tage. `ticker_status`
+wird **nie** automatisch gelöscht — der kumulative Zähler muss die Event-Retention
+überleben.
 
 ---
 
@@ -628,15 +701,29 @@ Plan: `docs/superpowers/plans/2026-05-21-sprint2-plan1-capital-provider-db-incre
 Vollständige Spezifikation: `docs/superpowers/specs/PROJECT_STATUS.md`.
 Kurzüberblick, was sich an der oben beschriebenen Architektur ändern wird:
 
+**Bereits umgesetzt** (Sprint 3B / Plan 1, abgeschlossen 2026-07-29):
+
+| Bereich | Änderung |
+|---|---|
+| Pipeline | **Phase 0b neu**: Markt-Kontext (VIX, A/D-Ratio, Regime) — ersetzt das hardcodierte `None`-Dict vor dem Ranking |
+| `data_collector` | Gap-Erkennung mit Handelstags-Logik + automatisches Nachladen fehlender Bars |
+| `data_collector` | Inaktive Ticker überspringen; Sektor-Mapping organisch pflegen |
+| Schema | `ticker_status`, `sectors` (21 Sub-Sektoren statt der ursprünglich geplanten 11 GICS), `ticker_sectors`, `guardrail_rejects`, `sector_momentum` + 5 neue Spalten |
+| Retention | news 90→30 Tage, skipped_tickers-Events 30→90 Tage, `ticker_status` nie gelöscht |
+| `ranking` | Rejects werden persistiert; `predictions.sector` kommt aus `ticker_sectors` |
+| `main` | B-05 gefixt: echte Abbruch-Phase statt Platzhalter |
+
+**Noch offen:**
+
 | Bereich | Änderung | Sprint |
 |---|---|---|
-| Run-Types | `midday` + `position_check` entfallen; `evaluate` wird durch `trade_proposals` (16:10 Berlin) ersetzt | 3B |
-| Pipeline | **Phase 1c neu**: offene Capital.com-Positionen laden, deren Ticker als Pflicht-Kandidaten für Phase 3 markieren | 3B |
-| Pipeline | **Phase 4 und 4a tauschen** — Phase 4a nutzt danach die fertigen Phase-3-Ergebnisse (Claude-Call ohne Web-Search). Mail-Reihenfolge bleibt: Portfolio zuerst. | 3B |
-| `close` | Holt Schlusskurse aller Ticker; TP/SL-Auswertung bleibt bis Sprint 3D erhalten; neue Cleanup-Regeln (news 30d, skipped_tickers nicht mehr löschen sondern zählen) | 3B |
-| `data_collector` | Gap-Erkennung mit Handelstags-Logik + automatisches Nachladen fehlender Bars | 3B |
-| Schema | Neue Tabelle `ticker_status` (skip_count, inactive); neue Spalte `predictions.ranking_score` | 3B / 3C |
-| Schema | **Sektor-Struktur**: `sectors` (11 GICS-Sektoren + Sektor-ETF, z.B. Technology→XLK) und `ticker_sectors` (Ticker→Sektor-Mapping). Befüllung organisch in Phase 1 aus dem Finnhub-Fundamentals-Cache, kein statisches Mapping im Code. Basis für den Sektor-ETF-Momentum-Guardrail. | 3B |
+| Run-Types | `midday` + `position_check` entfallen; `evaluate` wird durch `trade_proposals` (16:10 Berlin) ersetzt | 3B / Plan 2 |
+| Pipeline | **Phase 1c neu**: offene Capital.com-Positionen laden, deren Ticker als Pflicht-Kandidaten für Phase 3 markieren | 3B / Plan 2 |
+| Pipeline | **Phase 4 und 4a tauschen** — Phase 4a nutzt danach die fertigen Phase-3-Ergebnisse (Claude-Call ohne Web-Search). Mail-Reihenfolge bleibt: Portfolio zuerst. | 3B / Plan 2 |
+| `close` | Holt Schlusskurse aller Ticker; TP/SL-Auswertung bleibt bis Sprint 3D erhalten | 3B / Plan 2 |
+| Guardrails | **Anwendung** der beiden Momentum-Signale (hartes Reject nur bei Übereinstimmung) + `SECTOR_GUARDRAIL_STRICT`; befüllt dabei die vier bereits angelegten Momentum-Spalten | 3B / Plan 2 |
+| Weekly-Mail | Auswertung von `guardrail_rejects` und `ticker_status` | 3B / Plan 2 |
+| Schema | Neue Spalte `predictions.ranking_score` | 3C |
 | `ranking` | `atr_pct`/`rsi_at_entry`/`volume_ratio` korrekt befüllen; kombinierter `ranking_score` **zusätzlich** zu `total_score` | 3C |
 | Phase 2 | Technischer Python-Pre-Filter (ATR/RSI/Volume/Market-Cap) vor dem Haiku-Batching | 3C |
 

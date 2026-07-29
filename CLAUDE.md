@@ -24,8 +24,10 @@ Shares_Future/
 │   │   ├── base.py
 │   │   ├── capital_provider.py  # Capital.com (alleiniger OHLC-Provider + positions)
 │   │   └── finnhub_provider.py  # Fundamentals (gecacht)
-│   ├── data_collector.py   # Phase 1: Datenabruf
+│   ├── data_collector.py   # Phase 1: Datenabruf + Gap-Erkennung
 │   ├── trend_analyzer.py   # Phase 0: Megatrend-Analyse
+│   ├── market_context.py   # Phase 0b: VIX, A/D-Ratio, Regime (Claude + Web-Search)
+│   ├── sector_momentum.py  # ETF- + DB-Momentum je Sub-Sektor (nur Erhebung)
 │   ├── quick_filter.py     # Phase 2: Batch-Analyse ohne Web-Search
 │   ├── deep_analysis.py    # Phase 3: Claude + Web-Search + Policy-Monitor
 │   ├── commodities_crypto.py # Phase 3b: Gold, Silber, Öl, BTC, ETH, SOL, XRP
@@ -40,7 +42,8 @@ Shares_Future/
 │   # learning_module.py  → noch nicht implementiert (Sprint 3D)
 │   # prompt_optimizer.py → noch nicht implementiert (Sprint 3D/3E)
 ├── setup/
-│   └── historical_loader.py  # 3-Jahres-Pull via Capital.com
+│   ├── historical_loader.py  # 3-Jahres-Pull via Capital.com + Ticker-Status-CLI
+│   └── verify_epics.py       # Capital.com-Epics der Sektor-ETFs prüfen (manuell)
 ├── data/
 │   ├── tracking.db         # SQLite Hauptdatenbank
 │   ├── learnings.json       # Long/Short Performance getrennt
@@ -55,8 +58,11 @@ Shares_Future/
 **Ist-Zustand** (`main.py:run_pipeline()`):
 ```
 Phase 0:  Trend-Analyse    → Megatrends identifizieren (fatal wenn sie fehlschlägt)
+Phase 0b: Markt-Kontext    → VIX, A/D-Ratio, Regime, Sektor-Rotation (Claude + Web-Search)
+                             NICHT fatal: schlägt der Call fehl, läuft der Run mit leerem Kontext
 Phase 1:  Datenabruf       → Capital.com (alleiniger OHLC-Provider), Aktien
                              1 Bar täglich fetchen + letzte 200 aus DB
+                             inkl. Gap-Erkennung: fehlende Handelstage nachladen
 Phase 1b: Datenabruf       → Commodities + Crypto (separater collect-Aufruf)
 Phase 2:  Quick-Filter     → Batches à 30, kein Web-Search, Top 80
 Phase 3:  Policy-Monitor   → 1× pro Run, Web-Search
@@ -84,6 +90,14 @@ Phase 5:  E-Mail           → Briefing, Portfolio, Aktien, Trends, Commodities/
 - MAX_HOLD_DAYS = 5, HOLD_TARGET = "intraday"
 - Timezone: TZ="Europe/Berlin" in Bash, ZoneInfo("Europe/Berlin") in Python
 - Prompts versioniert mit A/B-Testing
+- `SECTOR_ALIASES` normalisiert Finnhubs `finnhubIndustry` auf 21 **Sub-Sektoren**
+  (feiner als GICS: Halbleiter gegen SOXX statt gegen den breiten XLK). Unbekannte
+  Rohwerte werden mit WARN geloggt und bleiben ungemappt — nie stillschweigend
+  in einen Sammeleimer geworfen. Grundregel: lieber ungemappt als falsch gemappt.
+- Ticker werden nach `TICKER_MAX_SKIPS = 20` Datenqualitäts-Skips deaktiviert,
+  Auto-Retry nach `TICKER_RETRY_AFTER_DAYS = 30`, manueller Reset via `--reactivate`
+- Sektor-Momentum wird als **zwei getrennte Signale** erhoben (ETF + DB-Durchschnitt)
+  und nie verrechnet — Sprint 3D soll messen, welches besser predictet
 
 ## Cron-Jobs (Berliner Zeit)
 **Ist-Zustand**, aus `.github/workflows/analyze.yml` (Cron ist UTC-fix, GitHub Actions

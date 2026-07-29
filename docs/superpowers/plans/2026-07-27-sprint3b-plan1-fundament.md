@@ -2101,7 +2101,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 ---
 
 
-## Task 10: Markt-Kontext-Modul
+## Task 10: Markt-Kontext-Modul ✅ ERLEDIGT (`e53fd18`, Schnitt 4)
 
 Setzt D2 um. Neues Modul mit genau einer Aufgabe.
 
@@ -2486,7 +2486,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 
 ---
 
-## Task 11: Markt-Kontext in die Pipeline verdrahten
+## Task 11: Markt-Kontext in die Pipeline verdrahten ✅ ERLEDIGT (`ccb3010`, Schnitt 4)
 
 Ersetzt das hardcodierte `None`-Dict in `main.py:226`.
 
@@ -2651,7 +2651,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 
 ---
 
-## Task 12: Gap-Erkennung in Phase 1
+## Task 12: Gap-Erkennung in Phase 1 ✅ ERLEDIGT (`7698276`, Schnitt 4)
 
 Setzt B.8 um.
 
@@ -2867,7 +2867,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 
 ---
 
-## Task 13: Bug B-05 — echte Abbruch-Phase melden
+## Task 13: Bug B-05 — echte Abbruch-Phase melden ✅ ERLEDIGT (`7c4c311`, Schnitt 4)
 
 **Files:**
 - Modify: `main.py` (`run_pipeline`, `_guess_aborted_phase` entfernen)
@@ -2997,7 +2997,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 
 ---
 
-## Task 14: Gesamtlauf, Coverage und Doku
+## Task 14: Gesamtlauf, Coverage und Doku ✅ ERLEDIGT (Schnitt 4) — PLAN 1 ABGESCHLOSSEN
 
 **Files:**
 - Modify: `CLAUDE.md`

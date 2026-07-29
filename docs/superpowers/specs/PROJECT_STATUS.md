@@ -65,6 +65,7 @@
 | Vollständige Code-Dokumentation | `e3b6e86` (2026-07-15) | Jedes Modul hat eine Modul-Beschreibung, jede Funktion einen 1-2-Satz-Docstring. Gilt ab jetzt als Standard für neuen Code. |
 | Intraday-Widerspruch in Prompts behoben | (2026-07-17) | `prompts/deep_analysis_v1.txt` + `prompts/commodities_crypto_v1.txt`: "hold 1-3 trading days"-Framing entfernt. Intraday ist explizit das primäre UND einzige Ziel — Setups, die nicht klar intraday funktionieren, müssen `direction='none'` sein. `hold_days_recommended` bleibt Pflichtfeld (für das Learning Modul), ist aber kein Akzeptanzkriterium mehr. |
 | Bug B-06 behoben: MAX_HOLD_DAYS vereinheitlicht | `c2c8e1c` (2026-07-17) | `guardrails.py`, `evaluator.py`, `portfolio_check.py`, `db.py` nutzen `config.MAX_HOLD_DAYS` (=5) als einzige Quelle der Wahrheit statt eigener hardcodierter `3`. Tests angepasst + neuer Test beweist die 5-Tage-Ausweitung im Walk-Forward-Evaluator. |
+| **Sprint 3B / Plan 1, Schnitt 4: Tasks 10–14 — Plan 1 ABGESCHLOSSEN** | `e53fd18`, `ccb3010`, `7698276`, `7c4c311` (2026-07-29) | `src/market_context.py` (Phase 0b: VIX, A/D-Ratio, Regime via Claude + Websuche) inkl. `prompts/market_context_v1.txt` und `db.save_market_context()`; Verdrahtung in `run_pipeline()` — das hardcodierte `None`-Dict ist weg, `predictions.vix_at_prediction` und `market_regime` tragen echte Werte; Gap-Erkennung in Phase 1 (`_expected_trading_days`, `_fill_price_gaps`); B-05 gefixt. Docker-Smoke-Test grün, Migration gegen eine bestehende `tracking.db` verifiziert. 380 Tests, 92.42% Coverage. |
 | **Sprint 3B / Plan 1, Schnitt 3: Tasks 8, 9, 9a** | `6ab199d`, `6c42cc2`, `6fb3290` (2026-07-28) | `guardrail_rejects` mit gruppiertem Regelnamen (`_rule_name()` deckt alle 12 Meldungen von `GuardrailsChecker` ab); `predictions.sector` kommt jetzt aus `ticker_sectors` statt aus dem marktweiten Kontext-Dict, wo der Key nie gesetzt war; Retention auf 30/180/90 umgestellt; `sector_momentum` + `collect_sector_momentum()` erheben beide D9-Signale. Live gegen Capital.com + Finnhub verifiziert (s. Abschnitt B.3.1). 329 Tests, 92.09% Coverage. |
 | **Sprint 3B / Plan 1, Schnitt 2: Tasks 5–7** | `c035f6c`, `031868d`, `18aa1cb` (2026-07-27) | `ticker_status` mit kumulativem Skip-Zähler, Deaktivierung ab >20 Skips, Auto-Retry nach 30 Tagen; `collect()` überspringt inaktive Ticker ohne API-Call und heilt den Zähler bei Erfolg; CLI `--reactivate` / `--list-inactive`. **Verhaltensänderung:** die Modus-Gruppe von `historical_loader.py` ist jetzt `required=True` — ein Aufruf ohne Flag (oder mit vertipptem Flag) bricht mit argparse-Fehler ab, statt wie bisher stillschweigend den vollen `SP500_MVP_TICKERS`-Pull zu starten. Gegen die echte Capital.com-API mit `FAKEXXXX` verifiziert: Zähler 1→21, Umschlag bei 21, 0 Calls bis `retry_after`, Retry danach, Fehlschlag verlängert die Sperre. 280 Tests, 91.95% Coverage. |
 | **Sprint 3B / Plan 1, Schnitt 1: Tasks 3–4 + zwei Loader-Fixes** | `a4211d5`, `990597f`, `ea624ef`, `0e539c4` (2026-07-27) | `sectors` + `ticker_sectors` inkl. Seeding und `resolve_sector_id`; organische Befüllung in Phase 1. Dazu zwei unabhängige `historical_loader`-Bugs behoben (s. Abschnitt 3). Live-Lauf bestätigt 18/20 MVP-Ticker gemappt. 254 Tests, 91.8% Coverage. |
@@ -82,7 +83,7 @@
 | Sprint | Inhalt | Status |
 |---|---|---|
 | 3A | Roadmap + Doku aktualisieren | ✅ erledigt (dieses Dokument) |
-| 3B | Cron-Struktur + Pipeline-Umbau | 🟡 Plan 1 (Fundament) Tasks 1–9a implementiert (Schnitte 1–3), **10–14 offen**; Plan 2 (Pipeline) noch nicht geschrieben |
+| 3B | Cron-Struktur + Pipeline-Umbau | 🟡 **Plan 1 (Fundament) vollständig abgeschlossen** (2026-07-29, Tasks 1–14); Plan 2 (Pipeline-Umbau) noch nicht geschrieben |
 | 3C | Ranking-Überarbeitung | 📋 spezifiziert, Implementierung offen |
 | 3D | Learning Modul | ⚠️ **Platzhalter — Planungssession ausstehend** |
 | 3E | Human-in-the-Loop | ⚠️ **Platzhalter — Planungssession ausstehend** |
@@ -427,10 +428,43 @@ auf den Fall beschränkt, dass **beide** Momentum-Signale vorliegen und überein
 
 ### B.11 — Kleinere Fixes in 3B
 
-- **B-05:** `main.py:_guess_aborted_phase()` gibt aktuell immer `"policy_monitor"` zurück,
-  unabhängig von der tatsächlichen Abbruch-Phase. Fix: echten Phasennamen durchreichen
-  (z.B. Variable `current_phase` im `try`-Block mitführen und im `except` auslesen).
-- **E-Mail:** `hold_days_recommended` als eigene Spalte in der Top-10-Long/Short-Tabelle ergänzen.
+- ✅ **B-05 erledigt (2026-07-29, `7c4c311`):** `run_pipeline()` führt eine
+  `current_phase`-Variable durch den `try`-Block; `_guess_aborted_phase()` ist
+  ersatzlos entfernt. Ein Test je Phase stellt sicher, dass eine künftig ergänzte
+  Phase ohne `current_phase`-Zuweisung auffliegt, statt die Abbruch-Mail falsch
+  zu beschriften.
+- ⏭ **E-Mail:** `hold_days_recommended` als eigene Spalte in der Top-10-Long/Short-Tabelle
+  ergänzen — **gehört zu Plan 2**, zusammen mit den übrigen Mail-Arbeiten (B.9).
+
+### B.12 — Stand der Umsetzung: Plan 1 fertig, Plan 2 offen
+
+**Plan 1 (Fundament) ist abgeschlossen** (2026-07-29, Tasks 1–14, Plan-Datei
+`docs/superpowers/plans/2026-07-27-sprint3b-plan1-fundament.md`). Er war
+ausschliesslich **additiv**: die Pipeline läuft unverändert weiter, es kamen nur
+neue Tabellen, Helper und der Phase-0b-Call dazu.
+
+Geliefert: `sectors` / `ticker_sectors` / `ticker_status` / `guardrail_rejects` /
+`sector_momentum`, `SECTOR_ALIASES`-Normalisierung, Skip-Zähler mit Auto-Retry,
+beide Momentum-Signale, Markt-Kontext (Phase 0b), Gap-Erkennung, B-05.
+
+**Plan 2 (Pipeline-Umbau) ist noch nicht geschrieben.** Er umfasst B.1, B.2, B.4,
+B.5, B.6, B.9 sowie die **Anwendung** der in Plan 1 beschafften Daten — insbesondere
+die D9-Guardrail-Logik (hartes Reject nur bei zwei übereinstimmenden Signalen,
+sonst weiche Warnung mit `enforced=0`) und `config.SECTOR_GUARDRAIL_STRICT`.
+
+Eingangsvoraussetzungen für Plan 2 — **alle erfüllt**:
+- ✅ verifizierte ETF-Epics (D8: 20/20 bestätigt, `setup/verify_epics.py`)
+- ✅ Datenbasis für die Weekly-Auswertung (`guardrail_rejects`, `ticker_status`)
+- ✅ beide Momentum-Signale live gemessen, inkl. der zwei Befunde in B.3.1
+  (Richtung statt Betrag vergleichen; Abdeckungslücke bis 3F)
+
+Zwei Dinge, die Plan 2 mitnehmen muss und die nicht aus dem Code hervorgehen:
+- `predictions.sector_etf_momentum` / `sector_db_momentum` und die gleichnamigen
+  Spalten in `guardrail_rejects` **existieren, werden aber noch von niemandem
+  befüllt**. Plan 1 hat bewusst nur die Spalten angelegt.
+- `ticker_sectors` ist in der produktiven `tracking.db` noch leer. Phase 1 füllt
+  sie organisch beim nächsten vollen Run; bis dahin liefert `db_momentum`
+  überall NULL.
 
 ---
 
@@ -541,7 +575,12 @@ Offene Punkte:
 | # | Datei | Bug | Schwere | Geplant in |
 |---|---|---|---|---|
 | B-03 | `config.py:SP500_FULL_TICKERS` | Ist Stub (= MVP-Liste), `USE_FULL_SP500=true` würde nur 20 Ticker laufen lassen | Mittel | Sprint 3F |
-| B-05 | `main.py:_guess_aborted_phase()` | Gibt immer `"policy_monitor"` zurück, egal wo der Abort war | Niedrig | Sprint 3B |
+
+**Behoben (2026-07-29, Sprint 3B / Plan 1, Schnitt 4):**
+
+| # | Datei | Bug | Fix |
+|---|---|---|---|
+| B-05 | `main.py:_guess_aborted_phase()` | Gab immer `"policy_monitor"` zurück, egal wo der Run tatsächlich abbrach — die Kosten-Abbruch-Mail zeigte damit systematisch auf die falsche Phase. | `run_pipeline()` führt `current_phase` durch den `try`-Block, der `except`-Zweig liest sie aus. `_guess_aborted_phase()` ersatzlos entfernt. Parametrisierter Test über alle sieben Phasen, die `CostCapExceeded` werfen können. (`7c4c311`) |
 
 **Behoben (2026-07-27, Sprint 3B / Plan 1, Schnitt 1):**
 
