@@ -126,7 +126,7 @@ Das System folgt einer **Pipeline-Architektur** mit 6 Phasen (Phase 0–5), die 
 │         yesterday_outcomes_agg, cost_summary                     │
 │  HTML: 4 Sektionen (Portfolio → Stocks → Trends → Commodities)  │
 │  SendGrid: E-Mail an EMAIL_TO                                   │
-│  Cost: ~0.00 EUR (SendGrid kostenlos)                           │
+│  Cost: ~0.00 EUR (Freikontingent)                               │
 │  Fail: ⚠️ Log, aber keine Abort (beste Anstrengung)             │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -461,6 +461,11 @@ def evaluate_open_predictions(
 ### 9. **`src/email_sender.py`** (Phase 5)
 
 Rendert HTML und sendet via SendGrid.
+
+> ⚠️ **Provider-Wechsel ansteht (Sprint 3B-M).** SendGrids Konto meldet `total: 0`
+> Kontingent, jeder Versand scheitert mit 401. `_send()` ist die **einzige**
+> providerspezifische Stelle — jedes `send_*_email()` laeuft dort durch, der Austausch
+> bleibt also auf den Funktionsrumpf beschraenkt. Signatur und `EmailSendError` bleiben.
 
 ```python
 def render_daily_html(

@@ -84,6 +84,7 @@
 |---|---|---|
 | 3A | Roadmap + Doku aktualisieren | ✅ erledigt (dieses Dokument) |
 | 3B | Cron-Struktur + Pipeline-Umbau | 🟡 **Plan 1 (Fundament) vollständig abgeschlossen** (2026-07-29, Tasks 1–14); Plan 2 (Pipeline-Umbau) noch nicht geschrieben |
+| **3B-M** | **Mail-Provider-Wechsel (Zwischensprint)** | 🔴 **NEU, läuft VOR 3B/Plan 2** — SendGrid raus, Ersatz noch offen. Spezifikation s. unten |
 | 3C | Ranking-Überarbeitung | 📋 spezifiziert, Implementierung offen |
 | 3D | Learning Modul | ⚠️ **Platzhalter — Planungssession ausstehend** |
 | 3E | Human-in-the-Loop | ⚠️ **Platzhalter — Planungssession ausstehend** |
@@ -501,6 +502,110 @@ Zwei Dinge, die Plan 2 mitnehmen muss und die nicht aus dem Code hervorgehen:
 - `ticker_sectors` ist in der produktiven `tracking.db` noch leer. Phase 1 füllt
   sie organisch beim nächsten vollen Run; bis dahin liefert `db_momentum`
   überall NULL.
+
+---
+
+## Sprint 3B-M — Mail-Provider-Wechsel (Zwischensprint)
+
+> **Eingeschoben am 2026-07-29, läuft VOR 3B/Plan 2.** Nummerierung von 3C–3F bleibt
+> unberührt. Grund für die Vorziehung: ohne funktionierenden Versand ist jeder
+> Pipeline-Lauf blind — die Analyse landet zwar in der DB (B-10), aber niemand sieht sie.
+
+### M.1 — Anlass
+
+SendGrid ist nicht *kaputt*, sondern **kontingentlos**. Der Schlüssel ist gültig
+(`GET /v3/user/profile` → 200, `mail.send` unter den Scopes), aber `/v3/user/credits`
+meldet `total: 0, remain: 0, is_hard_limit: true` bei `reset_frequency: daily`; die
+Reset-Daten stehen seit 2026-07-01 still. Jeder Versand scheitert mit HTTP 401 und
+`"Maximum credits exceeded"`.
+
+**Wichtig für die Fehlersuche in Zukunft:** SendGrid meldet leeres Kontingent und
+unbrauchbaren Schlüssel unter demselben 401. Deshalb sind die Live-Checks seit
+`d79c896` getrennt — `test_api_connectivity` prüft lesend den Schlüssel und weist das
+Kontingent aus, `test_email_delivery` prüft den Versand.
+
+### M.2 — Provider-Auswahl *(offen — Entscheidung steht aus)*
+
+Kriterien, an denen die Wahl hängt:
+
+| Kriterium | Warum es hier zählt |
+|---|---|
+| **Dauerhaft kostenloses Kontingent** | Bedarf ist klein und planbar: 2 Mails/Tag heute, nach 3B ~3/Tag plus Wochenmail — also < 100/Monat. Genau daran ist SendGrid gescheitert (Trial ohne Anschlusstarif). |
+| **Absender-Verifikation ohne eigene Domain** | Aktuell ist `EMAIL_FROM == EMAIL_TO` (private Gmail-Adresse). Anbieter, die eine verifizierte Domain erzwingen, bedeuten Zusatzaufwand. |
+| **Python-SDK oder simples REST** | `_send()` braucht genau einen POST. Ein SDK ist bequem, aber `urllib` reicht — weniger Abhängigkeiten. |
+| **HTML-Mails** | Die Tagesmail ist HTML mit Tabellen. Reine Text-APIs scheiden aus. |
+| **Aussagekräftige Fehler-Bodies** | Siehe SendGrid: ein 401 ohne Klartext kostet Stunden. |
+
+Als Sonderfall zu prüfen: **SMTP direkt** (z.B. über den bestehenden Gmail-Account mit
+App-Passwort). Kein Anbieterkonto, kein Kontingentproblem, `smtplib` ist in der
+Standardbibliothek — dafür kein Zustellungs-Reporting und Gmail-eigene Sendelimits.
+
+### M.3 — Vorgehen
+
+Die Umsetzung ist überschaubar, weil `src/email_sender.py:_send()` bereits **die einzige
+Stelle** ist, an der SendGrid berührt wird — jedes `send_*_email()` läuft dort durch.
+Der Austausch bleibt damit auf den Funktionsrumpf plus Konfiguration beschränkt; eine
+zusätzliche Provider-Abstraktion wie bei `DataProvider` wäre für einen einmaligen
+Wechsel überzogen.
+
+Schrittfolge s. Abschnitt M.4 unten. Betroffene Dateien s. M.5.
+
+### M.4 — Schritte
+
+| # | Schritt | Wer |
+|---|---|---|
+| 1 | Provider auswählen (Kriterien M.2) | Korbinian |
+| 2 | Konto anlegen, Absender verifizieren, Kontingent schriftlich festhalten | Korbinian |
+| 3 | Key in `.env` **und** in die GitHub-Secrets legen | Korbinian |
+| 4 | Live-Check erweitern: lesende Schlüsselprüfung des neuen Anbieters, Kontingent ausweisen | Claude |
+| 5 | `requirements.txt` tauschen, `config.py`-Konstante umbenennen | Claude |
+| 6 | `_send()` neu implementieren — Signatur und `EmailSendError` bleiben unverändert | Claude |
+| 7 | Referenzen in `main.py` und den Workflows nachziehen | Claude |
+| 8 | Unit-Tests auf den neuen Client umstellen, Integrationstest anpassen | Claude |
+| 9 | Live verifizieren: lokal **und** über Actions (zwei unabhängige Schlüssel) | Claude |
+| 10 | Doku aktualisieren (Liste M.5) | Claude |
+| 11 | SendGrid-Secret aus GitHub entfernen, Konto kündigen | Korbinian |
+
+**Reihenfolge ist bindend:** Schritt 6 erst nach 2, sonst lässt sich der neue Pfad nicht
+verifizieren und man tauscht blind. Die Schritte 1–3 kann nur Korbinian ausführen.
+
+### M.5 — Betroffene Dateien
+
+**Code:**
+- `src/email_sender.py` — `_send()` und der Import; einzige providerspezifische Stelle
+- `config.py` — `SENDGRID_API_KEY` → Konstante des neuen Anbieters
+- `main.py` — Referenzen auf `config.SENDGRID_API_KEY` (Pipeline, Position-Check, Fehler-Mail)
+- `requirements.txt` — Paket tauschen
+
+**CI / Umgebung:**
+- `.github/workflows/analyze.yml`
+- `.github/workflows/test.yml`
+- `.env.example`
+- (dazu die lokale `.env` und die GitHub-Secrets selbst — keine Dateien im Repo)
+
+**Tests:**
+- `tests/unit/test_email_sender.py`
+- `tests/live/test_api_connectivity.py`
+- `tests/live/test_email_delivery.py`
+- `tests/unit/test_live_email_guard.py`
+- `tests/integration/test_full_pipeline.py`
+- `tests/conftest.py`
+
+**Doku, aktuell zu halten (Regel 14):**
+- `CLAUDE.md` — Tech-Stack, Environment-Variablen, GitHub-Secrets
+- `docs/ARCHITECTURE.md` — Modulbeschreibung `email_sender`
+- `docs/superpowers/specs/PROJECT_STATUS.md` — dieser Abschnitt
+
+**Doku, bekannt veraltet (Regel 14 — bewusst nicht anfassen):**
+- `docs/WORKFLOW.md`, `docs/SPECIFICATION.md`,
+  `docs/superpowers/specs/2026-05-19-shares-future-mvp-design.md`
+- ⚠️ **`README.md` ist die Ausnahme:** es enthält die Einrichtungsanleitung inklusive
+  `SENDGRID_API_KEY`. Bleibt es unangetastet, führt es beim Neuaufsetzen in die Irre.
+  Der Env-Abschnitt wird deshalb mitgezogen, der Rest bleibt für den Schlussdurchgang liegen.
+
+**Historische Plandateien (Regel 9 — nicht bearbeiten):**
+`2026-05-19-sprint1-plan1-foundation.md`, `2026-05-19-sprint1-plan3-deep-portfolio-email.md`,
+`2026-05-21-sprint2-plan1-capital-provider-db-incremental.md`
 
 ---
 
