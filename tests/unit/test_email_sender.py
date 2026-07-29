@@ -262,3 +262,45 @@ def test_send_position_check_email_subject_contains_count(mocker):
     subject = mock_send.call_args[0][3]
     assert "2026-05-21" in subject
     assert "1" in subject
+
+
+# ---------- SendGrid-Fehlertext durchreichen ----------
+
+
+def test_send_surfaces_the_sendgrid_response_body(mocker):
+    """SendGrid meldet ein aufgebrauchtes Kontingent als HTTP 401 mit dem Text
+    'Maximum credits exceeded' im Body. Die python_http_client-Exception traegt
+    den Body in .body, aber nicht in str(e) — ohne Durchreichen liest sich ein
+    Quota-Problem wie ein ungueltiger Key. Genau darauf sind wir am 2026-07-29
+    hereingefallen."""
+    from src.email_sender import _send, EmailSendError
+
+    class FakeUnauthorized(Exception):
+        status_code = 401
+        body = b'{"errors":[{"message":"Maximum credits exceeded"}]}'
+
+        def __str__(self):
+            return "HTTP Error 401: Unauthorized"
+
+    client = mocker.MagicMock()
+    client.send.side_effect = FakeUnauthorized()
+    mocker.patch("src.email_sender.SendGridAPIClient", return_value=client)
+
+    with pytest.raises(EmailSendError) as e:
+        _send("k", "a@b.de", "c@d.de", "subj", "<p>x</p>")
+
+    assert "Maximum credits exceeded" in str(e.value)
+    assert "401" in str(e.value)
+
+
+def test_send_survives_an_exception_without_a_body(mocker):
+    """Ein Netzwerkfehler ohne .body darf nicht am Auslesen scheitern."""
+    from src.email_sender import _send, EmailSendError
+
+    client = mocker.MagicMock()
+    client.send.side_effect = ConnectionError("connection reset")
+    mocker.patch("src.email_sender.SendGridAPIClient", return_value=client)
+
+    with pytest.raises(EmailSendError) as e:
+        _send("k", "a@b.de", "c@d.de", "subj", "<p>x</p>")
+    assert "connection reset" in str(e.value)

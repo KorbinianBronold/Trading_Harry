@@ -331,13 +331,32 @@ def send_weekly_email(
 def _send(api_key: str, email_from: str, email_to: str,
           subject: str, html_body: str) -> None:
     """Shared SendGrid delivery call used by every send_*_email(); raises
-    EmailSendError on a non-2xx response."""
+    EmailSendError on a non-2xx response.
+
+    Der Antwort-Body wird ausdruecklich mitgereicht: python_http_client wirft bei
+    4xx eine Exception, deren str() nur "HTTP Error 401: Unauthorized" lautet —
+    die eigentliche Ursache steht ausschliesslich in .body. SendGrid meldet dort
+    z.B. "Maximum credits exceeded", also ein aufgebrauchtes Kontingent, unter
+    demselben 401 wie ein ungueltiger Schluessel. Ohne den Body sucht man den
+    Fehler beim Key statt beim Tarif (erlebt am 2026-07-29)."""
     mail = Mail(
         from_email=email_from, to_emails=email_to,
         subject=subject, html_content=html_body,
     )
     client = SendGridAPIClient(api_key)
-    resp = client.send(mail)
+    try:
+        resp = client.send(mail)
+    except Exception as e:
+        body = getattr(e, "body", None)
+        if isinstance(body, (bytes, bytearray)):
+            body = body.decode("utf-8", "replace")
+        status = getattr(e, "status_code", None)
+        detail = f" — {body}" if body else ""
+        raise EmailSendError(
+            f"SendGrid rejected the message"
+            f"{f' (status {status})' if status else ''}: {e}{detail}"
+        ) from e
+
     if not (200 <= getattr(resp, "status_code", 0) < 300):
         raise EmailSendError(
             f"SendGrid returned status {resp.status_code}: "
