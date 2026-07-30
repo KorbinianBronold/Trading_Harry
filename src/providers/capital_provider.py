@@ -30,6 +30,23 @@ TICKER_MAP: dict[str, str] = {
     "BRK-B":   "BRKB",        # Capital.com epic for Berkshire B
 }
 
+# Rueckrichtung fuer Phase 1c (B.4): get_open_positions() liefert Epics, wir
+# rechnen intern in Tickern. Beim Import einmal gebaut statt bei jedem Aufruf.
+_EPIC_TO_TICKER: dict[str, str] = {v: k for k, v in TICKER_MAP.items()}
+
+
+def epic_to_ticker(epic: str) -> str | None:
+    """Uebersetzt ein Capital.com-Epic zurueck in unser internes Ticker-Symbol.
+
+    Gibt None zurueck, wenn das Epic zu keinem Ticker unserer Universen gehoert —
+    typisch fuer von Hand eroeffnete Fremdpositionen. Fuer sie existieren keine
+    Indikator-Daten, sie werden vom Aufrufer geloggt und uebersprungen."""
+    if epic in _EPIC_TO_TICKER:
+        return _EPIC_TO_TICKER[epic]
+    known = set(config.SP500_FULL_TICKERS if config.USE_FULL_SP500
+                else config.SP500_MVP_TICKERS)
+    return epic if epic in known else None
+
 
 class CapitalComProvider(DataProvider):
     _source_name = "capital.com"

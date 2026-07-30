@@ -312,3 +312,30 @@ def test_every_sector_alias_target_is_a_known_sub_sector():
         if target not in config.SUB_SECTOR_ETFS
     }
     assert not unknown, f"SECTOR_ALIASES zeigt auf unbekannte Sub-Sektoren: {unknown}"
+
+
+# ---------- Rueckabbildung Epic -> Ticker (Phase 1c, B.4) ----------
+
+def test_epic_to_ticker_maps_back():
+    from src.providers.capital_provider import epic_to_ticker
+    assert epic_to_ticker("GOLD") == "GC=F"
+    assert epic_to_ticker("BRKB") == "BRK-B"
+
+
+def test_epic_to_ticker_passes_through_unmapped_known_symbols():
+    """Aktien-Epics sind identisch mit dem Ticker — AAPL bleibt AAPL."""
+    from src.providers.capital_provider import epic_to_ticker
+    assert epic_to_ticker("AAPL") == "AAPL"
+
+
+def test_epic_to_ticker_is_none_for_foreign_epics():
+    """B.4: Fremdpositionen ohne Gegenstueck werden uebersprungen, nicht geraten."""
+    from src.providers.capital_provider import epic_to_ticker
+    assert epic_to_ticker("PPHE") is None
+
+
+def test_ticker_map_is_injective():
+    """Zwei Ticker auf dasselbe Epic wuerden die Rueckabbildung still falsch
+    machen — genau ein Ticker gewaenne, der andere verschwaende lautlos."""
+    from src.providers.capital_provider import TICKER_MAP
+    assert len(set(TICKER_MAP.values())) == len(TICKER_MAP)
