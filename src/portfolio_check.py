@@ -4,7 +4,12 @@ For every open prediction <= config.MAX_HOLD_DAYS trading days old, decide HALTE
 SCHLIESSEN / ANPASSEN given the current snapshot, trend, and policy context. Writes one
 position_recommendations row per call. Output is rendered as the FIRST
 section of the daily e-mail (spec §3 CFD-Kurzfristfokus). Per-position
-failures are caught — a single broken call must not abort the loop."""
+failures are caught — a single broken call must not abort the loop.
+
+Seit Sprint 3B / Plan 2 (B.5) laeuft der Check OHNE web_search und nach Phase 4:
+Input ist die fertige Phase-3-Analyse plus die Original-These aus der DB. Das spart
+die Recherchekosten, behaelt aber Urteilsvermoegen und Begruendungstext fuer die Mail.
+"""
 import json
 import logging
 import sqlite3
@@ -13,7 +18,7 @@ from pathlib import Path
 import config
 from src import db
 from src.cost_tracker import CostTracker
-from src.utils import call_claude, extract_json_blob, WEB_SEARCH_TOOL
+from src.utils import call_claude, extract_json_blob
 
 log = logging.getLogger("shares_future.portfolio_check")
 
@@ -65,7 +70,7 @@ def check_one_position(
     )
     result = call_claude(
         model=MODEL, system=SYSTEM_PROMPT, user=user_msg,
-        max_tokens=MAX_TOKENS, tools=[WEB_SEARCH_TOOL],
+        max_tokens=MAX_TOKENS, tools=[],
     )
     cost_tracker.add_from_result(result)
     parsed = extract_json_blob(result.text, PortfolioCheckError)
@@ -81,14 +86,15 @@ def check_open_positions(
     conn,
     today: str,
     run_type: str,
-    snapshots_by_ticker: dict[str, dict],
+    analyses_by_ticker: dict[str, dict],
     trend_context: dict,
     policy_context: dict,
     cost_tracker: CostTracker,
 ) -> list[dict]:
     """Loop all open predictions <= config.MAX_HOLD_DAYS days old, run portfolio_check
-    per row, persist one position_recommendations row each. Returns the list of
-    parsed response dicts."""
+    per row, persist one position_recommendations row each. `analyses_by_ticker`
+    enthaelt seit B.5 die fertigen Phase-3-Tiefenanalysen (nicht mehr die rohen
+    Phase-1-Snapshots). Returns the list of parsed response dicts."""
     open_preds = db.load_open_predictions_within_max_age_days(
         conn, today=today, max_trading_days=MAX_HOLD_DAYS,
     )
@@ -97,17 +103,17 @@ def check_open_positions(
     out: list[dict] = []
     for pred in open_preds:
         ticker = pred["ticker"]
-        snapshot = snapshots_by_ticker.get(ticker)
-        if snapshot is None:
+        analysis = analyses_by_ticker.get(ticker)
+        if analysis is None:
             log.warning(
-                f"{ticker}: no current snapshot, skipping portfolio_check for "
+                f"{ticker}: no current analysis, skipping portfolio_check for "
                 f"prediction_id={pred['id']}"
             )
             continue
 
         try:
             parsed = check_one_position(
-                prediction=pred, current_snapshot=snapshot,
+                prediction=pred, current_snapshot=analysis,
                 trend_context=trend_context, policy_context=policy_context,
                 cost_tracker=cost_tracker,
             )

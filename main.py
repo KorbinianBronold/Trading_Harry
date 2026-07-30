@@ -287,17 +287,6 @@ def run_pipeline(run_type: str, date: str, db_path: str) -> None:
             cost_tracker=cost_tracker,
         )
 
-        current_phase = "portfolio_check"
-        # Phase 4a — Portfolio check (across all snapshots seen this run)
-        snapshots_by_ticker = {td["ticker"]: td for td in (sp500_tds + cc_tds)}
-        portfolio_recs = check_open_positions(
-            conn=conn, today=date, run_type=run_type,
-            snapshots_by_ticker=snapshots_by_ticker,
-            trend_context=trend_context, policy_context=policy_context,
-            cost_tracker=cost_tracker,
-        )
-        payload["portfolio_recs"] = portfolio_recs
-
         current_phase = "ranking"
         # Phase 4 — Ranking + persist predictions (market_ctx kommt aus Phase 0b)
         ranked = rank_and_persist(
@@ -309,6 +298,19 @@ def run_pipeline(run_type: str, date: str, db_path: str) -> None:
         payload["top_long"]            = ranked["top_long"]
         payload["top_short"]           = ranked["top_short"]
         payload["commodities_crypto"]  = ranked["commodities_crypto"]
+
+        current_phase = "portfolio_check"
+        # Phase 4a — Portfolio-Check auf den FERTIGEN Phase-3-Analysen (B.5).
+        # Die Mail-Reihenfolge bleibt davon unberuehrt: die Portfolio-Sektion ist
+        # weiterhin die erste Sektion der Tagesmail (dokumentierte Invariante).
+        analyses_by_ticker = {a["ticker"]: a for a in (deep_stocks + deep_cc)}
+        portfolio_recs = check_open_positions(
+            conn=conn, today=date, run_type=run_type,
+            analyses_by_ticker=analyses_by_ticker,
+            trend_context=trend_context, policy_context=policy_context,
+            cost_tracker=cost_tracker,
+        )
+        payload["portfolio_recs"] = portfolio_recs
 
     except CostCapExceeded as e:
         log.warning(f"Run aborted in phase '{current_phase}': {e}")

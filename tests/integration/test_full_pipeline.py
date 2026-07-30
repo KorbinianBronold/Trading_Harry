@@ -116,6 +116,16 @@ def test_full_pipeline_writes_predictions_and_sends_email(tmp_path, monkeypatch)
         _r(_cc_for("BTC-USD", "crypto")),                    # cc BTC
     ]
 
+    # Seit Sprint 3B / Plan 2 (B.5) laeuft Phase 4a NACH Phase 4 (Ranking) und
+    # sieht damit auch die soeben in diesem Lauf persistierten Predictions als
+    # offene Positionen — anders als vorher braucht der Mock hier also eine
+    # echte Antwort statt eines ungenutzten Platzhalters.
+    portfolio_check_resp = json.dumps({
+        "action": "HALTEN", "reason": "These intakt, kein Eingriff noetig.",
+        "new_sl_price": None, "new_tp_price": None,
+        "market_context_changed": False, "sources_used": [],
+    })
+
     with patch("src.market_context.call_claude",
                side_effect=[_r(market_ctx_resp, web_search_calls=2)]), \
          patch("src.trend_analyzer.call_claude", side_effect=[sequence[0]]), \
@@ -124,7 +134,8 @@ def test_full_pipeline_writes_predictions_and_sends_email(tmp_path, monkeypatch)
                side_effect=[sequence[2], sequence[3], sequence[4], sequence[5]]), \
          patch("src.commodities_crypto.call_claude",
                side_effect=[sequence[6], sequence[7]]), \
-         patch("src.portfolio_check.call_claude"), \
+         patch("src.portfolio_check.call_claude",
+               side_effect=lambda **kw: _r(portfolio_check_resp, web_search_calls=0)), \
          patch("src.email_sender.requests.post") as mock_sg, \
          patch("src.commodities_crypto.fetch_fear_greed",
                return_value={"value": 55, "label": "Greed"}):

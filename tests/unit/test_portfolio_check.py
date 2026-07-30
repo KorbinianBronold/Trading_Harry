@@ -84,7 +84,7 @@ def test_check_open_positions_writes_recommendation_rows(in_memory_db):
     with patch("src.portfolio_check.call_claude", return_value=fake):
         out = check_open_positions(
             conn=in_memory_db, today="2026-05-20", run_type="pre_market",
-            snapshots_by_ticker=snapshots_by_ticker,
+            analyses_by_ticker=snapshots_by_ticker,
             trend_context={"trend_summary": "risk-on"},
             policy_context={"policy_risk_level": "low", "events": []},
             cost_tracker=tracker,
@@ -107,7 +107,7 @@ def test_check_open_positions_skips_position_with_missing_snapshot(in_memory_db)
     with patch("src.portfolio_check.call_claude") as mock_call:
         out = check_open_positions(
             conn=in_memory_db, today="2026-05-20", run_type="pre_market",
-            snapshots_by_ticker={},
+            analyses_by_ticker={},
             trend_context={"trend_summary": ""},
             policy_context={"policy_risk_level": "low", "events": []},
             cost_tracker=tracker,
@@ -124,7 +124,7 @@ def test_check_open_positions_skips_old_predictions(in_memory_db):
     with patch("src.portfolio_check.call_claude") as mock_call:
         out = check_open_positions(
             conn=in_memory_db, today="2026-05-20", run_type="pre_market",
-            snapshots_by_ticker={"AAPL": {"ticker": "AAPL", "price": 180.0,
+            analyses_by_ticker={"AAPL": {"ticker": "AAPL", "price": 180.0,
                                           "intraday_range_pct": 1.5}},
             trend_context={}, policy_context={},
             cost_tracker=tracker,
@@ -168,7 +168,7 @@ def test_check_open_positions_continues_after_single_failure(in_memory_db):
     with patch("src.portfolio_check.call_claude", side_effect=side_effects):
         out = check_open_positions(
             conn=in_memory_db, today="2026-05-20", run_type="pre_market",
-            snapshots_by_ticker=snapshots,
+            analyses_by_ticker=snapshots,
             trend_context={}, policy_context={},
             cost_tracker=tracker,
         )
@@ -200,7 +200,7 @@ def test_check_open_positions_enriches_with_prediction_fields(in_memory_db):
     with patch("src.portfolio_check.call_claude", return_value=fake):
         out = check_open_positions(
             conn=in_memory_db, today="2026-05-20", run_type="pre_market",
-            snapshots_by_ticker=snapshots,
+            analyses_by_ticker=snapshots,
             trend_context={}, policy_context={},
             cost_tracker=tracker,
         )
@@ -218,7 +218,27 @@ def test_check_open_positions_returns_empty_when_no_open(in_memory_db):
     tracker = CostTracker(hard_cap_eur=10.0)
     out = check_open_positions(
         conn=in_memory_db, today="2026-05-20", run_type="pre_market",
-        snapshots_by_ticker={}, trend_context={}, policy_context={},
+        analyses_by_ticker={}, trend_context={}, policy_context={},
         cost_tracker=tracker,
     )
     assert out == []
+
+
+def test_check_one_position_uses_no_web_search(mocker):
+    """B.5: der Portfolio-Check verzichtet auf eine eigene Websuche — die
+    Phase-3-Analyse hat die Recherche bereits bezahlt."""
+    call = mocker.patch("src.portfolio_check.call_claude")
+    call.return_value = MagicMock(
+        text='{"action": "HALTEN", "reason": "ok"}',
+        model="claude-sonnet-4-6", input_tokens=10, output_tokens=5,
+        cache_read_tokens=0, cache_creation_tokens=0, web_search_calls=0,
+    )
+    from src.portfolio_check import check_one_position
+    from src.cost_tracker import CostTracker
+    pred = {"id": 1, "ticker": "AAPL", "direction": "long", "entry_price": 178.0,
+            "tp_price": 184.0, "sl_price": 176.0}
+    check_one_position(
+        prediction=pred, current_snapshot={"ticker": "AAPL"},
+        trend_context={}, policy_context={}, cost_tracker=CostTracker(),
+    )
+    assert call.call_args.kwargs["tools"] == []

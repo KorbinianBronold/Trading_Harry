@@ -40,8 +40,15 @@ def test_build_commodity_crypto_inputs_combines_config_maps():
     assert tickers == expected
 
 
-def test_run_pipeline_calls_phases_in_order():
-    """Smoke-mock every phase and assert the call order."""
+def _mock_all_other_phases(mocker) -> list[str]:
+    """Legt alle Pipeline-Phasen AUSSER Ranking (`rank_and_persist`) und
+    Portfolio-Check (`check_open_positions`) mit Fake-Rueckgabewerten still und
+    protokolliert die Aufrufreihenfolge in der zurueckgegebenen Liste. Die
+    beiden ausgesparten Phasen mockt jeder aufrufende Test selbst — ihre
+    Reihenfolge zueinander ist genau das, was Sprint 3B / Plan 2 (B.5) hier
+    prueft; ein zweiter `mocker.patch` auf dasselbe Ziel wuerde den zuerst
+    gesetzten Fake sonst stillschweigend ueberschreiben (aus
+    test_run_pipeline_calls_phases_in_order herausgezogen, Task 6)."""
     call_log: list[str] = []
 
     def make_mock(name: str, return_value):
@@ -67,47 +74,64 @@ def test_run_pipeline_calls_phases_in_order():
                                  "momentum","risk","sector_trend","catalyst","policy_risk",
                              ]}}]
     fake_cc = []
-    fake_portfolio = []
-    fake_ranking = {"top_long": fake_deep, "top_short": [],
-                    "commodities_crypto": []}
     fake_market_ctx = {"vix_level": 18.0, "vix_source": "capital.com",
                        "advance_decline_ratio": 1.2, "market_regime": "risk_on",
                        "sector_rotation_in": None, "sector_rotation_out": None,
                        "macro_summary": None}
 
-    patches = [
-        patch("main.analyze_trends", side_effect=make_mock("trend", fake_trends)),
-        patch("main.collect", side_effect=make_mock("collect", fake_collect)),
-        patch("main.quick_filter_batch",
-              side_effect=make_mock("quick_filter", fake_quick)),
-        patch("main.run_policy_monitor",
-              side_effect=make_mock("policy", fake_policy)),
-        patch("main.analyze_assets",
-              side_effect=make_mock("deep", fake_deep)),
-        patch("main.analyze_commodities_and_crypto",
-              side_effect=make_mock("cc", fake_cc)),
-        patch("main.check_open_positions",
-              side_effect=make_mock("portfolio", fake_portfolio)),
-        patch("main.rank_and_persist",
-              side_effect=make_mock("ranking", fake_ranking)),
-        patch("main.fetch_fear_greed", return_value={"value": 50, "label": "Neutral"}),
-        patch("main.send_daily_email", side_effect=make_mock("email", None)),
-        patch("main.FinnhubProvider"),
-        # Phase 0b muss mitgemockt werden, sonst geht der Test echt ans Netz:
-        # fetch_market_context ruft Claude und Capital.com.
-        patch("main.fetch_market_context",
-              side_effect=make_mock("market_context", fake_market_ctx)),
-        patch("main.CapitalComProvider"),
-    ]
-    with patches[0], patches[1], patches[2], patches[3], patches[4], \
-         patches[5], patches[6], patches[7], patches[8], patches[9], \
-         patches[10], patches[11], patches[12]:
-        run_pipeline(run_type="close", date="2026-05-19", db_path=":memory:")
+    mocker.patch("main.analyze_trends", side_effect=make_mock("trend", fake_trends))
+    mocker.patch("main.collect", side_effect=make_mock("collect", fake_collect))
+    mocker.patch("main.quick_filter_batch",
+                 side_effect=make_mock("quick_filter", fake_quick))
+    mocker.patch("main.run_policy_monitor",
+                 side_effect=make_mock("policy", fake_policy))
+    mocker.patch("main.analyze_assets", side_effect=make_mock("deep", fake_deep))
+    mocker.patch("main.analyze_commodities_and_crypto",
+                 side_effect=make_mock("cc", fake_cc))
+    mocker.patch("main.fetch_fear_greed", return_value={"value": 50, "label": "Neutral"})
+    mocker.patch("main.send_daily_email", side_effect=make_mock("email", None))
+    mocker.patch("main.FinnhubProvider")
+    # Phase 0b muss mitgemockt werden, sonst geht der Test echt ans Netz:
+    # fetch_market_context ruft Claude und Capital.com.
+    mocker.patch("main.fetch_market_context",
+                 side_effect=make_mock("market_context", fake_market_ctx))
+    mocker.patch("main.CapitalComProvider")
+    return call_log
+
+
+def test_run_pipeline_calls_phases_in_order(mocker):
+    """Smoke-mock every phase and assert the call order. Seit Sprint 3B / Plan 2
+    (B.5) laeuft Phase 4 (Ranking) vor Phase 4a (Portfolio-Check), damit Letzterer
+    auf den fertigen Phase-3-Analysen arbeiten kann statt auf Rohsnapshots."""
+    call_log = _mock_all_other_phases(mocker)
+    fake_ranking = {"top_long": [], "top_short": [], "commodities_crypto": []}
+    mocker.patch("main.rank_and_persist",
+                 side_effect=lambda **kw: call_log.append("ranking") or fake_ranking)
+    mocker.patch("main.check_open_positions",
+                 side_effect=lambda **kw: call_log.append("portfolio") or [])
+
+    run_pipeline(run_type="close", date="2026-05-19", db_path=":memory:")
 
     assert call_log == [
         "trend", "market_context", "collect", "collect", "quick_filter", "policy",
-        "deep", "cc", "portfolio", "ranking", "email",
+        "deep", "cc", "ranking", "portfolio", "email",
     ]
+
+
+def test_ranking_runs_before_portfolio_check(mocker):
+    """B.5: Phase 4 vor Phase 4a. Phase 4a soll auf den fertigen
+    Phase-3-Analysen arbeiten, nicht auf Rohsnapshots."""
+    order: list[str] = []
+    mocker.patch("main.rank_and_persist",
+                 side_effect=lambda **kw: order.append("ranking") or
+                 {"top_long": [], "top_short": [], "commodities_crypto": []})
+    mocker.patch("main.check_open_positions",
+                 side_effect=lambda **kw: order.append("portfolio") or [])
+    # uebrige Phasen wie in test_run_pipeline_calls_phases_in_order mocken
+    _mock_all_other_phases(mocker)
+    from main import run_pipeline
+    run_pipeline(run_type="pre_market", date="2026-07-30", db_path=":memory:")
+    assert order == ["ranking", "portfolio"]
 
 
 def test_run_pipeline_aborts_when_trend_fails(tmp_db_path):
