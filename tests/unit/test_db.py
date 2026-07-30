@@ -286,6 +286,31 @@ def test_load_open_predictions_within_max_age_days(in_memory_db):
     assert p_old not in ids
 
 
+def test_load_open_predictions_excludes_same_day_predictions(in_memory_db):
+    """Sprint 3B / Plan 2, Task 6 Fix: eine Prediction von heute ist noch keine
+    offene Position, sondern nur ein frischer Vorschlag aus Phase 4 desselben
+    Laufs — erst ab dem Folgetag darf Phase 4a sie gegenchecken."""
+    db.init_schema(in_memory_db)
+    pid_today = _insert_test_prediction(in_memory_db, date="2026-05-20")
+    rows = db.load_open_predictions_within_max_age_days(
+        in_memory_db, today="2026-05-20", max_trading_days=5,
+    )
+    ids = {r["id"] for r in rows}
+    assert pid_today not in ids
+
+
+def test_load_open_predictions_includes_yesterdays_open_prediction(in_memory_db):
+    """Gegenprobe zum Ausschluss: eine noch offene Prediction von gestern muss
+    weiterhin gefunden werden, der Folgetag-Filter darf nicht zu viel wegschneiden."""
+    db.init_schema(in_memory_db)
+    pid_yesterday = _insert_test_prediction(in_memory_db, date="2026-05-19")
+    rows = db.load_open_predictions_within_max_age_days(
+        in_memory_db, today="2026-05-20", max_trading_days=5,
+    )
+    ids = {r["id"] for r in rows}
+    assert pid_yesterday in ids
+
+
 def test_save_outcome_with_new_columns(in_memory_db):
     db.init_schema(in_memory_db)
     pid = _insert_test_prediction(in_memory_db)

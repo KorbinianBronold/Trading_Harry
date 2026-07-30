@@ -77,14 +77,14 @@ def test_check_open_positions_writes_recommendation_rows(in_memory_db):
     payload_obj["prediction_id"] = pid
     fake = _fake_result(json.dumps(payload_obj))
     tracker = CostTracker(hard_cap_eur=10.0)
-    snapshots_by_ticker = {"AAPL": {"ticker": "AAPL", "price": 181.2,
-                                    "rsi_14": 60.0, "macd_signal": "bullish_cross",
-                                    "atr_pct": 1.8, "intraday_range_pct": 1.5}}
+    analyses_by_ticker = {"AAPL": {"ticker": "AAPL", "price": 181.2,
+                                   "rsi_14": 60.0, "macd_signal": "bullish_cross",
+                                   "atr_pct": 1.8, "intraday_range_pct": 1.5}}
 
     with patch("src.portfolio_check.call_claude", return_value=fake):
         out = check_open_positions(
             conn=in_memory_db, today="2026-05-20", run_type="pre_market",
-            analyses_by_ticker=snapshots_by_ticker,
+            analyses_by_ticker=analyses_by_ticker,
             trend_context={"trend_summary": "risk-on"},
             policy_context={"policy_risk_level": "low", "events": []},
             cost_tracker=tracker,

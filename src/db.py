@@ -718,13 +718,22 @@ def load_open_predictions_within_max_age_days(
 ) -> list[sqlite3.Row]:
     """Returns open, learnable predictions whose calendar age <= max_trading_days
     days from `today`. We use a calendar approximation (sqlite julianday); the
-    walk-forward evaluator handles trading-day precision separately."""
+    walk-forward evaluator handles trading-day precision separately.
+
+    Predictions mit `date == today` sind ausgeschlossen: sie sind zum Zeitpunkt
+    des Laufs frische Vorschlaege aus Phase 4 desselben Laufs, noch keine
+    offenen Positionen. Erst ab dem Folgetag darf Phase 4a (der Portfolio-Check)
+    sie gegenchecken (Sprint 3B / Plan 2, Fix zu B.5) — ohne diesen Ausschluss
+    pruefte Phase 4a jede gerade erst persistierte Prediction gegen genau die
+    Analyse, die sie erzeugt hat: ein unnoetiger Claude-Call je Signal und
+    derselbe Ticker doppelt in der Mail."""
     return conn.execute(
         """SELECT * FROM predictions
            WHERE status='open' AND learnable=1
+             AND date < ?
              AND julianday(?) - julianday(date) <= ?
            ORDER BY date DESC""",
-        (today, max_trading_days),
+        (today, today, max_trading_days),
     ).fetchall()
 
 
