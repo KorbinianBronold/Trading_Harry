@@ -90,14 +90,14 @@ def check_vix(
     direction: str, confidence: str | None, vix_level: float | None, *,
     enforce: bool,
 ) -> CheckResult | None:
-    """VIX-Filter aus B.3. Ueber VIX_NO_NEW_LONGS keine neuen Long-Signale mehr,
-    im Band dazwischen (ueber VIX_HIGH_CONFIDENCE_ONLY, aber noch nicht ueber
-    VIX_NO_NEW_LONGS) nur noch confidence='high' — fuer beide Richtungen.
-
-    Die beiden Schwellen partitionieren die VIX-Achse, statt sich zu ueberlappen:
-    ab VIX_NO_NEW_LONGS greift ausschliesslich das Long-Verbot, das Confidence-Band
-    ist dann bereits durchlaufen. Shorts sind vom Long-Verbot nie betroffen und
-    bleiben oberhalb von VIX_NO_NEW_LONGS ungefiltert.
+    """VIX-Filter aus B.3. Die beiden Schwellen gelten KUMULATIV, nicht exklusiv:
+    ab VIX_HIGH_CONFIDENCE_ONLY nur noch confidence='high' — fuer beide Richtungen
+    und ohne Obergrenze —, zusaetzlich ab VIX_NO_NEW_LONGS gar keine neuen
+    Long-Signale mehr. Der Filter darf mit steigender Volatilitaet nur strenger
+    werden, nie lockerer: ein Short mit confidence='medium' bleibt auch weit
+    oberhalb von VIX_NO_NEW_LONGS blockiert, weil das Confidence-Band dort nicht
+    endet, sondern weiterlaeuft. Nur das zusaetzliche Long-Verbot ist auf 'long'
+    beschraenkt — Shorts sind ausschliesslich davon nie betroffen.
 
     Faellt Phase 0b aus und bleibt vix_level None, filtert der Check nicht — ein
     fehlender Messwert ist kein Grund, alle Signale zu verwerfen."""
@@ -110,8 +110,7 @@ def check_vix(
                    f"keine neuen Long-Signale",
             enforced=enforce,
         )
-    if (config.VIX_HIGH_CONFIDENCE_ONLY < vix_level <= config.VIX_NO_NEW_LONGS
-            and confidence != "high"):
+    if vix_level > config.VIX_HIGH_CONFIDENCE_ONLY and confidence != "high":
         return CheckResult(
             rule="vix_high_confidence_only",
             detail=f"VIX {vix_level:.1f} > {config.VIX_HIGH_CONFIDENCE_ONLY:.0f} — "

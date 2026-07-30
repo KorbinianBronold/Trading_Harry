@@ -100,13 +100,23 @@ def test_vix_above_35_blocks_new_longs():
 def test_vix_above_35_leaves_shorts_alone():
     """Die Regel lautet 'keine neuen LONG-Signale' — Shorts sind nicht gemeint."""
     from src.signal_checks import check_vix
-    assert check_vix("short", "medium", 40.0, enforce=True) is None
+    assert check_vix("short", "high", 40.0, enforce=True) is None
 
 
 def test_vix_between_25_and_35_blocks_only_low_confidence():
     from src.signal_checks import check_vix
     assert check_vix("long", "high", 28.0, enforce=True) is None
     r = check_vix("long", "medium", 28.0, enforce=True)
+    assert r is not None and r.rule == "vix_high_confidence_only"
+
+
+def test_vix_confidence_filter_stays_cumulative_above_35():
+    """Regression: der Filter darf mit steigender Volatilitaet nur strenger werden,
+    nie lockerer. Ein Short mit confidence='medium' war bei VIX 28 blockiert —
+    bei VIX 40 muss das Confidence-Band weiterhin greifen, nicht plötzlich
+    verschwinden, nur weil die Long-Schwelle zusaetzlich ueberschritten ist."""
+    from src.signal_checks import check_vix
+    r = check_vix("short", "medium", 40.0, enforce=True)
     assert r is not None and r.rule == "vix_high_confidence_only"
 
 
