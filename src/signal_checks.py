@@ -79,3 +79,93 @@ def check_cluster(sector_name: str | None, count: int) -> CheckResult | None:
         detail=f"{count} Signale im Sub-Sektor {sector_name} — Klumpenrisiko",
         enforced=False,
     )
+
+
+def blocks(results: list[CheckResult]) -> bool:
+    """True, wenn mindestens ein Check das Signal tatsaechlich verwirft."""
+    return any(r.enforced for r in results)
+
+
+def check_vix(
+    direction: str, confidence: str | None, vix_level: float | None, *,
+    enforce: bool,
+) -> CheckResult | None:
+    """VIX-Filter aus B.3. Ueber VIX_NO_NEW_LONGS keine neuen Long-Signale mehr,
+    im Band dazwischen (ueber VIX_HIGH_CONFIDENCE_ONLY, aber noch nicht ueber
+    VIX_NO_NEW_LONGS) nur noch confidence='high' — fuer beide Richtungen.
+
+    Die beiden Schwellen partitionieren die VIX-Achse, statt sich zu ueberlappen:
+    ab VIX_NO_NEW_LONGS greift ausschliesslich das Long-Verbot, das Confidence-Band
+    ist dann bereits durchlaufen. Shorts sind vom Long-Verbot nie betroffen und
+    bleiben oberhalb von VIX_NO_NEW_LONGS ungefiltert.
+
+    Faellt Phase 0b aus und bleibt vix_level None, filtert der Check nicht — ein
+    fehlender Messwert ist kein Grund, alle Signale zu verwerfen."""
+    if vix_level is None:
+        return None
+    if vix_level > config.VIX_NO_NEW_LONGS and direction == "long":
+        return CheckResult(
+            rule="vix_no_new_longs",
+            detail=f"VIX {vix_level:.1f} > {config.VIX_NO_NEW_LONGS:.0f} — "
+                   f"keine neuen Long-Signale",
+            enforced=enforce,
+        )
+    if (config.VIX_HIGH_CONFIDENCE_ONLY < vix_level <= config.VIX_NO_NEW_LONGS
+            and confidence != "high"):
+        return CheckResult(
+            rule="vix_high_confidence_only",
+            detail=f"VIX {vix_level:.1f} > {config.VIX_HIGH_CONFIDENCE_ONLY:.0f} — "
+                   f"nur confidence='high', hier '{confidence}'",
+            enforced=enforce,
+        )
+    return None
+
+
+def _supports(direction: str, momentum: float) -> bool:
+    """True, wenn das Sektor-Momentum in dieselbe Richtung zeigt wie der Trade."""
+    return momentum > 0 if direction == "long" else momentum < 0
+
+
+def check_sector_momentum(
+    direction: str, etf_momentum: float | None, db_momentum: float | None, *,
+    enforce: bool,
+) -> CheckResult | None:
+    """D9-Guardrail nach B.3.1. Verglichen wird die RICHTUNG, nie der Betrag.
+
+    Der Live-Lauf vom 2026-07-28 zeigt Abweichungen um Faktor ~2,5 zwischen ETF-
+    und DB-Signal bei identischem Vorzeichen (Retail +2,89% gegen +1,17%): XRT ist
+    gleichgewichtet und small-cap-lastig, unsere Retail-Ticker sind AMZN/WMT/HD.
+    Ein Schwellenwert auf der Differenz waere damit reines Rauschen.
+
+    Hart verworfen wird nur, wenn BEIDE Signale vorliegen, in dieselbe Richtung
+    zeigen, der Trade-Richtung widersprechen — und SECTOR_GUARDRAIL_STRICT an ist."""
+    if etf_momentum is None and db_momentum is None:
+        return None
+
+    if etf_momentum is not None and db_momentum is not None:
+        if (etf_momentum > 0) != (db_momentum > 0):
+            return CheckResult(
+                rule="sector_momentum_conflict",
+                detail=f"Sektor-Momentum widerspruechlich: ETF {etf_momentum:+.2f}%, "
+                       f"DB {db_momentum:+.2f}%",
+                enforced=False,
+            )
+        if _supports(direction, etf_momentum):
+            return None
+        return CheckResult(
+            rule="sector_momentum",
+            detail=f"Beide Sektor-Signale gegen {direction}: "
+                   f"ETF {etf_momentum:+.2f}%, DB {db_momentum:+.2f}%",
+            enforced=enforce and config.SECTOR_GUARDRAIL_STRICT,
+        )
+
+    value = etf_momentum if etf_momentum is not None else db_momentum
+    source = "ETF" if etf_momentum is not None else "DB"
+    if _supports(direction, value):
+        return None
+    return CheckResult(
+        rule="sector_momentum_partial",
+        detail=f"Nur das {source}-Signal vorhanden ({value:+.2f}%) und gegen "
+               f"{direction} — kein Gegencheck moeglich",
+        enforced=False,
+    )

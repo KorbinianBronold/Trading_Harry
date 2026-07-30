@@ -82,3 +82,114 @@ def test_cluster_check_warns_at_the_threshold():
     assert r.rule == "sector_cluster"
     assert r.enforced is False, "Klumpenrisiko ist immer nur eine Warnung"
     assert "Semiconductors" in r.detail
+
+
+# ---------- VIX (B.3, hartes Filterkriterium) ----------
+
+def test_vix_below_thresholds_is_silent():
+    from src.signal_checks import check_vix
+    assert check_vix("long", "medium", 18.0, enforce=True) is None
+
+
+def test_vix_above_35_blocks_new_longs():
+    from src.signal_checks import check_vix
+    r = check_vix("long", "high", 40.0, enforce=True)
+    assert r is not None and r.rule == "vix_no_new_longs" and r.enforced is True
+
+
+def test_vix_above_35_leaves_shorts_alone():
+    """Die Regel lautet 'keine neuen LONG-Signale' — Shorts sind nicht gemeint."""
+    from src.signal_checks import check_vix
+    assert check_vix("short", "medium", 40.0, enforce=True) is None
+
+
+def test_vix_between_25_and_35_blocks_only_low_confidence():
+    from src.signal_checks import check_vix
+    assert check_vix("long", "high", 28.0, enforce=True) is None
+    r = check_vix("long", "medium", 28.0, enforce=True)
+    assert r is not None and r.rule == "vix_high_confidence_only"
+
+
+def test_vix_is_silent_when_the_level_is_unknown():
+    """Phase 0b darf ausfallen — dann filtert der VIX-Check eben nicht."""
+    from src.signal_checks import check_vix
+    assert check_vix("long", "medium", None, enforce=True) is None
+
+
+# ---------- E4: derselbe Check, zwei Runs ----------
+
+def test_same_check_blocks_only_when_enforce_is_true():
+    """Entscheidung E4 in einem Test: pre_market erhebt und warnt,
+    trade_proposals setzt durch."""
+    from src.signal_checks import check_vix
+    weich = check_vix("long", "medium", 40.0, enforce=False)
+    hart = check_vix("long", "medium", 40.0, enforce=True)
+    assert weich is not None and hart is not None
+    assert weich.rule == hart.rule, "gleicher Befund"
+    assert weich.enforced is False and hart.enforced is True
+
+
+# ---------- D9: Sektor-Momentum (B.3.1) ----------
+
+def test_d9_silent_when_both_signals_support_the_direction():
+    from src.signal_checks import check_sector_momentum
+    assert check_sector_momentum("long", 1.2, 0.8, enforce=True) is None
+
+
+def test_d9_silent_when_no_signal_exists():
+    """B.3.1 woertlich: 'keines vorhanden -> kein Check, KEIN Log-Eintrag'."""
+    from src.signal_checks import check_sector_momentum
+    assert check_sector_momentum("long", None, None, enforce=True) is None
+
+
+def test_d9_hard_only_when_both_agree_and_strict_is_on(monkeypatch):
+    import config
+    from src.signal_checks import check_sector_momentum
+    monkeypatch.setattr(config, "SECTOR_GUARDRAIL_STRICT", True)
+    r = check_sector_momentum("long", -1.5, -0.9, enforce=True)
+    assert r is not None and r.rule == "sector_momentum" and r.enforced is True
+
+
+def test_d9_stays_soft_while_strict_is_off(monkeypatch):
+    import config
+    from src.signal_checks import check_sector_momentum
+    monkeypatch.setattr(config, "SECTOR_GUARDRAIL_STRICT", False)
+    r = check_sector_momentum("long", -1.5, -0.9, enforce=True)
+    assert r is not None and r.enforced is False
+
+
+def test_d9_conflicting_signals_stay_soft_even_with_strict(monkeypatch):
+    """Widerspruechliche Signale duerfen NIE hart blocken — auch nicht mit STRICT."""
+    import config
+    from src.signal_checks import check_sector_momentum
+    monkeypatch.setattr(config, "SECTOR_GUARDRAIL_STRICT", True)
+    r = check_sector_momentum("long", -1.5, +0.9, enforce=True)
+    assert r is not None and r.rule == "sector_momentum_conflict"
+    assert r.enforced is False
+
+
+def test_d9_single_signal_stays_soft_even_with_strict(monkeypatch):
+    """Der MVP-Normalfall: 19 von 21 Sub-Sektoren haben nur das ETF-Signal."""
+    import config
+    from src.signal_checks import check_sector_momentum
+    monkeypatch.setattr(config, "SECTOR_GUARDRAIL_STRICT", True)
+    r = check_sector_momentum("long", -1.5, None, enforce=True)
+    assert r is not None and r.rule == "sector_momentum_partial"
+    assert r.enforced is False
+
+
+def test_d9_compares_direction_not_magnitude(monkeypatch):
+    """Live-Befund 2026-07-28: Retail lag bei +2,89% ETF gegen +1,17% DB.
+    Faktor ~2,5 bei gleichem Vorzeichen ist KEIN Widerspruch."""
+    import config
+    from src.signal_checks import check_sector_momentum
+    monkeypatch.setattr(config, "SECTOR_GUARDRAIL_STRICT", True)
+    assert check_sector_momentum("long", 2.89, 1.17, enforce=True) is None
+
+
+def test_blocks_is_true_only_for_enforced_results():
+    from src.signal_checks import CheckResult, blocks
+    assert blocks([CheckResult("a", "x", enforced=False)]) is False
+    assert blocks([CheckResult("a", "x", enforced=False),
+                   CheckResult("b", "y", enforced=True)]) is True
+    assert blocks([]) is False

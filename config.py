@@ -94,6 +94,16 @@ SECTOR_DB_MOMENTUM_MIN_TICKERS = 3
 # vor Klumpenrisiko warnt. Reine Warnung, blockiert nie.
 SECTOR_CLUSTER_WARN_AT = 3
 
+# Sprint 3B / Plan 2 (B.3): VIX-Schwellen. Ueber HIGH_CONFIDENCE_ONLY gehen nur
+# noch Signale mit confidence='high' durch, ueber NO_NEW_LONGS gar keine Longs mehr.
+VIX_HIGH_CONFIDENCE_ONLY = 25.0
+VIX_NO_NEW_LONGS = 35.0
+
+# D9 (B.3.1): solange False, blockiert der Sektor-Guardrail nie — er schreibt nur
+# guardrail_rejects-Zeilen mit enforced=0. Erst auf True stellen, wenn die
+# Sub-Sektor-Mapping-Abdeckung in der Weekly-Mail stabil hoch ist.
+SECTOR_GUARDRAIL_STRICT = False
+
 # Normalisierung: Finnhub liefert im Feld `finnhubIndustry` ein gemischtes
 # Vokabular — teils Sektor-Ebene ("Consumer Cyclical"), teils Industrie-Ebene
 # ("Semiconductors"), teils Yahoo-Bezeichnungen. Dieses Dict bildet alle bekannten
