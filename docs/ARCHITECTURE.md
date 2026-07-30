@@ -466,8 +466,11 @@ Rendert HTML und sendet via **Resend** (`POST https://api.resend.com/emails`).
 > providerspezifische Stelle — jedes `send_*_email()` laeuft dort durch. Bewusst
 > `requests` statt Anbieter-SDK: es ist genau ein POST, `requests` ist ohnehin
 > Abhaengigkeit, und Resend sitzt hinter Cloudflare, das die `urllib`-Signatur mit
-> HTTP 403 / „error code: 1010" abweist. Ohne verifizierte Domain akzeptiert Resend
-> nur `onboarding@resend.dev` als Absender und nur die Konto-Adresse als Empfaenger.
+> HTTP 403 / „error code: 1010" abweist. Resend verlangt eine **verifizierte eigene
+> Domain**; `tradingharry.com` ist seit 2026-07-30 verifiziert, Absender ist
+> `noreply@tradingharry.com`. Ein 2xx auf den POST heisst nur „angenommen" — die
+> Zustellung laeuft asynchron, Fehlschlaege zeigen sich erst unter
+> `GET /emails/{id}` als `last_event="failed"`.
 
 ```python
 def render_daily_html(

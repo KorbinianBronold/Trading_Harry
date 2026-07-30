@@ -545,7 +545,7 @@ Standardbibliothek — dafür kein Zustellungs-Reporting und Gmail-eigene Sendel
 | Befund | Wert |
 |---|---|
 | Freikontingent | **3 000 Mails/Monat, 100/Tag** (vom Konto bestätigt) |
-| Verifizierte Domains | **keine** → Absender zwingend `onboarding@resend.dev`, Empfänger nur die Konto-Adresse |
+| Verifizierte Domain | **`tradingharry.com`** (seit 2026-07-30, Region eu-west-1) → Absender `noreply@tradingharry.com`, beliebige Empfänger |
 | Key-Rechte | **Full Access** — bewusst, damit die lesende Verbindungsprüfung über `GET /domains` möglich bleibt |
 | Endpunkt | `POST https://api.resend.com/emails`, Felder `from`, `to[]`, `subject`, `html` |
 
@@ -564,10 +564,34 @@ Standardbibliothek — dafür kein Zustellungs-Reporting und Gmail-eigene Sendel
 
 ### M.6 — Ergebnis der Live-Verifikation *(2026-07-30)*
 
-Alle sechs Checks grün, lokal ausgeführt (`pytest tests/live --run-live`):
-Anthropic, Finnhub-Quote, Finnhub-Fundamentals, Capital.com, Resend-Key **und
-echter Versand** — die Testmail kam an. Damit ist erstmals seit 2026-07-13 ein
-Zustellweg nachweislich funktionsfähig.
+**Erster Anlauf war ein Fehlalarm.** Der Test meldete „Versand erfolgreich", weil er
+nur den HTTP-Status prüfte. Resend nimmt mit `200` an und stellt **asynchron** zu; die
+Mail scheiterte danach mit `last_event="failed"`, weil keine Absenderdomain verifiziert
+war. Zwei Ursachen, beide auf Claudes Seite:
+
+1. **Erfolgskriterium zu schwach.** `2xx` heißt „angenommen", nicht „zugestellt".
+2. **`onboarding@resend.dev` als Absender empfohlen**, ohne es zu prüfen. Resends Doku
+   ist eindeutig: *„You must add and verify at least one domain"* und *„Resend sends
+   emails using a domain you own (not a shared or public domain)."* Der daraufhin
+   gebaute Domain-Check hat diese falsche Annahme dann sogar per `assert` abgesegnet.
+
+**Konsequenz im Code** (`034ef5c`): `_send()` gibt die `messageId` zurück, der
+Versandtest pollt `GET /emails/{id}` und fällt bei `failed`/`bounced`/`complained`.
+Die lesenden Checks sind getrennt in „Key gültig" und „Absenderdomain verifiziert" —
+ein gültiger Schlüssel sagt nichts über Zustellbarkeit.
+
+**Endstand nach Domain-Verifikation:** eigene Domain `tradingharry.com` registriert
+(Nameserver bei Cloudflare) und in Resend verifiziert. Alle **sieben** Live-Checks grün:
+Anthropic, Finnhub-Quote, Finnhub-Fundamentals, Capital.com, Resend-Key,
+Resend-Absenderdomain und der echte Versand mit bestätigter Zustellung.
+
+> **Diagnose-Notiz:** Die Verifikation hing zwei Stunden auf „pending", weil die
+> DNS-Zone leer war — `dig` fand weder MX noch TXT noch DKIM, auch nicht auf den
+> üblichen Tippfehler-Varianten. Ursache: die Records müssen dort gesetzt werden,
+> wohin die **Nameserver** zeigen (hier Cloudflare), nicht beim Registrar. Bei
+> Cloudflare hängt das Feld „Name" die Zone automatisch an — voller Hostname im
+> Namensfeld erzeugt `send.example.com.example.com`. `dig` zeigt beides in Sekunden
+> und unabhängig vom Prüfzyklus des Anbieters.
 
 ### M.3 — Vorgehen
 

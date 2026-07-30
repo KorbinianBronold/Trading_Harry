@@ -238,7 +238,7 @@ In GitHub Repo Settings → Secrets and variables → Actions:
 | `ANTHROPIC_API_KEY` | sk-ant-... | https://console.anthropic.com |
 | `RESEND_API_KEY` | re_xxx... | https://resend.com/api-keys |
 | `EMAIL_TO` | korbinian.bronold@gmail.com | Deine E-Mail |
-| `EMAIL_FROM` | onboarding@resend.dev | Resend-Testabsender; eigene Domain erst nach DNS-Verifikation |
+| `EMAIL_FROM` | noreply@tradingharry.com | Adresse auf der bei Resend verifizierten Domain |
 | `CAPITAL_COM_API_KEY` | ... | Capital.com Demo Account |
 | `CAPITAL_COM_PASSWORD` | ... | Capital.com Demo Account |
 | `FINNHUB_API_KEY` | ... | https://finnhub.io |
@@ -452,7 +452,7 @@ Das MVP ist erst **production-ready**, wenn folgende Kriterien erfüllt sind:
    - Test ohne Kontingentverbrauch: `pytest tests/live -m live_api --run-live`
    - Test mit echtem Versand: `pytest tests/live -m live_email --run-live`
 
-3. **Spam-Ordner?** Mails von `onboarding@resend.dev` können im Spam landen – whitelisten.
+3. **Spam-Ordner?** Mails von `noreply@tradingharry.com` können im Spam landen – whitelisten.
 
 4. **Logs in GitHub Actions:**
    ```bash
