@@ -39,7 +39,7 @@ jobs:
       CAPITAL_COM_API_KEY:    ${{ secrets.CAPITAL_COM_API_KEY }}
       CAPITAL_COM_IDENTIFIER: ${{ secrets.CAPITAL_COM_IDENTIFIER }}
       CAPITAL_COM_PASSWORD:   ${{ secrets.CAPITAL_COM_PASSWORD }}
-      SENDGRID_API_KEY:       ${{ secrets.SENDGRID_API_KEY }}
+      RESEND_API_KEY:         ${{ secrets.RESEND_API_KEY }}
       EMAIL_FROM:             ${{ secrets.EMAIL_FROM }}
       EMAIL_TO:               ${{ secrets.EMAIL_TO }}
     steps:

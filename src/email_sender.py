@@ -1,4 +1,4 @@
-"""Phase 5: E-Mail rendering and SendGrid delivery.
+"""Phase 5: E-Mail rendering and delivery via Resend.
 
 Error-Mail: send_error_email() is called by main.py on any unhandled exception.
 It replaces the normal run email so the user is informed via the same channel.
@@ -15,15 +15,16 @@ import html
 import logging
 from typing import Any
 
-from sendgrid import SendGridAPIClient
-from sendgrid.helpers.mail import Mail
+import requests
 
 log = logging.getLogger("shares_future.email_sender")
 
+RESEND_ENDPOINT = "https://api.resend.com/emails"
+
 
 class EmailSendError(RuntimeError):
-    """SendGrid returned a non-2xx response. Caller should still treat the run
-    as successful — the data is in the DB."""
+    """Delivery failed (non-2xx or transport error). Caller should still treat
+    the run as successful — the data is in the DB (s. B-10)."""
 
 
 # ---------- Daily HTML ----------
@@ -330,39 +331,50 @@ def send_weekly_email(
 
 def _send(api_key: str, email_from: str, email_to: str,
           subject: str, html_body: str) -> None:
-    """Shared SendGrid delivery call used by every send_*_email(); raises
-    EmailSendError on a non-2xx response.
+    """Shared delivery call used by every send_*_email(); raises EmailSendError
+    on any non-2xx response or transport failure.
 
-    Der Antwort-Body wird ausdruecklich mitgereicht: python_http_client wirft bei
-    4xx eine Exception, deren str() nur "HTTP Error 401: Unauthorized" lautet —
-    die eigentliche Ursache steht ausschliesslich in .body. SendGrid meldet dort
-    z.B. "Maximum credits exceeded", also ein aufgebrauchtes Kontingent, unter
-    demselben 401 wie ein ungueltiger Schluessel. Ohne den Body sucht man den
-    Fehler beim Key statt beim Tarif (erlebt am 2026-07-29)."""
-    mail = Mail(
-        from_email=email_from, to_emails=email_to,
-        subject=subject, html_content=html_body,
-    )
-    client = SendGridAPIClient(api_key)
+    Bewusst `requests` und kein Anbieter-SDK: es ist genau ein POST, requests ist
+    ohnehin Abhaengigkeit (capital_provider), und Resend sitzt hinter Cloudflare,
+    das die urllib-Signatur mit HTTP 403 / "error code: 1010" sperrt.
+
+    Der Antwort-Body wird ausdruecklich mitgereicht. Ein abgelehnter Absender und
+    ein ungueltiger Schluessel kommen beide als 4xx; ohne Klartext sucht man den
+    Fehler an der falschen Stelle. Genau daran ist beim Vorgaenger SendGrid ein
+    Abend verlorengegangen, wo ein aufgebrauchtes Kontingent als 401 auftrat und
+    wie ein kaputter Key aussah."""
     try:
-        resp = client.send(mail)
-    except Exception as e:
-        body = getattr(e, "body", None)
-        if isinstance(body, (bytes, bytearray)):
-            body = body.decode("utf-8", "replace")
-        status = getattr(e, "status_code", None)
-        detail = f" — {body}" if body else ""
-        raise EmailSendError(
-            f"SendGrid rejected the message"
-            f"{f' (status {status})' if status else ''}: {e}{detail}"
-        ) from e
-
-    if not (200 <= getattr(resp, "status_code", 0) < 300):
-        raise EmailSendError(
-            f"SendGrid returned status {resp.status_code}: "
-            f"{getattr(resp, 'body', '')!r}"
+        resp = requests.post(
+            RESEND_ENDPOINT,
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "from": email_from,
+                "to": [email_to],
+                "subject": subject,
+                "html": html_body,
+            },
+            timeout=30,
         )
-    log.info(f"SendGrid accepted message (status={resp.status_code})")
+    except Exception as e:
+        raise EmailSendError(f"Resend request failed: {type(e).__name__}: {e}") from e
+
+    if not (200 <= resp.status_code < 300):
+        raise EmailSendError(
+            f"Resend rejected the message (status {resp.status_code}): "
+            f"{resp.text[:500]}"
+        )
+
+    try:
+        message_id = resp.json().get("id")
+    except Exception:
+        message_id = None
+    log.info(
+        f"Resend accepted message (status={resp.status_code}"
+        f"{f', id={message_id}' if message_id else ''})"
+    )
 
 
 # ---------- Position-Check HTML ----------

@@ -291,7 +291,7 @@ def run_pipeline(run_type: str, date: str, db_path: str) -> None:
     try:
         send_daily_email(
             payload=payload,
-            api_key=config.SENDGRID_API_KEY,
+            api_key=config.RESEND_API_KEY,
             email_from=config.EMAIL_FROM, email_to=config.EMAIL_TO,
         )
     except Exception as e:
@@ -363,7 +363,7 @@ def run_position_check(date: str, db_path: str) -> None:
 
     send_position_check_email(
         payload={"date": date, **parsed},
-        api_key=config.SENDGRID_API_KEY,
+        api_key=config.RESEND_API_KEY,
         email_from=config.EMAIL_FROM,
         email_to=config.EMAIL_TO,
     )
@@ -395,7 +395,7 @@ def run_weekly(date: str, db_path: str) -> None:
                          "web_search_calls": 0, "aborted_at_phase": None},
     }
     send_weekly_email(
-        payload=payload, api_key=config.SENDGRID_API_KEY,
+        payload=payload, api_key=config.RESEND_API_KEY,
         email_from=config.EMAIL_FROM, email_to=config.EMAIL_TO,
     )
     conn.close()
@@ -424,12 +424,12 @@ def main(argv: list[str] | None = None) -> None:
     except Exception as exc:
         tb_text = traceback.format_exc()
         log.error(f"Run {ns.run_type} FAILED: {exc}\n{tb_text}")
-        if config.SENDGRID_API_KEY and config.EMAIL_FROM and config.EMAIL_TO:
+        if config.RESEND_API_KEY and config.EMAIL_FROM and config.EMAIL_TO:
             try:
                 send_error_email(
                     run_type=ns.run_type, date=date, exc=exc,
                     traceback_text=tb_text,
-                    api_key=config.SENDGRID_API_KEY,
+                    api_key=config.RESEND_API_KEY,
                     email_from=config.EMAIL_FROM, email_to=config.EMAIL_TO,
                 )
             except Exception as mail_exc:

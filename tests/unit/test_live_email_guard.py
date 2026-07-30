@@ -17,7 +17,7 @@ WORKFLOW = (ROOT / ".github" / "workflows" / "test.yml").read_text()
 REQUIRED_SECRETS = (
     "ANTHROPIC_API_KEY", "FINNHUB_API_KEY",
     "CAPITAL_COM_API_KEY", "CAPITAL_COM_IDENTIFIER", "CAPITAL_COM_PASSWORD",
-    "SENDGRID_API_KEY", "EMAIL_FROM", "EMAIL_TO",
+    "RESEND_API_KEY", "EMAIL_FROM", "EMAIL_TO",
 )
 
 
@@ -51,7 +51,7 @@ def test_read_only_checks_and_the_send_use_different_markers():
 
 
 def test_every_external_service_has_a_connectivity_check():
-    for needle in ("anthropic", "finnhub", "capital", "sendgrid"):
+    for needle in ("anthropic", "finnhub", "capital", "resend"):
         assert needle in LIVE_API.lower(), f"Keine Live-Pruefung fuer {needle}"
 
 

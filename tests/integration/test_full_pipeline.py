@@ -125,10 +125,11 @@ def test_full_pipeline_writes_predictions_and_sends_email(tmp_path, monkeypatch)
          patch("src.commodities_crypto.call_claude",
                side_effect=[sequence[6], sequence[7]]), \
          patch("src.portfolio_check.call_claude"), \
-         patch("src.email_sender.SendGridAPIClient") as mock_sg, \
+         patch("src.email_sender.requests.post") as mock_sg, \
          patch("src.commodities_crypto.fetch_fear_greed",
                return_value={"value": 55, "label": "Greed"}):
-        mock_sg.return_value.send.return_value = MagicMock(status_code=202)
+        mock_sg.return_value = MagicMock(status_code=200,
+                                         json=lambda: {'id': 'test-id'})
         orchestrator.run_pipeline(run_type="close", date="2026-05-19",
                                   db_path=str(db_path))
 
@@ -156,4 +157,4 @@ def test_full_pipeline_writes_predictions_and_sends_email(tmp_path, monkeypatch)
     assert pred["vix_at_prediction"] == vix_from_provider
     assert pred["market_regime"] == "risk_on"
 
-    mock_sg.return_value.send.assert_called_once()
+    mock_sg.assert_called_once()

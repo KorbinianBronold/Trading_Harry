@@ -120,37 +120,51 @@ def test_weekly_html_renders_win_rate_and_trade_list():
     assert "NVDA" in html
 
 
-def test_send_daily_email_posts_via_sendgrid():
+def test_send_daily_email_posts_to_resend():
     payload = _sample_payload()
-    mock_response = MagicMock()
-    mock_response.status_code = 202
-    mock_sg_class = MagicMock()
-    mock_sg_instance = MagicMock()
-    mock_sg_instance.send.return_value = mock_response
-    mock_sg_class.return_value = mock_sg_instance
-    with patch("src.email_sender.SendGridAPIClient", mock_sg_class):
+    resp = MagicMock()
+    resp.status_code = 200
+    resp.json.return_value = {"id": "abc-123"}
+    with patch("src.email_sender.requests.post", return_value=resp) as post:
         send_daily_email(
             payload=payload,
-            api_key="SG.fake",
-            email_from="from@example.com",
+            api_key="re_fake",
+            email_from="onboarding@resend.dev",
             email_to="to@example.com",
         )
-    mock_sg_instance.send.assert_called_once()
+    post.assert_called_once()
+    url = post.call_args.args[0] if post.call_args.args else post.call_args.kwargs["url"]
+    assert url == "https://api.resend.com/emails"
+    sent = post.call_args.kwargs["json"]
+    assert sent["from"] == "onboarding@resend.dev"
+    assert sent["to"] == ["to@example.com"]
+    assert "<" in sent["html"], "HTML-Body muss als html-Feld gehen, nicht als text"
+    assert post.call_args.kwargs["headers"]["Authorization"] == "Bearer re_fake"
+
+
+def test_send_uses_requests_not_urllib():
+    """Resend sitzt hinter Cloudflare, das die urllib-Signatur mit 403/1010
+    sperrt. Der Versand MUSS ueber requests laufen."""
+    import inspect
+    import re
+    from src import email_sender
+    src = inspect.getsource(email_sender)
+    # Auf den Import pruefen, nicht auf das Wort — der Docstring erwaehnt urllib
+    # bewusst, um die Entscheidung zu begruenden.
+    assert not re.search(r"^\s*(import urllib|from urllib)", src, re.M)
+    assert "requests.post" in src
 
 
 def test_send_daily_email_raises_on_non_2xx():
     payload = _sample_payload()
-    mock_response = MagicMock()
-    mock_response.status_code = 500
-    mock_response.body = b"server error"
-    mock_sg_instance = MagicMock()
-    mock_sg_instance.send.return_value = mock_response
-    with patch("src.email_sender.SendGridAPIClient",
-               return_value=mock_sg_instance):
+    resp = MagicMock()
+    resp.status_code = 500
+    resp.text = "server error"
+    with patch("src.email_sender.requests.post", return_value=resp):
         with pytest.raises(EmailSendError):
             send_daily_email(
-                payload=payload, api_key="SG.fake",
-                email_from="from@example.com", email_to="to@example.com",
+                payload=payload, api_key="re_fake",
+                email_from="onboarding@resend.dev", email_to="to@example.com",
             )
 
 
@@ -264,43 +278,48 @@ def test_send_position_check_email_subject_contains_count(mocker):
     assert "1" in subject
 
 
-# ---------- SendGrid-Fehlertext durchreichen ----------
+# ---------- Fehlertext des Anbieters durchreichen ----------
 
 
-def test_send_surfaces_the_sendgrid_response_body(mocker):
-    """SendGrid meldet ein aufgebrauchtes Kontingent als HTTP 401 mit dem Text
-    'Maximum credits exceeded' im Body. Die python_http_client-Exception traegt
-    den Body in .body, aber nicht in str(e) — ohne Durchreichen liest sich ein
-    Quota-Problem wie ein ungueltiger Key. Genau darauf sind wir am 2026-07-29
-    hereingefallen."""
+def test_send_surfaces_the_provider_response_body(mocker):
+    """Ein 4xx ohne Klartext kostet Stunden. Bei SendGrid war ein leeres
+    Kontingent nicht von einem kaputten Key zu unterscheiden, weil der Body
+    verworfen wurde. Bei Resend kommen ein abgelehnter Absender und ein
+    ungueltiger Key ebenfalls beide als 4xx — der Body muss mit."""
     from src.email_sender import _send, EmailSendError
 
-    class FakeUnauthorized(Exception):
-        status_code = 401
-        body = b'{"errors":[{"message":"Maximum credits exceeded"}]}'
-
-        def __str__(self):
-            return "HTTP Error 401: Unauthorized"
-
-    client = mocker.MagicMock()
-    client.send.side_effect = FakeUnauthorized()
-    mocker.patch("src.email_sender.SendGridAPIClient", return_value=client)
+    resp = mocker.MagicMock()
+    resp.status_code = 403
+    resp.text = '{"message":"The onboarding@resend.dev address is restricted"}'
+    mocker.patch("src.email_sender.requests.post", return_value=resp)
 
     with pytest.raises(EmailSendError) as e:
-        _send("k", "a@b.de", "c@d.de", "subj", "<p>x</p>")
+        _send("re_k", "onboarding@resend.dev", "c@d.de", "subj", "<p>x</p>")
 
-    assert "Maximum credits exceeded" in str(e.value)
-    assert "401" in str(e.value)
+    assert "restricted" in str(e.value)
+    assert "403" in str(e.value)
 
 
-def test_send_survives_an_exception_without_a_body(mocker):
-    """Ein Netzwerkfehler ohne .body darf nicht am Auslesen scheitern."""
+def test_send_survives_a_transport_error(mocker):
+    """Ein Netzwerkfehler darf nicht als AttributeError durchschlagen."""
     from src.email_sender import _send, EmailSendError
 
-    client = mocker.MagicMock()
-    client.send.side_effect = ConnectionError("connection reset")
-    mocker.patch("src.email_sender.SendGridAPIClient", return_value=client)
-
+    mocker.patch("src.email_sender.requests.post",
+                 side_effect=ConnectionError("connection reset"))
     with pytest.raises(EmailSendError) as e:
-        _send("k", "a@b.de", "c@d.de", "subj", "<p>x</p>")
+        _send("re_k", "onboarding@resend.dev", "c@d.de", "subj", "<p>x</p>")
     assert "connection reset" in str(e.value)
+
+
+def test_send_logs_the_message_id_on_success(mocker, caplog):
+    """Resend gibt eine id zurueck — die ist der Belegnachweis im Log."""
+    from src.email_sender import _send
+
+    resp = mocker.MagicMock()
+    resp.status_code = 200
+    resp.json.return_value = {"id": "9f1c-42"}
+    mocker.patch("src.email_sender.requests.post", return_value=resp)
+
+    with caplog.at_level("INFO"):
+        _send("re_k", "onboarding@resend.dev", "c@d.de", "subj", "<p>x</p>")
+    assert "9f1c-42" in caplog.text

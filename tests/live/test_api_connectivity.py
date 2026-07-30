@@ -115,50 +115,50 @@ def test_capital_com_session_and_read(report, key_source):
            f"AAPL {len(df)} Bars bis {df.index[-1].date()}")
 
 
-# ---------- SendGrid (lesend, ohne Kontingent zu verbrauchen) ----------
+# ---------- Resend (lesend, ohne Kontingent zu verbrauchen) ----------
 
 @pytest.mark.live_api
-def test_sendgrid_key_is_accepted_without_sending(report, key_source):
-    """Prueft NUR den Schluessel, nicht den Versand — GET /v3/user/profile
-    kostet kein Kontingent.
+def test_resend_key_is_accepted_without_sending(report, key_source):
+    """Prueft NUR den Schluessel, nicht den Versand — GET /domains kostet kein
+    Kontingent.
 
-    Die Trennung ist bewusst: SendGrid meldet ein aufgebrauchtes Kontingent als
-    HTTP 401, also genauso wie einen unbrauchbaren Schluessel. Schlaegt dieser
-    Test fehl, ist der Key kaputt; schlaegt nur test_email_delivery fehl, ist der
-    Key in Ordnung und das Kontingent leer."""
-    import json
-    import urllib.error
-    import urllib.request
+    Die Trennung ist bewusst und stammt aus einem konkreten Vorfall beim
+    Vorgaenger SendGrid: dort meldete ein aufgebrauchtes Kontingent denselben
+    HTTP 401 wie ein unbrauchbarer Schluessel, was die Fehlersuche in die falsche
+    Richtung schickte. Schlaegt dieser Test fehl, ist der Key kaputt; schlaegt nur
+    test_email_delivery fehl, liegt es an Kontingent oder Absenderadresse.
 
-    if not config.SENDGRID_API_KEY:
-        report(f"❌ SendGrid: kein SENDGRID_API_KEY aus {key_source}")
-        pytest.fail(f"SENDGRID_API_KEY fehlt in {key_source}")
+    Verlangt einen Key mit Leserechten. Ein Sending-only-Key wuerde hier 401/403
+    liefern — dann muesste dieser Test entfallen und nur der Versand bliebe.
+    """
+    import requests
 
-    req = urllib.request.Request(
-        "https://api.sendgrid.com/v3/user/profile",
-        headers={"Authorization": f"Bearer {config.SENDGRID_API_KEY}"},
+    if not config.RESEND_API_KEY:
+        report(f"❌ Resend: kein RESEND_API_KEY aus {key_source}")
+        pytest.fail(f"RESEND_API_KEY fehlt in {key_source}")
+
+    # requests, NICHT urllib: Resend sitzt hinter Cloudflare, das die
+    # urllib-Signatur mit HTTP 403 und "error code: 1010" abweist.
+    resp = requests.get(
+        "https://api.resend.com/domains",
+        headers={"Authorization": f"Bearer {config.RESEND_API_KEY}"},
+        timeout=20,
     )
-    try:
-        with urllib.request.urlopen(req, timeout=20) as resp:
-            assert resp.status == 200
-    except urllib.error.HTTPError as e:
-        body = e.read(400).decode("utf-8", "replace")
-        report(f"❌ SendGrid-Key FEHLGESCHLAGEN ({key_source}): {e.code} — {body}")
-        raise
+    if resp.status_code != 200:
+        report(f"❌ Resend-Key FEHLGESCHLAGEN ({key_source}): "
+               f"{resp.status_code} — {resp.text[:200]}")
+        pytest.fail(f"Resend antwortete {resp.status_code}: {resp.text[:200]}")
 
-    # Kontingent mitmelden — genau das fehlte am 2026-07-29 bei der Fehlersuche.
-    creds = urllib.request.Request(
-        "https://api.sendgrid.com/v3/user/credits",
-        headers={"Authorization": f"Bearer {config.SENDGRID_API_KEY}"},
-    )
-    try:
-        with urllib.request.urlopen(creds, timeout=20) as resp:
-            c = json.load(resp)
-        report(f"✅ SendGrid-Key gueltig ({key_source}) — "
-               f"Kontingent: {c.get('remain')} von {c.get('total')} frei "
-               f"(Reset {c.get('reset_frequency')})")
-        if not c.get("total"):
-            report("   ⚠️  total=0 — der Versand wird trotz gueltigem Key mit "
-                   "401 'Maximum credits exceeded' scheitern")
-    except Exception:
-        report(f"✅ SendGrid-Key gueltig ({key_source}) — Kontingent nicht abrufbar")
+    domains = resp.json().get("data", [])
+    verified = [d.get("name") for d in domains if d.get("status") == "verified"]
+    report(f"✅ Resend-Key gueltig ({key_source}) — "
+           f"{len(domains)} Domain(s), verifiziert: {verified or 'keine'}")
+
+    if not verified:
+        report(f"   ℹ️  Ohne verifizierte Domain erlaubt Resend nur "
+               f"onboarding@resend.dev als Absender und nur die Konto-Adresse "
+               f"als Empfaenger. Aktuell EMAIL_FROM={config.EMAIL_FROM}")
+        assert config.EMAIL_FROM == "onboarding@resend.dev", (
+            f"Keine verifizierte Domain, aber EMAIL_FROM={config.EMAIL_FROM!r} — "
+            f"Resend wird den Versand ablehnen"
+        )

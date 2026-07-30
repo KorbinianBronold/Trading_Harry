@@ -13,7 +13,7 @@ DATA_DIR.mkdir(exist_ok=True)
 DB_PATH = DATA_DIR / "tracking.db"
 
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
-SENDGRID_API_KEY = os.getenv("SENDGRID_API_KEY")
+RESEND_API_KEY = os.getenv("RESEND_API_KEY")
 EMAIL_TO = os.getenv("EMAIL_TO")
 EMAIL_FROM = os.getenv("EMAIL_FROM")
 FINNHUB_API_KEY = os.getenv("FINNHUB_API_KEY")
