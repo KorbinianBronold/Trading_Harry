@@ -90,6 +90,10 @@ VIX_TICKER = "VIX"
 # wertlos und sector_momentum.db_momentum bleibt NULL.
 SECTOR_DB_MOMENTUM_MIN_TICKERS = 3
 
+# Sprint 3B / Plan 2 (B.3): ab wie vielen Signalen im selben Sub-Sektor die Mail
+# vor Klumpenrisiko warnt. Reine Warnung, blockiert nie.
+SECTOR_CLUSTER_WARN_AT = 3
+
 # Normalisierung: Finnhub liefert im Feld `finnhubIndustry` ein gemischtes
 # Vokabular — teils Sektor-Ebene ("Consumer Cyclical"), teils Industrie-Ebene
 # ("Semiconductors"), teils Yahoo-Bezeichnungen. Dieses Dict bildet alle bekannten
