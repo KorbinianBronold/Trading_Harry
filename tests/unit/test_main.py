@@ -536,6 +536,35 @@ def test_forced_candidates_override_quick_filter_exclude():
     assert by_t["MSFT"]["exclude"] is True
 
 
+def test_forced_candidate_reaches_deep_analysis_with_exclude_false(tmp_db_path, mocker):
+    """Integrationstest fuer B.4: eine offene Capital.com-Position auf AAPL, die
+    der Quick-Filter eigentlich ausschliessen wollte, muss trotzdem mit
+    exclude=False bei analyze_assets (Phase 3) ankommen — sonst greift Phase 1c
+    nicht bis in die Tiefenanalyse durch, obwohl echtes Geld daran haengt."""
+    _stub_pipeline(mocker)
+    mocker.patch("main.fetch_market_context", return_value=dict(_CTX))
+    mocker.patch("main.rank_and_persist", return_value={
+        "top_long": [], "top_short": [], "commodities_crypto": [],
+    })
+
+    provider = MagicMock()
+    provider.get_open_positions.return_value = [{"ticker": "AAPL"}]
+    mocker.patch("main.CapitalComProvider", return_value=provider)
+
+    mocker.patch("main.quick_filter_batch", return_value=[
+        {"ticker": "AAPL", "exclude": True, "long_score": 1.0, "short_score": 1.0,
+         "confidence": "low", "evidence": []},
+    ])
+    mock_deep = mocker.patch("main.analyze_assets", return_value=[])
+
+    from main import run_pipeline
+    run_pipeline(run_type="pre_market", date="2026-07-27", db_path=str(tmp_db_path))
+
+    passed_quick = mock_deep.call_args.kwargs["quick_filter_results"]
+    by_ticker = {q["ticker"]: q for q in passed_quick}
+    assert by_ticker["AAPL"]["exclude"] is False
+
+
 # ---------- Sprint 3B / Plan 2, Task 3: kein toter Code (B.1) ----------
 
 def test_removed_functions_are_gone():
