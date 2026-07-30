@@ -3,7 +3,7 @@ from unittest.mock import patch, MagicMock
 import pytest
 
 from main import (
-    run_pipeline, run_evaluate, run_weekly, run_close, parse_args, build_commodity_crypto_inputs,
+    run_pipeline, run_weekly, run_close, parse_args, build_commodity_crypto_inputs,
 )
 import config
 
@@ -141,14 +141,6 @@ def test_run_pipeline_partial_email_when_cost_cap_hit(tmp_db_path):
     assert args["payload"]["cost_summary"]["aborted_at_phase"] == "policy_monitor"
 
 
-def test_run_evaluate_calls_evaluator_no_email(tmp_db_path):
-    with patch("main.evaluate_open_predictions", return_value=3) as mock_eval, \
-         patch("main.send_daily_email") as mock_email, \
-         patch("main.CapitalComProvider"):
-        run_evaluate(date="2026-05-19", db_path=str(tmp_db_path))
-    mock_eval.assert_called_once()
-    mock_email.assert_not_called()
-
 
 def test_run_weekly_calls_send_weekly_email(tmp_db_path):
     with patch("main.send_weekly_email") as mock_send, \
@@ -201,31 +193,6 @@ def test_main_date_uses_berlin_timezone(tmp_db_path, mocker):
     assert call_date == "2026-05-22", f"Expected Berlin date 2026-05-22, got {call_date}"
 
 
-def test_position_check_calls_get_open_positions(tmp_db_path, mocker):
-    """position_check must call get_open_positions on Capital.com."""
-    mocker.patch("main.config.CAPITAL_COM_API_KEY", "test-key")
-    mock_capital = mocker.MagicMock()
-    mock_capital.get_open_positions.return_value = []
-    mocker.patch("main.CapitalComProvider", return_value=mock_capital)
-    mocker.patch("src.utils.call_claude")
-    mocker.patch("src.email_sender._send")
-
-    from main import run_position_check
-    run_position_check(date="2026-05-21", db_path=str(tmp_db_path))
-    mock_capital.get_open_positions.assert_called_once()
-
-
-def test_position_check_always_sends_email(tmp_db_path, mocker):
-    mocker.patch("main.config.CAPITAL_COM_API_KEY", "test-key")
-    mock_capital = mocker.MagicMock()
-    mock_capital.get_open_positions.return_value = []
-    mocker.patch("main.CapitalComProvider", return_value=mock_capital)
-    mocker.patch("src.utils.call_claude")
-    mock_send = mocker.patch("src.email_sender._send")
-
-    from main import run_position_check
-    run_position_check(date="2026-05-21", db_path=str(tmp_db_path))
-    mock_send.assert_called_once()
 
 
 # ---------- Markt-Kontext in der Pipeline (Sprint 3B / Plan 1, Task 11) ----------
@@ -534,3 +501,21 @@ def test_run_trade_proposals_sends_no_mail_yet(tmp_db_path, mocker):
     run_trade_proposals(date="2026-07-30", db_path=str(tmp_db_path))
 
     send.assert_not_called()
+
+
+# ---------- Sprint 3B / Plan 2, Task 3: kein toter Code (B.1) ----------
+
+def test_removed_functions_are_gone():
+    """B.1: 'vollstaendig, keine Leichen'. Ein spaeterer Reflex-Import wuerde
+    hier auffliegen."""
+    import main
+    import src.email_sender as es
+    for name in ("run_position_check", "run_evaluate"):
+        assert not hasattr(main, name), f"main.{name} existiert noch"
+    for name in ("render_position_check_html", "send_position_check_email"):
+        assert not hasattr(es, name), f"email_sender.{name} existiert noch"
+
+
+def test_position_check_prompt_file_is_deleted():
+    from pathlib import Path
+    assert not (Path("prompts") / "position_check_v1.txt").exists()

@@ -5,12 +5,10 @@ re-raising; the GH Actions step turns red and the user is alerted via the
 workflow's email-on-failure notification. Cost-cap aborts produce a partial
 e-mail with the warning bar."""
 import argparse
-import json
 import logging
 import sys
 import traceback
 from datetime import date as date_cls, datetime, timedelta
-from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import config
@@ -29,9 +27,8 @@ from src.ranking import rank_and_persist
 from src.evaluator import evaluate_open_predictions
 from src.email_sender import (
     send_daily_email, send_weekly_email, generate_daily_briefing,
-    send_position_check_email, send_error_email,
+    send_error_email,
 )
-from src.utils import call_claude, extract_json_blob
 from src.providers.finnhub_provider import FinnhubProvider
 from src.providers.capital_provider import CapitalComProvider
 
@@ -128,7 +125,8 @@ def load_recent_outcomes_aggregate(conn, today: str) -> dict:
 
 
 def run_pipeline(run_type: str, date: str, db_path: str) -> None:
-    """Full Phase 0–5 pipeline for pre_market / midday / close."""
+    """Full Phase 0–5 pipeline. Seit Sprint 3B / Plan 2 nur noch fuer pre_market —
+    midday ist entfallen, trade_proposals hat einen eigenen, schlankeren Ablauf."""
     conn = db.connect(db_path)
     db.init_schema(conn)
     db.cleanup_old_data(conn)
@@ -342,71 +340,6 @@ def run_trade_proposals(date: str, db_path: str) -> None:
     )
     log.info(f"trade_proposals: Kurse fuer {len(_tickers) + len(cc_tickers)} "
              f"Ticker aktualisiert")
-    conn.close()
-
-
-def run_position_check(date: str, db_path: str) -> None:
-    """Read open Capital.com positions, compare to DB predictions, send status mail."""
-    if not config.CAPITAL_COM_API_KEY:
-        log.warning("position_check skipped: CAPITAL_COM_API_KEY not set")
-        return
-    conn = db.connect(db_path)
-    db.init_schema(conn)
-    capital = CapitalComProvider()
-
-    real_positions = capital.get_open_positions()
-    open_preds     = db.load_open_predictions(conn)
-    real_by_ticker = {p["ticker"]: p for p in real_positions if p.get("ticker")}
-
-    position_inputs = [
-        {
-            "ticker":        pred["ticker"],
-            "direction":     pred["direction"],
-            "entry_price":   pred["entry_price"],
-            "current_price": real_by_ticker.get(pred["ticker"], {}).get("current_price"),
-            "tp_price":      pred["tp_price"],
-            "sl_price":      pred["sl_price"],
-            "profit_loss":   real_by_ticker.get(pred["ticker"], {}).get("profit_loss"),
-        }
-        for pred in open_preds
-    ]
-
-    if not position_inputs:
-        parsed = {"checks": [], "summary": "Keine offenen Positionen."}
-    else:
-        system_prompt = (Path("prompts") / "position_check_v1.txt").read_text()
-        user_msg      = f"Today is {date}. Open positions:\n{json.dumps(position_inputs, indent=2)}"
-        result        = call_claude(
-            model=config.CLAUDE_MODEL_SONNET,
-            system=system_prompt,
-            user=user_msg,
-            max_tokens=1024,
-            tools=[],
-        )
-        try:
-            parsed = extract_json_blob(result.text, RuntimeError)
-        except Exception:
-            parsed = {"checks": [], "summary": "Parse error — raw: " + result.text[:200]}
-
-    send_position_check_email(
-        payload={"date": date, **parsed},
-        api_key=config.RESEND_API_KEY,
-        email_from=config.EMAIL_FROM,
-        email_to=config.EMAIL_TO,
-    )
-    conn.close()
-
-
-def run_evaluate(date: str, db_path: str) -> None:
-    """Walk-forward evaluates open predictions against fresh OHLC via Capital.com.
-    No Claude calls, no e-mail — pure DB maintenance."""
-    conn = db.connect(db_path)
-    db.init_schema(conn)
-    price_provider = CapitalComProvider()
-    n = evaluate_open_predictions(
-        conn=conn, today=date, price_provider=price_provider,
-    )
-    log.info(f"Evaluate run: {n} predictions closed")
     conn.close()
 
 

@@ -30,9 +30,13 @@ def test_dockerfile_defaults_to_help_without_arguments():
 def test_dockerfile_has_no_default_run_type():
     """Bewusst KEIN echter Run-Type als Default: ein Klick auf Run wuerde sonst
     eine Pipeline gegen die gemountete tracking.db starten. Gleiches Muster wie
-    beim historical_loader, wo der stillschweigende Default entfernt wurde."""
-    for run_type in ("pre_market", "midday", "close", "evaluate",
-                     "weekly", "position_check"):
+    beim historical_loader, wo der stillschweigende Default entfernt wurde.
+
+    Die Liste kommt aus main.RUN_TYPES statt aus einer Kopie im Test: eine fest
+    verdrahtete Liste veraltet lautlos, und genau der neu hinzugekommene Run-Type
+    waere dann ungeschuetzt."""
+    from main import RUN_TYPES
+    for run_type in RUN_TYPES:
         assert f'CMD ["--run-type", "{run_type}"]' not in DOCKERFILE
 
 
