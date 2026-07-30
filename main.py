@@ -318,6 +318,33 @@ def run_close(date: str, db_path: str) -> None:
     conn.close()
 
 
+def run_trade_proposals(date: str, db_path: str) -> None:
+    """Run-Type trade_proposals (16:10 Berlin): prueft die pre_market-Signale
+    nach dem Opening-Rauschen erneut. In diesem Ausbaustand zieht er nur frische
+    Kurse fuer alle Ticker; die Re-Validierung kommt in Task 13 dazu."""
+    conn = db.connect(db_path)
+    db.init_schema(conn)
+    price_provider = CapitalComProvider()
+    earnings_provider = FinnhubProvider()
+
+    _tickers = (config.SP500_FULL_TICKERS if config.USE_FULL_SP500
+                else config.SP500_MVP_TICKERS)
+    collect(
+        tickers=_tickers, price_provider=price_provider,
+        earnings_provider=earnings_provider,
+        conn=conn, date=date, run_type="trade_proposals",
+    )
+    cc_tickers = [d["ticker"] for d in build_commodity_crypto_inputs()]
+    collect(
+        tickers=cc_tickers, price_provider=price_provider,
+        earnings_provider=earnings_provider,
+        conn=conn, date=date, run_type="trade_proposals",
+    )
+    log.info(f"trade_proposals: Kurse fuer {len(_tickers) + len(cc_tickers)} "
+             f"Ticker aktualisiert")
+    conn.close()
+
+
 def run_position_check(date: str, db_path: str) -> None:
     """Read open Capital.com positions, compare to DB predictions, send status mail."""
     if not config.CAPITAL_COM_API_KEY:

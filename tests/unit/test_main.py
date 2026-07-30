@@ -485,3 +485,36 @@ def test_successful_mail_leaves_no_error(tmp_db_path, mocker):
     from main import run_pipeline
     run_pipeline(run_type="pre_market", date="2026-07-27",
                  db_path=str(tmp_db_path))
+
+
+# ---------- Sprint 3B / Plan 2, Task 1: trade_proposals-Geruest ----------
+
+def test_run_trade_proposals_collects_all_tickers(tmp_db_path, mocker):
+    """B.2/Schritt 1: der 16:10-Lauf zieht frische Kurse fuer ALLE Ticker,
+    nicht nur fuer die Top-Listen."""
+    mocker.patch("main.CapitalComProvider", return_value=MagicMock())
+    mocker.patch("main.FinnhubProvider", return_value=MagicMock())
+    collect_mock = mocker.patch("main.collect", return_value=([], 0))
+
+    from main import run_trade_proposals
+    run_trade_proposals(date="2026-07-30", db_path=str(tmp_db_path))
+
+    # zwei Aufrufe: SP500 und Commodities/Crypto
+    assert collect_mock.call_count == 2
+    passed = [set(c.kwargs["tickers"]) for c in collect_mock.call_args_list]
+    assert set(config.SP500_MVP_TICKERS) in passed
+    cc = set(config.COMMODITY_TICKERS.values()) | set(config.CRYPTO_TICKERS.values())
+    assert cc in passed
+
+
+def test_run_trade_proposals_sends_no_mail_yet(tmp_db_path, mocker):
+    """Das Geruest verschickt bewusst noch nichts — wie close."""
+    mocker.patch("main.CapitalComProvider", return_value=MagicMock())
+    mocker.patch("main.FinnhubProvider", return_value=MagicMock())
+    mocker.patch("main.collect", return_value=([], 0))
+    send = mocker.patch("main.send_daily_email")
+
+    from main import run_trade_proposals
+    run_trade_proposals(date="2026-07-30", db_path=str(tmp_db_path))
+
+    send.assert_not_called()
