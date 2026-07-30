@@ -66,6 +66,41 @@ def build_commodity_crypto_inputs() -> list[dict]:
     return out
 
 
+def _forced_candidates(price_provider) -> set[str]:
+    """Phase 1c (B.4): Ticker mit offener Capital.com-Position. Sie muessen in
+    Phase 3, egal was der Quick-Filter sagt — es haengt echtes Geld daran.
+
+    Epics ohne Gegenstueck in unserer Ticker-Liste (von Hand eroeffnete
+    Fremdpositionen) werden geloggt und uebersprungen: fuer sie gibt es keine
+    Indikator-Daten."""
+    from src.providers.capital_provider import epic_to_ticker
+    forced: set[str] = set()
+    for pos in price_provider.get_open_positions():
+        epic = pos.get("ticker")
+        if not epic:
+            continue
+        ticker = epic_to_ticker(epic)
+        if ticker is None:
+            log.info(f"Offene Position {epic}: kein Ticker-Gegenstueck, uebersprungen")
+            continue
+        forced.add(ticker)
+    if forced:
+        log.info(f"Phase 1c: {len(forced)} Pflicht-Kandidaten aus offenen Positionen: "
+                 f"{sorted(forced)}")
+    return forced
+
+
+def _apply_forced_candidates(
+    quick_results: list[dict], forced: set[str],
+) -> list[dict]:
+    """Setzt exclude=False fuer jeden Pflicht-Kandidaten aus Phase 1c, damit
+    Phase 3 ihn garantiert analysiert."""
+    for q in quick_results:
+        if q.get("ticker") in forced:
+            q["exclude"] = False
+    return quick_results
+
+
 def _aggregate_yesterday_outcomes(conn, today: str) -> dict:
     """Aggregates yesterday's evaluated outcomes into long/short hit counts and
     total P&L, for the daily e-mail's performance footer."""
@@ -210,12 +245,17 @@ def run_pipeline(run_type: str, date: str, db_path: str) -> None:
             ).fetchall()
         ]
 
+        current_phase = "open_positions"
+        # Phase 1c — offene Positionen als Pflicht-Kandidaten (B.4)
+        forced = _forced_candidates(price_provider)
+
         current_phase = "quick_filter"
         # Phase 2 — quick filter (stocks only)
         quick = quick_filter_batch(
             batch=sp500_tds, trend_context=trend_context,
             cost_tracker=cost_tracker,
         )
+        quick = _apply_forced_candidates(quick, forced)
 
         current_phase = "policy_monitor"
         # Phase 3 policy monitor (1× for all of Phase 3 + 3b + 4a)

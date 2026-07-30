@@ -503,6 +503,39 @@ def test_run_trade_proposals_sends_no_mail_yet(tmp_db_path, mocker):
     send.assert_not_called()
 
 
+# ---------- Sprint 3B / Plan 2, Task 5: Phase 1c — Pflicht-Kandidaten (B.4) ----------
+
+
+def test_forced_candidates_maps_epics_and_skips_foreign(mocker):
+    """B.4: bekannte Epics werden zu Tickern, fremde geloggt und uebersprungen."""
+    provider = MagicMock()
+    provider.get_open_positions.return_value = [
+        {"ticker": "GOLD"}, {"ticker": "AAPL"}, {"ticker": "PPHE"},
+    ]
+    from main import _forced_candidates
+    assert _forced_candidates(provider) == {"GC=F", "AAPL"}
+
+
+def test_forced_candidates_is_empty_when_provider_fails(mocker):
+    """get_open_positions() gibt bei Fehlern [] zurueck — kein Absturz."""
+    provider = MagicMock()
+    provider.get_open_positions.return_value = []
+    from main import _forced_candidates
+    assert _forced_candidates(provider) == set()
+
+
+def test_forced_candidates_override_quick_filter_exclude():
+    """Der Kern von B.4: ein Ticker mit offener Position darf nicht am
+    Quick-Filter haengenbleiben."""
+    from main import _apply_forced_candidates
+    quick = [{"ticker": "AAPL", "exclude": True},
+             {"ticker": "MSFT", "exclude": True}]
+    out = _apply_forced_candidates(quick, forced={"AAPL"})
+    by_t = {q["ticker"]: q for q in out}
+    assert by_t["AAPL"]["exclude"] is False
+    assert by_t["MSFT"]["exclude"] is True
+
+
 # ---------- Sprint 3B / Plan 2, Task 3: kein toter Code (B.1) ----------
 
 def test_removed_functions_are_gone():
