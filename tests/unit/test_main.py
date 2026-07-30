@@ -9,9 +9,23 @@ import config
 
 
 def test_parse_args_accepts_all_run_types():
-    for rt in ["pre_market", "midday", "close", "evaluate", "weekly"]:
+    for rt in ["pre_market", "trade_proposals", "close", "weekly"]:
         ns = parse_args(["--run-type", rt])
         assert ns.run_type == rt
+
+
+@pytest.mark.parametrize("removed", ["midday", "evaluate", "position_check"])
+def test_parse_args_rejects_removed_run_types(removed):
+    """B.1: die drei Run-Types sind vollstaendig entfernt, keine Leichen."""
+    with pytest.raises(SystemExit):
+        parse_args(["--run-type", removed])
+
+
+def test_main_dispatches_trade_proposals(mocker):
+    fn = mocker.patch("main.run_trade_proposals")
+    from main import main as main_fn
+    main_fn(["--run-type", "trade_proposals", "--date", "2026-07-30"])
+    fn.assert_called_once()
 
 
 def test_parse_args_rejects_unknown_run_type():
@@ -178,10 +192,12 @@ def test_main_date_uses_berlin_timezone(tmp_db_path, mocker):
     import importlib
     import main as m
     importlib.reload(m)
-    mocker.patch.object(m, "run_evaluate")
+    # Vehikel ist seit Plan 2 trade_proposals statt evaluate — geprueft wird
+    # weiterhin die Timezone-Ableitung, nicht der Run-Type.
+    mocker.patch.object(m, "run_trade_proposals")
     with freeze_time("2026-05-21T23:30:00+00:00"):
-        m.main(["--run-type", "evaluate", "--db-path", str(tmp_db_path)])
-        call_date = m.run_evaluate.call_args[1]["date"]
+        m.main(["--run-type", "trade_proposals", "--db-path", str(tmp_db_path)])
+        call_date = m.run_trade_proposals.call_args[1]["date"]
     assert call_date == "2026-05-22", f"Expected Berlin date 2026-05-22, got {call_date}"
 
 

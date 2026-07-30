@@ -39,7 +39,7 @@ log = logging.getLogger("shares_future.main")
 
 BERLIN = ZoneInfo("Europe/Berlin")
 
-RUN_TYPES = ["pre_market", "midday", "close", "evaluate", "weekly", "position_check"]
+RUN_TYPES = ["pre_market", "trade_proposals", "close", "weekly"]
 
 
 class MailDeliveryError(RuntimeError):
@@ -434,16 +434,14 @@ def main(argv: list[str] | None = None) -> None:
     ns = parse_args(argv)
     date = ns.date or datetime.now(BERLIN).date().isoformat()
     try:
-        if ns.run_type in ("pre_market", "midday"):
+        if ns.run_type == "pre_market":
             run_pipeline(run_type=ns.run_type, date=date, db_path=ns.db_path)
+        elif ns.run_type == "trade_proposals":
+            run_trade_proposals(date=date, db_path=ns.db_path)
         elif ns.run_type == "close":
             run_close(date=date, db_path=ns.db_path)
-        elif ns.run_type == "evaluate":
-            run_evaluate(date=date, db_path=ns.db_path)
         elif ns.run_type == "weekly":
             run_weekly(date=date, db_path=ns.db_path)
-        elif ns.run_type == "position_check":
-            run_position_check(date=date, db_path=ns.db_path)
         else:  # pragma: no cover — argparse validated
             sys.exit(2)
     except SystemExit:

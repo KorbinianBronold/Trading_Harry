@@ -12,6 +12,8 @@ einer E-Mail haengen."""
 import re
 from pathlib import Path
 
+import pytest
+
 WORKFLOW = (Path(__file__).resolve().parents[2]
             / ".github" / "workflows" / "analyze.yml").read_text()
 
@@ -51,3 +53,28 @@ def test_analysis_step_is_not_silenced():
     Fehler muss den Job weiterhin rot faerben."""
     step = _step("Run analysis")
     assert "continue-on-error" not in step
+
+
+# ---------- Sprint 3B / Plan 2, Task 2: Ziel-Cron-Struktur (B.1) ----------
+
+REMOVED_RUN_TYPES = ("midday", "evaluate", "position_check")
+
+
+@pytest.mark.parametrize("removed", REMOVED_RUN_TYPES)
+def test_workflow_has_no_removed_run_types(removed):
+    """B.1: kein Cron, keine workflow_dispatch-Option, kein case-Zweig darf
+    einen entfernten Run-Type noch nennen — sonst laeuft der Job in Exit 2."""
+    assert removed not in WORKFLOW
+
+
+def test_workflow_schedules_trade_proposals_at_1410_utc():
+    """16:10 Berlin (CEST) == 14:10 UTC."""
+    assert "'10 14 * * 1-5'" in WORKFLOW
+    assert 'T="trade_proposals"' in WORKFLOW
+
+
+def test_every_cron_has_a_matching_case_branch():
+    """Ein Cron ohne case-Zweig fiele still auf den close-Default zurueck."""
+    crons = set(re.findall(r"- cron: '([^']+)'", WORKFLOW))
+    cases = set(re.findall(r'"([0-9*/, -]+)"\)\s+T=', WORKFLOW))
+    assert crons == cases, f"Cron/case-Mismatch: {crons ^ cases}"

@@ -1,18 +1,16 @@
 name: analyze
 on:
   schedule:
-    - cron: '0 13 * * 1-5'    # pre_market     15:00 Berlin
-    - cron: '0 14 * * 1-5'    # evaluate       16:00 Berlin
-    - cron: '0 17 * * 1-5'   # midday         19:00 Berlin
-    - cron: '30 15 * * 1-5'   # position_check 17:30 Berlin
-    - cron: '30 20 * * 1-5'   # close          22:30 Berlin
-    - cron: '0 18 * * 0'      # weekly         20:00 Berlin Sonntag
+    - cron: '0 13 * * 1-5'    # pre_market       15:00 Berlin (CEST)
+    - cron: '10 14 * * 1-5'   # trade_proposals  16:10 Berlin (CEST)
+    - cron: '30 20 * * 1-5'   # close            22:30 Berlin (CEST)
+    - cron: '0 18 * * 0'      # weekly           So 20:00 Berlin (CEST)
 
   workflow_dispatch:
     inputs:
       run_type:
         type: choice
-        options: [pre_market, midday, close, evaluate, weekly, position_check]
+        options: [pre_market, trade_proposals, close, weekly]
         default: close
 
 permissions:
@@ -61,9 +59,7 @@ jobs:
           fi
           case "${{ github.event.schedule }}" in
             "0 13 * * 1-5")  T="pre_market" ;;
-            "0 14 * * 1-5")  T="evaluate" ;;
-            "0 17 * * 1-5")  T="midday" ;;
-            "30 15 * * 1-5") T="position_check" ;;
+            "10 14 * * 1-5") T="trade_proposals" ;;
             "30 20 * * 1-5") T="close" ;;
             "0 18 * * 0")    T="weekly" ;;
             *)               T="close" ;;
