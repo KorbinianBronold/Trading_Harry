@@ -15,6 +15,7 @@ import config
 from src import db
 from src.cost_tracker import CostTracker, CostCapExceeded
 from src.data_collector import collect
+from src.sector_momentum import collect_sector_momentum
 from src.trend_analyzer import analyze_trends, TrendAnalyzerError
 from src.quick_filter import quick_filter_batch
 from src.deep_analysis import run_policy_monitor, analyze_assets
@@ -248,6 +249,23 @@ def run_pipeline(run_type: str, date: str, db_path: str) -> None:
         current_phase = "open_positions"
         # Phase 1c — offene Positionen als Pflicht-Kandidaten (B.4)
         forced = _forced_candidates(price_provider)
+
+        current_phase = "sector_momentum"
+        # Phase 1d — beide Momentum-Signale je Sub-Sektor (B.3.1 / D9). Muss NACH
+        # Phase 1 laufen: db_momentum mittelt die heutigen Bars aus price_history.
+        # Nicht fatal — ein ETF-Ausfall darf keinen bezahlten Lauf kosten.
+        sector_mom: dict[int, dict] = {}
+        try:
+            sector_mom = collect_sector_momentum(
+                conn=conn, date=date, run_type=run_type,
+                price_provider=price_provider,
+            )
+        except CostCapExceeded:
+            # Muss vor dem blanken except stehen, sonst frisst der Auffang-Zweig
+            # den Kosten-Abbruch und der Lauf laeuft ueber den Deckel hinaus weiter.
+            raise
+        except Exception as e:
+            log.warning(f"Sektor-Momentum nicht ermittelbar, Run laeuft ohne: {e}")
 
         current_phase = "quick_filter"
         # Phase 2 — quick filter (stocks only)

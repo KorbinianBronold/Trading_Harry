@@ -362,6 +362,7 @@ def test_cost_cap_abort_reports_the_actual_phase(tmp_db_path, mocker):
 
 @pytest.mark.parametrize("phase_fn, expected", [
     ("main.fetch_market_context",          "market_context"),
+    ("main.collect_sector_momentum",       "sector_momentum"),
     ("main.quick_filter_batch",            "quick_filter"),
     ("main.run_policy_monitor",            "policy_monitor"),
     ("main.analyze_assets",                "deep_analysis"),
@@ -605,3 +606,38 @@ def test_removed_functions_are_gone():
 def test_position_check_prompt_file_is_deleted():
     from pathlib import Path
     assert not (Path("prompts") / "position_check_v1.txt").exists()
+
+
+# ---------- Sprint 3B / Plan 2, Task 9: Phase 1d — Sektor-Momentum (D9) ----------
+
+
+def test_sector_momentum_is_collected_after_data_collection(mocker):
+    """Plan 1 hat collect_sector_momentum gebaut, aber nie aufgerufen. Ohne
+    diesen Test faellt ein spaeteres Herausfallen nicht auf.
+
+    _mock_all_other_phases patcht main.collect selbst mit einem Fake — deshalb
+    muss der eigene, ordnungspruefende Fake HIER NACH dem Helper gesetzt werden,
+    sonst ueberschreibt der Helper ihn wieder stillschweigend (genau die Falle,
+    vor der sein Docstring fuer rank_and_persist/check_open_positions warnt)."""
+    order: list[str] = []
+    _mock_all_other_phases(mocker)
+    mocker.patch("main.collect",
+                 side_effect=lambda **kw: order.append("collect") or ([], 0))
+    mocker.patch("main.collect_sector_momentum",
+                 side_effect=lambda **kw: order.append("sector_momentum") or {})
+    from main import run_pipeline
+    run_pipeline(run_type="pre_market", date="2026-07-30", db_path=":memory:")
+    assert "sector_momentum" in order, "Phase 1d laeuft gar nicht"
+    assert order.index("collect") < order.index("sector_momentum"), (
+        "db_momentum mittelt die heutigen Bars — die schreibt erst Phase 1"
+    )
+
+
+def test_sector_momentum_failure_does_not_abort_the_run(mocker):
+    """Ein Sektor-ETF-Ausfall darf keinen 3-EUR-Lauf kosten."""
+    mocker.patch("main.collect_sector_momentum", side_effect=RuntimeError("boom"))
+    _mock_all_other_phases(mocker)
+    mocker.patch("main.collect", return_value=([], 0))
+    from main import run_pipeline
+    run_pipeline(run_type="pre_market", date="2026-07-30", db_path=":memory:")
+    # kein raise
