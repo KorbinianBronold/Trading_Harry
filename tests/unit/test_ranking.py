@@ -43,9 +43,26 @@ def _market_ctx() -> dict:
     return {"vix_level": 14.0, "market_regime": "risk_on"}
 
 
-def test_score_total_uses_dimension_weights():
-    a = _analysis("AAPL", momentum=8.0)
-    t = score_total(a)
+@pytest.fixture
+def valid_analysis() -> dict:
+    """Guardrail-taugliches Analyse-Dict fuer AAPL long — mehrere Ranking-Tests
+    bauten dieses Dict bisher inline; seit Task 10 einmal als Fixture
+    herausgezogen (Sprint 3B / Plan 2)."""
+    return _analysis("AAPL", momentum=8.0)
+
+
+def _seed_sector_for(conn, ticker="AAPL", sector="Technology Hardware"):
+    """Ordnet `ticker` einem existierenden Sub-Sektor zu (aus init_schema's
+    Seed) — Grundlage fuer die Momentum-Checks in den Task-10-Tests."""
+    sid = conn.execute("SELECT id FROM sectors WHERE name=?", (sector,)).fetchone()["id"]
+    conn.execute("INSERT OR REPLACE INTO ticker_sectors (ticker, sector_id) VALUES (?,?)",
+                 (ticker, sid))
+    conn.commit()
+    return sid
+
+
+def test_score_total_uses_dimension_weights(valid_analysis):
+    t = score_total(valid_analysis)
     assert 6.0 < t < 8.5
 
 
@@ -73,9 +90,9 @@ def test_rank_and_persist_top_10_long_and_short(in_memory_db):
     assert counts["short"] == 10
 
 
-def test_rank_drops_guardrail_failures(in_memory_db):
+def test_rank_drops_guardrail_failures(in_memory_db, valid_analysis):
     db.init_schema(in_memory_db)
-    good = _analysis("AAPL", momentum=8.0)
+    good = valid_analysis
     bad_hold = _analysis("BAD1", momentum=8.0, hold_days=6)
     bad_range = _analysis("BAD2", momentum=8.0, intraday=0.5)
     bad_momentum = _analysis("BAD3", direction="long", momentum=3.0)
@@ -89,13 +106,12 @@ def test_rank_drops_guardrail_failures(in_memory_db):
     assert tickers == ["AAPL"]
 
 
-def test_rank_drops_direction_none(in_memory_db):
+def test_rank_drops_direction_none(in_memory_db, valid_analysis):
     db.init_schema(in_memory_db)
-    a = _analysis("AAPL", momentum=8.0)
-    a["direction"] = "none"
+    valid_analysis["direction"] = "none"
     out = rank_and_persist(
         conn=in_memory_db, date="2026-05-19", run_type="close",
-        stock_analyses=[a], commodity_crypto_analyses=[],
+        stock_analyses=[valid_analysis], commodity_crypto_analyses=[],
         market_context=_market_ctx(),
     )
     assert out["top_long"] == []
@@ -117,12 +133,11 @@ def test_rank_keeps_all_commodities_crypto(in_memory_db):
     assert {a["ticker"] for a in out["commodities_crypto"]} == {"GC=F", "SI=F", "BTC-USD"}
 
 
-def test_rank_persists_predictions_with_score_dimensions(in_memory_db):
+def test_rank_persists_predictions_with_score_dimensions(in_memory_db, valid_analysis):
     db.init_schema(in_memory_db)
-    a = _analysis("AAPL", momentum=8.0)
     rank_and_persist(
         conn=in_memory_db, date="2026-05-19", run_type="close",
-        stock_analyses=[a], commodity_crypto_analyses=[],
+        stock_analyses=[valid_analysis], commodity_crypto_analyses=[],
         market_context=_market_ctx(),
     )
     row = in_memory_db.execute(
@@ -263,6 +278,64 @@ def test_prediction_row_sector_is_none_when_unmapped(in_memory_db):
         "SELECT sector FROM predictions WHERE ticker='UNMAPPED'"
     ).fetchone()
     assert row["sector"] is None
+
+
+# ---------- B.3-Checks weich ausgefuehrt (Sprint 3B / Plan 2, Task 10) ----------
+
+
+def test_ranking_writes_sector_momentum_onto_the_prediction(in_memory_db, valid_analysis):
+    """3D kann die Korrelation nur ueber predictions rechnen — verworfene Signale
+    haben nie ein Outcome."""
+    db.init_schema(in_memory_db)
+    sid = _seed_sector_for(in_memory_db)
+    from src.ranking import rank_and_persist
+    rank_and_persist(
+        conn=in_memory_db, date="2026-07-30", run_type="pre_market",
+        stock_analyses=[valid_analysis], commodity_crypto_analyses=[],
+        market_context={}, sector_momentum={sid: {"etf_momentum": 1.2,
+                                                  "db_momentum": 0.8,
+                                                  "ticker_count": 4}},
+    )
+    row = in_memory_db.execute(
+        "SELECT sector_etf_momentum, sector_db_momentum FROM predictions").fetchone()
+    assert row["sector_etf_momentum"] == 1.2
+    assert row["sector_db_momentum"] == 0.8
+
+
+def test_soft_check_writes_reject_row_but_keeps_the_signal(in_memory_db, valid_analysis):
+    """E4: pre_market erhebt und warnt, blockiert aber nicht."""
+    db.init_schema(in_memory_db)
+    sid = _seed_sector_for(in_memory_db)
+    from src.ranking import rank_and_persist
+    out = rank_and_persist(
+        conn=in_memory_db, date="2026-07-30", run_type="pre_market",
+        stock_analyses=[valid_analysis], commodity_crypto_analyses=[],
+        market_context={"vix_level": 40.0},
+        sector_momentum={sid: {"etf_momentum": -1.2, "db_momentum": None,
+                               "ticker_count": 1}},
+        enforce_checks=False,
+    )
+    assert len(out["top_long"]) == 1, "weicher Check darf nicht blockieren"
+    rejects = in_memory_db.execute(
+        "SELECT rule, enforced FROM guardrail_rejects").fetchall()
+    rules = {r["rule"] for r in rejects}
+    assert "vix_no_new_longs" in rules
+    assert "sector_momentum_partial" in rules
+    assert all(r["enforced"] == 0 for r in rejects)
+
+
+def test_no_reject_row_when_no_check_fires(in_memory_db, valid_analysis):
+    """B.3.1: kein Signal vorhanden -> kein Check, KEIN Log-Eintrag."""
+    db.init_schema(in_memory_db)
+    from src.ranking import rank_and_persist
+    rank_and_persist(
+        conn=in_memory_db, date="2026-07-30", run_type="pre_market",
+        stock_analyses=[valid_analysis], commodity_crypto_analyses=[],
+        market_context={}, sector_momentum={},
+    )
+    n = in_memory_db.execute(
+        "SELECT COUNT(*) AS n FROM guardrail_rejects").fetchone()["n"]
+    assert n == 0
 
 
 @pytest.mark.parametrize("message, expected", [

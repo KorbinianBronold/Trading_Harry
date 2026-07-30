@@ -257,6 +257,20 @@ def test_save_prediction_persists_hold_days_and_intraday(in_memory_db):
     assert row["intraday_range_pct"] == 1.4
 
 
+def test_save_prediction_persists_sector_momentum(in_memory_db):
+    """Die Spalten existierten seit Plan 1, wurden aber nie geschrieben."""
+    db.init_schema(in_memory_db)
+    pid = db.save_prediction(in_memory_db, {
+        "date": "2026-07-30", "run_type": "pre_market", "ticker": "AAPL",
+        "direction": "long", "sector_etf_momentum": -1.5, "sector_db_momentum": -0.9,
+    })
+    row = in_memory_db.execute(
+        "SELECT sector_etf_momentum, sector_db_momentum FROM predictions WHERE id=?",
+        (pid,)).fetchone()
+    assert row["sector_etf_momentum"] == -1.5
+    assert row["sector_db_momentum"] == -0.9
+
+
 def test_save_position_recommendation(in_memory_db):
     db.init_schema(in_memory_db)
     pid = _insert_test_prediction(in_memory_db)
@@ -666,6 +680,20 @@ def test_log_and_load_guardrail_rejects(in_memory_db):
     assert rows[0]["ticker"] == "AAPL"
     assert rows[0]["rule"] == "rr_ratio"
     assert rows[0]["enforced"] == 1
+
+
+def test_log_guardrail_reject_persists_sector_momentum(in_memory_db):
+    db.init_schema(in_memory_db)
+    db.log_guardrail_reject(in_memory_db, {
+        "date": "2026-07-30", "run_type": "pre_market", "ticker": "AAPL",
+        "direction": "long", "rule": "sector_momentum", "detail": "x",
+        "enforced": 0, "sector_etf_momentum": -1.5, "sector_db_momentum": -0.9,
+    })
+    row = in_memory_db.execute(
+        "SELECT sector_etf_momentum, sector_db_momentum FROM guardrail_rejects"
+    ).fetchone()
+    assert row["sector_etf_momentum"] == -1.5
+    assert row["sector_db_momentum"] == -0.9
 
 
 def test_load_guardrail_rejects_includes_the_since_date_itself(in_memory_db):

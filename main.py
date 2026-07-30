@@ -312,6 +312,7 @@ def run_pipeline(run_type: str, date: str, db_path: str) -> None:
             stock_analyses=deep_stocks,
             commodity_crypto_analyses=deep_cc,
             market_context=market_ctx,
+            sector_momentum=sector_mom,
         )
         payload["top_long"]            = ranked["top_long"]
         payload["top_short"]           = ranked["top_short"]

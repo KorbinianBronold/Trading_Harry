@@ -443,6 +443,9 @@ def save_prediction(conn: sqlite3.Connection, pred: dict) -> int:
         "market_regime", "vix_at_prediction", "sector",
         "trend_boost", "earnings_warning", "summary", "learnable",
         "hold_days_recommended", "intraday_range_pct",
+        # D9 (Plan 2 / Task 10): standen seit Plan 1 im Schema, aber nicht in
+        # dieser Liste — deshalb blieben sie bis hierher immer NULL.
+        "sector_etf_momentum", "sector_db_momentum",
     ]
     placeholders = ", ".join(["?"] * len(cols))
     values = [pred.get(c) for c in cols]
@@ -632,7 +635,8 @@ def log_guardrail_reject(conn: sqlite3.Connection, row: dict) -> None:
     """Persistiert eine verworfene (oder bei enforced=0 nur markierte) Analyse mit
     Regelname und Detailtext, damit die Weekly-Mail auswerten kann, welche
     Guardrails wie oft greifen (Sprint 3B / B.9)."""
-    cols = ["date", "run_type", "ticker", "direction", "rule", "detail", "enforced"]
+    cols = ["date", "run_type", "ticker", "direction", "rule", "detail", "enforced",
+            "sector_etf_momentum", "sector_db_momentum"]
     placeholders = ", ".join(["?"] * len(cols))
     conn.execute(
         f"INSERT INTO guardrail_rejects ({', '.join(cols)}) VALUES ({placeholders})",

@@ -168,3 +168,29 @@ def check_sector_momentum(
                f"{direction} — kein Gegencheck moeglich",
         enforced=False,
     )
+
+
+def momentum_for(
+    conn: sqlite3.Connection, ticker: str, sector_momentum: dict[int, dict],
+) -> tuple[float | None, float | None]:
+    """Liefert (etf_momentum, db_momentum) fuer den Sub-Sektor des Tickers.
+    (None, None), wenn der Ticker keinem Sub-Sektor zugeordnet ist."""
+    sector = db.get_ticker_sector(conn, ticker)
+    if sector is None:
+        return None, None
+    entry = sector_momentum.get(sector["sector_id"]) or {}
+    return entry.get("etf_momentum"), entry.get("db_momentum")
+
+
+def cluster_counts(
+    conn: sqlite3.Connection, tickers: list[str],
+) -> dict[str, int]:
+    """Zaehlt, wie viele der uebergebenen Ticker je Sub-Sektor anfallen —
+    Grundlage fuer die Klumpenrisiko-Warnung. Ungemappte Ticker zaehlen nicht mit."""
+    counts: dict[str, int] = {}
+    for t in tickers:
+        sector = db.get_ticker_sector(conn, t)
+        if sector is None:
+            continue
+        counts[sector["name"]] = counts.get(sector["name"], 0) + 1
+    return counts
