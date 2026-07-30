@@ -330,7 +330,7 @@ def send_weekly_email(
 
 
 def _send(api_key: str, email_from: str, email_to: str,
-          subject: str, html_body: str) -> None:
+          subject: str, html_body: str) -> str | None:
     """Shared delivery call used by every send_*_email(); raises EmailSendError
     on any non-2xx response or transport failure.
 
@@ -371,10 +371,16 @@ def _send(api_key: str, email_from: str, email_to: str,
         message_id = resp.json().get("id")
     except Exception:
         message_id = None
+    # Bewusst "accepted", nicht "sent": Resend nimmt die Mail mit 2xx an und
+    # stellt danach asynchron zu. Ein Fehlschlag (z.B. unverifizierte
+    # Absenderdomain) taucht erst spaeter unter GET /emails/{id} als
+    # last_event="failed" auf. Die id wird zurueckgegeben, damit der Aufrufer die
+    # echte Zustellung nachsehen kann — der Live-Test tut das.
     log.info(
         f"Resend accepted message (status={resp.status_code}"
         f"{f', id={message_id}' if message_id else ''})"
     )
+    return message_id
 
 
 # ---------- Position-Check HTML ----------

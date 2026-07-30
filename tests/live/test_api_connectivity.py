@@ -117,48 +117,70 @@ def test_capital_com_session_and_read(report, key_source):
 
 # ---------- Resend (lesend, ohne Kontingent zu verbrauchen) ----------
 
+def _resend_get(path: str):
+    """GET auf die Resend-API. Bewusst `requests`, NICHT urllib: Resend sitzt
+    hinter Cloudflare, das die urllib-Signatur mit HTTP 403 und dem Klartext
+    "error code: 1010" abweist — das sieht wie ein Auth-Fehler aus und ist keiner."""
+    import requests
+    return requests.get(
+        f"https://api.resend.com{path}",
+        headers={"Authorization": f"Bearer {config.RESEND_API_KEY}"},
+        timeout=20,
+    )
+
+
 @pytest.mark.live_api
 def test_resend_key_is_accepted_without_sending(report, key_source):
-    """Prueft NUR den Schluessel, nicht den Versand — GET /domains kostet kein
-    Kontingent.
+    """Prueft NUR den Schluessel, nicht die Zustellbarkeit — kostet kein Kontingent.
 
-    Die Trennung ist bewusst und stammt aus einem konkreten Vorfall beim
-    Vorgaenger-Anbieter: dort meldete ein aufgebrauchtes Kontingent denselben
-    HTTP 401 wie ein unbrauchbarer Schluessel, was die Fehlersuche in die falsche
-    Richtung schickte. Schlaegt dieser Test fehl, ist der Key kaputt; schlaegt nur
-    test_email_delivery fehl, liegt es an Kontingent oder Absenderadresse.
-
-    Verlangt einen Key mit Leserechten. Ein Sending-only-Key wuerde hier 401/403
-    liefern — dann muesste dieser Test entfallen und nur der Versand bliebe.
-    """
-    import requests
-
+    Die Trennung von der Domain-Pruefung darunter ist bewusst: ein gueltiger
+    Schluessel sagt nichts darueber, ob eine Mail ankommt. Genau diese Verwechslung
+    hat beim Vorgaenger-Anbieter einen Abend gekostet."""
     if not config.RESEND_API_KEY:
         report(f"❌ Resend: kein RESEND_API_KEY aus {key_source}")
         pytest.fail(f"RESEND_API_KEY fehlt in {key_source}")
 
-    # requests, NICHT urllib: Resend sitzt hinter Cloudflare, das die
-    # urllib-Signatur mit HTTP 403 und "error code: 1010" abweist.
-    resp = requests.get(
-        "https://api.resend.com/domains",
-        headers={"Authorization": f"Bearer {config.RESEND_API_KEY}"},
-        timeout=20,
-    )
+    resp = _resend_get("/domains")
     if resp.status_code != 200:
         report(f"❌ Resend-Key FEHLGESCHLAGEN ({key_source}): "
                f"{resp.status_code} — {resp.text[:200]}")
         pytest.fail(f"Resend antwortete {resp.status_code}: {resp.text[:200]}")
 
+    report(f"✅ Resend-Key gueltig ({key_source})")
+
+
+@pytest.mark.live_api
+def test_resend_has_a_verified_sender_domain(report, key_source):
+    """Ohne verifizierte Absenderdomain nimmt Resend die Mail mit 2xx AN und
+    stellt sie dann NICHT zu — `last_event` wird "failed".
+
+    Am 2026-07-30 so passiert: `onboarding@resend.dev` als Absender, POST 200,
+    Zustellung gescheitert mit "Domain is not verified". Dieser Adresse darf man
+    also nicht vertrauen; sie ist Resends eigener Onboarding-Absender und nicht
+    fuer fremde Konten freigegeben. Der Test faellt deshalb rot, solange keine
+    eigene Domain verifiziert ist — sonst meldet die Suite eine Zustellfaehigkeit,
+    die nicht existiert."""
+    resp = _resend_get("/domains")
+    assert resp.status_code == 200, resp.text[:200]
     domains = resp.json().get("data", [])
     verified = [d.get("name") for d in domains if d.get("status") == "verified"]
-    report(f"✅ Resend-Key gueltig ({key_source}) — "
-           f"{len(domains)} Domain(s), verifiziert: {verified or 'keine'}")
+    pending = [f"{d.get('name')} ({d.get('status')})"
+               for d in domains if d.get("status") != "verified"]
 
-    if not verified:
-        report(f"   ℹ️  Ohne verifizierte Domain erlaubt Resend nur "
-               f"onboarding@resend.dev als Absender und nur die Konto-Adresse "
-               f"als Empfaenger. Aktuell EMAIL_FROM={config.EMAIL_FROM}")
-        assert config.EMAIL_FROM == "onboarding@resend.dev", (
-            f"Keine verifizierte Domain, aber EMAIL_FROM={config.EMAIL_FROM!r} — "
-            f"Resend wird den Versand ablehnen"
+    if verified:
+        report(f"✅ Resend-Absenderdomain verifiziert ({key_source}): {verified}")
+        sender_domain = (config.EMAIL_FROM or "").split("@")[-1]
+        assert sender_domain in verified, (
+            f"EMAIL_FROM={config.EMAIL_FROM!r} nutzt {sender_domain!r}, "
+            f"verifiziert ist aber nur {verified}"
         )
+        return
+
+    report(f"❌ Keine verifizierte Absenderdomain ({key_source}). "
+           f"Angelegt: {pending or 'keine'}. Aktuell EMAIL_FROM={config.EMAIL_FROM} — "
+           f"Resend nimmt die Mail an und stellt sie NICHT zu.")
+    pytest.fail(
+        "Keine verifizierte Domain bei Resend. Der Versand scheitert asynchron mit "
+        "last_event='failed'. Loesung: eigene Domain in Resend anlegen und die "
+        "DNS-Records setzen, dann EMAIL_FROM darauf umstellen."
+    )

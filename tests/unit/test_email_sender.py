@@ -323,3 +323,23 @@ def test_send_logs_the_message_id_on_success(mocker, caplog):
     with caplog.at_level("INFO"):
         _send("re_k", "onboarding@resend.dev", "c@d.de", "subj", "<p>x</p>")
     assert "9f1c-42" in caplog.text
+
+
+def test_send_returns_the_message_id(mocker):
+    """Der Aufrufer braucht die id, um die tatsaechliche Zustellung nachzusehen —
+    ein 2xx auf den POST heisst bei Resend nur 'angenommen', nicht 'zugestellt'."""
+    from src.email_sender import _send
+    resp = mocker.MagicMock()
+    resp.status_code = 200
+    resp.json.return_value = {"id": "2c89-abc"}
+    mocker.patch("src.email_sender.requests.post", return_value=resp)
+    assert _send("re_k", "a@b.de", "c@d.de", "s", "<p>x</p>") == "2c89-abc"
+
+
+def test_send_returns_none_when_no_id_comes_back(mocker):
+    from src.email_sender import _send
+    resp = mocker.MagicMock()
+    resp.status_code = 200
+    resp.json.side_effect = ValueError("no json")
+    mocker.patch("src.email_sender.requests.post", return_value=resp)
+    assert _send("re_k", "a@b.de", "c@d.de", "s", "<p>x</p>") is None
