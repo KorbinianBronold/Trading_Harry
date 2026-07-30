@@ -9,7 +9,7 @@
 
 ## Überblick
 
-Das System folgt einer **Pipeline-Architektur** mit 6 Phasen (Phase 0–5), die sequenziell ausgeführt werden. Jede Phase ist entkoppelt über klare Daten-Schnittstellen und kann unabhängig getestet werden.
+Das System folgt einer **Pipeline-Architektur** mit 7 Phasen (0, 0b, 1, 2, 3, 4a/4, 5), die sequenziell ausgeführt werden. Jede Phase ist entkoppelt über klare Daten-Schnittstellen und kann unabhängig getestet werden.
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -684,8 +684,10 @@ TOTAL: ~3.50 EUR
 
 - **Unit Tests** (155): Isolierte Module, Mock-Claude, Fixtures
 - **Integration Tests** (3): Volle Pipeline mit 5 Aktien + E2E HTML-Render
-- **Coverage Gate**: 80% Minimum (aktuell 91%)
-- **Baseline**: `pytest tests/ -q` → 197 passed, 0 failures (Stand 2026-07-27)
+- **Coverage Gate**: 80% Minimum (aktuell 92.45%)
+- **Baseline**: `pytest tests/ -q` → 411 passed, 7 skipped, 0 failures (Stand 2026-07-30).
+  Die 7 übersprungenen sind die Live-Tests unter `tests/live/`; sie laufen nur mit
+  `--run-live` und sprechen dann echte APIs an (inkl. echtem Mailversand).
 
 ---
 

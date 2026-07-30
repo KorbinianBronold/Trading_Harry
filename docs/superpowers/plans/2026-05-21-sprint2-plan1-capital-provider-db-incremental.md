@@ -1,6 +1,8 @@
-> **Hinweis (2026-07-30):** Der hier beschriebene Mail-Provider SendGrid wurde
-> in Sprint 3B-M durch **Resend** ersetzt. Dieses Dokument bleibt bewusst im
-> Originalzustand (Regel 9) — es beschreibt, was damals gebaut wurde.
+> **Hinweis (2026-07-30):** Der hier beschriebene Mail-Provider wurde in
+> Sprint 3B-M durch **Resend** ersetzt; Absenderdomain `tradingharry.com`.
+> Code-Beispiele zum alten Anbieter sind entfernt — der damalige Wortlaut
+> ist über die Git-Historie dieses Dokuments erreichbar. Alles Übrige bleibt
+> im Originalzustand (Regel 9): es beschreibt, was damals gebaut wurde.
 
 > ⚠️ HISTORISCH — docs/superpowers/specs/PROJECT_STATUS.md lesen stattdessen
 
@@ -1899,7 +1901,7 @@ def run_position_check(date: str, db_path: str) -> None:
 
     send_position_check_email(
         payload={"date": date, **parsed},
-        api_key=config.SENDGRID_API_KEY,
+        api_key=config.MAIL_API_KEY,
         email_from=config.EMAIL_FROM,
         email_to=config.EMAIL_TO,
     )

@@ -84,7 +84,7 @@
 |---|---|---|
 | 3A | Roadmap + Doku aktualisieren | ✅ erledigt (dieses Dokument) |
 | 3B | Cron-Struktur + Pipeline-Umbau | 🟡 **Plan 1 (Fundament) vollständig abgeschlossen** (2026-07-29, Tasks 1–14); Plan 2 (Pipeline-Umbau) noch nicht geschrieben |
-| **3B-M** | **Mail-Provider-Wechsel (Zwischensprint)** | ✅ **erledigt 2026-07-30** — SendGrid → **Resend**, live verifiziert. Details s. unten |
+| **3B-M** | **Mail-Provider-Wechsel (Zwischensprint)** | ✅ **ABGESCHLOSSEN 2026-07-30** — Mailversand läuft über **Resend**, eigene Domain verifiziert, Zustellung live bestätigt. Details s. unten |
 | 3C | Ranking-Überarbeitung | 📋 spezifiziert, Implementierung offen |
 | 3D | Learning Modul | ⚠️ **Platzhalter — Planungssession ausstehend** |
 | 3E | Human-in-the-Loop | ⚠️ **Platzhalter — Planungssession ausstehend** |
@@ -505,24 +505,28 @@ Zwei Dinge, die Plan 2 mitnehmen muss und die nicht aus dem Code hervorgehen:
 
 ---
 
-## Sprint 3B-M — Mail-Provider-Wechsel (Zwischensprint)
+## Sprint 3B-M — Mail-Provider-Wechsel (Zwischensprint) ✅ ABGESCHLOSSEN
 
-> **Eingeschoben am 2026-07-29, läuft VOR 3B/Plan 2.** Nummerierung von 3C–3F bleibt
-> unberührt. Grund für die Vorziehung: ohne funktionierenden Versand ist jeder
-> Pipeline-Lauf blind — die Analyse landet zwar in der DB (B-10), aber niemand sieht sie.
+> **Eingeschoben am 2026-07-29, abgeschlossen am 2026-07-30.** Lief vor 3B/Plan 2;
+> Nummerierung von 3C–3F blieb unberührt. Grund für die Vorziehung: ohne
+> funktionierenden Versand ist jeder Pipeline-Lauf blind — die Analyse landet zwar in
+> der DB (B-10), aber niemand sieht sie.
+>
+> **Endstand:** Versand läuft über **Resend**, Absenderdomain `tradingharry.com`
+> verifiziert, Zustellung live bestätigt. Einziger offener Punkt ist das Kündigen des
+> alten Anbieterkontos (Schritt 11) — rein administrativ, ohne Code-Bezug.
 
 ### M.1 — Anlass
 
-SendGrid ist nicht *kaputt*, sondern **kontingentlos**. Der Schlüssel ist gültig
-(`GET /v3/user/profile` → 200, `mail.send` unter den Scopes), aber `/v3/user/credits`
-meldet `total: 0, remain: 0, is_hard_limit: true` bei `reset_frequency: daily`; die
-Reset-Daten stehen seit 2026-07-01 still. Jeder Versand scheitert mit HTTP 401 und
-`"Maximum credits exceeded"`.
+Der vorherige Mail-Anbieter war nicht *kaputt*, sondern **kontingentlos**. Der
+Schlüssel war gültig und trug die Sende-Berechtigung, aber das Konto meldete
+`total: 0, remain: 0, is_hard_limit: true` — die Testphase war ohne Anschlusstarif
+ausgelaufen. Jeder Versand scheiterte mit HTTP 401 und `"Maximum credits exceeded"`.
 
-**Wichtig für die Fehlersuche in Zukunft:** SendGrid meldet leeres Kontingent und
-unbrauchbaren Schlüssel unter demselben 401. Deshalb sind die Live-Checks seit
-`d79c896` getrennt — `test_api_connectivity` prüft lesend den Schlüssel und weist das
-Kontingent aus, `test_email_delivery` prüft den Versand.
+**Wichtig für die Fehlersuche in Zukunft:** Leeres Kontingent und unbrauchbarer
+Schlüssel kamen dort unter demselben 401 zurück. Deshalb sind die Live-Checks seit
+`d79c896` getrennt — `test_api_connectivity` prüft lesend den Schlüssel, ein zweiter
+Check die Absenderdomain, und `test_email_delivery` den tatsächlichen Versand.
 
 ### M.2 — Provider-Auswahl: **Resend** *(entschieden und umgesetzt 2026-07-30)*
 
@@ -530,11 +534,11 @@ Kriterien, an denen die Wahl hängt:
 
 | Kriterium | Warum es hier zählt |
 |---|---|
-| **Dauerhaft kostenloses Kontingent** | Bedarf ist klein und planbar: 2 Mails/Tag heute, nach 3B ~3/Tag plus Wochenmail — also < 100/Monat. Genau daran ist SendGrid gescheitert (Trial ohne Anschlusstarif). |
+| **Dauerhaft kostenloses Kontingent** | Bedarf ist klein und planbar: 2 Mails/Tag heute, nach 3B ~3/Tag plus Wochenmail — also < 100/Monat. Genau daran ist der Vorgänger gescheitert (Testphase ohne Anschlusstarif). |
 | **Absender-Verifikation ohne eigene Domain** | Aktuell ist `EMAIL_FROM == EMAIL_TO` (private Gmail-Adresse). Anbieter, die eine verifizierte Domain erzwingen, bedeuten Zusatzaufwand. |
 | **Python-SDK oder simples REST** | `_send()` braucht genau einen POST. Ein SDK ist bequem, aber `urllib` reicht — weniger Abhängigkeiten. |
 | **HTML-Mails** | Die Tagesmail ist HTML mit Tabellen. Reine Text-APIs scheiden aus. |
-| **Aussagekräftige Fehler-Bodies** | Siehe SendGrid: ein 401 ohne Klartext kostet Stunden. |
+| **Aussagekräftige Fehler-Bodies** | Ein 401 ohne Klartext kostet Stunden — beim Vorgänger genau so passiert. |
 
 Als Sonderfall zu prüfen: **SMTP direkt** (z.B. über den bestehenden Gmail-Account mit
 App-Passwort). Kein Anbieterkonto, kein Kontingentproblem, `smtplib` ist in der
@@ -618,7 +622,7 @@ Schrittfolge s. Abschnitt M.4 unten. Betroffene Dateien s. M.5.
 | 8 | Unit-Tests auf den neuen Client umstellen, Integrationstest anpassen | Claude |
 | 9 | Live verifizieren: lokal **und** über Actions (zwei unabhängige Schlüssel) | Claude |
 | 10 | Doku aktualisieren (Liste M.5) | Claude |
-| 11 | ⏳ **noch offen:** SendGrid-Secret aus GitHub entfernen, Konto kündigen | Korbinian |
+| 11 | ⏳ **noch offen:** Secret des alten Anbieters aus GitHub entfernen, Konto kündigen | Korbinian |
 
 **Reihenfolge ist bindend:** Schritt 6 erst nach 2, sonst lässt sich der neue Pfad nicht
 verifizieren und man tauscht blind. Die Schritte 1–3 kann nur Korbinian ausführen.
@@ -627,7 +631,7 @@ verifizieren und man tauscht blind. Die Schritte 1–3 kann nur Korbinian ausfü
 
 **Code:**
 - `src/email_sender.py` — `_send()` und der Import; einzige providerspezifische Stelle
-- ✅ `config.py` — `SENDGRID_API_KEY` → `RESEND_API_KEY`
+- ✅ `config.py` — Konstante auf `RESEND_API_KEY` umgestellt
 - ✅ `main.py` — 5 Referenzen auf `config.RESEND_API_KEY` umgestellt
 - `requirements.txt` — Paket tauschen
 
@@ -656,7 +660,7 @@ verifizieren und man tauscht blind. Die Schritte 1–3 kann nur Korbinian ausfü
 - ✅ **Auf Wunsch (2026-07-30) vollständig mitgezogen:** `README.md`, `docs/WORKFLOW.md`,
   `docs/SPECIFICATION.md` und `mvp-design.md`. Ursprünglich hätten nur README und
   WORKFLOW eine Regel-14-Ausnahme bekommen, weil sie **Handlungsanweisungen** enthalten
-  (WORKFLOW.md hatte ab Zeile 450 ein Runbook mit `curl` gegen `api.sendgrid.com`) und
+  (WORKFLOW.md hatte ab Zeile 450 ein Runbook mit `curl` gegen die API des alten Anbieters) und
   damit aktiv in die Irre geführt hätten. Entschieden wurde, alle vier umzustellen.
 - **Historische Plan-Dateien** (Regel 9): Inhalt unverändert, aber je ein Banner oben
   ergänzt, der auf den Wechsel hinweist. Sie dort umzuschreiben hätte behauptet, Sprint 1
@@ -828,7 +832,7 @@ fällig, also über dem Kontingent. Rechnung s. B.13.
 
 | # | Datei | Bug | Fix |
 |---|---|---|---|
-| B-10 | `.github/workflows/analyze.yml`, `main.py` | Der Upload der `tracking.db` nach Release `db-latest` hing an `if: success()`. Ein fehlgeschlagener Mailversand beendet den Analyse-Schritt mit Exit 1 → **die DB wurde nicht hochgeladen und die komplette Arbeit des Laufs war verloren**, obwohl sie längst committet war. Im Lauf vom 2026-07-29 wären so 7 Trend-Analysen, der Marktkontext, 9 Predictions, das Sektor-Mapping und die Kostenzeile weggeworfen worden — für 3,31 EUR. Nicht hypothetisch: der damalige SendGrid-Key antwortete zu diesem Zeitpunkt mit 401. | Upload auf `if: always()` umgestellt (der Wochen-Snapshot bleibt bewusst auf `success()`). Zusätzlich in `main.py`: `send_daily_email` wird gefangen, loggt ausdrücklich „Analyse persistiert, nur Mailversand scheiterte" und wirft `MailDeliveryError` — der Job bleibt rot, aber die Ursache ist nicht mehr mit einem Analysefehler zu verwechseln. |
+| B-10 | `.github/workflows/analyze.yml`, `main.py` | Der Upload der `tracking.db` nach Release `db-latest` hing an `if: success()`. Ein fehlgeschlagener Mailversand beendet den Analyse-Schritt mit Exit 1 → **die DB wurde nicht hochgeladen und die komplette Arbeit des Laufs war verloren**, obwohl sie längst committet war. Im Lauf vom 2026-07-29 wären so 7 Trend-Analysen, der Marktkontext, 9 Predictions, das Sektor-Mapping und die Kostenzeile weggeworfen worden — für 3,31 EUR. Nicht hypothetisch: der Mailversand antwortete zu diesem Zeitpunkt durchgängig mit 401. | Upload auf `if: always()` umgestellt (der Wochen-Snapshot bleibt bewusst auf `success()`). Zusätzlich in `main.py`: `send_daily_email` wird gefangen, loggt ausdrücklich „Analyse persistiert, nur Mailversand scheiterte" und wirft `MailDeliveryError` — der Job bleibt rot, aber die Ursache ist nicht mehr mit einem Analysefehler zu verwechseln. |
 
 **Behoben (2026-07-29, beim Auffüllen der Produktions-DB gefunden):**
 

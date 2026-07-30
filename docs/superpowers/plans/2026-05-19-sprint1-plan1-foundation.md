@@ -1,6 +1,8 @@
-> **Hinweis (2026-07-30):** Der hier beschriebene Mail-Provider SendGrid wurde
-> in Sprint 3B-M durch **Resend** ersetzt. Dieses Dokument bleibt bewusst im
-> Originalzustand (Regel 9) — es beschreibt, was damals gebaut wurde.
+> **Hinweis (2026-07-30):** Der hier beschriebene Mail-Provider wurde in
+> Sprint 3B-M durch **Resend** ersetzt; Absenderdomain `tradingharry.com`.
+> Code-Beispiele zum alten Anbieter sind entfernt — der damalige Wortlaut
+> ist über die Git-Historie dieses Dokuments erreichbar. Alles Übrige bleibt
+> im Originalzustand (Regel 9): es beschreibt, was damals gebaut wurde.
 
 > ⚠️ HISTORISCH — docs/superpowers/specs/PROJECT_STATUS.md lesen stattdessen
 
@@ -73,7 +75,7 @@ pandas==2.2.3
 pandas-ta==0.3.14b0
 yfinance==0.2.50
 finnhub-python==2.4.21
-sendgrid==6.11.0
+<mail-provider-sdk>
 python-dotenv==1.0.1
 requests==2.32.3
 pytest==8.3.4
@@ -86,7 +88,7 @@ freezegun==1.5.1
 
 ```
 ANTHROPIC_API_KEY=
-SENDGRID_API_KEY=
+MAIL_API_KEY=
 EMAIL_TO=korbinian.bronold@gmail.com
 EMAIL_FROM=
 FINNHUB_API_KEY=
@@ -126,7 +128,7 @@ DATA_DIR.mkdir(exist_ok=True)
 DB_PATH = DATA_DIR / "tracking.db"
 
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
-SENDGRID_API_KEY = os.getenv("SENDGRID_API_KEY")
+MAIL_API_KEY = os.getenv("MAIL_API_KEY")
 EMAIL_TO = os.getenv("EMAIL_TO")
 EMAIL_FROM = os.getenv("EMAIL_FROM")
 FINNHUB_API_KEY = os.getenv("FINNHUB_API_KEY")

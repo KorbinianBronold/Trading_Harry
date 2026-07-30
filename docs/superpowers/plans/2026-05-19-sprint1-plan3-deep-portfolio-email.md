@@ -1,6 +1,8 @@
-> **Hinweis (2026-07-30):** Der hier beschriebene Mail-Provider SendGrid wurde
-> in Sprint 3B-M durch **Resend** ersetzt. Dieses Dokument bleibt bewusst im
-> Originalzustand (Regel 9) — es beschreibt, was damals gebaut wurde.
+> **Hinweis (2026-07-30):** Der hier beschriebene Mail-Provider wurde in
+> Sprint 3B-M durch **Resend** ersetzt; Absenderdomain `tradingharry.com`.
+> Code-Beispiele zum alten Anbieter sind entfernt — der damalige Wortlaut
+> ist über die Git-Historie dieses Dokuments erreichbar. Alles Übrige bleibt
+> im Originalzustand (Regel 9): es beschreibt, was damals gebaut wurde.
 
 > ⚠️ HISTORISCH — docs/superpowers/specs/PROJECT_STATUS.md lesen stattdessen
 
@@ -12,7 +14,7 @@
 
 **Architecture:** Eight new phase/glue modules on top of the existing foundation (`config`, `utils`, `db`, `cost_tracker`, `guardrails`, `data_collector`, `trend_analyzer`, `quick_filter`). All Claude calls reuse `utils.call_claude` with prompt caching of the trend + policy context (1× cached, ~20× read). All DB I/O goes through `db.py` helpers added in Task 1. `main.py` dispatches by `--run-type` and owns the single `CostTracker` instance for the run. Each phase module raises only **fatal** errors (Phase 0 missing); per-asset failures `skip` and continue.
 
-**Tech Stack:** Python 3.11+, Anthropic SDK (Sonnet + server-side web_search tool with prompt caching), pandas, yfinance, SendGrid, sqlite3, pytest, pytest-mock, freezegun.
+**Tech Stack:** Python 3.11+, Anthropic SDK (Sonnet + server-side web_search tool with prompt caching), pandas, yfinance, der Mail-Provider, sqlite3, pytest, pytest-mock, freezegun.
 
 **Spec reference:** `docs/superpowers/specs/2026-05-19-trading-harry-mvp-design.md` §3, §5 (CFD-Kurzfrist-Schema), §6 (Guardrails), §7 (Cron), §9 (Tests), §10 rows 11-21.
 
@@ -2899,7 +2901,7 @@ git commit -m "Sprint1/Plan3 Task 8: DataProvider.get_ohlc_after for evaluator"
 
 ## Task 9: `email_sender.py` — 4-section daily + reduced weekly
 
-Pure-Python render (no templating engine — string concatenation, well-scoped helper per section). The `send_daily_email(...)` function builds the HTML body and POSTs via SendGrid. Failure to send is **logged but not fatal** — the run already wrote everything to DB. Weekly email is identical infra with a shorter body.
+Pure-Python render (no templating engine — string concatenation, well-scoped helper per section). The `send_daily_email(...)` function builds the HTML body and POSTs via der Mail-Provider. Failure to send is **logged but not fatal** — the run already wrote everything to DB. Weekly email is identical infra with a shorter body.
 
 Daily sections (spec §3 + §5):
 1. **Portfolio-Empfehlungen** (Phase 4a) — table with `action`, ticker, reason, new SL/TP if ANPASSEN. **Always first.**
@@ -3040,7 +3042,7 @@ def test_weekly_html_renders_win_rate_and_trade_list():
     assert "NVDA" in html
 
 
-def test_send_daily_email_posts_via_sendgrid():
+def test_send_daily_email_posts_via_mailprovider():
     payload = _sample_payload()
     mock_response = MagicMock()
     mock_response.status_code = 202
@@ -3048,7 +3050,7 @@ def test_send_daily_email_posts_via_sendgrid():
     mock_sg_instance = MagicMock()
     mock_sg_instance.send.return_value = mock_response
     mock_sg_class.return_value = mock_sg_instance
-    with patch("src.email_sender.SendGridAPIClient", mock_sg_class):
+    with patch("src.email_sender.MailClient", mock_sg_class):
         send_daily_email(
             payload=payload,
             api_key="SG.fake",
@@ -3065,7 +3067,7 @@ def test_send_daily_email_raises_on_non_2xx():
     mock_response.body = b"server error"
     mock_sg_instance = MagicMock()
     mock_sg_instance.send.return_value = mock_response
-    with patch("src.email_sender.SendGridAPIClient",
+    with patch("src.email_sender.MailClient",
                return_value=mock_sg_instance):
         with pytest.raises(EmailSendError):
             send_daily_email(
@@ -3082,7 +3084,7 @@ Expected: ImportError.
 - [ ] **Step 9.3: Implement `src/email_sender.py`**
 
 ```python
-"""Phase 5: E-Mail rendering and SendGrid delivery.
+"""Phase 5: E-Mail rendering and der Mail-Provider delivery.
 
 Daily mail is rendered as four sections in this fixed order:
   1. Portfolio-Empfehlungen (Phase 4a) — directly actionable on market open
@@ -3096,14 +3098,14 @@ import html
 import logging
 from typing import Any
 
-from sendgrid import SendGridAPIClient
-from sendgrid.helpers.mail import Mail
+from mailprovider import MailClient
+from mailprovider.helpers import Mail
 
 log = logging.getLogger("shares_future.email_sender")
 
 
 class EmailSendError(RuntimeError):
-    """SendGrid returned a non-2xx response. Caller should still treat the run
+    """der Mail-Provider returned a non-2xx response. Caller should still treat the run
     as successful — the data is in the DB."""
 
 
@@ -3359,14 +3361,14 @@ def _send(api_key: str, email_from: str, email_to: str,
         from_email=email_from, to_emails=email_to,
         subject=subject, html_content=html_body,
     )
-    client = SendGridAPIClient(api_key)
+    client = MailClient(api_key)
     resp = client.send(mail)
     if not (200 <= getattr(resp, "status_code", 0) < 300):
         raise EmailSendError(
-            f"SendGrid returned status {resp.status_code}: "
+            f"der Mail-Provider returned status {resp.status_code}: "
             f"{getattr(resp, 'body', '')!r}"
         )
-    log.info(f"SendGrid accepted message (status={resp.status_code})")
+    log.info(f"der Mail-Provider accepted message (status={resp.status_code})")
 ```
 
 - [ ] **Step 9.4: Run tests, expect green**
@@ -3378,7 +3380,7 @@ Expected: 8 passed.
 
 ```bash
 git add src/email_sender.py tests/unit/test_email_sender.py
-git commit -m "Sprint1/Plan3 Task 9: email_sender with 4-section daily + reduced weekly + SendGrid delivery"
+git commit -m "Sprint1/Plan3 Task 9: email_sender with 4-section daily + reduced weekly + der Mail-Provider delivery"
 ```
 
 ---
@@ -3784,7 +3786,7 @@ def run_pipeline(run_type: str, date: str, db_path: str) -> None:
 
     send_daily_email(
         payload=payload,
-        api_key=config.SENDGRID_API_KEY,
+        api_key=config.MAIL_API_KEY,
         email_from=config.EMAIL_FROM, email_to=config.EMAIL_TO,
     )
     conn.close()
@@ -3819,7 +3821,7 @@ def run_weekly(date: str, db_path: str) -> None:
                          "web_search_calls": 0, "aborted_at_phase": None},
     }
     send_weekly_email(
-        payload=payload, api_key=config.SENDGRID_API_KEY,
+        payload=payload, api_key=config.MAIL_API_KEY,
         email_from=config.EMAIL_FROM, email_to=config.EMAIL_TO,
     )
     conn.close()
@@ -3858,7 +3860,7 @@ git commit -m "Sprint1/Plan3 Task 10: main.py orchestrator with run-type dispatc
 
 ## Task 11: Integration tests — full pipeline, eval loop, email render
 
-These tests mock every external API (Claude, yfinance, Finnhub, SendGrid) but exercise the real Python plumbing between phases.
+These tests mock every external API (Claude, yfinance, Finnhub, der Mail-Provider) but exercise the real Python plumbing between phases.
 
 **Files:**
 - Create: `tests/integration/__init__.py` (empty)
@@ -3982,7 +3984,7 @@ def test_full_pipeline_writes_predictions_and_sends_email(tmp_path, monkeypatch)
          patch("src.commodities_crypto.call_claude",
                side_effect=[sequence[6], sequence[7]]), \
          patch("src.portfolio_check.call_claude"), \
-         patch("src.email_sender.SendGridAPIClient") as mock_sg, \
+         patch("src.email_sender.MailClient") as mock_sg, \
          patch("src.commodities_crypto.fetch_fear_greed",
                return_value={"value": 55, "label": "Greed"}):
         mock_sg.return_value.send.return_value = MagicMock(status_code=202)
@@ -4190,7 +4192,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-      SENDGRID_API_KEY: ${{ secrets.SENDGRID_API_KEY }}
+      MAIL_API_KEY: ${{ secrets.MAIL_API_KEY }}
       EMAIL_TO:         ${{ secrets.EMAIL_TO }}
       EMAIL_FROM:       ${{ secrets.EMAIL_FROM }}
       FINNHUB_API_KEY:  ${{ secrets.FINNHUB_API_KEY }}
@@ -4282,7 +4284,7 @@ If coverage < 80%, add small targeted tests for the gap (typically in `main.py` 
 Not automated — document for the user. Add a `docs/SMOKE.md` section if missing, otherwise just record below.
 
 Procedure:
-1. Populate `.env` with real `ANTHROPIC_API_KEY`, `SENDGRID_API_KEY`, `EMAIL_TO`, `EMAIL_FROM`, `FINNHUB_API_KEY`.
+1. Populate `.env` with real `ANTHROPIC_API_KEY`, `MAIL_API_KEY`, `EMAIL_TO`, `EMAIL_FROM`, `FINNHUB_API_KEY`.
 2. Run locally: `python main.py --run-type close --db-path data/smoke.db`.
 3. Inbox check: arrives within 2 min, all 4 sections render, footer shows costs < 4.00 EUR.
 4. `sqlite3 data/smoke.db "SELECT COUNT(*) FROM predictions"` → ≥ 5.
