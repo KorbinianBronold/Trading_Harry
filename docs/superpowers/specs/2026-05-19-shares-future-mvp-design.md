@@ -223,7 +223,7 @@ Wird im MVP aufgesplittet:
 10. email_sender
     └─ Lädt: position_recommendations (Phase 4a), predictions, trend, eval-stats von gestern
     └─ Rendert 4-Sektionen-HTML: (1) Portfolio-Empfehlungen, (2) Aktien Top-10, (3) Trends, (4) Commodities/Crypto
-    └─ SendGrid POST
+    └─ Resend POST
     └─ DB-Write: cost_tracking (Run-Kosten)
 ```
 
@@ -598,7 +598,7 @@ Pro Werktag: **2 Analyse-Mails** + 1 Position-Check-Mail + stille Runs. Sonntags
 
 ```
 ANTHROPIC_API_KEY=...
-SENDGRID_API_KEY=...
+RESEND_API_KEY=...
 EMAIL_TO=korbinian.bronold@gmail.com
 EMAIL_FROM=...
 FINNHUB_API_KEY=...              # Earnings-Calendar + Fundamentals (gecacht)
@@ -645,9 +645,9 @@ tests/
 
 ### Test-Philosophie
 
-- **Unit**: alle externen Dependencies gemockt (Claude, yfinance, Finnhub, SendGrid). Schnell, deterministisch.
+- **Unit**: alle externen Dependencies gemockt (Claude, yfinance, Finnhub, Resend). Schnell, deterministisch.
 - **Integration**: 5 Ticker, alle Phasen verkettet, externe APIs weiter gemockt. Validiert Phase-Glue.
-- **Smoke** (manuell vor jedem Sprint-Übergang): echte APIs, gemockter SendGrid.
+- **Smoke** (manuell vor jedem Sprint-Übergang): echte APIs, gemockter Resend.
 
 CI-Gate: 80 % Coverage in `.github/workflows/test.yml` erzwungen.
 
@@ -676,7 +676,7 @@ CI-Gate: 80 % Coverage in `.github/workflows/test.yml` erzwungen.
 | 17 | `main.py` (Orchestrator) | `test_full_pipeline.py` |
 | 18 | Coverage-Check | `pytest --cov-fail-under=80` |
 | 19 | `.github/workflows/test.yml` | grüner Push-Build |
-| 20 | **Smoke-Test manuell** mit echtem yfinance + Claude + SendGrid | E-Mail im Posteingang |
+| 20 | **Smoke-Test manuell** mit echtem yfinance + Claude + Resend | E-Mail im Posteingang |
 | 21 | `.github/workflows/analyze.yml` (Cron + Release-Asset) | erster Cron-Run grün |
 
 ### Sprint-1-Definition of Done

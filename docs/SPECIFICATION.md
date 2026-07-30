@@ -41,7 +41,7 @@ Marktdaten:  Flexibles DataProvider-Interface (Hierarchie):
              - Fundamentals: Finnhub Free (7-Tage Cache in DB)
                           ENV: FINNHUB_API_KEY
              - Fallback:  yfinance (wenn Capital.com nicht verfügbar)
-E-Mail:      SendGrid API (Free Tier: 100 Mails/Tag)
+E-Mail:      Resend API (Free Tier: 100 Mails/Tag)
 Hosting:     GitHub Actions (Free Tier: 2.000 Min/Monat)
 Datenbank:   SQLite (tracking.db, ~200-500 MB nach 1 Jahr)
 Scheduler:   GitHub Actions Cron (6 Run-Types täglich)
@@ -908,7 +908,7 @@ jobs:
       - name: Run
         env:
           ANTHROPIC_API_KEY:    ${{ secrets.ANTHROPIC_API_KEY }}
-          SENDGRID_API_KEY:     ${{ secrets.SENDGRID_API_KEY }}
+          RESEND_API_KEY:     ${{ secrets.RESEND_API_KEY }}
           CAPITAL_COM_API_KEY:  ${{ secrets.CAPITAL_COM_API_KEY }}
           CAPITAL_COM_PASSWORD: ${{ secrets.CAPITAL_COM_PASSWORD }}
           FINNHUB_API_KEY:      ${{ secrets.FINNHUB_API_KEY }}
@@ -941,7 +941,7 @@ jobs:
 import os
 
 ANTHROPIC_API_KEY    = os.getenv("ANTHROPIC_API_KEY")
-SENDGRID_API_KEY     = os.getenv("SENDGRID_API_KEY")
+RESEND_API_KEY     = os.getenv("RESEND_API_KEY")
 EMAIL_TO             = os.getenv("EMAIL_TO")
 EMAIL_FROM           = os.getenv("EMAIL_FROM")
 CAPITAL_COM_API_KEY  = os.getenv("CAPITAL_COM_API_KEY")

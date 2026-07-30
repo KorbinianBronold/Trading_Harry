@@ -236,9 +236,9 @@ In GitHub Repo Settings → Secrets and variables → Actions:
 | Secret | Value | Quelle |
 |--------|-------|--------|
 | `ANTHROPIC_API_KEY` | sk-ant-... | https://console.anthropic.com |
-| `SENDGRID_API_KEY` | SG.xxx... | https://app.sendgrid.com/settings/api_keys |
+| `RESEND_API_KEY` | re_xxx... | https://resend.com/api-keys |
 | `EMAIL_TO` | korbinian.bronold@gmail.com | Deine E-Mail |
-| `EMAIL_FROM` | noreply@trading-harry.com | SendGrid Verified Sender |
+| `EMAIL_FROM` | onboarding@resend.dev | Resend-Testabsender; eigene Domain erst nach DNS-Verifikation |
 | `CAPITAL_COM_API_KEY` | ... | Capital.com Demo Account |
 | `CAPITAL_COM_PASSWORD` | ... | Capital.com Demo Account |
 | `FINNHUB_API_KEY` | ... | https://finnhub.io |
@@ -327,7 +327,7 @@ main.py --run-type pre_market --date 2026-05-25
   Phase 3b: Commodities/Crypto
   Phase 4a: Portfolio-Check (offene von Fr/Do)
   Phase 4: Ranking Top-10
-  Phase 5: HTML-Render + SendGrid
+  Phase 5: HTML-Render + Resend
   ↓
   tracking.db: predictions-Rows schreiben
   GitHub Release: db-latest aktualisieren
@@ -447,11 +447,12 @@ Das MVP ist erst **production-ready**, wenn folgende Kriterien erfüllt sind:
    gh secret list --repo KorbinianBronold/Shares_Future | grep EMAIL
    ```
 
-2. **GitHub Secret `SENDGRID_API_KEY` gültig?**
-   - Login sendgrid.com → Settings → API Keys
-   - Test: `curl -X POST https://api.sendgrid.com/v3/mail/send ... -H "Authorization: Bearer $SENDGRID_API_KEY"`
+2. **GitHub Secret `RESEND_API_KEY` gültig?**
+   - Login resend.com → API Keys
+   - Test ohne Kontingentverbrauch: `pytest tests/live -m live_api --run-live`
+   - Test mit echtem Versand: `pytest tests/live -m live_email --run-live`
 
-3. **Spam-Ordner?** SendGrid kann im Spam landen – whitelisten.
+3. **Spam-Ordner?** Mails von `onboarding@resend.dev` können im Spam landen – whitelisten.
 
 4. **Logs in GitHub Actions:**
    ```bash

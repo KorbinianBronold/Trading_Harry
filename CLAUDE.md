@@ -12,8 +12,7 @@ Kein automatisches Trading. Nur Research und Paper-Trading Simulation.
 - Capital.com Demo API (primary OHLC, 600 Calls/Min, kostenlos)
 - Finnhub Free (Fundamentals, 7-Tage Cache)
 - SQLite für Tracking und Lernmodul
-- SendGrid für E-Mail Reports — ⚠️ **wird ersetzt (Sprint 3B-M)**: Konto hat kein
-  Versandkontingent mehr (`total: 0`), Nachfolger noch nicht ausgewählt
+- Resend für E-Mail Reports (3 000 Mails/Monat, 100/Tag kostenlos)
 - GitHub Actions für Scheduling (6 Run-Types täglich)
 - pytest für Tests (min. 80% Coverage)
 
@@ -209,7 +208,7 @@ Für gefahrlose Experimente den Mount überschreiben:
 ## Environment Variables (.env)
 ```
 ANTHROPIC_API_KEY=...
-SENDGRID_API_KEY=...
+RESEND_API_KEY=...        # Resend API Key
 EMAIL_TO=...
 EMAIL_FROM=...
 CAPITAL_COM_API_KEY=...    # Capital.com Demo API Key
@@ -219,7 +218,7 @@ FINNHUB_API_KEY=...        # Finnhub Free (Fundamentals)
 ```
 
 ## GitHub Secrets (für Actions)
-ANTHROPIC_API_KEY, SENDGRID_API_KEY, EMAIL_TO, EMAIL_FROM,
+ANTHROPIC_API_KEY, RESEND_API_KEY, EMAIL_TO, EMAIL_FROM,
 CAPITAL_COM_API_KEY, CAPITAL_COM_IDENTIFIER, CAPITAL_COM_PASSWORD, FINNHUB_API_KEY
 
 ## Scoring
@@ -245,10 +244,9 @@ der verbindliche Stand inkl. Spezifikation aller Sprint-3-Teilschritte.
   - **3B** TEILWEISE — Plan 1 (Fundament) ERLEDIGT (2026-07-29, Tasks 1–14);
     Plan 2 (Cron-Struktur + Pipeline-Umbau: `trade_proposals`, Phase 1c,
     Phase-4/4a-Tausch, close-Vereinfachung) noch nicht geschrieben
-  - **3B-M** OFFEN, **läuft VOR 3B/Plan 2** — Mail-Provider-Wechsel: SendGrid hat kein
-    Versandkontingent mehr (`total: 0`), Ersatz noch nicht ausgewählt. Ohne Versand ist
-    jeder Lauf blind — die Analyse landet zwar in der DB, sichtbar wird sie nicht.
-    Schritte und betroffene Dateien: PROJECT_STATUS.md, Abschnitt 3B-M
+  - **3B-M** ERLEDIGT (2026-07-30) — Mail-Provider von SendGrid auf **Resend**
+    gewechselt. Live verifiziert, lokal und über Actions. Details: PROJECT_STATUS.md,
+    Abschnitt 3B-M
   - **3C** OFFEN — Ranking-Überarbeitung (fehlende Indikator-Werte, kombinierter `ranking_score`,
     R/R-Ziel 2.0, technischer Pre-Filter)
   - **3D** PLATZHALTER — Learning Modul ⚠️ braucht eigene Planungssession vor Implementierung

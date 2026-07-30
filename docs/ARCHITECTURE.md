@@ -125,7 +125,7 @@ Das System folgt einer **Pipeline-Architektur** mit 6 Phasen (Phase 0–5), die 
 │  Input: top_10_long, top_10_short, commodities_crypto,          │
 │         yesterday_outcomes_agg, cost_summary                     │
 │  HTML: 4 Sektionen (Portfolio → Stocks → Trends → Commodities)  │
-│  SendGrid: E-Mail an EMAIL_TO                                   │
+│  Resend: E-Mail an EMAIL_TO                                      │
 │  Cost: ~0.00 EUR (Freikontingent)                               │
 │  Fail: ⚠️ Log, aber keine Abort (beste Anstrengung)             │
 └─────────────────────────────────────────────────────────────────┘
@@ -460,12 +460,14 @@ def evaluate_open_predictions(
 
 ### 9. **`src/email_sender.py`** (Phase 5)
 
-Rendert HTML und sendet via SendGrid.
+Rendert HTML und sendet via **Resend** (`POST https://api.resend.com/emails`).
 
-> ⚠️ **Provider-Wechsel ansteht (Sprint 3B-M).** SendGrids Konto meldet `total: 0`
-> Kontingent, jeder Versand scheitert mit 401. `_send()` ist die **einzige**
-> providerspezifische Stelle — jedes `send_*_email()` laeuft dort durch, der Austausch
-> bleibt also auf den Funktionsrumpf beschraenkt. Signatur und `EmailSendError` bleiben.
+> **Provider-Wechsel erledigt (Sprint 3B-M, 2026-07-30).** `_send()` ist die einzige
+> providerspezifische Stelle — jedes `send_*_email()` laeuft dort durch. Bewusst
+> `requests` statt Anbieter-SDK: es ist genau ein POST, `requests` ist ohnehin
+> Abhaengigkeit, und Resend sitzt hinter Cloudflare, das die `urllib`-Signatur mit
+> HTTP 403 / „error code: 1010" abweist. Ohne verifizierte Domain akzeptiert Resend
+> nur `onboarding@resend.dev` als Absender und nur die Konto-Adresse als Empfaenger.
 
 ```python
 def render_daily_html(
@@ -489,7 +491,7 @@ def render_daily_html(
     """
 
 def send_daily_email(to: str, html: str, date: str) -> bool:
-    """SendGrid API Call"""
+    """Resend API Call"""
 ```
 
 ---
@@ -653,7 +655,7 @@ heute = 2026-05-20, run_type = "close"
   ↓
 [Phase 5] render_daily_html() + send_daily_email()
   → 4 HTML-Sektionen
-  → SendGrid API
+  → Resend API
   ✓ costs ~0.00 EUR
 
 TOTAL: ~3.50 EUR

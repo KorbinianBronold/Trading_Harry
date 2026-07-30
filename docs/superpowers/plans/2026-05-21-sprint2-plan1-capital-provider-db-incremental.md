@@ -1,3 +1,7 @@
+> **Hinweis (2026-07-30):** Der hier beschriebene Mail-Provider SendGrid wurde
+> in Sprint 3B-M durch **Resend** ersetzt. Dieses Dokument bleibt bewusst im
+> Originalzustand (Regel 9) — es beschreibt, was damals gebaut wurde.
+
 > ⚠️ HISTORISCH — docs/superpowers/specs/PROJECT_STATUS.md lesen stattdessen
 
 # Sprint 2 / Plan 1: Capital Provider + DB Incremental + Position Check

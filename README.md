@@ -13,7 +13,7 @@ pytest tests/ --cov=src --cov-fail-under=80  # Baseline: 159 tests, 89.62% cover
 python main.py --run-type pre_market --date 2026-05-19
 
 # 3. Live auf GitHub Actions
-# → Secrets konfigurieren (ANTHROPIC_API_KEY, SENDGRID_API_KEY, EMAIL_TO, EMAIL_FROM)
+# → Secrets konfigurieren (ANTHROPIC_API_KEY, RESEND_API_KEY, EMAIL_TO, EMAIL_FROM)
 # → workflow_dispatch auf analyze.yml auslösen
 # → Daily: 3 Runs (14:00, 14:45, 21:30 UTC), 1 Eval, 1 Weekly (So 20:00)
 ```
@@ -74,7 +74,7 @@ Alle Setups MÜSSEN erfüllen:
 | **Marktdaten** | yfinance (primär) + Paid API (Setup) | Kostenlos, zuverlässig, Rate-Limiting-aware |
 | **Persistenz** | SQLite (`tracking.db`) | Lokal, ACID, Release-Asset-Backup via GitHub |
 | **Scheduler** | GitHub Actions Cron | Free Tier 2000 Min/Monat, UTC-basiert |
-| **E-Mail** | SendGrid | 100 Mails/Tag kostenlos, API-basiert |
+| **E-Mail** | Resend | 3 000 Mails/Monat + 100/Tag kostenlos, API-basiert |
 | **Tests** | pytest | 80% Coverage-Gate, 159 Tests (unit + integration) |
 
 ## Projekt-Status
@@ -112,7 +112,7 @@ Alle Setups MÜSSEN erfüllen:
 
 - [ ] `requirements.txt` installiert + Python 3.12+ aktiv
 - [ ] `pytest tests/ -q` → 159 passed (✅ lokal grün)
-- [ ] GitHub Secrets: ANTHROPIC_API_KEY, SENDGRID_API_KEY, EMAIL_TO, EMAIL_FROM
+- [ ] GitHub Secrets: ANTHROPIC_API_KEY, RESEND_API_KEY, EMAIL_TO, EMAIL_FROM
 - [ ] `.github/workflows/analyze.yml` aktiviert (nicht FINNHUB_API_KEY!)
 - [ ] `workflow_dispatch` auf `analyze.yml` testen
 - [ ] Erste 3 Runs beobachten (14:00, 14:45, 21:30 UTC)
