@@ -282,8 +282,8 @@ def test_send_position_check_email_subject_contains_count(mocker):
 
 
 def test_send_surfaces_the_provider_response_body(mocker):
-    """Ein 4xx ohne Klartext kostet Stunden. Bei SendGrid war ein leeres
-    Kontingent nicht von einem kaputten Key zu unterscheiden, weil der Body
+    """Ein 4xx ohne Klartext kostet Stunden. Beim Vorgaenger-Anbieter war ein
+    leeres Kontingent nicht von einem kaputten Key zu unterscheiden, weil der Body
     verworfen wurde. Bei Resend kommen ein abgelehnter Absender und ein
     ungueltiger Key ebenfalls beide als 4xx — der Body muss mit."""
     from src.email_sender import _send, EmailSendError

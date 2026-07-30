@@ -8,7 +8,7 @@ from pathlib import Path
 #
 # Zwei Marker, weil sich die Nebenwirkungen unterscheiden:
 #   live_api   — rein lesende Verbindungspruefung, keine sichtbare Wirkung
-#   live_email — verschickt echte Post und verbraucht SendGrid-Kontingent
+#   live_email — verschickt echte Post und verbraucht Versandkontingent
 # So laesst sich die Verbindung pruefen, ohne sich selbst zuzuspammen:
 #   pytest tests/live --run-live -m live_api
 LIVE_MARKERS = ("live_api", "live_email")

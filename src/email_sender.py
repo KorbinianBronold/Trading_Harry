@@ -308,7 +308,7 @@ def render_weekly_html(payload: dict) -> str:
 def send_daily_email(
     payload: dict, api_key: str, email_from: str, email_to: str,
 ) -> None:
-    """Renders and sends the daily pre_market/midday e-mail via SendGrid."""
+    """Renders and sends the daily pre_market/midday e-mail via Resend."""
     html_body = render_daily_html(payload)
     subject = (
         f"[Shares_Future] {payload.get('date')} {payload.get('run_type')} — "
@@ -321,7 +321,7 @@ def send_daily_email(
 def send_weekly_email(
     payload: dict, api_key: str, email_from: str, email_to: str,
 ) -> None:
-    """Renders and sends the Sunday weekly-performance e-mail via SendGrid."""
+    """Renders and sends the Sunday weekly-performance e-mail via Resend."""
     html_body = render_weekly_html(payload)
     subject = (
         f"[Shares_Future] {payload.get('week_label')} — Wochen-Summary"
@@ -340,9 +340,9 @@ def _send(api_key: str, email_from: str, email_to: str,
 
     Der Antwort-Body wird ausdruecklich mitgereicht. Ein abgelehnter Absender und
     ein ungueltiger Schluessel kommen beide als 4xx; ohne Klartext sucht man den
-    Fehler an der falschen Stelle. Genau daran ist beim Vorgaenger SendGrid ein
-    Abend verlorengegangen, wo ein aufgebrauchtes Kontingent als 401 auftrat und
-    wie ein kaputter Key aussah."""
+    Fehler an der falschen Stelle. Beim Vorgaenger-Anbieter ist genau daran ein
+    Abend verlorengegangen: ein aufgebrauchtes Kontingent kam als 401 und sah wie
+    ein kaputter Key aus (Hintergrund: PROJECT_STATUS, Abschnitt 3B-M)."""
     try:
         resp = requests.post(
             RESEND_ENDPOINT,
@@ -407,7 +407,7 @@ def render_position_check_html(payload: dict) -> str:
 def send_position_check_email(
     payload: dict, api_key: str, email_from: str, email_to: str,
 ) -> None:
-    """Renders and sends the position_check status e-mail via SendGrid."""
+    """Renders and sends the position_check status e-mail via Resend."""
     html_body = render_position_check_html(payload)
     checks = payload.get("checks") or []
     n_warn = sum(1 for c in checks if c.get("status") in ("near_sl", "signal_fallen"))
@@ -448,7 +448,7 @@ def send_error_email(
     email_from: str,
     email_to: str,
 ) -> None:
-    """Renders and sends the run-failure notification e-mail via SendGrid; called
+    """Renders and sends the run-failure notification e-mail via Resend; called
     by main.py's top-level exception handler."""
     html_body = render_error_html(run_type, date, exc, traceback_text)
     subject = f"[Shares_Future] FEHLER {date} {run_type} — {type(exc).__name__}"

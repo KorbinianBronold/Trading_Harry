@@ -75,7 +75,7 @@ jobs:
 
       - name: Upload tracking.db to Release db-latest
         # B-10: bewusst always() statt success(). Die Analyse committet phasenweise;
-        # bricht der Schritt danach ab -- etwa weil SendGrid mit 401 antwortet --
+        # bricht der Schritt danach ab -- etwa weil der Mailversand fehlschlaegt --
         # waere bei success() die gesamte Arbeit des Laufs verloren (Trends,
         # Marktkontext, Predictions, Sektor-Mapping, Kosten). Der hochgeladene
         # Stand ist schlimmstenfalls unvollstaendig, aber nie schlechter als der

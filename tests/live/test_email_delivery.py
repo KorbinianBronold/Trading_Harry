@@ -1,13 +1,13 @@
 """Live-Test des Mailversands — verschickt eine ECHTE E-Mail.
 
 Anders als die lesenden Pruefungen in test_api_connectivity.py hat dieser Test
-eine sichtbare Nebenwirkung und verbraucht SendGrid-Kontingent. Deshalb ein
+eine sichtbare Nebenwirkung und verbraucht Versandkontingent. Deshalb ein
 eigener Marker: `pytest tests/live --run-live -m live_api` prueft alle
 Verbindungen, ohne Post zu verschicken.
 
 Anlass: am 2026-07-29 lief ein vollstaendiger `pre_market` fuer 3,31 EUR durch
 und scheiterte erst beim Versand. Die Ursache war nicht der Schluessel, sondern
-ein Konto ohne Versandkontingent beim damaligen Anbieter SendGrid, der beides als
+ein Konto ohne Versandkontingent beim Vorgaenger-Anbieter, der beides als
 HTTP 401 meldete. Genau deshalb ist der lesende Key-Test von diesem Versand-Test
 getrennt: schlaegt nur dieser hier fehl, liegt es an Kontingent oder Absender.
 

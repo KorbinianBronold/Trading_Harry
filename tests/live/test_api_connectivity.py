@@ -123,7 +123,7 @@ def test_resend_key_is_accepted_without_sending(report, key_source):
     Kontingent.
 
     Die Trennung ist bewusst und stammt aus einem konkreten Vorfall beim
-    Vorgaenger SendGrid: dort meldete ein aufgebrauchtes Kontingent denselben
+    Vorgaenger-Anbieter: dort meldete ein aufgebrauchtes Kontingent denselben
     HTTP 401 wie ein unbrauchbarer Schluessel, was die Fehlersuche in die falsche
     Richtung schickte. Schlaegt dieser Test fehl, ist der Key kaputt; schlaegt nur
     test_email_delivery fehl, liegt es an Kontingent oder Absenderadresse.
