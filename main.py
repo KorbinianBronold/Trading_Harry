@@ -26,6 +26,8 @@ from src.market_context import fetch_market_context, MarketContextError
 from src.portfolio_check import check_open_positions
 from src.ranking import rank_and_persist
 from src.evaluator import evaluate_open_predictions
+from src import signal_checks
+from src.revalidation import revalidate_one, RevalidationError
 from src.email_sender import (
     send_daily_email, send_weekly_email, generate_daily_briefing,
     send_error_email,
@@ -377,31 +379,262 @@ def run_close(date: str, db_path: str) -> None:
     conn.close()
 
 
+def _persist_revision(
+    conn, pred, verdict: dict, snapshot: dict, date: str,
+    checks: list, momentum: tuple[float | None, float | None],
+) -> int | None:
+    """Setzt das Urteil des 16:10-Laufs nach der Tabelle aus Spec 6.3 um.
+
+    Gibt die ID der neuen trade_proposals-Zeile zurueck, oder None, wenn keine
+    entstand (Urteil 'gedreht' oder ein hart greifender Check). In beiden
+    None-Faellen bleibt die pre_market-Zeile offen und wird regulaer ausgewertet —
+    nur so laesst sich messen, ob die Ablehnung richtig lag."""
+    etf_mom, db_mom = momentum
+    ticker, direction = pred["ticker"], pred["direction"]
+
+    if verdict["verdict"] == "gedreht":
+        # E5: melden, nicht handeln. Das Gegensignal ist nie durch Phase 3
+        # gelaufen — es haette keine Belege und kein analytisch hergeleitetes TP/SL.
+        db.record_revision(conn, pred["id"], "gedreht")
+        return None
+
+    if signal_checks.blocks(checks):
+        db.record_revision(conn, pred["id"], "verworfen")
+        return None
+
+    entry = snapshot.get("price") or pred["entry_price"]
+    rr = signal_checks.recompute_rr_ratio(
+        entry, pred["tp_price"], pred["sl_price"], direction)
+    if rr is None or rr < config.RR_RATIO_MIN_HARD:
+        db.log_guardrail_reject(conn, {
+            "date": date, "run_type": "trade_proposals", "ticker": ticker,
+            "direction": direction, "rule": "rr_ratio",
+            "detail": f"R/R nach Opening {rr} < {config.RR_RATIO_MIN_HARD} "
+                      f"(Einstieg {entry} statt {pred['entry_price']})",
+            "enforced": 1,
+            "sector_etf_momentum": etf_mom, "sector_db_momentum": db_mom,
+        })
+        db.record_revision(conn, pred["id"], "verworfen")
+        return None
+
+    new_id = db.save_prediction(conn, {
+        "date": date, "run_type": "trade_proposals",
+        "asset_class": pred["asset_class"], "ticker": ticker, "direction": direction,
+        "entry_price": entry,
+        "tp_price": pred["tp_price"], "tp_pct": pred["tp_pct"],
+        "sl_price": pred["sl_price"], "sl_pct": pred["sl_pct"],
+        "rr_ratio": round(rr, 2),
+        "total_score": pred["total_score"],
+        "probability_pct": verdict.get("probability_pct"),
+        "confidence": pred["confidence"],
+        "score_market_env": pred["score_market_env"],
+        "score_company": pred["score_company"],
+        "score_valuation": pred["score_valuation"],
+        "score_momentum": pred["score_momentum"],
+        "score_risk": pred["score_risk"],
+        "score_sector": pred["score_sector"],
+        "score_catalyst": pred["score_catalyst"],
+        "score_policy": pred["score_policy"],
+        "market_regime": pred["market_regime"],
+        "vix_at_prediction": pred["vix_at_prediction"],
+        "sector": pred["sector"],
+        "earnings_warning": pred["earnings_warning"],
+        "summary": verdict.get("reason") or pred["summary"],
+        "learnable": True,
+        "hold_days_recommended": pred["hold_days_recommended"],
+        "intraday_range_pct": pred["intraday_range_pct"],
+        "sector_etf_momentum": etf_mom, "sector_db_momentum": db_mom,
+    })
+    db.record_revision(conn, pred["id"], verdict["verdict"], superseded_by=new_id)
+    return new_id
+
+
 def run_trade_proposals(date: str, db_path: str) -> None:
-    """Run-Type trade_proposals (16:10 Berlin): prueft die pre_market-Signale
-    nach dem Opening-Rauschen erneut. In diesem Ausbaustand zieht er nur frische
-    Kurse fuer alle Ticker; die Re-Validierung kommt in Task 13 dazu."""
+    """Run-Type trade_proposals (16:10 Berlin): prueft die pre_market-Signale nach
+    dem Opening-Rauschen billig nach und loest sie ab.
+
+    Kein Phase 0 — die Megatrend-Analyse aendert sich nicht in 70 Minuten, der Run
+    liest sie aus der DB. Der Policy-Monitor laeuft dagegen MIT Websuche: seit E1
+    ist er die einzige Recherche des Laufs."""
     conn = db.connect(db_path)
     db.init_schema(conn)
+    cost_tracker = CostTracker()
     price_provider = CapitalComProvider()
     earnings_provider = FinnhubProvider()
 
-    _tickers = (config.SP500_FULL_TICKERS if config.USE_FULL_SP500
-                else config.SP500_MVP_TICKERS)
-    collect(
-        tickers=_tickers, price_provider=price_provider,
-        earnings_provider=earnings_provider,
-        conn=conn, date=date, run_type="trade_proposals",
-    )
-    cc_tickers = [d["ticker"] for d in build_commodity_crypto_inputs()]
-    collect(
-        tickers=cc_tickers, price_provider=price_provider,
-        earnings_provider=earnings_provider,
-        conn=conn, date=date, run_type="trade_proposals",
-    )
-    log.info(f"trade_proposals: Kurse fuer {len(_tickers) + len(cc_tickers)} "
-             f"Ticker aktualisiert")
+    aborted_at: str | None = None
+    current_phase = "market_context"
+    payload = {
+        "date": date, "run_type": "trade_proposals",
+        "briefing": [], "portfolio_recs": [], "signal_changes": [],
+        "commodities_crypto": [], "market_context": {},
+        "cost_summary": {},
+    }
+
+    try:
+        market_ctx = {"vix_level": None, "advance_decline_ratio": None,
+                      "market_regime": None}
+        try:
+            market_ctx = fetch_market_context(
+                date=date, run_type="trade_proposals", cost_tracker=cost_tracker,
+                price_provider=price_provider,
+            )
+            db.save_market_context(
+                conn, {**market_ctx, "date": date, "run_type": "trade_proposals"})
+        except MarketContextError as e:
+            log.warning(f"Markt-Kontext nicht ermittelbar, Run laeuft ohne: {e}")
+        payload["market_context"] = market_ctx
+
+        current_phase = "data_collection"
+        _tickers = (config.SP500_FULL_TICKERS if config.USE_FULL_SP500
+                    else config.SP500_MVP_TICKERS)
+        sp_tds, _ = collect(
+            tickers=_tickers, price_provider=price_provider,
+            earnings_provider=earnings_provider,
+            conn=conn, date=date, run_type="trade_proposals")
+        cc_tickers = [d["ticker"] for d in build_commodity_crypto_inputs()]
+        cc_tds, _ = collect(
+            tickers=cc_tickers, price_provider=price_provider,
+            earnings_provider=earnings_provider,
+            conn=conn, date=date, run_type="trade_proposals")
+        snapshots = {td["ticker"]: td for td in (sp_tds + cc_tds)}
+
+        current_phase = "open_positions"
+        _forced_candidates(price_provider)   # nur fuer den Log — Phase 4a sieht sie ohnehin
+
+        current_phase = "sector_momentum"
+        sector_mom: dict[int, dict] = {}
+        try:
+            sector_mom = collect_sector_momentum(
+                conn=conn, date=date, run_type="trade_proposals",
+                price_provider=price_provider)
+        except CostCapExceeded:
+            # Muss vor dem blanken except stehen, sonst frisst der Auffang-Zweig
+            # den Kosten-Abbruch und der Lauf laeuft ueber den Deckel hinaus weiter.
+            raise
+        except Exception as e:
+            log.warning(f"Sektor-Momentum nicht ermittelbar, Run laeuft ohne: {e}")
+
+        current_phase = "policy_monitor"
+        # Seit E1 die einzige Websuche des Laufs. Faellt sie aus, ist die
+        # Re-Validierung rein preisbasiert — immer noch besser als gar keine.
+        policy_context: dict = {"policy_risk_level": "unknown", "events": []}
+        try:
+            policy_context = run_policy_monitor(
+                date=date, run_type="trade_proposals", cost_tracker=cost_tracker)
+        except CostCapExceeded:
+            # Dieselbe Reihenfolge wie beim Sektor-Momentum: sonst liefe der Lauf
+            # ueber den Deckel hinaus weiter und die Kostenzeile nennte die
+            # falsche Phase — genau der Fehler, den B-05 beseitigt hat.
+            raise
+        except Exception as e:
+            log.warning(f"Policy-Monitor ausgefallen, Re-Validierung laeuft "
+                        f"rein preisbasiert weiter: {e}")
+            payload["briefing"] = ["⚠️ Policy-Monitor ausgefallen — "
+                                   "keine Nachrichtenlage in dieser Prüfung."]
+
+        current_phase = "revalidation"
+        payload["signal_changes"] = _revalidate_all(
+            conn=conn, date=date, snapshots=snapshots, sector_mom=sector_mom,
+            market_ctx=market_ctx, policy_context=policy_context,
+            cost_tracker=cost_tracker,
+        )
+
+        current_phase = "portfolio_check"
+        payload["portfolio_recs"] = check_open_positions(
+            conn=conn, today=date, run_type="trade_proposals",
+            analyses_by_ticker=snapshots,
+            trend_context=db.load_trend_context(conn, date) or {},
+            policy_context=policy_context, cost_tracker=cost_tracker,
+        )
+
+    except CostCapExceeded as e:
+        log.warning(f"Run aborted in phase '{current_phase}': {e}")
+        cost_tracker.aborted_at_phase = current_phase
+        aborted_at = current_phase
+
+    payload["cost_summary"] = cost_tracker.summary(
+        run_type="trade_proposals", date=date)
+    db.save_cost_tracking(conn, payload["cost_summary"])
+    log.info(f"trade_proposals fertig: {len(payload['signal_changes'])} Signale "
+             f"geprueft, {payload['cost_summary']['total_eur']} EUR"
+             + (f", abgebrochen in {aborted_at}" if aborted_at else ""))
     conn.close()
+
+
+def _revalidate_all(
+    conn, date: str, snapshots: dict, sector_mom: dict,
+    market_ctx: dict, policy_context: dict, cost_tracker: CostTracker,
+) -> list[dict]:
+    """Prueft jedes heutige offene pre_market-Signal nach und persistiert das
+    Ergebnis. Gibt die Zeilen fuer die Mail zurueck.
+
+    Ein Fehlschlag betrifft immer nur EIN Signal: die zugehoerige Zeile bleibt dann
+    unangetastet offen und erscheint in der Mail als 'nicht geprueft'."""
+    open_preds = db.load_predictions_for_revalidation(conn, date)
+    log.info(f"Re-Validierung: {len(open_preds)} offene pre_market-Signale")
+
+    counts = signal_checks.cluster_counts(conn, [p["ticker"] for p in open_preds])
+    out: list[dict] = []
+    for pred in open_preds:
+        ticker = pred["ticker"]
+        snapshot = snapshots.get(ticker, {})
+        etf_mom, db_mom = signal_checks.momentum_for(conn, ticker, sector_mom)
+        sector = db.get_ticker_sector(conn, ticker)
+        sector_name = sector["name"] if sector else None
+        checks = [c for c in (
+            signal_checks.check_vix(pred["direction"], pred["confidence"],
+                                    market_ctx.get("vix_level"), enforce=True),
+            signal_checks.check_sector_momentum(pred["direction"], etf_mom, db_mom,
+                                                enforce=True),
+            signal_checks.check_cluster(sector_name,
+                                        counts.get(sector_name or "", 0)),
+        ) if c is not None]
+
+        # E4: auch der 16:10-Lauf persistiert JEDEN angeschlagenen Check — sonst
+        # zeigt die Guardrail-Statistik der Weekly-Mail nur die weiche Haelfte und
+        # die enforced-Spalte waere wertlos.
+        for c in checks:
+            db.log_guardrail_reject(conn, {
+                "date": date, "run_type": "trade_proposals", "ticker": ticker,
+                "direction": pred["direction"], "rule": c.rule, "detail": c.detail,
+                "enforced": 1 if c.enforced else 0,
+                "sector_etf_momentum": etf_mom, "sector_db_momentum": db_mom,
+            })
+
+        try:
+            verdict = revalidate_one(
+                prediction=pred, snapshot=snapshot, checks=checks,
+                relative_strength=signal_checks.compute_relative_strength(
+                    conn, ticker, date),
+                policy_context=policy_context, cost_tracker=cost_tracker,
+            )
+        except RevalidationError as e:
+            log.warning(f"{ticker}: Re-Validierung fehlgeschlagen, Zeile bleibt "
+                        f"unveraendert offen: {e}")
+            out.append({"ticker": ticker, "direction": pred["direction"],
+                        "verdict": "nicht_geprueft",
+                        "probability_before": pred["probability_pct"],
+                        "probability_after": None, "reason": str(e), "checks": []})
+            continue
+
+        new_id = _persist_revision(
+            conn=conn, pred=pred, verdict=verdict, snapshot=snapshot,
+            date=date, checks=checks, momentum=(etf_mom, db_mom),
+        )
+        out.append({
+            "ticker": ticker, "direction": pred["direction"],
+            "verdict": "verworfen" if (new_id is None and
+                                       verdict["verdict"] != "gedreht")
+                       else verdict["verdict"],
+            "probability_before": pred["probability_pct"],
+            "probability_after": verdict.get("probability_pct"),
+            "entry_window_low": verdict.get("entry_window_low"),
+            "entry_window_high": verdict.get("entry_window_high"),
+            "reason": verdict.get("reason"),
+            "checks": [f"{c.rule}: {c.detail}" for c in checks],
+        })
+    return out
 
 
 def run_weekly(date: str, db_path: str) -> None:

@@ -194,3 +194,21 @@ def cluster_counts(
             continue
         counts[sector["name"]] = counts.get(sector["name"], 0) + 1
     return counts
+
+
+def recompute_rr_ratio(
+    entry: float, tp: float, sl: float, direction: str,
+) -> float | None:
+    """Chance/Risiko-Verhaeltnis gegen einen NEUEN Einstiegskurs.
+
+    Die Kursziele der Morgen-These bleiben absolut — sie wandern nicht, nur weil der
+    Einstieg 40 Minuten spaeter erfolgt. Verschiebt sich der Einstieg aber Richtung TP,
+    schrumpft das Verhaeltnis. None, wenn der Kurs bereits durch TP oder SL gelaufen
+    ist; dann gibt es kein sinnvolles Verhaeltnis mehr."""
+    if direction == "long":
+        reward, risk = tp - entry, entry - sl
+    else:
+        reward, risk = entry - tp, sl - entry
+    if reward <= 0 or risk <= 0:
+        return None
+    return reward / risk

@@ -190,6 +190,40 @@ def test_save_trend_analysis_unique_per_date_and_name(in_memory_db):
     assert rows[0]["strength"] == 9
 
 
+# ---------- load_trend_context (Task 13): der 16:10-Lauf liest den Morgen ----------
+
+def test_load_trend_context_mirrors_analyze_trends_shape(in_memory_db):
+    """Der 16:10-Lauf macht keine eigene Trendanalyse, sondern liest die
+    Morgen-Zeilen aus trend_analyses — im selben Format, das analyze_trends()
+    liefert (Schluessel 'name', nicht die DB-Spalte 'trend_name')."""
+    from src.db import load_trend_context
+    init_schema(in_memory_db)
+    save_trend_analysis(in_memory_db, {
+        "date": "2026-07-30", "run_type": "pre_market",
+        "trend_name": "ai-capex-acceleration",
+        "strength": 8, "duration_estimate": "1m+",
+        "summary": "Hyperscalers raised guidance.",
+        "beneficiary_tickers": ["NVDA", "AVGO"],
+        "negative_tickers": ["INTC"],
+        "next_catalyst": "GTC keynote 2026-06-12",
+    })
+    ctx = load_trend_context(in_memory_db, "2026-07-30")
+    assert len(ctx["trends"]) == 1
+    trend = ctx["trends"][0]
+    assert trend["name"] == "ai-capex-acceleration"
+    assert trend["strength"] == 8
+    assert trend["beneficiary_tickers"] == ["NVDA", "AVGO"]
+    assert trend["negative_tickers"] == ["INTC"]
+
+
+def test_load_trend_context_is_empty_dict_without_a_morning_entry(in_memory_db):
+    """Faellt Phase 0 am Morgen aus, gibt es fuer den Tag keine Zeile —
+    der Portfolio-Check muss mit einem leeren Kontext klarkommen."""
+    from src.db import load_trend_context
+    init_schema(in_memory_db)
+    assert load_trend_context(in_memory_db, "2026-07-30") == {}
+
+
 def test_log_skipped_ticker_inserts_row(in_memory_db):
     init_schema(in_memory_db)
     log_skipped_ticker(

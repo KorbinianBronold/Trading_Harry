@@ -495,7 +495,20 @@ def test_successful_mail_leaves_no_error(tmp_db_path, mocker):
                  db_path=str(tmp_db_path))
 
 
-# ---------- Sprint 3B / Plan 2, Task 1: trade_proposals-Geruest ----------
+# ---------- Sprint 3B / Plan 2, Task 1/13: trade_proposals ----------
+
+def _stub_trade_proposals_side_phases(mocker) -> None:
+    """Legt die Phasen still, die Task 13 um das urspruengliche Geruest herum
+    ergaenzt hat (Markt-Kontext, Sektor-Momentum, Policy-Monitor,
+    Portfolio-Check) — die beiden Geruest-Tests unten pruefen nur die
+    Kurs-Erfassung bzw. den (noch) fehlenden Mailversand und sollen dafuer
+    nicht wirklich Claude oder Capital.com anfassen."""
+    mocker.patch("main.fetch_market_context", return_value={"vix_level": 18.0})
+    mocker.patch("main.collect_sector_momentum", return_value={})
+    mocker.patch("main.run_policy_monitor",
+                 return_value={"policy_risk_level": "low", "events": []})
+    mocker.patch("main.check_open_positions", return_value=[])
+
 
 def test_run_trade_proposals_collects_all_tickers(tmp_db_path, mocker):
     """B.2/Schritt 1: der 16:10-Lauf zieht frische Kurse fuer ALLE Ticker,
@@ -503,6 +516,7 @@ def test_run_trade_proposals_collects_all_tickers(tmp_db_path, mocker):
     mocker.patch("main.CapitalComProvider", return_value=MagicMock())
     mocker.patch("main.FinnhubProvider", return_value=MagicMock())
     collect_mock = mocker.patch("main.collect", return_value=([], 0))
+    _stub_trade_proposals_side_phases(mocker)
 
     from main import run_trade_proposals
     run_trade_proposals(date="2026-07-30", db_path=str(tmp_db_path))
@@ -516,10 +530,11 @@ def test_run_trade_proposals_collects_all_tickers(tmp_db_path, mocker):
 
 
 def test_run_trade_proposals_sends_no_mail_yet(tmp_db_path, mocker):
-    """Das Geruest verschickt bewusst noch nichts — wie close."""
+    """Der Mailversand wird erst im naechsten Task verdrahtet — wie close."""
     mocker.patch("main.CapitalComProvider", return_value=MagicMock())
     mocker.patch("main.FinnhubProvider", return_value=MagicMock())
     mocker.patch("main.collect", return_value=([], 0))
+    _stub_trade_proposals_side_phases(mocker)
     send = mocker.patch("main.send_daily_email")
 
     from main import run_trade_proposals
@@ -641,3 +656,167 @@ def test_sector_momentum_failure_does_not_abort_the_run(mocker):
     from main import run_pipeline
     run_pipeline(run_type="pre_market", date="2026-07-30", db_path=":memory:")
     # kein raise
+
+
+# ---------- Sprint 3B / Plan 2, Task 13: Re-Validierung + Persistenz ----------
+
+
+def _pred_row(conn, **over):
+    base = {"date": "2026-07-30", "run_type": "pre_market", "ticker": "AAPL",
+            "direction": "long", "entry_price": 100.0, "tp_price": 106.0,
+            "sl_price": 98.0, "probability_pct": 65, "confidence": "high"}
+    from src import db
+    return db.save_prediction(conn, {**base, **over})
+
+
+def test_confirmed_signal_supersedes_the_morning_row(in_memory_db):
+    from src import db
+    from main import _persist_revision
+    db.init_schema(in_memory_db)
+    pid = _pred_row(in_memory_db)
+    pred = in_memory_db.execute("SELECT * FROM predictions WHERE id=?", (pid,)).fetchone()
+
+    new_id = _persist_revision(
+        conn=in_memory_db, pred=pred,
+        verdict={"verdict": "bestaetigt", "probability_pct": 71,
+                 "reason": "haelt", "entry_window_low": 100.2,
+                 "entry_window_high": 101.0},
+        snapshot={"price": 101.0}, date="2026-07-30", checks=[],
+        momentum=(1.2, 0.8),
+    )
+    assert new_id is not None
+    old = in_memory_db.execute("SELECT * FROM predictions WHERE id=?", (pid,)).fetchone()
+    assert old["status"] == "superseded" and old["superseded_by"] == new_id
+    new = in_memory_db.execute("SELECT * FROM predictions WHERE id=?", (new_id,)).fetchone()
+    assert new["run_type"] == "trade_proposals"
+    assert new["entry_price"] == 101.0, "Einstieg ist der 16:10-Kurs"
+    assert new["tp_price"] == 106.0, "TP bleibt absolut — das Ziel wandert nicht"
+    assert new["probability_pct"] == 71
+
+
+def test_flipped_signal_creates_no_counter_position(in_memory_db):
+    """E5: melden, nicht handeln."""
+    from src import db
+    from main import _persist_revision
+    db.init_schema(in_memory_db)
+    pid = _pred_row(in_memory_db)
+    pred = in_memory_db.execute("SELECT * FROM predictions WHERE id=?", (pid,)).fetchone()
+
+    new_id = _persist_revision(
+        conn=in_memory_db, pred=pred,
+        verdict={"verdict": "gedreht", "probability_pct": 30, "reason": "gekippt"},
+        snapshot={"price": 99.0}, date="2026-07-30", checks=[], momentum=(None, None),
+    )
+    assert new_id is None
+    rows = in_memory_db.execute("SELECT * FROM predictions").fetchall()
+    assert len(rows) == 1, "keine Gegenposition"
+    assert rows[0]["status"] == "open", "bleibt offen und wird ausgewertet"
+    assert rows[0]["revision_verdict"] == "gedreht"
+
+
+def test_hard_check_marks_the_signal_verworfen(in_memory_db):
+    from src import db
+    from main import _persist_revision
+    from src.signal_checks import CheckResult
+    db.init_schema(in_memory_db)
+    pid = _pred_row(in_memory_db)
+    pred = in_memory_db.execute("SELECT * FROM predictions WHERE id=?", (pid,)).fetchone()
+
+    new_id = _persist_revision(
+        conn=in_memory_db, pred=pred,
+        verdict={"verdict": "bestaetigt", "probability_pct": 71, "reason": "x"},
+        snapshot={"price": 101.0}, date="2026-07-30",
+        checks=[CheckResult("vix_no_new_longs", "VIX 41", enforced=True)],
+        momentum=(None, None),
+    )
+    assert new_id is None
+    row = in_memory_db.execute("SELECT * FROM predictions WHERE id=?", (pid,)).fetchone()
+    assert row["revision_verdict"] == "verworfen" and row["status"] == "open"
+
+
+def test_entry_past_the_stop_is_verworfen(in_memory_db):
+    """Der Kurs ist seit 15:00 durch den SL gelaufen — kein Einstieg mehr."""
+    from src import db
+    from main import _persist_revision
+    db.init_schema(in_memory_db)
+    pid = _pred_row(in_memory_db)
+    pred = in_memory_db.execute("SELECT * FROM predictions WHERE id=?", (pid,)).fetchone()
+
+    new_id = _persist_revision(
+        conn=in_memory_db, pred=pred,
+        verdict={"verdict": "bestaetigt", "probability_pct": 71, "reason": "x"},
+        snapshot={"price": 97.0}, date="2026-07-30", checks=[], momentum=(None, None),
+    )
+    assert new_id is None
+    row = in_memory_db.execute("SELECT * FROM predictions WHERE id=?", (pid,)).fetchone()
+    assert row["revision_verdict"] == "verworfen"
+
+
+def test_revalidation_failure_leaves_the_row_untouched(tmp_db_path, mocker):
+    """Nie auf Basis eines Fehlers abloesen — sonst verschwindet ein gutes
+    Signal, weil ein Call einmal unlesbar antwortete."""
+    from src import db
+    from src.revalidation import RevalidationError
+    conn = db.connect(str(tmp_db_path)); db.init_schema(conn)
+    pid = _pred_row(conn)
+    conn.commit(); conn.close()
+
+    mocker.patch("main.CapitalComProvider", return_value=MagicMock())
+    mocker.patch("main.FinnhubProvider", return_value=MagicMock())
+    mocker.patch("main.collect", return_value=([{"ticker": "AAPL", "price": 101.0}], 0))
+    mocker.patch("main.fetch_market_context", return_value={"vix_level": 18.0})
+    mocker.patch("main.collect_sector_momentum", return_value={})
+    mocker.patch("main.run_policy_monitor", return_value={"policy_risk_level": "low",
+                                                         "events": []})
+    mocker.patch("main.check_open_positions", return_value=[])
+    mocker.patch("main.revalidate_one", side_effect=RevalidationError("kaputt"))
+
+    from main import run_trade_proposals
+    run_trade_proposals(date="2026-07-30", db_path=str(tmp_db_path))
+
+    conn = db.connect(str(tmp_db_path))
+    row = conn.execute("SELECT * FROM predictions WHERE id=?", (pid,)).fetchone()
+    assert row["status"] == "open"
+    assert row["revision_verdict"] is None
+    conn.close()
+
+
+@pytest.mark.parametrize("phase,target", [
+    ("market_context",  "main.fetch_market_context"),
+    ("data_collection", "main.collect"),
+    ("sector_momentum", "main.collect_sector_momentum"),
+    ("policy_monitor",  "main.run_policy_monitor"),
+    ("revalidation",    "main.revalidate_one"),
+    ("portfolio_check", "main.check_open_positions"),
+])
+def test_cost_abort_reports_the_right_phase(tmp_db_path, mocker, phase, target):
+    """B-05 fuer den neuen Run-Type: bricht der Lauf am Kosten-Deckel ab, muss die
+    Kostenzeile die TATSAECHLICHE Phase nennen. Der alte Bug gab hier systematisch
+    'policy_monitor' zurueck, egal wo es knallte. Eine kuenftig ergaenzte Phase ohne
+    current_phase-Zuweisung faellt hier auf."""
+    from src import db
+    from src.cost_tracker import CostCapExceeded
+    conn = db.connect(str(tmp_db_path)); db.init_schema(conn)
+    _pred_row(conn); conn.commit(); conn.close()
+
+    mocker.patch("main.CapitalComProvider", return_value=MagicMock())
+    mocker.patch("main.FinnhubProvider", return_value=MagicMock())
+    mocker.patch("main.fetch_market_context", return_value={"vix_level": 18.0})
+    mocker.patch("main.collect", return_value=([{"ticker": "AAPL", "price": 101.0}], 0))
+    mocker.patch("main.collect_sector_momentum", return_value={})
+    mocker.patch("main.run_policy_monitor",
+                 return_value={"policy_risk_level": "low", "events": []})
+    mocker.patch("main.revalidate_one", return_value={
+        "verdict": "bestaetigt", "probability_pct": 71, "reason": "ok"})
+    mocker.patch("main.check_open_positions", return_value=[])
+    mocker.patch(target, side_effect=CostCapExceeded("Deckel"))
+
+    from main import run_trade_proposals
+    run_trade_proposals(date="2026-07-30", db_path=str(tmp_db_path))
+
+    conn = db.connect(str(tmp_db_path))
+    row = conn.execute(
+        "SELECT aborted_at_phase FROM cost_tracking WHERE run_type='trade_proposals'"
+    ).fetchone()
+    assert row["aborted_at_phase"] == phase
+    conn.close()

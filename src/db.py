@@ -609,6 +609,38 @@ def save_trend_analysis(conn: sqlite3.Connection, trend: dict) -> None:
     conn.commit()
 
 
+def load_trend_context(conn: sqlite3.Connection, date: str) -> dict:
+    """Liest die am Morgen gespeicherten `trend_analyses`-Zeilen fuer `date` und
+    baut daraus dieselbe Struktur, die analyze_trends() zurueckgibt (Schluessel
+    `trends`, je Eintrag `name` statt der DB-Spalte `trend_name`).
+
+    Der 16:10-Lauf macht keine eigene Trendanalyse — die Megatrend-Lage aendert
+    sich nicht in 70 Minuten —, sondern liest den Vormittags-Eintrag einfach aus
+    der DB, damit der Portfolio-Check denselben Trend-Kontext bekommt wie im
+    Morgenlauf. Gibt {} zurueck, wenn fuer den Tag noch keine Trends vorliegen
+    (z. B. weil Phase 0 am Morgen fehlgeschlagen ist); der Portfolio-Check
+    vertraegt einen leeren Trend-Kontext."""
+    rows = conn.execute(
+        "SELECT * FROM trend_analyses WHERE date = ?", (date,),
+    ).fetchall()
+    if not rows:
+        return {}
+    trends = []
+    for r in rows:
+        trends.append({
+            "name": r["trend_name"],
+            "strength": r["strength"],
+            "duration_estimate": r["duration_estimate"],
+            "summary": r["summary"],
+            "beneficiary_tickers": r["beneficiary_tickers"].split(",")
+                                   if r["beneficiary_tickers"] else [],
+            "negative_tickers": r["negative_tickers"].split(",")
+                                if r["negative_tickers"] else [],
+            "next_catalyst": r["next_catalyst"],
+        })
+    return {"trends": trends}
+
+
 def save_market_context(conn: sqlite3.Connection, row: dict) -> None:
     """Schreibt oder ueberschreibt den Marktkontext eines Runs
     (UNIQUE date + run_type). Fehlende Keys werden zu NULL — ein Kontext, in dem

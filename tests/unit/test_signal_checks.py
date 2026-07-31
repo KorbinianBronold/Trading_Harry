@@ -203,3 +203,28 @@ def test_blocks_is_true_only_for_enforced_results():
     assert blocks([CheckResult("a", "x", enforced=False),
                    CheckResult("b", "y", enforced=True)]) is True
     assert blocks([]) is False
+
+
+# ---------- recompute_rr_ratio (Task 13): TP/SL bleiben absolut ----------
+
+def test_recompute_rr_ratio_long():
+    from src.signal_checks import recompute_rr_ratio
+    # Einstieg 100, TP 106, SL 98 -> Chance 6, Risiko 2 -> 3.0
+    assert recompute_rr_ratio(100.0, 106.0, 98.0, "long") == pytest.approx(3.0)
+
+
+def test_recompute_rr_ratio_short():
+    from src.signal_checks import recompute_rr_ratio
+    assert recompute_rr_ratio(100.0, 94.0, 102.0, "short") == pytest.approx(3.0)
+
+
+def test_recompute_rr_ratio_shrinks_when_the_entry_drifted():
+    """Nach dem Opening naeher am TP: dasselbe Ziel, schlechteres Verhaeltnis."""
+    from src.signal_checks import recompute_rr_ratio
+    assert recompute_rr_ratio(104.0, 106.0, 98.0, "long") == pytest.approx(1/3)
+
+
+def test_recompute_rr_ratio_is_none_past_the_stop():
+    """Kurs schon durch den SL — kein sinnvolles Verhaeltnis mehr."""
+    from src.signal_checks import recompute_rr_ratio
+    assert recompute_rr_ratio(97.0, 106.0, 98.0, "long") is None
