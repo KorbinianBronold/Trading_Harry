@@ -59,6 +59,35 @@ def tmp_db_path(tmp_path: Path) -> Path:
     return tmp_path / "test.db"
 
 
+@pytest.fixture(autouse=True)
+def _block_real_email_sends(monkeypatch, request):
+    """Blockiert echten Mailversand in Unit- und Integrationstests.
+
+    Ein Entwickler, der den Versand einer neuen send_*_email-Funktion vergisst
+    zu mocken, soll sofort Fehlschlag sehen, nicht versehentlich echte Mails
+    verschicken. Ausgenommen sind Tests mit den Markern 'live_api' oder
+    'live_email', die ohnehin nur mit --run-live laufen.
+
+    Fehler meldet dem Entwickler, dass er src.email_sender.requests.post oder
+    die betreffende send_*_email-Funktion selbst mocken soll."""
+
+    # Live-Tests duerfen echt senden
+    if any(m in request.keywords for m in LIVE_MARKERS):
+        return
+
+    def _fail_on_email_send(*args, **kwargs):
+        raise RuntimeError(
+            "FEHLER: Echte Mail-Versendung in Test blockiert! "
+            "requests.post wurde nicht gemockt.\n"
+            "Moegliche Loesung:\n"
+            "  - @patch('src.email_sender.requests.post', return_value=...) verwenden\n"
+            "  - oder die send_*_email-Funktion direkt mocken\n"
+            "Wenn dies ein Live-Test ist, markiere ihn mit @pytest.mark.live_email"
+        )
+
+    monkeypatch.setattr("src.email_sender.requests.post", _fail_on_email_send)
+
+
 @pytest.fixture
 def sample_ticker_data() -> dict:
     """Realistic single-ticker payload as produced by data_collector."""

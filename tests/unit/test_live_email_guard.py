@@ -82,3 +82,37 @@ def test_default_test_job_does_not_enable_live_runs():
     """Der Coverage-Job darf die Live-Tests nicht mitziehen."""
     job = WORKFLOW.split("live-api-checks:")[0]
     assert "--run-live" not in job
+
+
+def test_guard_fixture_blocks_direct_requests_post():
+    """Fixture blockiert direkten requests.post-Aufruf in normalem Test."""
+    import src.email_sender
+    import pytest
+
+    with pytest.raises(RuntimeError, match="Echte Mail-Versendung"):
+        src.email_sender.requests.post(
+            "https://api.resend.com/emails",
+            json={"to": "test@example.com"}
+        )
+
+
+def test_guard_fixture_blocks_send_daily_email_without_mock():
+    """Fixture blockiert send_daily_email wenn requests.post nicht gemockt ist."""
+    from src.email_sender import send_daily_email, EmailSendError
+    import pytest
+
+    payload = {
+        "date": "2026-01-01",
+        "run_type": "test",
+        "top_long": [],
+        "top_short": [],
+        "portfolio_recs": [],
+        "trends": [],
+        "commodities_crypto": [],
+        "cost_summary": {},
+        "yesterday_outcomes": {},
+        "skipped_tickers": [],
+    }
+
+    with pytest.raises(EmailSendError, match="Echte Mail-Versendung"):
+        send_daily_email(payload, "test-key", "from@test.com", "to@test.com")
