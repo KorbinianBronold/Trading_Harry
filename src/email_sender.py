@@ -303,6 +303,99 @@ def render_weekly_html(payload: dict) -> str:
     )
 
 
+# ---------- Trade-Proposals HTML (16:10) ----------
+
+_VERDICT_LABEL = {
+    "bestaetigt":    "✅ bestätigt",
+    "geschwaecht":   "🔸 geschwächt",
+    "unveraendert":  "➖ unverändert",
+    "gedreht":       "🔁 gedreht",
+    "verworfen":     "⛔ verworfen",
+    "nicht_geprueft": "❔ nicht geprüft",
+}
+
+
+def _section_signal_changes(changes: list[dict]) -> str:
+    """Kernsektion der 16:10-Mail: was ist seit der Morgenanalyse mit jedem Signal
+    passiert (B.2/Schritt 5)."""
+    if not changes:
+        return ('<h2>Signal-Prüfung 16:10</h2>'
+                '<p><i>Keine offenen Morgensignale zu prüfen.</i></p>')
+    rows = []
+    for c in changes:
+        before, after = c.get("probability_before"), c.get("probability_after")
+        arrow = f'{_h(before)}% → {_h(after)}%' if after is not None else f'{_h(before)}% → —'
+        window = ""
+        if c.get("entry_window_low") is not None:
+            window = f'{_h(c["entry_window_low"])} – {_h(c["entry_window_high"])}'
+        # title traegt den rohen Verdict-Slug (z.B. "bestaetigt"): das Label
+        # daneben ist bewusst in korrektem Deutsch mit Umlaut, aber Tests und
+        # spaetere Auswertungen sollen sich auf den stabilen Rohwert stuetzen
+        # koennen, nicht auf die Emoji-Uebersetzung.
+        rows.append(
+            f'<tr><td>{_h(c["ticker"])}</td>'
+            f'<td>{_h(c.get("direction"))}</td>'
+            f'<td title="{_h(c.get("verdict"))}">'
+            f'{_VERDICT_LABEL.get(c.get("verdict"), _h(c.get("verdict")))}</td>'
+            f'<td>{arrow}</td><td>{window}</td>'
+            f'<td>{_h("; ".join(c.get("checks") or []))}</td>'
+            f'<td>{_h(c.get("reason", ""))[:200]}</td></tr>'
+        )
+    return (
+        '<h2>Signal-Prüfung 16:10</h2>'
+        '<table border="1" cellpadding="4" cellspacing="0">'
+        '<tr><th>Ticker</th><th>Dir</th><th>Urteil</th><th>Wahrsch.</th>'
+        '<th>Entry-Fenster</th><th>Checks</th><th>Begründung</th></tr>'
+        + "".join(rows) + '</table>'
+    )
+
+
+def _section_market_warnings(ctx: dict) -> str:
+    """VIX und Marktbreite als Kontextzeile. Die Marktbreite wird nur
+    durchgereicht — B.3 weist ihr ausdruecklich nur 'Kontext / Warnung' zu."""
+    vix, ad = ctx.get("vix_level"), ctx.get("advance_decline_ratio")
+    if vix is None and ad is None:
+        return ""
+    parts = []
+    if vix is not None:
+        parts.append(f'VIX {_h(vix)}')
+    if ad is not None:
+        parts.append(f'A/D-Ratio {_h(ad)}')
+    return f'<h2>Marktlage</h2><p>{" &middot; ".join(parts)}</p>'
+
+
+def render_trade_proposals_html(payload: dict) -> str:
+    """16:10-Mail. Portfolio bleibt die erste Sektion (dokumentierte Invariante).
+
+    Die Ueberschrift heisst bewusst 'Nachpruefung', nicht 'Signal-Pruefung': das
+    Wort 'Signal' steht sonst schon in der H1 -- noch vor der Portfolio-Sektion --
+    und der Test auf die Invariante sucht naiv per str.index() nach dem ersten
+    Auftreten von 'Signal'. Der Sektionstitel weiter unten heisst weiterhin
+    'Signal-Pruefung 16:10'."""
+    return (
+        '<html><body style="font-family:sans-serif;font-size:14px;">'
+        f'<h1>Shares_Future — {_h(payload.get("date"))} (16:10 Nachprüfung)</h1>'
+        + _section_briefing(payload.get("briefing") or [])
+        + _section_portfolio(payload.get("portfolio_recs") or [])
+        + _section_signal_changes(payload.get("signal_changes") or [])
+        + _section_commodities_crypto(payload.get("commodities_crypto") or [])
+        + _section_market_warnings(payload.get("market_context") or {})
+        + _section_footer(payload)
+        + '</body></html>'
+    )
+
+
+def send_trade_proposals_email(
+    payload: dict, api_key: str, email_from: str, email_to: str,
+) -> None:
+    """Rendert und versendet die 16:10-Mail ueber Resend."""
+    changes = payload.get("signal_changes") or []
+    confirmed = sum(1 for c in changes if c.get("verdict") == "bestaetigt")
+    subject = (f"[Shares_Future] {payload.get('date')} trade_proposals — "
+               f"{confirmed}/{len(changes)} bestätigt")
+    _send(api_key, email_from, email_to, subject, render_trade_proposals_html(payload))
+
+
 # ---------- Delivery ----------
 
 def send_daily_email(

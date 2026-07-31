@@ -309,3 +309,69 @@ def test_send_returns_none_when_no_id_comes_back(mocker):
     resp.json.side_effect = ValueError("no json")
     mocker.patch("src.email_sender.requests.post", return_value=resp)
     assert _send("re_k", "a@b.de", "c@d.de", "s", "<p>x</p>") is None
+
+
+# ---------- Sprint 3B / Plan 2, Task 14: die 16:10-Mail (Vorher/Nachher) ----------
+
+
+VERDICT_PAYLOAD = {
+    "date": "2026-07-30", "run_type": "trade_proposals",
+    "briefing": [], "portfolio_recs": [], "commodities_crypto": [],
+    "market_context": {"vix_level": 28.4, "advance_decline_ratio": 0.7},
+    "cost_summary": {"total_eur": 0.61, "cache_hit_rate": 0.0, "input_tokens": 1,
+                     "output_tokens": 1, "web_search_calls": 2,
+                     "aborted_at_phase": None},
+    "signal_changes": [
+        {"ticker": "AAPL", "direction": "long", "verdict": "bestaetigt",
+         "probability_before": 65, "probability_after": 71,
+         "entry_window_low": 178.2, "entry_window_high": 179.0,
+         "reason": "haelt nach Opening", "checks": []},
+        {"ticker": "NVDA", "direction": "long", "verdict": "gedreht",
+         "probability_before": 70, "probability_after": 28,
+         "reason": "Sektor dreht", "checks": ["sector_momentum: SOXX -2.5%"]},
+        {"ticker": "MSFT", "direction": "short", "verdict": "nicht_geprueft",
+         "probability_before": 60, "probability_after": None,
+         "reason": "Call unlesbar", "checks": []},
+    ],
+}
+
+
+def test_trade_proposals_mail_shows_before_and_after():
+    from src.email_sender import render_trade_proposals_html
+    html = render_trade_proposals_html(VERDICT_PAYLOAD)
+    assert "65" in html and "71" in html
+    assert "AAPL" in html and "bestaetigt" in html
+
+
+def test_trade_proposals_mail_marks_flipped_and_unchecked():
+    from src.email_sender import render_trade_proposals_html
+    html = render_trade_proposals_html(VERDICT_PAYLOAD)
+    assert "gedreht" in html
+    assert "nicht geprüft" in html or "nicht_geprueft" in html
+
+
+def test_trade_proposals_mail_lists_fired_checks():
+    from src.email_sender import render_trade_proposals_html
+    assert "SOXX -2.5%" in render_trade_proposals_html(VERDICT_PAYLOAD)
+
+
+def test_portfolio_stays_the_first_section():
+    """Dokumentierte Invariante — gilt auch fuer die 16:10-Mail."""
+    from src.email_sender import render_trade_proposals_html
+    html = render_trade_proposals_html(VERDICT_PAYLOAD)
+    assert html.index("Portfolio") < html.index("Signal")
+
+
+def test_trade_proposals_mail_shows_market_warnings():
+    from src.email_sender import render_trade_proposals_html
+    html = render_trade_proposals_html(VERDICT_PAYLOAD)
+    assert "28.4" in html or "28,4" in html
+
+
+def test_send_trade_proposals_email_uses_the_shared_sender(mocker):
+    send = mocker.patch("src.email_sender._send")
+    from src.email_sender import send_trade_proposals_email
+    send_trade_proposals_email(VERDICT_PAYLOAD, api_key="k",
+                               email_from="a@b.c", email_to="d@e.f")
+    send.assert_called_once()
+    assert "trade_proposals" in send.call_args[0][3] or "16:10" in send.call_args[0][3]

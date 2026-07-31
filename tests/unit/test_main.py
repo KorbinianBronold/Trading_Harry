@@ -501,8 +501,8 @@ def _stub_trade_proposals_side_phases(mocker) -> None:
     """Legt die Phasen still, die Task 13 um das urspruengliche Geruest herum
     ergaenzt hat (Markt-Kontext, Sektor-Momentum, Policy-Monitor,
     Portfolio-Check) — die beiden Geruest-Tests unten pruefen nur die
-    Kurs-Erfassung bzw. den (noch) fehlenden Mailversand und sollen dafuer
-    nicht wirklich Claude oder Capital.com anfassen."""
+    Kurs-Erfassung bzw. den Mailversand (Task 14) und sollen dafuer nicht
+    wirklich Claude oder Capital.com anfassen."""
     mocker.patch("main.fetch_market_context", return_value={"vix_level": 18.0})
     mocker.patch("main.collect_sector_momentum", return_value={})
     mocker.patch("main.run_policy_monitor",
@@ -517,6 +517,7 @@ def test_run_trade_proposals_collects_all_tickers(tmp_db_path, mocker):
     mocker.patch("main.FinnhubProvider", return_value=MagicMock())
     collect_mock = mocker.patch("main.collect", return_value=([], 0))
     _stub_trade_proposals_side_phases(mocker)
+    mocker.patch("main.send_trade_proposals_email")  # Task 14: sonst echter Versand
 
     from main import run_trade_proposals
     run_trade_proposals(date="2026-07-30", db_path=str(tmp_db_path))
@@ -529,18 +530,19 @@ def test_run_trade_proposals_collects_all_tickers(tmp_db_path, mocker):
     assert cc in passed
 
 
-def test_run_trade_proposals_sends_no_mail_yet(tmp_db_path, mocker):
-    """Der Mailversand wird erst im naechsten Task verdrahtet — wie close."""
+def test_run_trade_proposals_sends_the_mail(tmp_db_path, mocker):
+    """Task 14: der Nachmittagslauf verschickt jetzt die 16:10-Mail -- die alte
+    Erwartung (kein Versand) galt nur fuer den damaligen Ausbaustand."""
     mocker.patch("main.CapitalComProvider", return_value=MagicMock())
     mocker.patch("main.FinnhubProvider", return_value=MagicMock())
     mocker.patch("main.collect", return_value=([], 0))
     _stub_trade_proposals_side_phases(mocker)
-    send = mocker.patch("main.send_daily_email")
+    send = mocker.patch("main.send_trade_proposals_email")
 
     from main import run_trade_proposals
     run_trade_proposals(date="2026-07-30", db_path=str(tmp_db_path))
 
-    send.assert_not_called()
+    send.assert_called_once()
 
 
 # ---------- Sprint 3B / Plan 2, Task 5: Phase 1c — Pflicht-Kandidaten (B.4) ----------
@@ -770,6 +772,7 @@ def test_revalidation_failure_leaves_the_row_untouched(tmp_db_path, mocker):
                                                          "events": []})
     mocker.patch("main.check_open_positions", return_value=[])
     mocker.patch("main.revalidate_one", side_effect=RevalidationError("kaputt"))
+    mocker.patch("main.send_trade_proposals_email")  # Task 14: sonst echter Versand
 
     from main import run_trade_proposals
     run_trade_proposals(date="2026-07-30", db_path=str(tmp_db_path))
@@ -809,6 +812,7 @@ def test_cost_abort_reports_the_right_phase(tmp_db_path, mocker, phase, target):
     mocker.patch("main.revalidate_one", return_value={
         "verdict": "bestaetigt", "probability_pct": 71, "reason": "ok"})
     mocker.patch("main.check_open_positions", return_value=[])
+    mocker.patch("main.send_trade_proposals_email")  # Task 14: sonst echter Versand
     mocker.patch(target, side_effect=CostCapExceeded("Deckel"))
 
     from main import run_trade_proposals
@@ -845,6 +849,7 @@ def test_portfolio_check_sees_sector_rotation_from_market_context(tmp_db_path, m
     mocker.patch("main.run_policy_monitor",
                  return_value={"policy_risk_level": "low", "events": []})
     mock_portfolio = mocker.patch("main.check_open_positions", return_value=[])
+    mocker.patch("main.send_trade_proposals_email")  # Task 14: sonst echter Versand
 
     from main import run_trade_proposals
     run_trade_proposals(date="2026-07-30", db_path=str(tmp_db_path))
@@ -880,6 +885,7 @@ def test_portfolio_check_still_works_with_a_real_morning_trend_context(tmp_db_pa
     mocker.patch("main.run_policy_monitor",
                  return_value={"policy_risk_level": "low", "events": []})
     mock_portfolio = mocker.patch("main.check_open_positions", return_value=[])
+    mocker.patch("main.send_trade_proposals_email")  # Task 14: sonst echter Versand
 
     from main import run_trade_proposals
     run_trade_proposals(date="2026-07-30", db_path=str(tmp_db_path))

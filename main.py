@@ -30,7 +30,7 @@ from src import signal_checks
 from src.revalidation import revalidate_one, RevalidationError
 from src.email_sender import (
     send_daily_email, send_weekly_email, generate_daily_briefing,
-    send_error_email,
+    send_error_email, send_trade_proposals_email,
 )
 from src.providers.finnhub_provider import FinnhubProvider
 from src.providers.capital_provider import CapitalComProvider
@@ -573,7 +573,27 @@ def run_trade_proposals(date: str, db_path: str) -> None:
     log.info(f"trade_proposals fertig: {len(payload['signal_changes'])} Signale "
              f"geprueft, {payload['cost_summary']['total_eur']} EUR"
              + (f", abgebrochen in {aborted_at}" if aborted_at else ""))
-    conn.close()
+
+    # B-10: Zustellung von der Re-Validierung trennen, dasselbe Muster wie in
+    # run_pipeline(). Alles oben ist zu diesem Zeitpunkt bereits persistiert;
+    # ein Mailfehler darf daran nichts aendern, soll aber klar als
+    # Zustellproblem sichtbar werden und nicht in einer Analysephase gesucht
+    # werden.
+    try:
+        send_trade_proposals_email(
+            payload=payload, api_key=config.RESEND_API_KEY,
+            email_from=config.EMAIL_FROM, email_to=config.EMAIL_TO,
+        )
+    except Exception as e:
+        log.error(
+            f"Re-Validierung vollstaendig persistiert "
+            f"({len(payload['signal_changes'])} Signale, "
+            f"{payload['cost_summary'].get('total_eur')} EUR) — "
+            f"nur der Mailversand scheiterte: {e}"
+        )
+        raise MailDeliveryError(str(e)) from e
+    finally:
+        conn.close()
 
 
 def _revalidate_all(
