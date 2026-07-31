@@ -6,7 +6,6 @@ Zwei Eigenschaften, die sich nur im Zusammenspiel zeigen:
 Beide wuerden bei einem Bruch keine Exception werfen, sondern still falsche
 Kennzahlen liefern."""
 from unittest.mock import MagicMock
-import pytest
 
 from src import db
 
@@ -92,12 +91,19 @@ def test_evaluator_closes_exactly_one_outcome(tmp_db_path, mocker):
     from main import run_trade_proposals
     run_trade_proposals(date="2026-07-30", db_path=str(tmp_db_path))
 
+    conn = db.connect(str(tmp_db_path))
+    n_before = conn.execute("SELECT COUNT(*) AS n FROM predictions").fetchone()["n"]
+    assert n_before == 2, ("Vorbedingung: abgeloeste Morgenzeile UND ihre "
+                           "Abloesung muessen existieren, sonst prueft der Rest "
+                           "dieses Tests keinen Mechanismus")
+    assert len(db.load_open_predictions(conn)) == 1, (
+        "Vorbedingung: von den zwei Zeilen darf genau eine offen sein")
+
     provider = MagicMock()
     provider.get_ohlc_after.return_value = pd.DataFrame(
         {"High": [107.0], "Low": [100.5], "Close": [106.5]},
         index=["2026-07-31"])
     from src.evaluator import evaluate_open_predictions
-    conn = db.connect(str(tmp_db_path))
     closed = evaluate_open_predictions(conn=conn, today="2026-07-31",
                                        price_provider=provider)
     assert closed == 1
