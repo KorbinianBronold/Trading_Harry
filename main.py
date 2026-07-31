@@ -541,10 +541,24 @@ def run_trade_proposals(date: str, db_path: str) -> None:
         )
 
         current_phase = "portfolio_check"
+        # Der Morgenlauf sieht sector_rotation/macro_summary, weil sein
+        # trend_context die ROHE Phase-0-Antwort ist (die Felder stehen dort als
+        # Top-Level-Keys). trend_analyses persistiert diese Felder nie — nur die
+        # Pro-Trend-Spalten —, load_trend_context() kann sie also nicht
+        # rekonstruieren. Der frisch erhobene Markt-Kontext liefert inhaltlich
+        # den naechstliegenden Ersatz (anderer Claude-Call, dieselbe Frage nach
+        # Rotation/Makrolage): hier eingemischt, damit der Portfolio-Check nicht
+        # aermer dasteht als am Morgen.
+        trend_ctx = {
+            **(db.load_trend_context(conn, date) or {}),
+            "sector_rotation_in": market_ctx.get("sector_rotation_in"),
+            "sector_rotation_out": market_ctx.get("sector_rotation_out"),
+            "macro_summary": market_ctx.get("macro_summary"),
+        }
         payload["portfolio_recs"] = check_open_positions(
             conn=conn, today=date, run_type="trade_proposals",
             analyses_by_ticker=snapshots,
-            trend_context=db.load_trend_context(conn, date) or {},
+            trend_context=trend_ctx,
             policy_context=policy_context, cost_tracker=cost_tracker,
         )
 
@@ -612,10 +626,15 @@ def _revalidate_all(
         except RevalidationError as e:
             log.warning(f"{ticker}: Re-Validierung fehlgeschlagen, Zeile bleibt "
                         f"unveraendert offen: {e}")
+            # Dieselben Schluessel wie im Normalpfad unten (nur als None) — sonst
+            # faellt ein spaeterer direkter Dict-Zugriff (statt .get()) bei einer
+            # 'nicht_geprueft'-Zeile mit KeyError um.
             out.append({"ticker": ticker, "direction": pred["direction"],
                         "verdict": "nicht_geprueft",
                         "probability_before": pred["probability_pct"],
-                        "probability_after": None, "reason": str(e), "checks": []})
+                        "probability_after": None,
+                        "entry_window_low": None, "entry_window_high": None,
+                        "reason": str(e), "checks": []})
             continue
 
         new_id = _persist_revision(

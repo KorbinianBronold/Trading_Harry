@@ -820,3 +820,104 @@ def test_cost_abort_reports_the_right_phase(tmp_db_path, mocker, phase, target):
     ).fetchone()
     assert row["aborted_at_phase"] == phase
     conn.close()
+
+
+# ---------- Review-Fix 1: Rotationsfelder erreichen den Nachmittags-Portfolio-Check ----------
+
+
+def test_portfolio_check_sees_sector_rotation_from_market_context(tmp_db_path, mocker):
+    """load_trend_context() kann sector_rotation/trend_summary nicht rekonstruieren
+    (trend_analyses persistiert sie nie) -- der frisch erhobene Markt-Kontext
+    liefert aber sector_rotation_in/out und macro_summary, und die werden am
+    Aufrufort in den Trend-Kontext gemischt, den der Portfolio-Check sieht.
+    Sonst bekaeme der 16:10-Lauf einen strikt aermeren Prompt als der Morgenlauf."""
+    from src import db
+    conn = db.connect(str(tmp_db_path)); db.init_schema(conn); conn.close()
+
+    mocker.patch("main.CapitalComProvider", return_value=MagicMock())
+    mocker.patch("main.FinnhubProvider", return_value=MagicMock())
+    mocker.patch("main.collect", return_value=([], 0))
+    mocker.patch("main.fetch_market_context", return_value={
+        "vix_level": 18.0, "sector_rotation_in": "Utilities",
+        "sector_rotation_out": "Technology", "macro_summary": "nervoes",
+    })
+    mocker.patch("main.collect_sector_momentum", return_value={})
+    mocker.patch("main.run_policy_monitor",
+                 return_value={"policy_risk_level": "low", "events": []})
+    mock_portfolio = mocker.patch("main.check_open_positions", return_value=[])
+
+    from main import run_trade_proposals
+    run_trade_proposals(date="2026-07-30", db_path=str(tmp_db_path))
+
+    passed_trend_ctx = mock_portfolio.call_args.kwargs["trend_context"]
+    assert passed_trend_ctx["sector_rotation_in"] == "Utilities"
+    assert passed_trend_ctx["sector_rotation_out"] == "Technology"
+    assert passed_trend_ctx["macro_summary"] == "nervoes"
+
+
+def test_portfolio_check_still_works_with_a_real_morning_trend_context(tmp_db_path, mocker):
+    """Regression: der Merge darf die aus trend_analyses gelesenen Trends nicht
+    verdraengen, nur die Rotationsfelder ergaenzen."""
+    from src import db
+    conn = db.connect(str(tmp_db_path)); db.init_schema(conn)
+    db.save_trend_analysis(conn, {
+        "date": "2026-07-30", "run_type": "pre_market",
+        "trend_name": "ai-capex-acceleration", "strength": 8,
+        "duration_estimate": "1m+", "summary": "x",
+        "beneficiary_tickers": ["NVDA"], "negative_tickers": [],
+        "next_catalyst": "x",
+    })
+    conn.close()
+
+    mocker.patch("main.CapitalComProvider", return_value=MagicMock())
+    mocker.patch("main.FinnhubProvider", return_value=MagicMock())
+    mocker.patch("main.collect", return_value=([], 0))
+    mocker.patch("main.fetch_market_context", return_value={
+        "vix_level": 18.0, "sector_rotation_in": "Utilities",
+        "sector_rotation_out": "Technology", "macro_summary": "nervoes",
+    })
+    mocker.patch("main.collect_sector_momentum", return_value={})
+    mocker.patch("main.run_policy_monitor",
+                 return_value={"policy_risk_level": "low", "events": []})
+    mock_portfolio = mocker.patch("main.check_open_positions", return_value=[])
+
+    from main import run_trade_proposals
+    run_trade_proposals(date="2026-07-30", db_path=str(tmp_db_path))
+
+    passed_trend_ctx = mock_portfolio.call_args.kwargs["trend_context"]
+    assert passed_trend_ctx["trends"][0]["name"] == "ai-capex-acceleration"
+    assert passed_trend_ctx["sector_rotation_in"] == "Utilities"
+
+
+# ---------- Review-Fix 2: signal_changes hat auf jedem Pfad dieselben Schluessel ----------
+
+
+def test_signal_changes_have_consistent_keys_on_revalidation_failure(tmp_db_path, mocker):
+    """Der Fehlerpfad (RevalidationError) muss dieselben Schluessel liefern wie
+    der Normalpfad -- sonst faellt ein spaeterer direkter Dict-Zugriff (statt
+    .get()) bei einer 'nicht_geprueft'-Zeile mit KeyError um, sobald Task 14
+    daraus die Mail rendert."""
+    from src import db
+    from src.revalidation import RevalidationError
+    from src.cost_tracker import CostTracker
+    conn = db.connect(str(tmp_db_path)); db.init_schema(conn)
+    _pred_row(conn)
+    conn.commit()
+
+    mocker.patch("main.revalidate_one", side_effect=RevalidationError("kaputt"))
+
+    from main import _revalidate_all
+    out = _revalidate_all(
+        conn=conn, date="2026-07-30", snapshots={"AAPL": {"price": 101.0}},
+        sector_mom={}, market_ctx={"vix_level": 18.0}, policy_context={},
+        cost_tracker=CostTracker(),
+    )
+    conn.close()
+
+    assert len(out) == 1
+    expected_keys = {"ticker", "direction", "verdict", "probability_before",
+                      "probability_after", "entry_window_low",
+                      "entry_window_high", "reason", "checks"}
+    assert set(out[0].keys()) == expected_keys
+    assert out[0]["entry_window_low"] is None
+    assert out[0]["entry_window_high"] is None

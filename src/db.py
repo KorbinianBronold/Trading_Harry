@@ -619,7 +619,20 @@ def load_trend_context(conn: sqlite3.Connection, date: str) -> dict:
     der DB, damit der Portfolio-Check denselben Trend-Kontext bekommt wie im
     Morgenlauf. Gibt {} zurueck, wenn fuer den Tag noch keine Trends vorliegen
     (z. B. weil Phase 0 am Morgen fehlgeschlagen ist); der Portfolio-Check
-    vertraegt einen leeren Trend-Kontext."""
+    vertraegt einen leeren Trend-Kontext.
+
+    Bewusst akzeptierte Luecke: `sector_rotation` und `trend_summary` — zwei
+    Top-Level-Felder, die analyze_trends() zusaetzlich zu `trends` liefert —
+    fehlen hier. Der Morgenlauf sieht sie nur, weil sein trend_context die ROHE
+    Phase-0-Antwort ist; save_trend_analysis() persistiert ausschliesslich die
+    Pro-Trend-Spalten (trend_name, strength, ... next_catalyst), nie diese
+    beiden Felder. Es gibt also nichts, aus dem sich hier rekonstruieren liesse
+    — nicht mangelnde Sorgfalt, sondern ein fehlendes Speicherziel. Aufrufer,
+    die einen Ersatz brauchen, muessen ihn aus dem separat erhobenen
+    Markt-Kontext (sector_rotation_in/out, macro_summary aus market_context.py
+    — ein anderer Claude-Call, aber inhaltlich die naechstliegende Frage) an
+    der eigenen Aufrufstelle einmischen; run_trade_proposals() tut das bereits
+    fuer den Portfolio-Check."""
     rows = conn.execute(
         "SELECT * FROM trend_analyses WHERE date = ?", (date,),
     ).fetchall()
