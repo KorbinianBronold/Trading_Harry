@@ -369,10 +369,31 @@ def run_pipeline(run_type: str, date: str, db_path: str) -> None:
 
 
 def run_close(date: str, db_path: str) -> None:
-    """Close-Run: DB Datenpflege only. No Claude, no email."""
+    """Close-Run (22:30 Berlin): Schlusskurse aller Ticker holen, offene
+    Predictions auswerten, DB aufraeumen. Kein Claude, keine Mail.
+
+    Die Schlusskurse kommen seit Sprint 3B / Plan 2 (B.6) fuer ALLE Ticker, nicht
+    mehr nur implizit ueber den Evaluator fuer die mit offener Position: db_momentum
+    und die relative Staerke mitteln am Folgetag ueber die gesamte Ticker-Liste.
+
+    evaluate_open_predictions() bleibt hier, bis das Learning Modul (3D) die
+    Auswertung uebernimmt — mit dem entfallenen evaluate-Run ist close sonst die
+    einzige Stelle, die ueberhaupt noch outcomes-Zeilen schreibt."""
     conn = db.connect(db_path)
     db.init_schema(conn)
     price_provider = CapitalComProvider()
+    earnings_provider = FinnhubProvider()
+
+    _tickers = (config.SP500_FULL_TICKERS if config.USE_FULL_SP500
+                else config.SP500_MVP_TICKERS)
+    collect(tickers=_tickers, price_provider=price_provider,
+            earnings_provider=earnings_provider,
+            conn=conn, date=date, run_type="close")
+    cc_tickers = [d["ticker"] for d in build_commodity_crypto_inputs()]
+    collect(tickers=cc_tickers, price_provider=price_provider,
+            earnings_provider=earnings_provider,
+            conn=conn, date=date, run_type="close")
+
     n = evaluate_open_predictions(conn=conn, today=date, price_provider=price_provider)
     log.info(f"Close run: {n} predictions evaluated")
     db.cleanup_old_data(conn)

@@ -189,6 +189,35 @@ def test_close_run_does_not_call_claude(tmp_db_path, mocker):
     mock_evaluate.assert_called_once()
 
 
+def test_close_pulls_closing_prices_for_all_tickers(tmp_db_path, mocker):
+    """B.6: sonst fehlen Schlusskurse fuer jeden Ticker ohne offene Position —
+    und damit die Basis fuer db_momentum und relative Staerke am Folgetag."""
+    mocker.patch("main.CapitalComProvider", return_value=MagicMock())
+    mocker.patch("main.FinnhubProvider", return_value=MagicMock())
+    mocker.patch("main.evaluate_open_predictions", return_value=0)
+    collect_mock = mocker.patch("main.collect", return_value=([], 0))
+
+    from main import run_close
+    run_close(date="2026-07-30", db_path=str(tmp_db_path))
+
+    assert collect_mock.call_count == 2
+    passed = [set(c.kwargs["tickers"]) for c in collect_mock.call_args_list]
+    assert set(config.SP500_MVP_TICKERS) in passed
+
+
+def test_close_still_evaluates_open_predictions(tmp_db_path, mocker):
+    """B.6/Punkt 2: bis 3D das Lernmodul uebernimmt, ist close die EINZIGE
+    Stelle, die outcomes-Zeilen schreibt."""
+    mocker.patch("main.CapitalComProvider", return_value=MagicMock())
+    mocker.patch("main.FinnhubProvider", return_value=MagicMock())
+    mocker.patch("main.collect", return_value=([], 0))
+    ev = mocker.patch("main.evaluate_open_predictions", return_value=3)
+
+    from main import run_close
+    run_close(date="2026-07-30", db_path=str(tmp_db_path))
+    ev.assert_called_once()
+
+
 def test_prompts_contain_intraday_focus():
     from pathlib import Path
     prompt_dir = Path("prompts")
