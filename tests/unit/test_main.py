@@ -178,7 +178,15 @@ def test_run_weekly_calls_send_weekly_email(tmp_db_path):
 
 
 def test_close_run_does_not_call_claude(tmp_db_path, mocker):
-    """Close run must not invoke Claude or send email."""
+    """Close run must not invoke Claude or send email.
+
+    Provider und collect() muessen mitgemockt werden, seit run_close() die
+    Schlusskurse aller Ticker holt (B.6) — sonst baut der Test eine echte
+    Capital.com-Session auf. Der Fehler wuerde in data_collector geschluckt,
+    der Test bliebe gruen, und ein Unit-Test telefonierte still nach draussen."""
+    mocker.patch("main.CapitalComProvider", return_value=MagicMock())
+    mocker.patch("main.FinnhubProvider", return_value=MagicMock())
+    mocker.patch("main.collect", return_value=([], 0))
     mock_claude = mocker.patch("src.utils.call_claude")
     mocker.patch("src.email_sender._send")
     mock_evaluate = mocker.patch("main.evaluate_open_predictions", return_value=0)
@@ -203,6 +211,8 @@ def test_close_pulls_closing_prices_for_all_tickers(tmp_db_path, mocker):
     assert collect_mock.call_count == 2
     passed = [set(c.kwargs["tickers"]) for c in collect_mock.call_args_list]
     assert set(config.SP500_MVP_TICKERS) in passed
+    cc = set(config.COMMODITY_TICKERS.values()) | set(config.CRYPTO_TICKERS.values())
+    assert cc in passed, "auch Rohstoffe und Krypto brauchen ihre Schlusskurse"
 
 
 def test_close_still_evaluates_open_predictions(tmp_db_path, mocker):
