@@ -1,11 +1,22 @@
 # Shares_Future – Architektur & Design
 
-> **Dieses Dokument beschreibt den IST-Zustand des Codes.** Die in Sprint 3B/3C geplanten
-> Änderungen (neuer Run-Type `trade_proposals`, Phase 1c, getauschte Phase-4/4a-Reihenfolge,
-> Wegfall von `midday` + `position_check`, kombinierter `ranking_score`) sind hier bewusst
-> **noch nicht** eingearbeitet — sie stehen in
-> `docs/superpowers/specs/PROJECT_STATUS.md`, Abschnitt "Sprint-3-Roadmap".
-> Nach der Implementierung eines Teilsprints wird dieses Dokument nachgezogen.
+> **Dieses Dokument beschreibt den IST-Zustand des Codes.**
+>
+> ⚠️ **Stand 2026-07-31 — teilweise überholt.** Sprint 3B / Plan 2 ist auf dem Branch
+> `sprint3b/plan2-pipeline-umbau` zu 17 von 20 Tasks umgesetzt (nicht gemerged). Damit
+> gilt für die Modulbeschreibungen unten Folgendes **bereits jetzt anders**:
+>
+> | Was hier steht | Was tatsächlich gilt |
+> |---|---|
+> | Run-Types `midday`, `evaluate`, `position_check` | **entfernt.** Es gibt `pre_market`, `trade_proposals`, `close`, `weekly` |
+> | Phase 4a läuft vor Phase 4 | **getauscht** — Ranking zuerst, Portfolio-Check danach, ohne Websuche |
+> | 7 Phasen | zusätzlich **1c** (offene Positionen als Pflicht-Kandidaten) und **1d** (Sektor-Momentum) |
+> | `src/portfolio_check.py` nimmt `snapshots_by_ticker` | heisst jetzt `analyses_by_ticker` und bekommt fertige Phase-3-Analysen |
+> | — | **neu:** `src/signal_checks.py` (rechnerische Checks) und `src/revalidation.py` (billiger 16:10-Zweitcheck) |
+>
+> Der vollständige Stand steht in `docs/superpowers/specs/PROJECT_STATUS.md`,
+> Abschnitt „Sprint 3B / Plan 2". Dieses Dokument wird in Task 20 vollständig
+> nachgezogen; die Tabelle oben ist bis dahin die verbindliche Abweichungsliste.
 
 ## Überblick
 
@@ -14,7 +25,7 @@ Das System folgt einer **Pipeline-Architektur** mit 7 Phasen (0, 0b, 1, 2, 3, 4a
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                      ORCHESTRATOR (main.py)                      │
-│  Dispatch: --run-type {pre_market|midday|close|evaluate|weekly|position_check}  │
+│  Dispatch: --run-type {pre_market|trade_proposals|close|weekly}  │
 └─────────────────────────────────────────────────────────────────┘
                               ↓
 ┌─────────────────────────────────────────────────────────────────┐
@@ -727,12 +738,16 @@ Kurzüberblick, was sich an der oben beschriebenen Architektur ändern wird:
 
 **Noch offen:**
 
+> ⚠️ **Stand 2026-07-31:** Die vier mit ✅ markierten Zeilen sind auf dem Branch
+> `sprint3b/plan2-pipeline-umbau` bereits **umgesetzt** (nicht gemerged). Sie stehen
+> hier nur so lange, bis Task 20 dieses Dokument vollständig nachzieht.
+
 | Bereich | Änderung | Sprint |
 |---|---|---|
-| Run-Types | `midday` + `position_check` entfallen; `evaluate` wird durch `trade_proposals` (16:10 Berlin) ersetzt | 3B / Plan 2 |
-| Pipeline | **Phase 1c neu**: offene Capital.com-Positionen laden, deren Ticker als Pflicht-Kandidaten für Phase 3 markieren | 3B / Plan 2 |
-| Pipeline | **Phase 4 und 4a tauschen** — Phase 4a nutzt danach die fertigen Phase-3-Ergebnisse (Claude-Call ohne Web-Search). Mail-Reihenfolge bleibt: Portfolio zuerst. | 3B / Plan 2 |
-| `close` | Holt Schlusskurse aller Ticker; TP/SL-Auswertung bleibt bis Sprint 3D erhalten | 3B / Plan 2 |
+| ✅ Run-Types | `midday` + `position_check` entfallen; `evaluate` wird durch `trade_proposals` (16:10 Berlin) ersetzt | 3B / Plan 2 |
+| ✅ Pipeline | **Phase 1c neu**: offene Capital.com-Positionen laden, deren Ticker als Pflicht-Kandidaten für Phase 3 markieren | 3B / Plan 2 |
+| ✅ Pipeline | **Phase 4 und 4a tauschen** — Phase 4a nutzt danach die fertigen Phase-3-Ergebnisse (Claude-Call ohne Web-Search). Mail-Reihenfolge bleibt: Portfolio zuerst. | 3B / Plan 2 |
+| ✅ `close` | Holt Schlusskurse aller Ticker; TP/SL-Auswertung bleibt bis Sprint 3D erhalten | 3B / Plan 2 |
 | Guardrails | **Anwendung** der beiden Momentum-Signale (hartes Reject nur bei Übereinstimmung) + `SECTOR_GUARDRAIL_STRICT`; befüllt dabei die vier bereits angelegten Momentum-Spalten | 3B / Plan 2 |
 | Weekly-Mail | Auswertung von `guardrail_rejects` und `ticker_status` | 3B / Plan 2 |
 | Schema | Neue Spalte `predictions.ranking_score` | 3C |

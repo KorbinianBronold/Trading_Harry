@@ -1,8 +1,13 @@
 # PROJECT_STATUS.md — Shares_Future (Trading_Harry)
 
-**Zuletzt aktualisiert:** 2026-07-27
-**Aktueller Branch:** main
+**Zuletzt aktualisiert:** 2026-07-31
+**Aktueller Branch:** `sprint3b/plan2-pipeline-umbau` (25 Commits, **nicht** gepusht, nicht gemerged)
 **Letzter Merge:** Sprint 2 / Plan 1 (2026-05-22) — Sprint 3 in Arbeit, Roadmap s. Abschnitt 2
+
+> **Stand 2026-07-31:** Sprint 3B / Plan 2 ist zu **17 von 20 Tasks** umgesetzt.
+> Offen sind Task 18 (Weekly-Aggregate), 19 (Weekly-Mail) und 20 (Doku-Abschluss).
+> Details, Entscheidungen und Befunde: Abschnitt „Sprint 3B / Plan 2" weiter unten.
+> 513 Tests, 93,00 % Coverage.
 
 ---
 
@@ -83,7 +88,7 @@
 | Sprint | Inhalt | Status |
 |---|---|---|
 | 3A | Roadmap + Doku aktualisieren | ✅ erledigt (dieses Dokument) |
-| 3B | Cron-Struktur + Pipeline-Umbau | 🟡 **Plan 1 (Fundament) vollständig abgeschlossen** (2026-07-29, Tasks 1–14); Plan 2 (Pipeline-Umbau) noch nicht geschrieben |
+| 3B | Cron-Struktur + Pipeline-Umbau | 🟡 **Plan 1 abgeschlossen** (2026-07-29); **Plan 2 zu 17/20 Tasks umgesetzt** (2026-07-31, Branch `sprint3b/plan2-pipeline-umbau`) |
 | **3B-M** | **Mail-Provider-Wechsel (Zwischensprint)** | ✅ **ABGESCHLOSSEN 2026-07-30** — Mailversand läuft über **Resend**, eigene Domain verifiziert, Zustellung live bestätigt. Details s. unten |
 | 3C | Ranking-Überarbeitung | 📋 spezifiziert, Implementierung offen |
 | 3D | Learning Modul | ⚠️ **Platzhalter — Planungssession ausstehend** |
@@ -299,7 +304,7 @@ Zusätzlich zum heutigen Inhalt (Long/Short-Trefferquote, Ø P&L, Trade-Liste, G
 
 | Neuer Block | Inhalt |
 |---|---|
-| **`pre_market` vs. `trade_proposals`** | Trefferquote und Ø P&L getrennt nach `run_type`. Beantwortet die Kernfrage von 3B: verbessert der 16:10-Run die Signale tatsächlich, oder verursacht er nur Kosten? |
+| **~~`pre_market` vs. `trade_proposals`~~ → bestätigt vs. abgelehnt** | ⚠️ **Neu formuliert 2026-07-30 (E3).** „Trefferquote getrennt nach `run_type`" ist nicht mehr berechenbar: durch den Ablöse-Mechanismus hat jede Trade-Idee genau **ein** Outcome. Verglichen werden stattdessen drei Gruppen — um 16:10 **bestätigt** (`run_type='trade_proposals'`), um 16:10 **abgelehnt** (`run_type='pre_market'` mit `revision_verdict IN ('gedreht','verworfen')`) und **nie geprüft** (`revision_verdict IS NULL`, eingegrenzt ab dem ersten 16:10-Lauf). Liegt die Trefferquote der abgelehnten unter der der bestätigten, verdient der Lauf seine Kosten. |
 | **Signal-Veränderungs-Statistik** | Wie oft wurden Signale im `trade_proposals`-Run bestätigt / geschwächt / gedreht — und wie performten die jeweiligen Gruppen danach? |
 | **Guardrail-Reject-Statistik** | Welche Guardrails haben diese Woche wie oft Signale verworfen (Intraday-Range, R/R, Momentum-Konsistenz, hold_days). Zeigt, ob Filter zu streng oder zu locker sind. |
 | **Skipped-Ticker-Übersicht** | Welche Ticker wurden diese Woche wie oft übersprungen und warum — passend zur neuen `skip_count`-Logik (inaktiv ab >20). |
@@ -437,10 +442,21 @@ auf den Fall beschränkt, dass **beide** Momentum-Signale vorliegen und überein
 - ⏭ **E-Mail:** `hold_days_recommended` als eigene Spalte in der Top-10-Long/Short-Tabelle
   ergänzen — **gehört zu Plan 2**, zusammen mit den übrigen Mail-Arbeiten (B.9).
 
-### B.13 — Phase 3 parallelisieren *(Entscheidung 2026-07-29, gehört in Plan 2)*
+### B.13 — Phase 3 parallelisieren *(⚠️ ZURÜCKGEZOGEN 2026-07-30 — gehört wieder zu 3F)*
 
-**Entschieden:** Die Parallelisierung von Phase 3 wird **nicht** nach 3F verschoben,
-sondern in Plan 2 gezogen. Grund: sie entscheidet mit, ob die geplante Cron-Struktur
+> **Diese Entscheidung wurde am 2026-07-30 umgekehrt (Plan-2-Entscheidung E2).**
+> Ihre Begründung — `trade_proposals` fresse mit ~530 Actions-Minuten/Monat die
+> Einsparung aus dem entfallenden `midday` wieder auf — beruhte auf der Annahme,
+> der 16:10-Lauf schicke 27 Assets erneut durch die volle Phase 3. Mit der billigen
+> Re-Validierung (E1) sind es **~220 statt ~530 Minuten**; die Summe liegt bei
+> **~790/Monat** statt ~1 100 und damit klar unter den 2 000 des Free-Tarifs.
+> Auch die Cron-Kollision ist bei MVP-Grösse entschärft (~25 min Lauf gegen 70 min
+> Abstand). Die Parallelisierung zahlt erst auf 3F ein, wo `pre_market` allein bei
+> ~2 090 Minuten/Monat läge. **Plan 2 enthält dazu keinen Task.**
+> Der folgende Abschnitt bleibt als Begründungsdokument stehen.
+
+**Ursprünglich entschieden (2026-07-29, überholt):** Die Parallelisierung von Phase 3 wird
+**nicht** nach 3F verschoben, sondern in Plan 2 gezogen. Grund: sie entscheidet mit, ob die geplante Cron-Struktur
 überhaupt tragfähig ist, und sie ist die einzige Maßnahme, die das Actions-Budget vor
 dem Umzug auf ein privates Repo entlastet.
 
@@ -484,10 +500,10 @@ Geliefert: `sectors` / `ticker_sectors` / `ticker_status` / `guardrail_rejects` 
 `sector_momentum`, `SECTOR_ALIASES`-Normalisierung, Skip-Zähler mit Auto-Retry,
 beide Momentum-Signale, Markt-Kontext (Phase 0b), Gap-Erkennung, B-05.
 
-**Plan 2 (Pipeline-Umbau) ist noch nicht geschrieben.** Er umfasst B.1, B.2, B.4,
-B.5, B.6, B.9 sowie die **Anwendung** der in Plan 1 beschafften Daten — insbesondere
-die D9-Guardrail-Logik (hartes Reject nur bei zwei übereinstimmenden Signalen,
-sonst weiche Warnung mit `enforced=0`) und `config.SECTOR_GUARDRAIL_STRICT`.
+**Plan 2 (Pipeline-Umbau) ist geschrieben und zu 17/20 Tasks umgesetzt**
+(2026-07-30/31). Spec: `docs/superpowers/specs/2026-07-30-sprint3b-plan2-pipeline-umbau-design.md`,
+Plan-Datei: `docs/superpowers/plans/2026-07-30-sprint3b-plan2-pipeline-umbau.md`.
+**Vollständiger Stand, Entscheidungen und Befunde: eigener Abschnitt weiter unten.**
 
 Eingangsvoraussetzungen für Plan 2 — **alle erfüllt**:
 - ✅ verifizierte ETF-Epics (D8: 20/20 bestätigt, `setup/verify_epics.py`)
@@ -502,6 +518,136 @@ Zwei Dinge, die Plan 2 mitnehmen muss und die nicht aus dem Code hervorgehen:
 - `ticker_sectors` ist in der produktiven `tracking.db` noch leer. Phase 1 füllt
   sie organisch beim nächsten vollen Run; bis dahin liefert `db_momentum`
   überall NULL.
+
+---
+
+## Sprint 3B / Plan 2 — Pipeline-Umbau 🟡 17 von 20 Tasks
+
+**Branch:** `sprint3b/plan2-pipeline-umbau`, 25 Commits, **nicht gepusht, nicht gemerged**.
+**Stand 2026-07-31:** 513 Tests, 93,00 % Coverage. Suite grün, Branch in sich konsistent.
+
+**Spec:** `docs/superpowers/specs/2026-07-30-sprint3b-plan2-pipeline-umbau-design.md`
+**Plan:** `docs/superpowers/plans/2026-07-30-sprint3b-plan2-pipeline-umbau.md`
+
+### P2.1 — Die fünf Entscheidungen der Planungssession (2026-07-30)
+
+| # | Entscheidung | Warum |
+|---|---|---|
+| **E1** | `trade_proposals` prüft **billig ohne Websuche** statt voller Phase 3 | Gemessen kostet eine Tiefenanalyse ~0,12 EUR / ~54 s. 27 Assets wären ~3,24 EUR gegen den 4-EUR-Deckel gewesen. Breaking News deckt der eine Policy-Monitor-Call ab — einmal statt 27-mal. Ist-Aufwand: ~0,5–0,7 EUR/Lauf. |
+| **E2** | B.13 (Parallelisierung) wandert zurück nach **3F** | Die Actions-Minuten-Begründung trägt nach E1 nicht mehr (s. B.13). |
+| **E3** | `pre_market`-Predictions werden **abgelöst**, nicht dupliziert | `predictions` hat kein UNIQUE über (date, ticker, direction); der Evaluator hätte beide Zeilen geschlossen → doppelte Trefferquote und doppelter P&L. Zusätzlich: um 15:00 Berlin ist die US-Börse zu, die Morgensignale sind gar nicht handelbar. |
+| **E4** | Checks in **beiden** Runs erheben, **nur um 16:10** durchsetzen | Die Morgenmail ist ein Research-Briefing, keine Handelsentscheidung. 3D bekommt trotzdem Messwerte aus beiden Läufen. |
+| **E5** | Gedrehte Signale werden **gemeldet, nicht gehandelt** | Das Gegensignal lief nie durch Phase 3 — keine Belege, kein analytisch hergeleitetes TP/SL. Eine Position darauf zu eröffnen unterliefe die Guardrail-Grundregel. |
+
+### P2.2 — Umgesetzt (Tasks 1–17)
+
+| Schnitt | Tasks | Inhalt | Commits |
+|---|---|---|---|
+| 1 | 1–3 | `midday`, `evaluate`, `position_check` restlos entfernt; `analyze.yml` auf die Ziel-Crons; `trade_proposals` als Gerüst | `fd7e20a`, `02ab4ba`, `59f5e2c` |
+| 2 | 4–6 | Phase 1c (offene Positionen als Pflicht-Kandidaten); Phase 4 vor 4a; Portfolio-Check ohne Websuche | `b5d4ba9`–`822f29e` |
+| 3 | 7–10 | `src/signal_checks.py` neu; VIX-Filter + D9 mit `enforce`-Schalter; Sektor-Momentum verdrahtet; Momentum-Spalten befüllt | `14c9cf5`–`fc975df` |
+| 4 | 11–14 | `superseded_by` + `revision_verdict`; `src/revalidation.py` + `prompts/trade_proposals_v1.txt`; `run_trade_proposals()` vollständig; 16:10-Mail | `ddc9df1`–`d05f5f5` |
+| 5 | 15–16 | Opening-Gap-Check; End-to-End-Nachweis für E3 und E4 | `508c696`, `83fcb1c`, `9b3b1e0` |
+| 6 | 17 | `close` holt die Schlusskurse aller Ticker | `0a546b0`, `0b7c952` |
+
+**Zwei Commits ausserhalb des Plans**, beide auf ausdrückliche Anweisung:
+`70f883b` und `58782e4` — Sperre gegen ausgehende HTTP-Aufrufe in Tests (s. P2.5).
+
+### P2.3 — Offen: Tasks 18–20
+
+| Task | Inhalt |
+|---|---|
+| **18** | Fünf Weekly-Aggregate in `src/db.py`: `load_revision_effectiveness`, `load_revision_verdict_stats`, `load_guardrail_reject_stats`, `load_skipped_ticker_stats`, `load_sector_mapping_coverage` |
+| **19** | Weekly-Mail um die vier B.9-Blöcke erweitern; `hold_days_recommended` als Spalte in der Tagesmail (B.11) |
+| **20** | Doku-Abschluss + Aufräumliste aus P2.6 |
+
+**Danach ausstehend:** ein Gesamt-Review über den kompletten Branch, dann die
+Live-Verifikation (s. P2.4).
+
+### P2.4 — ⏳ Live-Verifikation steht noch aus (Korbinian)
+
+Bewusst **nicht** von Subagenten ausgeführt — kostet echtes Geld und verschickt echte Post:
+
+```bash
+# 1. Migration gegen eine KOPIE der Produktions-DB, nie gegen das Original
+cp data/tracking.db /tmp/migrationstest.db
+python -c "from src import db; c = db.connect('/tmp/migrationstest.db'); db.init_schema(c); \
+print([r['name'] for r in c.execute('PRAGMA table_info(predictions)')])"
+# erwartet: superseded_by und revision_verdict in der Liste
+
+# 2. Docker-Smoke-Test gegen eine Wegwerf-DB
+docker compose run --rm -v /tmp/dbtest:/app/data trading-harry --run-type trade_proposals
+
+# 3. Echter Lauf, nachdem ein pre_market-Lauf Signale erzeugt hat
+python main.py --run-type pre_market
+python main.py --run-type trade_proposals
+```
+
+Zu prüfen: 16:10-Mail kommt an; je Ticker genau **eine** offene Zeile in `predictions`;
+`guardrail_rejects` enthält `enforced=0` aus dem Morgenlauf und ggf. `enforced=1` aus
+dem 16:10-Lauf; `cost_tracking` weist den 16:10-Lauf mit **deutlich unter 1 EUR** aus.
+Liegt er höher, stimmt E1 nicht und der Prompt oder die Eingabemenge muss nachgesehen werden.
+
+### P2.5 — Befunde aus der Umsetzung
+
+Drei Defekte stammten aus dem Plantext selbst und wären ohne die Umsetzung nicht aufgefallen:
+
+1. **VIX-Filter wurde bei steigender Volatilität lockerer.** Code und mitgelieferter Test
+   im Plan widersprachen sich. Die naheliegende Auflösung (partitionierte Schwellen) hätte
+   ein mittelmässiges Short-Signal bei VIX 28 verworfen und bei VIX 40 durchgelassen.
+   Entschieden: **kumulativ** — ab 25 nur noch `confidence='high'` (beide Richtungen, ohne
+   Obergrenze), zusätzlich ab 35 keine neuen Longs. Monotonie nachgemessen (`926a059`).
+2. **Der B.5-Tausch erzeugte einen Selbst-Check.** Nach dem Tausch sah Phase 4a auch die
+   Predictions, die Phase 4 Sekunden zuvor geschrieben hatte (Alter 0) → ein zusätzlicher
+   Claude-Call je neuem Signal und derselbe Ticker doppelt in der Mail. Nebenbefund: der
+   Tausch war für seinen erklärten Zweck **gar nicht nötig** — die Phase-3-Analysen lagen
+   auch vorher schon vor. Entschieden: Tausch bleibt, `date < today` schliesst
+   Predictions desselben Tages aus (`822f29e`).
+3. **`save_prediction()` schrieb NULL statt Schema-Default.** Fehlte `learnable` im Dict,
+   wurde explizit NULL geschrieben — die Zeile wäre für **jedes** `WHERE learnable = 1`
+   unsichtbar gewesen. Vorbestehender Bug, bei der Umsetzung von Task 11 gefunden und
+   behoben.
+
+**Zwei Vorfälle mit Aussenwirkung:**
+
+- **Echte Mails aus einem Testlauf.** Während Task 14 gingen mehrfach echte Test-Mails an
+  `EMAIL_TO`, weil bestehende Tests `run_trade_proposals()` durchlaufen liessen und der
+  neue Sendepfad noch nicht gemockt war. Inhaltlich harmlos, aber unangekündigt.
+- **Ein Unit-Test baute eine echte Capital.com-Session auf**, nachdem `run_close()` in
+  Task 17 echten Sammelcode bekam. Der Fehler wurde intern geschluckt, der Test blieb grün.
+
+**Konsequenz (`70f883b`, `58782e4`):** `tests/conftest.py` sperrt jetzt per Autouse-Fixture
+**jeden** ausgehenden `requests.get`/`requests.post` ausserhalb von `tests/live/`; die
+Fehlermeldung nennt die tatsächlich aufgerufene Adresse. Der Produktivcode hat keinen
+weiteren HTTP-Einstieg (kein `Session`, kein `urllib`, kein `httpx` — geprüft).
+**Merke:** Die erste Fassung setzte `src.email_sender.requests.post` und war dadurch
+unbeabsichtigt ein globaler POST-Block mit irreführender Meldung — `import requests`
+liefert überall dasselbe Modulobjekt.
+
+### P2.6 — Aufräumliste für Task 20
+
+Alles unkritisch, alles bewusst vertagt. Vollständige Liste im SDD-Ledger
+(`.superpowers/sdd/2026-07-30-sprint3b-plan2-pipeline-umbau/progress.md`):
+
+| Was | Wo |
+|---|---|
+| Echte Umlaute statt `ue/ae/oe` (Projektkonvention) | `src/revalidation.py:9`, `tests/unit/test_db.py:1062` — beide aus dem Plantext übernommen |
+| Ungenutzter Logger | `src/revalidation.py` |
+| Parameter `cluster_counts` schattiert den gleichnamigen Import | `src/ranking.py:_run_checks` — aktuell folgenlos |
+| `except CostCapExceeded` in Phase 1d unerreichbar | `collect_sector_momentum()` bekommt keinen `cost_tracker`; bewusste Vorwärtskompatibilität |
+| `get_ticker_sector()` wird je Ticker bis zu 4× abgefragt | `src/ranking.py` — bei MVP-Grösse vernachlässigbar |
+| `_h(reason)[:200]` escaped vor dem Kürzen | `src/email_sender.py` — kann eine HTML-Entity mitten durchschneiden |
+| Docstrings mit 3 statt 1–2 Sätzen, unvollständiger Satz | `epic_to_ticker`, `revalidate_one`, `_forced_candidates` |
+| Docstring nennt Phase 1d nicht als Ausnahme | `_mock_all_other_phases` in `tests/unit/test_main.py` |
+| Plan-Erratum: „8 Tests" statt 7 | Plan-Datei, Task 7 Step 4 |
+
+### P2.7 — Bekannte, bewusst akzeptierte Lücke
+
+`trend_summary` und das verschachtelte `sector_rotation` aus `analyze_trends()` werden
+**nirgends persistiert**. `db.load_trend_context()` kann sie deshalb nicht rekonstruieren;
+der 16:10-Portfolio-Check bekommt einen etwas ärmeren Trend-Kontext als der Morgenlauf.
+Die Rotationsfelder aus `market_context` werden am Aufrufort ergänzt (`41a724a`), der Rest
+bleibt offen. Im Docstring von `load_trend_context()` dokumentiert.
 
 ---
 
@@ -786,8 +932,23 @@ in der Planungssession gelöst werden, bevor `USE_FULL_SP500` aktiviert wird.**
 | Tiefenanalysen | 19 Stück, ~54 s und ~0,12 EUR je Stück |
 | Phase 3 gesamt | 17 min, 2,27 EUR |
 
-**Hochrechnung auf die 80 Slots aus `MAX_DEEP_ANALYSIS`** — der Deckel greift ab
-~100 Tickern, die Tickerzahl selbst ist also *nicht* der Engpass:
+> ### ⚠️ Korrektur 2026-07-30: **den Deckel gibt es nicht**
+>
+> Die folgende Hochrechnung setzt voraus, dass `MAX_DEEP_ANALYSIS = 80` die Zahl der
+> Tiefenanalysen begrenzt. **Das tut sie nicht.** Bei der Umsetzung von Plan 2 wurde
+> verifiziert: `MAX_DEEP_ANALYSIS` und `BATCH_SIZE_QUICK` sind **tote Konstanten** —
+> sie werden nirgends im Code referenziert. `main.py` übergibt *alle* Ticker in
+> **einem** Haiku-Call an `quick_filter_batch()` (das 30er-Batching existiert nicht),
+> und `analyze_assets()` analysiert **jeden** nicht-`exclude`ten Ticker.
+>
+> Ausser `CostCapExceeded` begrenzt also **nichts** die Zahl der Tiefenanalysen. Die
+> Zahlen unten sind damit die *optimistische* Untergrenze: bei 500 Tickern könnten es
+> deutlich mehr als 80 Analysen werden, je nachdem wie viele der Quick-Filter
+> durchlässt. Der Fix gehört zu **C.4** (technischer Pre-Filter) und ist bewusst
+> **nicht** Teil von Plan 2.
+
+**Hochrechnung auf die 80 Slots aus `MAX_DEEP_ANALYSIS`** *(unter der widerlegten
+Annahme, dass der Deckel greift)*:
 
 | | 20 Ticker (gemessen) | 500 Ticker (hochgerechnet) |
 |---|---|---|

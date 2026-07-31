@@ -31,6 +31,27 @@ Die Pipeline-Phasen lassen sich an `main.py:run_pipeline()` ablesen.
 - Mailversand über Resend. Ein `2xx` heisst nur "angenommen"; die Zustellung läuft
   asynchron und scheitert ggf. später unter `GET /emails/{id}` mit
   `last_event="failed"`. Erfolg nie am Statuscode festmachen.
+- **Je Trade-Idee existiert immer genau EINE offene Prediction.** `trade_proposals`
+  löst die `pre_market`-Zeile über `status='superseded'` + `superseded_by` ab, statt
+  eine zweite daneben zu legen. Ohne das schliesst der Evaluator beide und jede
+  Kennzahl zählt doppelt. Das Urteil steht auf der **alten** Zeile
+  (`revision_verdict`) — in drei von sechs Ausgängen entsteht gar keine neue.
+- Ein gedrehtes oder hart verworfenes Signal bleibt **offen** und wird regulär
+  ausgewertet; nur so lässt sich messen, ob die Ablehnung richtig lag. Eine
+  Gegenposition entsteht dabei nie (das Gegensignal lief nie durch Phase 3).
+- B.3-Checks werden in **beiden** Läufen erhoben, aber nur um 16:10 durchgesetzt —
+  gesteuert über den `enforce`-Parameter in `src/signal_checks.py`, den der Aufrufer
+  setzt. Um 15:00 ist die US-Börse zu; die Morgenmail ist ein Research-Briefing.
+- VIX-Schwellen wirken **kumulativ, nie partitioniert**: ab 25 nur noch
+  `confidence='high'` (beide Richtungen, ohne Obergrenze), zusätzlich ab 35 keine
+  neuen Longs. Ein Filter darf nicht lockerer werden, je unruhiger der Markt ist.
+- Eine Prediction ist erst **ab dem Folgetag** eine offene Position — vorher ist sie
+  ein Vorschlag. Sonst prüft Phase 4a die Signale desselben Laufs gegen ihre eigene,
+  Sekunden alte Analyse.
+- Tests ausserhalb `tests/live/` dürfen **nicht** nach draussen telefonieren. Ein
+  Autouse-Fixture in `tests/conftest.py` sperrt jeden `requests.get`/`post`. Anlass
+  waren zwei reale Vorfälle: echte Mails aus einem Testlauf und eine echte
+  Capital.com-Session aus einem Unit-Test, die still geschluckt wurde.
 
 ## Cron-Jobs — die zwei Fallen
 Zeitplan und Run-Types stehen in `.github/workflows/analyze.yml`. Zwei Dinge, die
@@ -42,9 +63,14 @@ Kommentare im Workflow gelten für CEST; im Winter (CET) läuft alles 1 h frühe
 **Kosten.** Die Schätzungen im Workflow und in älteren Dokumenten sind
 nachweislich zu niedrig. Erster echter Messlauf am 2026-07-29: ein `pre_market`
 mit **20** MVP-Tickern kostete **3,3143 EUR** (`cost_tracking`) — die Doku nannte
-~3,20 EUR für 500 Ticker. Treiber ist Phase 3 mit ~0,12 EUR je Tiefenanalyse;
-hochgerechnet auf die 80 Slots aus `MAX_DEEP_ANALYSIS` landet ein Lauf bei
-~10,8 EUR und bricht am Deckel `MAX_COST_PER_RUN_EUR = 4.00` ab.
+~3,20 EUR für 500 Ticker. Treiber ist Phase 3 mit ~0,12 EUR je Tiefenanalyse.
+
+⚠️ **`MAX_DEEP_ANALYSIS = 80` und `BATCH_SIZE_QUICK = 30` sind tote Konstanten** —
+sie werden nirgends im Code gelesen (verifiziert 2026-07-30). Es gibt **keinen**
+Deckel auf die Zahl der Tiefenanalysen ausser `CostCapExceeded`, und Phase 2 macht
+*einen* Haiku-Call über alle Ticker statt 30er-Batches. Jede Hochrechnung, die mit
+„80 Slots" argumentiert, ist damit die optimistische Untergrenze. Der Fix gehört zu
+Sprint 3C (C.4, technischer Pre-Filter).
 Details, Laufzeit-Hochrechnung und der Cron-Konflikt: PROJECT_STATUS.md, F.1.
 
 ## Wichtige Befehle
@@ -88,8 +114,11 @@ Für gefahrlose Experimente den Mount überschreiben:
 steht der verbindliche Stand inklusive aller Sprint-3-Teilschritte, der offenen Bugs
 und der getroffenen Entscheidungen. Kurzfassung:
 
-- **Sprint 3B** teilweise: Plan 1 (Fundament) erledigt, Plan 2 (Cron-/Pipeline-Umbau)
-  noch nicht geschrieben
+- **Sprint 3B** teilweise: Plan 1 (Fundament) erledigt; **Plan 2 (Pipeline-Umbau) zu
+  17 von 20 Tasks umgesetzt** auf Branch `sprint3b/plan2-pipeline-umbau` — nicht
+  gepusht, nicht gemerged. Offen: Tasks 18–20, ein Gesamt-Review über den Branch und
+  die Live-Verifikation. Run-Types sind seither
+  `pre_market` / `trade_proposals` / `close` / `weekly`.
 - **3C** offen (Ranking-Überarbeitung)
 - **3D / 3E / 3F** sind ⚠️ **Platzhalter** — bei Erreichen aktiv nachfragen und den
   Sprint gemeinsam ausarbeiten, **bevor** Code entsteht. Die Stichpunkte dort sind
