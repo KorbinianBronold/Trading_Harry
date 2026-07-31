@@ -60,32 +60,46 @@ def tmp_db_path(tmp_path: Path) -> Path:
 
 
 @pytest.fixture(autouse=True)
-def _block_real_email_sends(monkeypatch, request):
-    """Blockiert echten Mailversand in Unit- und Integrationstests.
+def _block_outgoing_http(monkeypatch, request):
+    """Sperrt jeden ausgehenden HTTP-Aufruf ausserhalb von tests/live/.
 
-    Ein Entwickler, der den Versand einer neuen send_*_email-Funktion vergisst
-    zu mocken, soll sofort Fehlschlag sehen, nicht versehentlich echte Mails
-    verschicken. Ausgenommen sind Tests mit den Markern 'live_api' oder
-    'live_email', die ohnehin nur mit --run-live laufen.
+    Deckt bewusst ALLE Fremdsysteme ab, nicht nur den Mailversand: Kursanbieter,
+    Fundamentaldaten und Mail laufen im Produktivcode saemtlich ueber
+    requests.get / requests.post (geprueft, es gibt keinen weiteren Einstieg --
+    kein Session-Objekt, kein urllib, kein httpx).
 
-    Fehler meldet dem Entwickler, dass er src.email_sender.requests.post oder
-    die betreffende send_*_email-Funktion selbst mocken soll."""
+    Anlass: zwei reale Vorfaelle. Erst gingen aus einem gewoehnlichen Testlauf
+    echte Mails an die private Adresse raus, weil ein neuer Sendepfad nicht
+    gemockt war. Danach baute ein Unit-Test eine echte Capital.com-Session auf,
+    weil run_close() seit B.6 echten Sammelcode ausfuehrt -- der Fehler wurde
+    intern geschluckt, der Test blieb gruen, und niemand haette es bemerkt.
 
-    # Live-Tests duerfen echt senden
+    Ausgenommen sind nur Tests mit den Markern 'live_api' oder 'live_email';
+    die laufen ohnehin ausschliesslich mit --run-live."""
     if any(m in request.keywords for m in LIVE_MARKERS):
         return
 
-    def _fail_on_email_send(*args, **kwargs):
-        raise RuntimeError(
-            "FEHLER: Echte Mail-Versendung in Test blockiert! "
-            "requests.post wurde nicht gemockt.\n"
-            "Moegliche Loesung:\n"
-            "  - @patch('src.email_sender.requests.post', return_value=...) verwenden\n"
-            "  - oder die send_*_email-Funktion direkt mocken\n"
-            "Wenn dies ein Live-Test ist, markiere ihn mit @pytest.mark.live_email"
-        )
+    def _blocked(verb: str):
+        """Baut den Ersatz fuer requests.<verb>, der die Zieladresse nennt."""
+        def _fail(*args, **kwargs):
+            url = args[0] if args else kwargs.get("url", "<unbekannte Adresse>")
+            raise RuntimeError(
+                f"Ungemockter {verb}-Aufruf an {url} blockiert.\n"
+                "Tests ausserhalb von tests/live/ duerfen nicht nach draussen "
+                "telefonieren -- weder Mail verschicken noch Kurse, "
+                "Fundamentaldaten oder Kontostaende abrufen.\n"
+                "Moegliche Loesungen:\n"
+                "  - die aufrufende Funktion mocken (z.B. main.collect)\n"
+                "  - den Provider mocken (z.B. main.CapitalComProvider)\n"
+                "  - die Versandfunktion mocken (z.B. src.email_sender._send)\n"
+                "  - oder gezielt requests.get / requests.post patchen\n"
+                "Ein echter Fremdsystem-Test gehoert nach tests/live/ und traegt "
+                "den Marker live_api oder live_email."
+            )
+        return _fail
 
-    monkeypatch.setattr("src.email_sender.requests.post", _fail_on_email_send)
+    monkeypatch.setattr("requests.get", _blocked("GET"))
+    monkeypatch.setattr("requests.post", _blocked("POST"))
 
 
 @pytest.fixture

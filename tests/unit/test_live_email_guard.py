@@ -84,35 +84,48 @@ def test_default_test_job_does_not_enable_live_runs():
     assert "--run-live" not in job
 
 
-def test_guard_fixture_blocks_direct_requests_post():
-    """Fixture blockiert direkten requests.post-Aufruf in normalem Test."""
-    import src.email_sender
+def test_guard_blocks_a_direct_post():
+    """Der Mailversand-Endpunkt ist gesperrt und die Meldung nennt die Adresse."""
     import pytest
+    import requests
 
-    with pytest.raises(RuntimeError, match="Echte Mail-Versendung"):
-        src.email_sender.requests.post(
-            "https://api.resend.com/emails",
-            json={"to": "test@example.com"}
-        )
+    with pytest.raises(RuntimeError, match="Ungemockter POST-Aufruf"):
+        requests.post("https://api.resend.com/emails", json={"to": "x@example.com"})
 
 
-def test_guard_fixture_blocks_send_daily_email_without_mock():
-    """Fixture blockiert send_daily_email wenn requests.post nicht gemockt ist."""
+def test_guard_blocks_a_direct_get():
+    """Auch lesende Fremdaufrufe sind gesperrt — nicht nur der Mailversand.
+
+    Genau diese Luecke kostete Zeit: ein Unit-Test baute eine echte
+    Capital.com-Session auf, der Fehler wurde intern geschluckt, der Test blieb
+    gruen. Ein reiner Mail-Schutz haette das nie gemeldet."""
+    import pytest
+    import requests
+
+    with pytest.raises(RuntimeError, match="Ungemockter GET-Aufruf"):
+        requests.get("https://demo-api-capital.backend-capital.com/api/v1/prices/AAPL")
+
+
+def test_guard_message_names_the_called_address():
+    """Wer an einem Kursanbieter-Problem sitzt, darf nicht in die
+    Mail-Dokumentation geschickt werden."""
+    import pytest
+    import requests
+
+    with pytest.raises(RuntimeError, match="finnhub.io"):
+        requests.get("https://finnhub.io/api/v1/quote")
+
+
+def test_guard_blocks_send_daily_email_without_mock():
+    """Ungemockter Versand schlaegt fehl, statt echte Post zu verschicken."""
+    import pytest
     from src.email_sender import send_daily_email, EmailSendError
-    import pytest
 
     payload = {
-        "date": "2026-01-01",
-        "run_type": "test",
-        "top_long": [],
-        "top_short": [],
-        "portfolio_recs": [],
-        "trends": [],
-        "commodities_crypto": [],
-        "cost_summary": {},
-        "yesterday_outcomes": {},
-        "skipped_tickers": [],
+        "date": "2026-01-01", "run_type": "test",
+        "top_long": [], "top_short": [], "portfolio_recs": [], "trends": [],
+        "commodities_crypto": [], "cost_summary": {},
+        "yesterday_outcomes": {}, "skipped_tickers": [],
     }
-
-    with pytest.raises(EmailSendError, match="Echte Mail-Versendung"):
+    with pytest.raises(EmailSendError, match="Ungemockter POST-Aufruf"):
         send_daily_email(payload, "test-key", "from@test.com", "to@test.com")
