@@ -80,6 +80,8 @@ CREATE TABLE IF NOT EXISTS predictions (
     status TEXT DEFAULT 'open',
     closed_date TEXT, closed_price REAL,
     hold_days_recommended INTEGER, intraday_range_pct REAL,
+    superseded_by INTEGER REFERENCES predictions(id),
+    revision_verdict TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -227,6 +229,13 @@ def _apply_migrations(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE predictions ADD COLUMN sector_etf_momentum REAL")
     if "sector_db_momentum" not in pred_cols:
         conn.execute("ALTER TABLE predictions ADD COLUMN sector_db_momentum REAL")
+    # E3 (Plan 2): der 16:10-Lauf loest die pre_market-Zeile ab, statt eine
+    # zweite offene Zeile daneben zu legen. Ohne das schliesst der Evaluator
+    # beide und jede Kennzahl zaehlt doppelt.
+    if "superseded_by" not in pred_cols:
+        conn.execute("ALTER TABLE predictions ADD COLUMN superseded_by INTEGER")
+    if "revision_verdict" not in pred_cols:
+        conn.execute("ALTER TABLE predictions ADD COLUMN revision_verdict TEXT")
 
     # guardrail_rejects existiert erst seit Task 8 — bei aelteren DBs legt der
     # SCHEMA_SQL-Lauf davor die Tabelle bereits mit beiden Spalten an.
@@ -431,7 +440,13 @@ def upsert_price_history(
 
 
 def save_prediction(conn: sqlite3.Connection, pred: dict) -> int:
-    """Inserts one predictions row from a flat dict and returns its new id."""
+    """Inserts one predictions row from a flat dict and returns its new id.
+
+    `learnable` faellt auf True zurueck, wenn der Aufrufer den Schluessel
+    weglaesst: die INSERT-Spaltenliste listet ihn immer explizit auf, ein
+    fehlender Wert wuerde sonst NULL statt des Schema-Defaults (DEFAULT 1)
+    schreiben — und NULL erfuellt keinen der `learnable = 1`-Filter."""
+    pred = {"learnable": True, **pred}
     cols = [
         "date", "run_type", "asset_class", "ticker", "direction",
         "entry_price", "tp_price", "tp_pct", "sl_price", "sl_pct", "rr_ratio",
@@ -473,6 +488,34 @@ def close_prediction(
         "UPDATE predictions SET status=?, closed_date=?, closed_price=? WHERE id=?",
         (status, closed_date, closed_price, pred_id),
     )
+    conn.commit()
+
+
+def record_revision(
+    conn: sqlite3.Connection, pred_id: int, verdict: str,
+    superseded_by: int | None = None,
+) -> None:
+    """Schreibt das Urteil des 16:10-Laufs auf die pre_market-Zeile (E3).
+
+    Mit `superseded_by` wird die Zeile abgeloest: status='superseded', damit der
+    Evaluator und Phase 4a sie nicht mehr sehen — beide filtern auf status='open'.
+    Ohne `superseded_by` (Urteil 'gedreht' oder 'verworfen') bleibt sie offen und
+    wird regulaer ausgewertet; nur so laesst sich messen, ob die Ablehnung richtig lag.
+
+    Das Urteil sitzt bewusst auf der ALTEN Zeile: in drei von sechs Ausgaengen
+    entsteht gar keine neue, dort waere es sonst nirgends."""
+    if superseded_by is None:
+        conn.execute(
+            "UPDATE predictions SET revision_verdict = ? WHERE id = ?",
+            (verdict, pred_id),
+        )
+    else:
+        conn.execute(
+            """UPDATE predictions
+               SET revision_verdict = ?, superseded_by = ?, status = 'superseded'
+               WHERE id = ?""",
+            (verdict, superseded_by, pred_id),
+        )
     conn.commit()
 
 
@@ -787,6 +830,20 @@ def load_predictions_for_date(
            WHERE date=? AND run_type=?
            ORDER BY total_score DESC""",
         (date, run_type),
+    ).fetchall()
+
+
+def load_predictions_for_revalidation(
+    conn: sqlite3.Connection, date: str,
+) -> list[sqlite3.Row]:
+    """Die heutigen offenen pre_market-Predictions — Eingangsmenge der
+    Re-Validierung im 16:10-Lauf."""
+    return conn.execute(
+        """SELECT * FROM predictions
+           WHERE date = ? AND run_type = 'pre_market'
+             AND status = 'open' AND learnable = 1
+           ORDER BY probability_pct DESC""",
+        (date,),
     ).fetchall()
 
 

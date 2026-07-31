@@ -1057,3 +1057,95 @@ def test_migration_is_idempotent_on_an_already_migrated_db():
     assert conn.execute(
         "SELECT COUNT(*) AS n FROM market_context").fetchone()["n"] == 1
     conn.close()
+
+
+# ---------- E3: Ablösung statt Dopplung ----------
+
+def test_predictions_has_supersede_columns(in_memory_db):
+    db.init_schema(in_memory_db)
+    cols = {r["name"] for r in in_memory_db.execute(
+        "PRAGMA table_info(predictions)").fetchall()}
+    assert {"superseded_by", "revision_verdict"}.issubset(cols)
+
+
+def test_migration_adds_supersede_columns_to_an_existing_db(tmp_db_path):
+    """Migration gegen eine DB, die die Spalten noch nicht kennt (Regel 5)."""
+    import sqlite3
+    conn = sqlite3.connect(tmp_db_path)
+    conn.row_factory = sqlite3.Row
+    conn.execute("""CREATE TABLE predictions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, date TEXT NOT NULL,
+        run_type TEXT NOT NULL, ticker TEXT NOT NULL, direction TEXT NOT NULL,
+        status TEXT DEFAULT 'open', learnable BOOLEAN DEFAULT 1)""")
+    conn.commit()
+    db.init_schema(conn)
+    cols = {r["name"] for r in conn.execute(
+        "PRAGMA table_info(predictions)").fetchall()}
+    assert {"superseded_by", "revision_verdict"}.issubset(cols)
+    conn.close()
+
+
+def test_record_revision_with_successor_marks_superseded(in_memory_db):
+    db.init_schema(in_memory_db)
+    old = db.save_prediction(in_memory_db, {
+        "date": "2026-07-30", "run_type": "pre_market",
+        "ticker": "AAPL", "direction": "long"})
+    new = db.save_prediction(in_memory_db, {
+        "date": "2026-07-30", "run_type": "trade_proposals",
+        "ticker": "AAPL", "direction": "long"})
+    db.record_revision(in_memory_db, old, verdict="bestaetigt", superseded_by=new)
+    row = in_memory_db.execute(
+        "SELECT status, superseded_by, revision_verdict FROM predictions WHERE id=?",
+        (old,)).fetchone()
+    assert row["status"] == "superseded"
+    assert row["superseded_by"] == new
+    assert row["revision_verdict"] == "bestaetigt"
+
+
+def test_record_revision_without_successor_keeps_it_open(in_memory_db):
+    """E5: ein gedrehtes Signal bleibt offen und wird regulaer ausgewertet —
+    genau das beantwortet, ob die Drehung richtig lag."""
+    db.init_schema(in_memory_db)
+    pid = db.save_prediction(in_memory_db, {
+        "date": "2026-07-30", "run_type": "pre_market",
+        "ticker": "AAPL", "direction": "long"})
+    db.record_revision(in_memory_db, pid, verdict="gedreht")
+    row = in_memory_db.execute(
+        "SELECT status, superseded_by, revision_verdict FROM predictions WHERE id=?",
+        (pid,)).fetchone()
+    assert row["status"] == "open"
+    assert row["superseded_by"] is None
+    assert row["revision_verdict"] == "gedreht"
+
+
+def test_superseded_predictions_are_invisible_to_the_evaluator(in_memory_db):
+    """Der Kern von E3: eine Trade-Idee, genau EIN Outcome. Ohne das zaehlt
+    jede Kennzahl doppelt."""
+    db.init_schema(in_memory_db)
+    old = db.save_prediction(in_memory_db, {
+        "date": "2026-07-29", "run_type": "pre_market",
+        "ticker": "AAPL", "direction": "long"})
+    new = db.save_prediction(in_memory_db, {
+        "date": "2026-07-29", "run_type": "trade_proposals",
+        "ticker": "AAPL", "direction": "long"})
+    db.record_revision(in_memory_db, old, verdict="bestaetigt", superseded_by=new)
+    open_ids = {r["id"] for r in db.load_open_predictions(in_memory_db)}
+    assert open_ids == {new}
+    within = {r["id"] for r in db.load_open_predictions_within_max_age_days(
+        in_memory_db, today="2026-07-30")}
+    assert within == {new}, "auch Phase 4a darf den Ticker nur einmal sehen"
+
+
+def test_load_predictions_for_revalidation_is_scoped(in_memory_db):
+    db.init_schema(in_memory_db)
+    keep = db.save_prediction(in_memory_db, {
+        "date": "2026-07-30", "run_type": "pre_market",
+        "ticker": "AAPL", "direction": "long"})
+    db.save_prediction(in_memory_db, {          # falscher Tag
+        "date": "2026-07-29", "run_type": "pre_market",
+        "ticker": "MSFT", "direction": "long"})
+    db.save_prediction(in_memory_db, {          # falscher run_type
+        "date": "2026-07-30", "run_type": "trade_proposals",
+        "ticker": "NVDA", "direction": "long"})
+    rows = db.load_predictions_for_revalidation(in_memory_db, "2026-07-30")
+    assert {r["id"] for r in rows} == {keep}
