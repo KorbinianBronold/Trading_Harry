@@ -927,3 +927,32 @@ def test_signal_changes_have_consistent_keys_on_revalidation_failure(tmp_db_path
     assert set(out[0].keys()) == expected_keys
     assert out[0]["entry_window_low"] is None
     assert out[0]["entry_window_high"] is None
+
+
+# ---------- Task 15 (B.3): Opening-Gap-Check im 16:10-Lauf ----------
+
+
+def test_opening_gap_reaches_the_revalidation_prompt(tmp_db_path, mocker):
+    """Der Gap muss beim Modell ankommen, sonst kann es ihn nicht wuerdigen."""
+    from src import db
+    conn = db.connect(str(tmp_db_path)); db.init_schema(conn)
+    _pred_row(conn, entry_price=100.0)
+    conn.commit(); conn.close()
+
+    mocker.patch("main.CapitalComProvider", return_value=MagicMock())
+    mocker.patch("main.FinnhubProvider", return_value=MagicMock())
+    mocker.patch("main.collect", return_value=([{"ticker": "AAPL", "price": 104.0}], 0))
+    mocker.patch("main.fetch_market_context", return_value={"vix_level": 18.0})
+    mocker.patch("main.collect_sector_momentum", return_value={})
+    mocker.patch("main.run_policy_monitor", return_value={"policy_risk_level": "low",
+                                                          "events": []})
+    mocker.patch("main.check_open_positions", return_value=[])
+    mocker.patch("main.send_trade_proposals_email")
+    reval = mocker.patch("main.revalidate_one", return_value={
+        "verdict": "geschwaecht", "probability_pct": 50, "reason": "Gap"})
+
+    from main import run_trade_proposals
+    run_trade_proposals(date="2026-07-30", db_path=str(tmp_db_path))
+
+    fired = {c.rule for c in reval.call_args.kwargs["checks"]}
+    assert "opening_gap" in fired

@@ -196,6 +196,30 @@ def cluster_counts(
     return counts
 
 
+def check_opening_gap(
+    pre_market_price: float | None, current_price: float | None,
+) -> CheckResult | None:
+    """Warnt bei einer grossen Luecke zwischen dem 15:00-Kurs und dem aktuellen.
+
+    Als 15:00-Kurs dient der entry_price der Morgen-Prediction — genau der Wert, den
+    B.3 mit 'pre_market-Kurs' meint. Kein zusaetzlicher Abruf noetig.
+
+    Immer weich: ein Gap sagt etwas ueber den Einstiegszeitpunkt, nicht ueber die
+    These. Ob das Setup dadurch unbrauchbar wird, faengt die neu berechnete
+    R/R-Ratio in main._persist_revision() ab."""
+    if not pre_market_price or current_price is None:
+        return None
+    gap = (current_price - pre_market_price) / pre_market_price * 100.0
+    if abs(gap) < config.OPENING_GAP_WARN_PCT:
+        return None
+    return CheckResult(
+        rule="opening_gap",
+        detail=f"Gap seit 15:00: {gap:+.1f}% "
+               f"({pre_market_price} → {current_price})",
+        enforced=False,
+    )
+
+
 def recompute_rr_ratio(
     entry: float, tp: float, sl: float, direction: str,
 ) -> float | None:

@@ -99,6 +99,11 @@ SECTOR_CLUSTER_WARN_AT = 3
 VIX_HIGH_CONFIDENCE_ONLY = 25.0
 VIX_NO_NEW_LONGS = 35.0
 
+# Sprint 3B / Plan 2 (B.3): ab welcher Kursluecke zwischen dem 15:00-Kurs und dem
+# 16:10-Kurs die Mail warnt. Reine Warnung — ob das Signal durchfaellt, entscheidet
+# die neu berechnete R/R-Ratio.
+OPENING_GAP_WARN_PCT = 1.5
+
 # D9 (B.3.1): solange False, blockiert der Sektor-Guardrail nie — er schreibt nur
 # guardrail_rejects-Zeilen mit enforced=0. Erst auf True stellen, wenn die
 # Sub-Sektor-Mapping-Abdeckung in der Weekly-Mail stabil hoch ist.

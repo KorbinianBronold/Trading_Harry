@@ -228,3 +228,31 @@ def test_recompute_rr_ratio_is_none_past_the_stop():
     """Kurs schon durch den SL — kein sinnvolles Verhaeltnis mehr."""
     from src.signal_checks import recompute_rr_ratio
     assert recompute_rr_ratio(97.0, 106.0, 98.0, "long") is None
+
+
+# ---------- check_opening_gap (Task 15, B.3): Luecke seit dem Morgen-Einstieg ----------
+
+def test_opening_gap_is_silent_below_the_threshold():
+    from src.signal_checks import check_opening_gap
+    assert check_opening_gap(100.0, 101.0) is None
+
+
+def test_opening_gap_warns_on_a_large_move_up():
+    from src.signal_checks import check_opening_gap
+    r = check_opening_gap(100.0, 103.0)
+    assert r is not None and r.rule == "opening_gap"
+    assert r.enforced is False, "ein Gap ist eine Information, kein Urteil"
+    assert "+3.0" in r.detail
+
+
+def test_opening_gap_warns_on_a_large_move_down():
+    from src.signal_checks import check_opening_gap
+    r = check_opening_gap(100.0, 97.0)
+    assert r is not None and "-3.0" in r.detail
+
+
+def test_opening_gap_is_silent_without_data():
+    from src.signal_checks import check_opening_gap
+    assert check_opening_gap(None, 103.0) is None
+    assert check_opening_gap(100.0, None) is None
+    assert check_opening_gap(0.0, 103.0) is None

@@ -623,6 +623,8 @@ def _revalidate_all(
                                                 enforce=True),
             signal_checks.check_cluster(sector_name,
                                         counts.get(sector_name or "", 0)),
+            signal_checks.check_opening_gap(
+                pred["entry_price"], snapshot.get("price")),
         ) if c is not None]
 
         # E4: auch der 16:10-Lauf persistiert JEDEN angeschlagenen Check — sonst
