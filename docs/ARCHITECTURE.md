@@ -1,32 +1,28 @@
 # Shares_Future – Architektur & Design
 
-**Zuletzt aktualisiert:** 2026-08-04 — Branch-Aussage in beiden Warnblöcken korrigiert,
-Ausführungsstand präzisiert (gemerged, aber Workflow deaktiviert)
+**Zuletzt aktualisiert:** 2026-08-04 — Task 20: Phasen 1c/1d ergänzt, Phase 4 vor 4a,
+signal_checks und revalidation als Module, position_check als Historie markiert
 
 > **Dieses Dokument beschreibt den IST-Zustand des Codes.**
 >
-> ⚠️ **Stand 2026-08-04 — teilweise überholt.** Sprint 3B / Plan 2 ist zu 19 von 20
-> Tasks umgesetzt und liegt **direkt auf `main`, gepusht** (nicht, wie hier bis
-> 2026-08-03 behauptet, auf einem ungemergten Branch — den gab es nie). Der Umbau ist
-> damit **gemerged, aber noch nicht scharf**: `analyze.yml` steht auf
-> `disabled_manually`, der letzte Pipeline-Lauf war am 2026-07-13. Für den **Code**
-> gilt unten trotzdem bereits Folgendes anders:
+> ✅ **Stand 2026-08-04:** In Task 20 auf Sprint 3B / Plan 2 nachgezogen. Die frühere
+> Abweichungsliste ist eingearbeitet und deshalb entfallen — Phasen 1c/1d, die
+> getauschte Reihenfolge 4 → 4a, `analyses_by_ticker` und die beiden neuen Module
+> `src/signal_checks.py` / `src/revalidation.py` stehen jetzt im Text selbst.
 >
-> | Was hier steht | Was tatsächlich gilt |
-> |---|---|
-> | Run-Types `midday`, `evaluate`, `position_check` | **entfernt.** Es gibt `pre_market`, `trade_proposals`, `close`, `weekly` |
-> | Phase 4a läuft vor Phase 4 | **getauscht** — Ranking zuerst, Portfolio-Check danach, ohne Websuche |
-> | 7 Phasen | zusätzlich **1c** (offene Positionen als Pflicht-Kandidaten) und **1d** (Sektor-Momentum) |
-> | `src/portfolio_check.py` nimmt `snapshots_by_ticker` | heisst jetzt `analyses_by_ticker` und bekommt fertige Phase-3-Analysen |
-> | — | **neu:** `src/signal_checks.py` (rechnerische Checks) und `src/revalidation.py` (billiger 16:10-Zweitcheck) |
+> ⚠️ **Eine Einschränkung bleibt:** Der beschriebene Code liegt vollständig auf `main`,
+> wurde aber **noch nie ausgeführt**. `analyze.yml` steht auf `disabled_manually`, der
+> letzte Pipeline-Lauf war am 2026-07-13. Was hier steht, ist also der Ist-Zustand des
+> *Codes*, nicht der eines laufenden Systems. Live-Verifikation: PROJECT_STATUS, P2.4.
 >
-> Der vollständige Stand steht in `docs/superpowers/specs/PROJECT_STATUS.md`,
-> Abschnitt „Sprint 3B / Plan 2". Dieses Dokument wird in Task 20 vollständig
-> nachgezogen; die Tabelle oben ist bis dahin die verbindliche Abweichungsliste.
+> Historische Abschnitte weiter unten (Sprint 1 / Sprint 2) sind bewusst nicht
+> umgeschrieben — sie sind als Historie gekennzeichnet.
 
 ## Überblick
 
-Das System folgt einer **Pipeline-Architektur** mit 7 Phasen (0, 0b, 1, 2, 3, 4a/4, 5), die sequenziell ausgeführt werden. Jede Phase ist entkoppelt über klare Daten-Schnittstellen und kann unabhängig getestet werden.
+Das System folgt einer **Pipeline-Architektur** mit 9 Phasen (0, 0b, 1, 1c, 1d, 2, 3, 4, 4a, 5), die sequenziell ausgeführt werden. Jede Phase ist entkoppelt über klare Daten-Schnittstellen und kann unabhängig getestet werden.
+
+**Reihenfolge beachten:** Ranking (Phase 4) läuft seit B.5 **vor** dem Portfolio-Check (4a), nicht danach. Phase 4a bekommt dadurch die fertigen Phase-3-Analysen und braucht keinen eigenen `web_search`.
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -57,11 +53,31 @@ Das System folgt einer **Pipeline-Architektur** mit 7 Phasen (0, 0b, 1, 2, 3, 4a
 └─────────────────────────────────────────────────────────────────┘
                               ↓
 ┌─────────────────────────────────────────────────────────────────┐
+│      PHASE 1c: OFFENE POSITIONEN ALS PFLICHT-KANDIDATEN          │
+│  Capital.com GET /positions → Epics über die Reverse-Map auf     │
+│  Ticker zurückführen. Diese Ticker gehen garantiert in Phase 3,  │
+│  auch wenn der Quick-Filter sie aussortiert hätte — sonst        │
+│  verliert man die Analyse zu einer Position, die man hält.       │
+│  Cost: ~0.00 EUR | Fail: ✅ leere Liste, continue                │
+└─────────────────────────────────────────────────────────────────┘
+                              ↓
+┌─────────────────────────────────────────────────────────────────┐
+│          PHASE 1d: SEKTOR-MOMENTUM (zwei Signale)                │
+│  ETF-Momentum (Capital.com, je Sub-Sektor-ETF) und              │
+│  DB-Momentum (Durchschnitt der Ticker aus ticker_sectors).      │
+│  Werden GETRENNT gespeichert und nie verrechnet — 3D soll       │
+│  messen, welches besser predictet.                               │
+│  DB: sector_momentum | Cost: ~0.00 EUR                           │
+└─────────────────────────────────────────────────────────────────┘
+                              ↓
+┌─────────────────────────────────────────────────────────────────┐
 │              PHASE 2: QUICK-FILTER (Batch-Scoring)               │
 │  Input: phase1_data[], trend_context                             │
-│  Claude: Haiku × ceil(500/30) Calls (30er-Batches)              │
+│  Claude: 1× Haiku über ALLE Ticker                              │
+│  ⚠️ BATCH_SIZE_QUICK und MAX_DEEP_ANALYSIS sind tote            │
+│     Konstanten — es gibt weder 30er-Batches noch einen Deckel    │
+│     auf die Tiefenanalysen. Fix gehört zu C.4.                   │
 │  Output: list[{ticker, long_score, short_score, confidence}]    │
-│  Logik: Top 80 Long + Top 80 Short behalten                     │
 │  Cost: ~0.15 EUR                                                 │
 │  Fail: ✅ Skip Batch, continue                                    │
 └─────────────────────────────────────────────────────────────────┘
@@ -102,39 +118,37 @@ Das System folgt einer **Pipeline-Architektur** mit 7 Phasen (0, 0b, 1, 2, 3, 4a
 └─────────────────────────────────────────────────────────────────┘
                               ↓
 ┌─────────────────────────────────────────────────────────────────┐
+│         PHASE 4: RANKING & PERSISTIERUNG                         │
+│  Input: deep_analysis[], commodities_crypto[]                    │
+│  Logik: Guardrail-Filter → Top-10 Long/Short nach prob_pct      │
+│  Checks: src/signal_checks.py (VIX, Klumpen, rel. Stärke, Gap)  │
+│          enforce=True nur im 16:10-Lauf, sonst weiche Warnung   │
+│  Output: {top_long[], top_short[], commodities_crypto[]}        │
+│  DB: predictions + guardrail_rejects schreiben                   │
+│  Learnable: Alle = true (außer skip-by-guardrails)             │
+│  Cost: ~0.00 EUR                                                 │
+│  Fail: ❌ Propagates (Ranking MUSS funktionieren)               │
+└─────────────────────────────────────────────────────────────────┘
+                              ↓
+┌─────────────────────────────────────────────────────────────────┐
 │       PHASE 4a: PORTFOLIO-CHECK (Offene Positionen)              │
-│  Input: db.predictions[status='open' & date ≤ 5 days ago],      │
-│         current_snapshots, trend_context, policy_context        │
-│  Claude: Sonnet × N offene Positionen + web_search              │
+│  ⚠️ Läuft seit B.5 NACH Phase 4 und nutzt deren fertige         │
+│     Phase-3-Analysen — kein eigener web_search mehr.             │
+│  Input: db.predictions[status='open' & date < today],           │
+│         analyses_by_ticker, trend_context, policy_context       │
+│  Claude: Sonnet × N offene Positionen, OHNE web_search          │
 │  Output: list[{prediction_id, action="HALTEN|SCHLIESSEN|..."}]  │
-│  Logik: Jede offene Position wird neu evaluiert                 │
+│  Hinweis: date < today — eine Prediction ist erst ab dem        │
+│           Folgetag eine offene Position, vorher ein Vorschlag.   │
 │  Cost: ~0.20 EUR (abhängig von offenen Positionen)              │
 │  Fail: ✅ Skip Position, continue                                │
 │  DB: position_recommendations-Table schreiben                   │
 └─────────────────────────────────────────────────────────────────┘
                               ↓
 ┌─────────────────────────────────────────────────────────────────┐
-│   EVALUATE RUN: Walk-Forward OHLC-Hit-Check                      │
-│   CLOSE RUN: Capital.com Schlusskurs + Datenpflege               │
-│   (kein Claude, kein Mail — nur Datenpflege)                     │
-└─────────────────────────────────────────────────────────────────┘
-                              ↓
-┌─────────────────────────────────────────────────────────────────┐
-│   POSITION CHECK RUN (17:30 Berlin, ~0.20 EUR)                   │
-│   Capital.com GET /positions → offene Trades abrufen             │
-│   Claude 1× → hat sich etwas wesentlich verändert?              │
-│   Status-Mail: ✅ auf Kurs / ⚠ nahe SL / ❌ Signal gefallen      │
-└─────────────────────────────────────────────────────────────────┘
-                              ↓
-┌─────────────────────────────────────────────────────────────────┐
-│         PHASE 4: RANKING & PERSISTIERUNG                         │
-│  Input: deep_analysis[], commodities_crypto[], phase4a_recs    │
-│  Logik: Guardrail-Filter → Top-10 Long/Short nach prob_pct      │
-│  Output: {top_long[], top_short[], commodities_crypto[]}        │
-│  DB: predictions-Table schreiben (future_outcome tracking)       │
-│  Learnable: Alle = true (außer skip-by-guardrails)             │
-│  Cost: ~0.00 EUR                                                 │
-│  Fail: ❌ Propagates (Ranking MUSS funktionieren)               │
+│   CLOSE RUN: Schlusskurse ALLER Ticker + TP/SL-Auswertung        │
+│   + cleanup_old_data()  (kein Claude, kein Mail)                 │
+│   WEEKLY RUN: Aggregate + Wochenmail                             │
 └─────────────────────────────────────────────────────────────────┘
                               ↓
 ┌─────────────────────────────────────────────────────────────────┐
@@ -387,38 +401,9 @@ def analyze_commodities_and_crypto(
 
 ---
 
-### 6. **`src/portfolio_check.py`** (Phase 4a)
+### 6. **`src/ranking.py`** (Phase 4)
 
-Evaluiert täglich alle offenen Positionen (max 5 Tage alt).
-
-```python
-def check_open_positions(
-    conn: sqlite3.Connection,
-    today: str,
-    run_type: str,
-    snapshots_by_ticker: dict,  # {ticker: {price, ...}}
-    trend_context: dict,
-    policy_context: dict,
-    cost_tracker: CostTracker,
-) -> list[dict]:
-    """
-    Für jede offene Position (≤ 5 Tage alt):
-      - Sonnet + web_search Call
-      - Returns: {prediction_id, action:"HALTEN"|"SCHLIESSEN"|"ANPASSEN",
-                 reason, new_sl_price, new_tp_price, market_context_changed}
-      - Speichert position_recommendations-Row
-    
-    Skip: Position wenn Ticker kein aktueller Snapshot.
-    """
-```
-
-**Fail-Verhalten:** `PortfolioCheckError` → skip Position, continue.
-
----
-
-### 7. **`src/ranking.py`** (Phase 4)
-
-Filtert, sortiert und persistiert Top-10-Setups.
+Filtert, sortiert und persistiert Top-10-Setups. **Läuft seit B.5 vor Phase 4a.**
 
 ```python
 def rank_and_persist(
@@ -432,16 +417,50 @@ def rank_and_persist(
     """
     Logik:
     1. Guardrail-Filter (hold_days ≤ 5, intraday_range ≥ 1%, R/R ≥ 1.5, no "none")
-    2. Split Long/Short
-    3. Sort by probability_pct DESC
-    4. Keep Top 10 each, ALL commodities/crypto
-    5. Persist to db.predictions
-    
+    2. Checks aus src/signal_checks.py (VIX, Klumpen, relative Stärke, Gap) —
+       erhoben in BEIDEN Läufen, durchgesetzt nur bei enforce=True (16:10)
+    3. Split Long/Short
+    4. Sort by probability_pct DESC
+    5. Keep Top 10 each, ALL commodities/crypto
+    6. Persist to db.predictions; Verworfenes nach db.guardrail_rejects
+
     Returns: {top_long[], top_short[], commodities_crypto[]}
     """
 ```
 
 **Fail-Verhalten:** `RankingError` → propagates (MUSS funktionieren).
+
+---
+
+### 7. **`src/portfolio_check.py`** (Phase 4a)
+
+Evaluiert alle offenen Positionen (max `MAX_HOLD_DAYS` Tage alt). **Läuft seit B.5
+nach Phase 4** und arbeitet auf deren fertigen Phase-3-Analysen.
+
+```python
+def check_open_positions(
+    conn,
+    today: str,
+    run_type: str,
+    analyses_by_ticker: dict[str, dict],   # fertige Phase-3-Analysen, NICHT Snapshots
+    trend_context: dict,
+    policy_context: dict,
+    cost_tracker: CostTracker,
+) -> list[dict]:
+    """
+    Für jede offene Position (≤ MAX_HOLD_DAYS alt):
+      - Sonnet-Call OHNE web_search (B.5) — der Kontext kommt aus Phase 3
+      - Returns: {prediction_id, action:"HALTEN"|"SCHLIESSEN"|"ANPASSEN",
+                 reason, new_sl_price, new_tp_price, market_context_changed}
+      - Speichert position_recommendations-Row
+
+    Nur Predictions mit date < today: eine Prediction desselben Laufs ist ein
+    Vorschlag, keine offene Position — sonst prüfte 4a die Signale gegen ihre
+    eigene, Sekunden alte Analyse.
+    """
+```
+
+**Fail-Verhalten:** `PortfolioCheckError` → skip Position, continue.
 
 ---
 
@@ -533,6 +552,49 @@ class GuardrailsChecker:
         6. direction ≠ "none"
         """
 ```
+
+---
+
+### 10a. **`src/signal_checks.py`** (neu in 3B / Plan 2)
+
+Die rechnerischen Checks aus B.3. **Bewusst netzwerk- und Claude-frei:** jede Funktion
+bekommt bereits erhobene Werte (Markt-Kontext aus Phase 0b, Sektor-Momentum aus Phase 1d,
+Kurse aus `price_history`) und gibt ein Urteil zurück. Dadurch ohne Mocking testbar.
+
+```python
+check_vix(...)             -> CheckResult | None   # kumulativ: ab 25 nur high,
+                                                   # zusätzlich ab 35 keine neuen Longs
+check_sector_momentum(...) -> CheckResult | None   # hart nur bei Übereinstimmung
+check_cluster(...)         -> CheckResult | None   # Klumpenrisiko im Sub-Sektor
+check_opening_gap(...)     -> CheckResult | None   # Gap pre_market → 16:10
+compute_relative_strength(...)                     # Ticker vs. Sub-Sektor
+blocks(results)            -> bool                 # blockiert irgendein Ergebnis?
+```
+
+**Zwei Regeln, die man hier leicht falsch macht:**
+- Ein Check, der **nicht** anschlägt, gibt `None` zurück und erzeugt **keine** Zeile —
+  wörtlich B.3.1: „keines vorhanden → kein Check, kein Log-Eintrag".
+- Ob ein anschlagender Check das Signal auch **blockiert**, entscheidet nicht dieses
+  Modul, sondern der Aufrufer über `enforce` (E4). Um 15:00 wird nur erhoben und
+  mit `enforced=0` protokolliert, um 16:10 durchgesetzt.
+
+---
+
+### 10b. **`src/revalidation.py`** (neu in 3B / Plan 2)
+
+Der billige Zweitcheck des `trade_proposals`-Laufs (E1). Ein Sonnet-Call je Signal,
+**ohne `web_search`** — die Recherche hat die Tiefenanalyse am Morgen bezahlt, und
+Breaking News zwischen 15:00 und 16:10 deckt der eine Policy-Monitor-Call ab.
+
+```python
+revalidate_one(...) -> dict   # {verdict, probability_pct, reason, ...}
+                              # verdict ∈ bestaetigt | geschwaecht | unveraendert
+                              #           | gedreht | verworfen
+```
+
+**Das Modul urteilt nur.** Was mit dem Urteil geschieht — Ablösung der `pre_market`-Zeile
+über `superseded_by`, eine neue Prediction oder blosse Warnung — entscheidet
+`main.run_trade_proposals()`. In drei von sechs Ausgängen entsteht gar keine neue Zeile.
 
 ---
 
@@ -660,17 +722,17 @@ heute = 2026-05-20, run_type = "close"
   ✓ costs ~0.35 EUR
 
   ↓
-[Phase 4a] check_open_positions()
-  → if db.predictions[status='open' & date ≤ 2026-05-17] exists
-  → Sonnet × N Calls
-  ← N Empfehlungen (HALTEN/SCHLIESSEN/ANPASSEN)
-  ✓ costs ~0.20 EUR
+[Phase 4] rank_and_persist()
+  → Guardrail-Filter + signal_checks (enforce nur um 16:10) + Top-10
+  → db.predictions + db.guardrail_rejects schreiben
+  ✓ costs ~0.00 EUR
 
   ↓
-[Phase 4] rank_and_persist()
-  → Guardrail-Filter + Top-10
-  → db.predictions schreiben
-  ✓ costs ~0.00 EUR
+[Phase 4a] check_open_positions()          # seit B.5 NACH Phase 4
+  → if db.predictions[status='open' & learnable=1 & date < today] exists
+  → Sonnet × N Calls, OHNE web_search (nutzt die Phase-3-Analysen)
+  ← N Empfehlungen (HALTEN/SCHLIESSEN/ANPASSEN)
+  ✓ costs ~0.20 EUR
 
   ↓
 [Phase 5] render_daily_html() + send_daily_email()
@@ -716,7 +778,8 @@ Plan: `docs/superpowers/plans/2026-05-21-sprint2-plan1-capital-provider-db-incre
 - **fundamentals_cache** – Finnhub-Fundamentals mit 7-Tage TTL
 - **DB-Incremental-Update** – täglich nur 1 Bar fetchen, Indikatoren aus DB (200 Tage)
 - **position_check Run-Type** – Capital.com Position-Read + Claude + Status-Mail
-  *(wird in Sprint 3B wieder entfernt)*
+  *(in Sprint 3B / Plan 2 restlos entfernt, `59f5e2c` — steht hier nur als
+  Sprint-2-Historie, nicht als Ist-Zustand)*
 - **Timezone-Fix** – `ZoneInfo("Europe/Berlin")` in Python, `TZ="Europe/Berlin"` in Bash
 - **historical_loader.py** – 3-Jahres-Pull via Capital.com (`--all`, `--full-sp500`, `--tickers`).
   Seit Sprint 3B zusätzlich die reinen Status-Modi `--reactivate` / `--list-inactive`;
@@ -742,20 +805,29 @@ Kurzüberblick, was sich an der oben beschriebenen Architektur ändern wird:
 | `ranking` | Rejects werden persistiert; `predictions.sector` kommt aus `ticker_sectors` |
 | `main` | B-05 gefixt: echte Abbruch-Phase statt Platzhalter |
 
-**Noch offen:**
+### Sprint 3B / Plan 2 — umgesetzt (2026-07-30 bis 2026-08-04)
 
-> ⚠️ **Stand 2026-08-03:** Die vier mit ✅ markierten Zeilen sind bereits **umgesetzt
-> und auf `main` gepusht** — sie stehen also nicht mehr aus. Sie bleiben hier nur so
-> lange stehen, bis Task 20 dieses Dokument vollständig nachzieht.
+Code vollständig, 20/20 Tasks, alles auf `main`. ⚠️ **Noch nie ausgeführt** —
+`analyze.yml` steht auf `disabled_manually`; die Live-Verifikation steht aus
+(PROJECT_STATUS, P2.4).
+
+| Bereich | Änderung |
+|---|---|
+| Run-Types | `midday`, `evaluate`, `position_check` entfernt; neu `trade_proposals` (16:10 Berlin) |
+| Pipeline | **Phase 1c**: offene Capital.com-Positionen als Pflicht-Kandidaten für Phase 3 |
+| Pipeline | **Phase 1d**: Sektor-Momentum verdrahtet (war toter Code) |
+| Pipeline | **Phase 4 vor 4a** — 4a nutzt die fertigen Phase-3-Analysen, ohne Web-Search. Mail-Reihenfolge bleibt: Portfolio zuerst |
+| Module | **neu** `src/signal_checks.py` und `src/revalidation.py` (s. 10a/10b) |
+| Guardrails | Momentum-Signale angewandt (hartes Reject nur bei Übereinstimmung); die vier Momentum-Spalten werden befüllt |
+| `close` | Holt Schlusskurse aller Ticker; TP/SL-Auswertung bleibt bis 3D |
+| Weekly-Mail | vier B.9-Blöcke aus `guardrail_rejects`, `ticker_status`, `revision_verdict` und der Sub-Sektor-Abdeckung |
+| Tagesmail | `hold_days_recommended` als Spalte „Haltedauer" (B.11) |
+
+**Noch offen:**
 
 | Bereich | Änderung | Sprint |
 |---|---|---|
-| ✅ Run-Types | `midday` + `position_check` entfallen; `evaluate` wird durch `trade_proposals` (16:10 Berlin) ersetzt | 3B / Plan 2 |
-| ✅ Pipeline | **Phase 1c neu**: offene Capital.com-Positionen laden, deren Ticker als Pflicht-Kandidaten für Phase 3 markieren | 3B / Plan 2 |
-| ✅ Pipeline | **Phase 4 und 4a tauschen** — Phase 4a nutzt danach die fertigen Phase-3-Ergebnisse (Claude-Call ohne Web-Search). Mail-Reihenfolge bleibt: Portfolio zuerst. | 3B / Plan 2 |
-| ✅ `close` | Holt Schlusskurse aller Ticker; TP/SL-Auswertung bleibt bis Sprint 3D erhalten | 3B / Plan 2 |
-| Guardrails | **Anwendung** der beiden Momentum-Signale (hartes Reject nur bei Übereinstimmung) + `SECTOR_GUARDRAIL_STRICT`; befüllt dabei die vier bereits angelegten Momentum-Spalten | 3B / Plan 2 |
-| Weekly-Mail | Auswertung von `guardrail_rejects` und `ticker_status` | 3B / Plan 2 |
+| `run_weekly` | `cost_summary` ist hart auf Nullen verdrahtet — die Weekly-Mail meldet dauerhaft 0,00 EUR. Es fehlt ein `db.load_cost_summary()` | 3C |
 | Schema | Neue Spalte `predictions.ranking_score` | 3C |
 | `ranking` | `atr_pct`/`rsi_at_entry`/`volume_ratio` korrekt befüllen; kombinierter `ranking_score` **zusätzlich** zu `total_score` | 3C |
 | Phase 2 | Technischer Python-Pre-Filter (ATR/RSI/Volume/Market-Cap) vor dem Haiku-Batching | 3C |

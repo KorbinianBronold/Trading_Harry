@@ -1,16 +1,18 @@
 # PROJECT_STATUS.md — Shares_Future (Trading_Harry)
 
-**Zuletzt aktualisiert:** 2026-08-04 — Tasks 18 und 19 umgesetzt (19/20); P2.4 korrigiert
-(Workflow deaktiviert, Plan-2-Code lief nie), Migration und Altlasten-Abschluss erledigt
+**Zuletzt aktualisiert:** 2026-08-04 — Plan 2 codeseitig fertig (20/20); B.1/B.2/B.3 auf
+E1–E5 nachgezogen; P2.4 korrigiert (Workflow deaktiviert, Code lief nie)
 **Aktueller Branch:** `main` — die 25 Plan-2-Commits (`fd7e20a`…`58782e4`) liegen
 **direkt auf `main` und sind gepusht**. `git ls-remote --heads origin` kennt nur
 `refs/heads/main` (Stand 2026-08-03: `feee447`); einen Branch
 `sprint3b/plan2-pipeline-umbau` gibt es weder lokal noch remote.
 **Letzter Merge:** Sprint 2 / Plan 1 (2026-05-22) — Sprint 3 in Arbeit, Roadmap s. Abschnitt 2
 
-> **Stand 2026-08-04:** Sprint 3B / Plan 2 ist zu **19 von 20 Tasks** umgesetzt.
-> Offen ist nur noch Task 20 (Doku-Abschluss). Tasks 18 (`0fec73b`) und 19
-> (`ae0a79c`) sind am 2026-08-04 dazugekommen.
+> **Stand 2026-08-04:** Sprint 3B / Plan 2 ist zu **20 von 20 Tasks** umgesetzt.
+> Tasks 18 (`0fec73b`), 19 (`ae0a79c`) und 20 (Doku) kamen am 2026-08-04 dazu.
+> **Damit ist der Code fertig — aber nicht der Sprint:** Gesamt-Review und
+> Live-Verifikation (P2.4) stehen aus, und die Pipeline lief bis heute kein
+> einziges Mal (`analyze.yml` = `disabled_manually`, letzter Lauf 2026-07-13).
 > Details, Entscheidungen und Befunde: Abschnitt „Sprint 3B / Plan 2" weiter unten.
 > 513 Tests, 93,00 % Coverage.
 >
@@ -62,7 +64,7 @@
 | `src/providers/capital_provider.py` | CapitalComProvider: lazy session auth (CST + X-SECURITY-TOKEN), `get_price_history()`, `get_ohlc_after()`, `get_premarket_price()`, `get_open_positions()`, `get_closed_positions()`, TICKER_MAP für epics |
 | `src/db.py` — Ergänzungen | `fundamentals_cache`-Tabelle (UNIQUE ticker, 7-Tage-TTL), `insert_price_bar_if_missing()`, `load_price_history_from_db()`, `get_cached_fundamentals()`, `save_fundamentals_cache()`, `update_outcome_close()`, Migration-Guards (`_apply_migrations`) |
 | `src/providers/finnhub_provider.py` | `get_fundamentals()` implementiert (PE, Forward-PE, Market-Cap, D/E, Sector, Analyst-Consensus) — Finnhub Free, 403-Bug bei `price_target` entfernt |
-| `main.py` — position_check | `run_position_check()`: Capital.com GET /positions → Claude → Position-Check-Mail (**wird in Sprint 3B wieder entfernt**) |
+| `main.py` — position_check | `run_position_check()`: Capital.com GET /positions → Claude → Position-Check-Mail (**in Sprint 3B / Plan 2 entfernt**, `59f5e2c` — hier nur als Sprint-2-Historie) |
 | `setup/historical_loader.py` | 3-Jahres-Pull aller SP500-Ticker via Capital.com; Flags: `--all`, `--full-sp500`, `--tickers` |
 | `config.py` | `USE_FULL_SP500`-Flag, `SP500_FULL_TICKERS` (noch Stub = MVP-Liste), `CAPITAL_COM_IDENTIFIER` |
 | `analyze.yml` | `CAPITAL_COM_IDENTIFIER`-Secret hinzugefügt |
@@ -101,7 +103,7 @@
 | Sprint | Inhalt | Status |
 |---|---|---|
 | 3A | Roadmap + Doku aktualisieren | ✅ erledigt (dieses Dokument) |
-| 3B | Cron-Struktur + Pipeline-Umbau | 🟡 **Plan 1 abgeschlossen** (2026-07-29); **Plan 2 zu 19/20 Tasks umgesetzt** (2026-08-04, direkt auf `main`) |
+| 3B | Cron-Struktur + Pipeline-Umbau | 🟢 **Code vollständig** — Plan 1 (2026-07-29) und Plan 2 (20/20 Tasks, 2026-08-04), alles auf `main`. ⚠️ **Noch nicht abgeschlossen:** der Code lief nie, `analyze.yml` steht auf `disabled_manually`. Offen sind Gesamt-Review und Live-Verifikation (P2.4) |
 | **3B-M** | **Mail-Provider-Wechsel (Zwischensprint)** | ✅ **ABGESCHLOSSEN 2026-07-30** — Mailversand läuft über **Resend**, eigene Domain verifiziert, Zustellung live bestätigt. Details s. unten |
 | 3C | Ranking-Überarbeitung | 📋 spezifiziert, Implementierung offen |
 | 3D | Learning Modul | ⚠️ **Platzhalter — Planungssession ausstehend** |
@@ -112,7 +114,12 @@
 
 ## Sprint 3B — Cron-Struktur + Pipeline-Umbau
 
-### B.1 — Ziel-Cron-Struktur
+### B.1 — Ziel-Cron-Struktur ✅ *(umgesetzt 2026-07-30, `02ab4ba` + `59f5e2c`)*
+
+> Die Tabelle unten ist seit dem Umbau **Ist-Stand, nicht Plan**. `midday`, `evaluate`
+> und `position_check` sind restlos entfernt — Run-Type, Cron-Eintrag, Funktionen,
+> Prompt-Datei, Mail-Renderer und Tests. `main.py:RUN_TYPES` kennt nur noch die vier
+> Zeilen darüber.
 
 | Run-Type | Zeit (Berlin) | Änderung | Kosten (geschätzt) |
 |---|---|---|---|
@@ -145,23 +152,59 @@ ohne den technischen Pre-Filter aus 3C — der schafft zusätzlichen Puffer.
 **Zweck:** Nach dem Opening-Rauschen (US-Open 15:30 Berlin) prüfen, ob die `pre_market`-Signale
 noch gültig sind, und konkrete Handlungsempfehlungen für den Tag geben.
 
+> ### ⚠️ Aktualisiert 2026-08-04 (Task 20): Schritt 2 und 6 sind durch E1/E3 überholt
+>
+> Die Tabelle unten beschrieb den Stand vor der Planungssession vom 2026-07-30. Zwei
+> Zeilen gelten so **nicht mehr**:
+>
+> - **Schritt 2 — keine zweite Tiefenanalyse.** Gemessen kostet eine Phase-3-Analyse
+>   ~0,12 EUR / ~54 s; 27 Assets wären ~3,24 EUR gegen den 4-EUR-Deckel gewesen.
+>   Stattdessen prüft `src/revalidation.py` **billig ohne Websuche** nach (E1),
+>   Ist-Aufwand ~0,5–0,7 EUR/Lauf. Breaking News deckt der eine Policy-Monitor-Call ab.
+> - **Schritt 6 — kein Vergleich `pre_market` vs. `trade_proposals`.** Durch die
+>   Ablösung (E3) hat jede Trade-Idee genau **ein** Outcome; eine Trefferquote je
+>   `run_type` ist damit nicht mehr berechenbar. Der 16:10-Lauf *ersetzt* die
+>   Morgenzeile über `status='superseded'` + `superseded_by`, statt eine zweite
+>   danebenzulegen — sonst schlösse der Evaluator beide und jede Kennzahl zählte
+>   doppelt. Was stattdessen gemessen wird, steht in B.9/Block 1.
+>
+> Ergänzend **E5:** Ein gedrehtes oder hart verworfenes Signal wird **gemeldet, nicht
+> gehandelt**. Das Gegensignal lief nie durch Phase 3, hat also weder Belege noch ein
+> hergeleitetes TP/SL. Es bleibt offen und wird regulär ausgewertet — nur so lässt sich
+> messen, ob die Ablehnung richtig lag.
+
 | Schritt | Was passiert |
 |---|---|
 | 1 | Frische Kurse für **ALLE** Ticker (SP500 + Commodities/Crypto) von Capital.com laden und in `price_history` schreiben — nicht nur für die Top-Listen |
-| 2 | Nur die `pre_market` **Top 10 Long + Top 10 Short + alle 7 Commodities/Crypto** erneut durch Phase 3 (Tiefenanalyse) schicken — nicht die komplette Ticker-Liste |
+| 2 | ~~Nur die `pre_market` **Top 10 Long + Top 10 Short + alle 7 Commodities/Crypto** erneut durch Phase 3 (Tiefenanalyse) schicken~~ → **E1:** billige Re-Validierung ohne Websuche über `src/revalidation.py` |
 | 3 | `probability_pct` vorher (`pre_market`) vs. nachher (`trade_proposals`) pro Ticker vergleichen |
 | 4 | Zusätzliche Checks (s. B.3) |
 | 5 | Update-Mail: Vorher/Nachher-Vergleich pro Ticker (**bestätigt / geschwächt / gedreht / unverändert**) plus die neuen Checks |
-| 6 | Alle Predictions dieses Runs ebenfalls in `predictions` speichern — mit `run_type='trade_proposals'`, damit das Learning Modul später `pre_market` vs. `trade_proposals` vergleichen kann |
+| 6 | ~~Alle Predictions dieses Runs ebenfalls in `predictions` speichern … damit das Learning Modul später `pre_market` vs. `trade_proposals` vergleichen kann~~ → **E3:** die Morgenzeile wird **abgelöst**, nicht dupliziert; das Urteil steht als `revision_verdict` auf der **alten** Zeile |
 
 ### B.3 — Neue Checks in `trade_proposals`
+
+> ### ⚠️ Aktualisiert 2026-08-04 (Task 20): zwei Korrekturen aus der Umsetzung
+>
+> - **Die Checks werden in BEIDEN Läufen erhoben, aber nur um 16:10 durchgesetzt**
+>   (E4). Gesteuert über den `enforce`-Parameter in `src/signal_checks.py`, den der
+>   Aufrufer setzt. Um 15:00 ist die US-Börse zu — die Morgenmail ist ein
+>   Research-Briefing, keine Handelsentscheidung. 3D bekommt trotzdem Messwerte aus
+>   beiden Läufen, und `guardrail_rejects.enforced` trennt weiche Warnung (0) von
+>   harter Ablehnung (1).
+> - **Die VIX-Schwellen wirken kumulativ, nicht partitioniert.** Die Zeile unten las
+>   sich als „25–35: nur high" und „ab 35: keine Longs". So gelesen wäre der Filter bei
+>   VIX 40 *lockerer* als bei VIX 28 — ein mittelmässiges Short-Signal wäre bei 28
+>   verworfen und bei 40 durchgelassen worden. Richtig ist: **ab 25 nur noch
+>   `confidence='high'`, beide Richtungen, ohne Obergrenze; zusätzlich ab 35 keine
+>   neuen Longs.** Monotonie ist nachgemessen (`926a059`).
 
 | Check | Beschreibung | Wirkung |
 |---|---|---|
 | **Sektor-Momentum (hybrid)** | Zwei unabhängige Signale, s. Detailabschnitt unten | Hart **nur bei Übereinstimmung**, sonst weiche Warnung |
 | **Relative Stärke** | Performance des Tickers vs. seinem Sub-Sektor | Score-Input |
 | **Marktbreite** | Advancing/Declining-Ratio im S&P 500 | Kontext / Warnung |
-| **VIX-Level** | >25: nur noch `confidence='high'`-Signale ausgeben. >35: **keine neuen Long-Signale** | Hartes Filter-Kriterium |
+| **VIX-Level** | **kumulativ:** ab 25 nur noch `confidence='high'` (beide Richtungen, ohne Obergrenze); **zusätzlich** ab 35 keine neuen Long-Signale | Hartes Filter-Kriterium (nur `enforce=True`) |
 | **Opening-Gap-Check** | Großer Gap zwischen `pre_market`-Kurs und aktuellem Kurs | Warnhinweis in der Mail |
 | **Entry-Fenster** | Empfehlung eines Pullback-Levels statt reinem Market-Entry | Zusatzfeld in der Mail |
 | **Korrelations-Check** | Klumpenrisiko-Warnung wenn mehrere Signale im selben Sub-Sektor liegen | Warnhinweis in der Mail |
@@ -502,7 +545,7 @@ im Free-Tarif, 3 000 im Pro-Tarif):
 die Rechnung. Für 3F braucht es zusätzlich ein kleineres `MAX_DEEP_ANALYSIS`, ein
 günstigeres Modell für Phase 3 oder einen deutlich schärferen Pre-Filter aus 3C.
 
-### B.12 — Stand der Umsetzung: Plan 1 fertig, Plan 2 offen
+### B.12 — Stand der Umsetzung: Plan 1 fertig, Plan 2 umgesetzt
 
 **Plan 1 (Fundament) ist abgeschlossen** (2026-07-29, Tasks 1–14, Plan-Datei
 `docs/superpowers/plans/2026-07-27-sprint3b-plan1-fundament.md`). Er war
@@ -513,10 +556,15 @@ Geliefert: `sectors` / `ticker_sectors` / `ticker_status` / `guardrail_rejects` 
 `sector_momentum`, `SECTOR_ALIASES`-Normalisierung, Skip-Zähler mit Auto-Retry,
 beide Momentum-Signale, Markt-Kontext (Phase 0b), Gap-Erkennung, B-05.
 
-**Plan 2 (Pipeline-Umbau) ist geschrieben und zu 19/20 Tasks umgesetzt**
-(2026-07-30/31). Spec: `docs/superpowers/specs/2026-07-30-sprint3b-plan2-pipeline-umbau-design.md`,
+**Plan 2 (Pipeline-Umbau) ist zu 20/20 Tasks umgesetzt** (2026-07-30 bis 2026-08-04).
+Spec: `docs/superpowers/specs/2026-07-30-sprint3b-plan2-pipeline-umbau-design.md`,
 Plan-Datei: `docs/superpowers/plans/2026-07-30-sprint3b-plan2-pipeline-umbau.md`.
 **Vollständiger Stand, Entscheidungen und Befunde: eigener Abschnitt weiter unten.**
+
+⚠️ **Umgesetzt heisst hier: der Code ist geschrieben, getestet und auf `main`.** Er wurde
+**noch nie ausgeführt** — `analyze.yml` steht auf `disabled_manually`, der letzte
+Pipeline-Lauf war am 2026-07-13. Die Live-Verifikation (P2.4) steht damit weiterhin aus
+und ist ein echtes Gate, kein Nachziehen hinter einem laufenden System.
 
 Eingangsvoraussetzungen für Plan 2 — **alle erfüllt**:
 - ✅ verifizierte ETF-Epics (D8: 20/20 bestätigt, `setup/verify_epics.py`)
@@ -534,13 +582,15 @@ Zwei Dinge, die Plan 2 mitnehmen muss und die nicht aus dem Code hervorgehen:
 
 ---
 
-## Sprint 3B / Plan 2 — Pipeline-Umbau 🟡 19 von 20 Tasks
+## Sprint 3B / Plan 2 — Pipeline-Umbau 🟢 20 von 20 Tasks (Code), Verifikation offen
 
-**Wo der Code liegt:** 25 Commits (`fd7e20a`…`58782e4`) **direkt auf `main`, gepusht**.
+**Wo der Code liegt:** Tasks 1–17 als 25 Commits (`fd7e20a`…`58782e4`), Tasks 18–20 als
+`0fec73b`, `ae0a79c`, `33b26c5` und der Doku-Commit — alles **direkt auf `main`, gepusht**.
 Es gab nie einen Branch `sprint3b/plan2-pipeline-umbau` — remote existiert nur
-`refs/heads/main` (`git ls-remote --heads origin`, 2026-08-03). Die Arbeit entstand in
-einem anderen Klon und kam hier per Fast-Forward-Pull auf `main` an.
-**Stand 2026-07-31:** 513 Tests, 93,00 % Coverage. Suite grün, Stand in sich konsistent.
+`refs/heads/main` (`git ls-remote --heads origin`, 2026-08-03). Die Arbeit an 1–17 entstand
+in einem anderen Klon und kam hier per Fast-Forward-Pull auf `main` an.
+**Stand 2026-08-04:** 524 Tests, 92,36 % Coverage (`--cov=src --cov=main`; mit `--cov=src`
+allein 93 %). Suite grün unter Europe/Berlin **und** UTC.
 
 **Spec:** `docs/superpowers/specs/2026-07-30-sprint3b-plan2-pipeline-umbau-design.md`
 **Plan:** `docs/superpowers/plans/2026-07-30-sprint3b-plan2-pipeline-umbau.md`
@@ -579,13 +629,13 @@ enthält u. a. noch die **alte** Cron-Tabelle mit `midday`/`evaluate`/`position_
 `c2c8e1c` in `.gitignore`, die Dateien wurden also erzwungen hinzugefügt und sind
 seitdem trotz Ignore-Regel getrackt. Kein Produktivcode, keine Testabdeckung.
 
-### P2.3 — Offen: nur noch Task 20
+### P2.3 — Alle 20 Tasks umgesetzt
 
 | Task | Inhalt | Stand |
 |---|---|---|
 | **18** | Fünf Weekly-Aggregate in `src/db.py`: `load_revision_effectiveness`, `load_revision_verdict_stats`, `load_guardrail_reject_stats`, `load_skipped_ticker_stats`, `load_sector_mapping_coverage` | ✅ `0fec73b` (2026-08-04) |
 | **19** | Weekly-Mail um die vier B.9-Blöcke erweitern; `hold_days_recommended` als Spalte in der Tagesmail (B.11) | ✅ `ae0a79c` (2026-08-04) |
-| **20** | Doku-Abschluss + Aufräumliste aus P2.6 | ⏳ offen |
+| **20** | Doku-Abschluss + Aufräumliste aus P2.6 | ✅ (2026-08-04) |
 
 Zu Task 18 gegenüber dem Plantext ergänzt: ein Test für `load_skipped_ticker_stats`.
 Der Plan implementierte die Funktion ohne Test, obwohl gerade ihr Join zwischen dem
