@@ -1,5 +1,8 @@
 # Shares_Future – SP500 CFD Research Tool
 
+**Zuletzt aktualisiert:** 2026-08-03 — Branch-Aussage zu Sprint 3B / Plan 2 korrigiert
+(Code liegt auf `main`, nicht auf einem Feature-Branch)
+
 ## Projektübersicht
 Automatisiertes Research-Tool zur täglichen Analyse von S&P 500 Aktien,
 Rohstoffen (Gold, Silber, Öl) und Kryptowährungen (BTC, ETH, SOL, XRP).
@@ -115,9 +118,12 @@ steht der verbindliche Stand inklusive aller Sprint-3-Teilschritte, der offenen 
 und der getroffenen Entscheidungen. Kurzfassung:
 
 - **Sprint 3B** teilweise: Plan 1 (Fundament) erledigt; **Plan 2 (Pipeline-Umbau) zu
-  17 von 20 Tasks umgesetzt** auf Branch `sprint3b/plan2-pipeline-umbau` — nicht
-  gepusht, nicht gemerged. Offen: Tasks 18–20, ein Gesamt-Review über den Branch und
-  die Live-Verifikation. Run-Types sind seither
+  17 von 20 Tasks umgesetzt** — die 25 Commits (`fd7e20a`…`58782e4`) liegen **direkt
+  auf `main` und sind gepusht**. Einen Branch `sprint3b/plan2-pipeline-umbau` gibt es
+  weder lokal noch remote (`git ls-remote --heads origin` kennt nur `refs/heads/main`,
+  geprüft 2026-08-03). Offen: Tasks 18–20, ein Gesamt-Review über die Plan-2-Commits
+  und die Live-Verifikation — beides findet damit **nach** dem faktischen Rollout
+  statt, nicht davor. Run-Types sind seither
   `pre_market` / `trade_proposals` / `close` / `weekly`.
 - **3C** offen (Ranking-Überarbeitung)
 - **3D / 3E / 3F** sind ⚠️ **Platzhalter** — bei Erreichen aktiv nachfragen und den

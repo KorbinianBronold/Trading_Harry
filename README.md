@@ -2,20 +2,30 @@
 
 > Automatisiertes Research-Tool für tägliche Analyse von S&P 500 Aktien, Rohstoffen und Kryptowährungen mit mehrdimensionalem Scoring, Web-Search-Integration und kontinuierlichem Lernen.
 
+**Zuletzt aktualisiert:** 2026-08-03 — Quick Start auf den Ist-Stand gezogen
+(Testzahlen, Run-Types, Crons); Rest wartet auf Task 20
+
+> ⚠️ **Stand 2026-08-03:** Die Abschnitte unterhalb von „Quick Start" sind noch auf
+> Sprint-1-Stand und werden erst in Sprint 3B / Task 20 vollständig nachgezogen.
+> Verbindlich ist `docs/superpowers/specs/PROJECT_STATUS.md`.
+
 ## Quick Start
 
 ```bash
 # 1. Setup (einmalig)
 python -m pip install -r requirements.txt
-pytest tests/ --cov=src --cov-fail-under=80  # Baseline: 159 tests, 89.62% coverage
+pytest tests/ --cov=src --cov-fail-under=80  # Stand 2026-08-03: 513 passed, 7 skipped, 93% Coverage
 
-# 2. Lokal testen (mit Mock-Daten)
-python main.py --run-type pre_market --date 2026-05-19
+# 2. Lokal ausführen — ACHTUNG: kein Mock-Modus. Ein Lauf ruft echte APIs auf,
+#    kostet Geld und verschickt echte Mail. Gefahrlos nur über Docker gegen eine
+#    Wegwerf-DB (s. CLAUDE.md, Abschnitt „Lokales Docker-Setup").
+python main.py --run-type pre_market
 
 # 3. Live auf GitHub Actions
 # → Secrets konfigurieren (ANTHROPIC_API_KEY, RESEND_API_KEY, EMAIL_TO, EMAIL_FROM)
 # → workflow_dispatch auf analyze.yml auslösen
-# → Daily: 3 Runs (14:00, 14:45, 21:30 UTC), 1 Eval, 1 Weekly (So 20:00)
+# → Cron (UTC): pre_market 13:00, trade_proposals 14:10, close 20:30 (Mo–Fr),
+#   weekly So 18:00. Berlin-Zeiten in analyze.yml gelten für CEST — im Winter 1 h früher.
 ```
 
 ## Was macht Shares_Future?
@@ -99,23 +109,30 @@ Alle Setups MÜSSEN erfüllen:
 
 - **`CLAUDE.md`** – Projekt-Direktiven für AI-Entwickler
 - **`config.py`** – Alle Konstanten (Gewichtungen, Limits, API-Keys)
-- **`main.py`** – Orchestrator: `--run-type {pre_market|midday|close|evaluate|weekly}`
-- **`docs/SPECIFICATION.md`** – Vollständige technische Spezifikation
-- **`docs/ARCHITECTURE.md`** – Data Flow, Module, Interfaces
-- **`docs/WORKFLOW.md`** – Live-Execution, Cron-Timing, DoD-Checklist
+- **`main.py`** – Orchestrator: `--run-type {pre_market|trade_proposals|close|weekly}` (Pflichtargument)
+- **`docs/superpowers/specs/PROJECT_STATUS.md`** – **verbindlicher Ist-Stand**, vor jeder Implementierung lesen
+- **`docs/SPECIFICATION.md`** – Vollständige technische Spezifikation (Sprint-2-Stand, teils überholt)
+- **`docs/ARCHITECTURE.md`** – Data Flow, Module, Interfaces (mit Abweichungsliste)
+- **`docs/WORKFLOW.md`** – Live-Execution, Cron-Timing, DoD-Checklist (grossflächig überholt)
 
 ## Bekannte Carry-Overs
 
-30 dokumentierte Code-Quality-Items für künftige Sprints (siehe `memory/project_carryover_issues.md`). Kein kritischer Bug aktiv; alle wurden bewusst nicht behoben, um Plan-Treue zu wahren (siehe [[feedback_plan_authority]]).
+Code-Quality-Items für künftige Sprints stehen in
+`docs/superpowers/specs/PROJECT_STATUS.md` (Abschnitt P2.6 „Aufräumliste" sowie die
+Carry-Over-Tabellen). Kein kritischer Bug aktiv.
+
+> Hinweis (2026-08-03): Hier stand bis zuletzt ein Verweis auf
+> `memory/project_carryover_issues.md` und `[[feedback_plan_authority]]`. Beides
+> existiert im Repo nicht — das Verzeichnis `memory/` gibt es nicht.
 
 ## First Run Checklist
 
 - [ ] `requirements.txt` installiert + Python 3.12+ aktiv
-- [ ] `pytest tests/ -q` → 159 passed (✅ lokal grün)
+- [ ] `pytest tests/ -q` → 513 passed, 7 skipped (✅ lokal grün, Stand 2026-08-03)
 - [ ] GitHub Secrets: ANTHROPIC_API_KEY, RESEND_API_KEY, EMAIL_TO, EMAIL_FROM
 - [ ] `.github/workflows/analyze.yml` aktiviert (nicht FINNHUB_API_KEY!)
 - [ ] `workflow_dispatch` auf `analyze.yml` testen
-- [ ] Erste 3 Runs beobachten (14:00, 14:45, 21:30 UTC)
+- [ ] Erste Runs beobachten (UTC: 13:00 pre_market, 14:10 trade_proposals, 20:30 close)
 - [ ] Release-Asset `db-latest` erscheint nach erstem erfolgreichen Run
 - [ ] E-Mails in EMAIL_TO ankommen (täglich + wöchentlich)
 - [ ] Kosten < 4 EUR pro Run (Cost Tracker in `tracking.db`)

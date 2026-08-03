@@ -3847,4 +3847,8 @@ Vor der Meldung „Plan 2 fertig":
       16:10-Mail angekommen, Kosten des 16:10-Laufs **unter 1 EUR**
 - [ ] In `predictions` existiert je Ticker und Tag genau **eine** offene Zeile
 - [ ] `git log --oneline` zeigt einen Commit je Task
-- [ ] **Nicht gepusht** — das macht Korbinian selbst
+- [x] ~~**Nicht gepusht** — das macht Korbinian selbst~~
+      → **überholt (Nachtrag 2026-08-03):** Die 25 Commits sind bereits auf `main`
+      gepusht; ein Feature-Branch existierte nie. Die drei noch offenen Haken oben
+      (Migration, Docker-Smoke, echter Lauf) prüfen damit **produktiven** Code —
+      sie sind nachgelagerte Kontrolle, kein Gate. S. PROJECT_STATUS.md, P2.4.

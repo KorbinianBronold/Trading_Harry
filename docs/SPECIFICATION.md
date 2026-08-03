@@ -2,6 +2,17 @@
 ## SP500 CFD Research Tool | Claude Code Buildanweisung
 ## Stand: 2026-05-22 | Version 5.0
 
+**Zuletzt aktualisiert:** 2026-08-03 — nur dieser Warnblock ergänzt; Inhalt unverändert
+auf Stand 2026-05-22
+
+> 🛑 **Achtung: Sprint-2-Stand (2026-05-22), in Teilen überholt.**
+> Insbesondere der Actions-Workflow weiter unten zeigt noch die alten Crons mit
+> `midday`, `evaluate` und `position_check` — diese Run-Types wurden in Sprint 3B /
+> Plan 2 restlos entfernt und laufen produktiv nicht mehr. Datenbankschema und
+> Prompt-Templates sind weitgehend gültig, aber um die Sprint-3-Tabellen erweitert.
+> **Verbindlich für den Ist-Stand: `docs/superpowers/specs/PROJECT_STATUS.md`.**
+> Task 20 zieht dieses Dokument nach.
+
 ---
 
 ## ZIELSETZUNG

@@ -1,28 +1,44 @@
 # Shares_Future – Live Workflow & Operationen
 
+**Zuletzt aktualisiert:** 2026-08-03 — Overview auf den Ist-Stand gezogen; der Rest des
+Dokuments ist als überholt markiert und wartet auf Task 20
+
+> 🛑 **Achtung: Dieses Dokument ist ab „Cron-Jobs" grossflächig überholt.**
+> Es beschreibt die Pipeline vor Sprint 3B / Plan 2. Die Run-Types `midday`,
+> `evaluate` und `position_check` **existieren nicht mehr** (in `02ab4ba`/`59f5e2c`
+> restlos entfernt, produktiv auf `main`). Jeder Befehl unten, der sie aufruft,
+> schlägt heute mit einem argparse-Fehler fehl. Auch die Kostenzahlen sind widerlegt
+> — s. CLAUDE.md, Abschnitt „Cron-Jobs — die zwei Fallen".
+> **Verbindlich sind `.github/workflows/analyze.yml` und
+> `docs/superpowers/specs/PROJECT_STATUS.md`.** Task 20 zieht dieses Dokument nach.
+
 ## Overview
 
-Shares_Future läuft täglich auf GitHub Actions mit **6 Run-Types** (Berliner Zeit) und produziert **E-Mails, DB-Backups und Cost-Reports**.
+Shares_Future läuft auf GitHub Actions mit **4 Run-Types** und produziert
+**E-Mails, DB-Backups und Cost-Reports**.
 
 ```
 ┌──────────────────────────────────────────────────────────────────────┐
 │              DAILY WORKFLOW (Montag–Freitag)                         │
 │                                                                       │
-│  14:00 Berlin  →  pre_market      (~3,20 EUR)  →  E-Mail 1          │
-│  15:00 Berlin  →  evaluate        (~0,00 EUR)  →  kein Mail          │
-│  16:15 Berlin  →  midday          (~3,20 EUR)  →  E-Mail 2          │
-│  17:30 Berlin  →  position_check  (~0,20 EUR)  →  Status-Mail (NEU) │
-│  22:30 Berlin  →  close           (~0,00 EUR)  →  kein Mail          │
+│  15:00 Berlin  →  pre_market       →  E-Mail 1 (Research-Briefing)   │
+│  16:10 Berlin  →  trade_proposals  →  E-Mail 2 (Vorher/Nachher)      │
+│  22:30 Berlin  →  close            →  kein Mail (Datenpflege)        │
 │                                                                       │
 │              WEEKLY (Sonntag 20:00 Berlin)                           │
-│  20:00 Berlin  →  weekly          (~0,00 EUR)  →  E-Mail 3          │
+│  20:00 Berlin  →  weekly           →  E-Mail 3                       │
 │                                                                       │
 │  RELEASE ASSET DB PERSISTENCE                                        │
 │  Nach jedem Run: tracking.db → GitHub Release Asset "db-latest"     │
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
-**Kosten/Tag:** ~6,60 EUR | **Kosten/Monat (500 Ticker):** ~145 EUR | **MVP (20 Ticker):** ~29 EUR
+⚠️ Berliner Zeiten gelten für **CEST**. Cron ist UTC-fix, GitHub Actions passt nicht
+an die Sommerzeit an — im Winter (CET) läuft alles 1 h früher.
+
+**Kosten:** Die früher hier genannten ~6,60 EUR/Tag sind überholt. Gemessen (2026-07-29):
+ein `pre_market` mit 20 MVP-Tickern kostete **3,3143 EUR**. `trade_proposals` prüft nach
+E1 billig ohne Websuche (~0,5–0,7 EUR/Lauf), `close` und `weekly` sind ~0,00 EUR.
 
 ---
 

@@ -1,10 +1,14 @@
 # Shares_Future – Architektur & Design
 
+**Zuletzt aktualisiert:** 2026-08-03 — Branch-Aussage in beiden Warnblöcken korrigiert
+
 > **Dieses Dokument beschreibt den IST-Zustand des Codes.**
 >
-> ⚠️ **Stand 2026-07-31 — teilweise überholt.** Sprint 3B / Plan 2 ist auf dem Branch
-> `sprint3b/plan2-pipeline-umbau` zu 17 von 20 Tasks umgesetzt (nicht gemerged). Damit
-> gilt für die Modulbeschreibungen unten Folgendes **bereits jetzt anders**:
+> ⚠️ **Stand 2026-08-03 — teilweise überholt.** Sprint 3B / Plan 2 ist zu 17 von 20
+> Tasks umgesetzt und liegt **direkt auf `main`, gepusht** (nicht, wie hier bis
+> 2026-08-03 behauptet, auf einem ungemergten Branch — den gab es nie). Der Umbau ist
+> also **produktiv**. Damit gilt für die Modulbeschreibungen unten Folgendes
+> **bereits jetzt anders**:
 >
 > | Was hier steht | Was tatsächlich gilt |
 > |---|---|
@@ -738,9 +742,9 @@ Kurzüberblick, was sich an der oben beschriebenen Architektur ändern wird:
 
 **Noch offen:**
 
-> ⚠️ **Stand 2026-07-31:** Die vier mit ✅ markierten Zeilen sind auf dem Branch
-> `sprint3b/plan2-pipeline-umbau` bereits **umgesetzt** (nicht gemerged). Sie stehen
-> hier nur so lange, bis Task 20 dieses Dokument vollständig nachzieht.
+> ⚠️ **Stand 2026-08-03:** Die vier mit ✅ markierten Zeilen sind bereits **umgesetzt
+> und auf `main` gepusht** — sie stehen also nicht mehr aus. Sie bleiben hier nur so
+> lange stehen, bis Task 20 dieses Dokument vollständig nachzieht.
 
 | Bereich | Änderung | Sprint |
 |---|---|---|
