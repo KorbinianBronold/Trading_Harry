@@ -704,8 +704,14 @@ def run_weekly(date: str, db_path: str) -> None:
     db.init_schema(conn)
     agg = load_recent_outcomes_aggregate(conn, today=date)
     week_label = "KW" + date_cls.fromisoformat(date).strftime("%V")
+    since = (date_cls.fromisoformat(date) - timedelta(days=7)).isoformat()
     payload = {
         "week_label": week_label, **agg,
+        "revision_effectiveness": db.load_revision_effectiveness(conn, since),
+        "verdict_stats":   db.load_revision_verdict_stats(conn, since),
+        "guardrail_stats": db.load_guardrail_reject_stats(conn, since),
+        "skipped_stats":   db.load_skipped_ticker_stats(conn, since),
+        "sector_coverage": db.load_sector_mapping_coverage(conn),
         "cost_summary": {"total_eur": 0.0, "cache_hit_rate": 0.0,
                          "input_tokens": 0, "output_tokens": 0,
                          "web_search_calls": 0, "aborted_at_phase": None},

@@ -375,3 +375,69 @@ def test_send_trade_proposals_email_uses_the_shared_sender(mocker):
                                email_from="a@b.c", email_to="d@e.f")
     send.assert_called_once()
     assert "trade_proposals" in send.call_args[0][3] or "16:10" in send.call_args[0][3]
+
+
+# --- Sprint 3B / Plan 2, Task 19: Weekly-Bloecke (B.9) + Haltedauer (B.11) ---
+
+def test_daily_table_has_a_hold_days_column():
+    """B.11: hold_days_recommended ist Pflichtfeld der Analyse, stand aber nie
+    in der Mail."""
+    from src.email_sender import render_daily_html
+    html = render_daily_html({
+        "date": "2026-07-30", "run_type": "pre_market",
+        "top_long": [{"ticker": "AAPL", "total_score": 7.6, "probability_pct": 65,
+                      "current_price": 178.0, "tp_price": 184.0, "sl_price": 176.0,
+                      "rr_ratio": 3.0, "hold_days_recommended": 2,
+                      "summary": "ok", "scores": {}}],
+        "top_short": [], "commodities_crypto": [], "trends": [],
+        "briefing": [], "portfolio_recs": [],
+        "cost_summary": {"total_eur": 3.3}, "yesterday_outcomes": {},
+    })
+    assert "Haltedauer" in html
+    assert "<td>2</td>" in html
+
+
+WEEKLY_PAYLOAD = {
+    "week_label": "KW31", "long_total": 4, "long_correct": 3, "long_avg_pl": 12.0,
+    "short_total": 2, "short_correct": 1, "short_avg_pl": -4.0,
+    "total_pl_eur": 28.0, "trades": [],
+    "cost_summary": {"total_eur": 18.4},
+    "revision_effectiveness": {
+        "confirmed": {"total": 6, "correct": 4, "pl_eur": 55.0},
+        "rejected":  {"total": 3, "correct": 0, "pl_eur": -41.0},
+        "unchecked": {"total": 1, "correct": 1, "pl_eur": 9.0},
+        "since": "2026-07-25"},
+    "verdict_stats": [{"revision_verdict": "bestaetigt", "n": 6, "avg_pl": 9.2},
+                      {"revision_verdict": "gedreht", "n": 3, "avg_pl": -13.7}],
+    "guardrail_stats": [{"rule": "vix_no_new_longs", "enforced": 1, "n": 2},
+                        {"rule": "sector_momentum_partial", "enforced": 0, "n": 9}],
+    "skipped_stats": [{"ticker": "FAKE", "n_week": 4, "reasons": "no data",
+                       "skip_total": 12, "inactive": 0, "retry_after": None}],
+    "sector_coverage": {"mapped": 18, "total": 20, "pct": 90.0},
+}
+
+
+def test_weekly_shows_confirmed_versus_rejected():
+    from src.email_sender import render_weekly_html
+    html = render_weekly_html(WEEKLY_PAYLOAD)
+    assert "bestätigt" in html and "abgelehnt" in html
+    assert "4/6" in html and "0/3" in html
+
+
+def test_weekly_shows_all_four_blocks():
+    from src.email_sender import render_weekly_html
+    html = render_weekly_html(WEEKLY_PAYLOAD)
+    assert "gedreht" in html                    # Block 2
+    assert "vix_no_new_longs" in html           # Block 3
+    assert "FAKE" in html                       # Block 4
+    assert "90.0" in html or "90,0" in html     # Mapping-Abdeckung
+
+
+def test_weekly_survives_a_week_without_any_1610_run():
+    """Erste Woche nach dem Umbau: alle neuen Bloecke sind leer."""
+    from src.email_sender import render_weekly_html
+    payload = {**WEEKLY_PAYLOAD, "revision_effectiveness": None,
+               "verdict_stats": [], "guardrail_stats": [], "skipped_stats": [],
+               "sector_coverage": None}
+    html = render_weekly_html(payload)
+    assert "KW31" in html          # kein Absturz, Grundgeruest steht

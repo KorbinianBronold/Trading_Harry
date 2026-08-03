@@ -128,6 +128,7 @@ def _row_for_setup(rank: int, a: dict) -> str:
         f'<td>{_h(a.get("rr_ratio"))}</td>'
         f'<td>{_h(a.get("atr_pct"))}</td>'
         f'<td>{_h(a.get("intraday_range_pct"))}</td>'
+        f'<td>{_h(a.get("hold_days_recommended"))}</td>'
         f'<td>{trend_flag}{policy_flag}</td>'
         f'<td>{_h(a.get("summary", ""))[:160]}</td></tr>'
     )
@@ -140,7 +141,8 @@ def _section_stocks(top_long: list[dict], top_short: list[dict]) -> str:
     head = (
         '<tr><th>#</th><th>Ticker</th><th>Score</th><th>P%</th>'
         '<th>Kurs</th><th>TP</th><th>SL</th><th>R/R</th>'
-        '<th>ATR/Tag</th><th>Range/Tag</th><th>Flags</th><th>Begründung</th></tr>'
+        '<th>ATR/Tag</th><th>Range/Tag</th><th>Haltedauer</th>'
+        '<th>Flags</th><th>Begründung</th></tr>'
     )
     long_rows = "".join(_row_for_setup(i + 1, a) for i, a in enumerate(top_long))
     short_rows = "".join(_row_for_setup(i + 1, a) for i, a in enumerate(top_short))
@@ -269,6 +271,44 @@ def render_daily_html(payload: dict) -> str:
 
 # ---------- Weekly HTML ----------
 
+def _weekly_revision_block(eff: dict | None) -> str:
+    """B.9/Block 1: verdient der 16:10-Lauf seine Kosten? Liegt die Trefferquote
+    der abgelehnten Signale unter der der bestaetigten, filtert er richtig."""
+    if not eff or not (eff["confirmed"]["total"] or eff["rejected"]["total"]):
+        return ('<h2>16:10-Prüfung</h2>'
+                '<p><i>Noch keine ausgewerteten Signale seit dem Umbau.</i></p>')
+
+    def _line(label: str, g: dict) -> str:
+        return (f'<tr><td>{label}</td><td>{g["correct"]}/{g["total"]}</td>'
+                f'<td>{g["pl_eur"]} EUR</td></tr>')
+    return (
+        '<h2>16:10-Prüfung</h2>'
+        '<table border="1" cellpadding="4" cellspacing="0">'
+        '<tr><th>Gruppe</th><th>Treffer</th><th>P/L</th></tr>'
+        + _line("um 16:10 bestätigt", eff["confirmed"])
+        + _line("um 16:10 abgelehnt", eff["rejected"])
+        + _line("nie geprüft", eff["unchecked"])
+        + '</table>'
+        f'<p><small>ausgewertet ab {_h(eff.get("since"))}</small></p>'
+    )
+
+
+def _weekly_simple_table(title: str, headers: list[str],
+                         rows: list[dict], keys: list[str]) -> str:
+    """Generische Tabelle fuer die Weekly-Bloecke 2-4."""
+    if not rows:
+        return f'<h2>{title}</h2><p><i>Keine Einträge.</i></p>'
+    head = "".join(f'<th>{h}</th>' for h in headers)
+    body = "".join(
+        '<tr>' + "".join(f'<td>{_h(r[k] if k in r.keys() else None)}</td>'
+                         for k in keys) + '</tr>'
+        for r in rows
+    )
+    return (f'<h2>{title}</h2>'
+            '<table border="1" cellpadding="4" cellspacing="0">'
+            f'<tr>{head}</tr>{body}</table>')
+
+
 def render_weekly_html(payload: dict) -> str:
     """Reduced weekly e-mail. No learnings/prompt-optimizer in Sprint 1."""
     trades_rows = "".join(
@@ -298,7 +338,25 @@ def render_weekly_html(payload: dict) -> str:
         '<th>Entry</th><th>Exit</th><th>Reason</th><th>P/L EUR</th></tr>'
         + trades_rows + '</table>'
         f'<p><b>Run-Kosten Woche:</b> {_h(cost.get("total_eur"))} EUR</p>'
-        f'<p><small>{_h(_DISCLAIMER)}</small></p>'
+        + _weekly_revision_block(payload.get("revision_effectiveness"))
+        + _weekly_simple_table(
+            "Signal-Veränderungen", ["Urteil", "Anzahl", "Ø P/L"],
+            payload.get("verdict_stats") or [],
+            ["revision_verdict", "n", "avg_pl"])
+        + _weekly_simple_table(
+            "Guardrails", ["Regel", "hart?", "Anzahl"],
+            payload.get("guardrail_stats") or [], ["rule", "enforced", "n"])
+        + _weekly_simple_table(
+            "Übersprungene Ticker", ["Ticker", "diese Woche", "Gründe",
+                                     "gesamt", "inaktiv", "Retry ab"],
+            payload.get("skipped_stats") or [],
+            ["ticker", "n_week", "reasons", "skip_total", "inactive", "retry_after"])
+        + (f'<h2>Sub-Sektor-Abdeckung</h2><p>'
+           f'{_h((payload.get("sector_coverage") or {}).get("mapped"))} von '
+           f'{_h((payload.get("sector_coverage") or {}).get("total"))} Tickern '
+           f'gemappt ({_h((payload.get("sector_coverage") or {}).get("pct"))} %)</p>'
+           if payload.get("sector_coverage") else "")
+        + f'<p><small>{_h(_DISCLAIMER)}</small></p>'
         '</body></html>'
     )
 
