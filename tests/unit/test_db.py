@@ -1274,17 +1274,22 @@ def test_skipped_ticker_stats_join_event_log_with_cumulative_status(in_memory_db
     Ereignis-Log (mehrere Zeilen je Ticker) mit dem kumulativen ticker_status,
     und genau dieser Join ist die Stelle, an der man sich vertun kann."""
     db.init_schema(in_memory_db)
+    # Der Skip vom 15.06. liegt VOR since_date. Er zaehlt damit nicht ins Fenster,
+    # erhoeht aber den kumulativen Zaehler — dadurch sind n_week (2) und
+    # skip_total (3) verschieden und ein Vertauschen der beiden Spalten faellt auf.
+    db.log_skipped_ticker(in_memory_db, "FAKE", "2026-06-15", "pre_market", "no data")
     db.log_skipped_ticker(in_memory_db, "FAKE", "2026-07-30", "pre_market", "no data")
-    db.log_skipped_ticker(in_memory_db, "FAKE", "2026-07-31", "pre_market", "no data")
+    db.log_skipped_ticker(in_memory_db, "FAKE", "2026-07-31", "pre_market", "stale quote")
     db.log_skipped_ticker(in_memory_db, "MSFT", "2026-06-01", "pre_market", "alt")
     in_memory_db.commit()
 
     rows = {r["ticker"]: r for r in
             db.load_skipped_ticker_stats(in_memory_db, "2026-07-01")}
     assert "MSFT" not in rows, "vor since_date, darf nicht auftauchen"
-    assert rows["FAKE"]["n_week"] == 2
-    assert rows["FAKE"]["skip_total"] == 2
+    assert rows["FAKE"]["n_week"] == 2, "nur die Ereignisse im Fenster"
+    assert rows["FAKE"]["skip_total"] == 3, "kumulativ aus ticker_status, fensterunabhaengig"
     assert "no data" in rows["FAKE"]["reasons"]
+    assert "stale quote" in rows["FAKE"]["reasons"], "mehrere Gruende zusammengefasst"
 
 
 def test_sector_mapping_coverage_counts_mapped_tickers(in_memory_db):
