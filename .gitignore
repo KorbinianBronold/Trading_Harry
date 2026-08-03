@@ -6,6 +6,7 @@ __pycache__/
 .coverage
 htmlcov/
 data/tracking.db
+data/tracking.db.backup-2026-08-04T0055
 data/*.json
 data/*.log
 *.egg-info/
