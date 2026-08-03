@@ -1011,3 +1011,124 @@ def load_price_history_from_db(
     })
     df["Date"] = pd.to_datetime(df["Date"])
     return df.set_index("Date").sort_index()
+
+
+# --- Weekly-Aggregate fuer die vier B.9-Bloecke (Sprint 3B / Plan 2, Task 18) ---
+
+def _first_trade_proposals_date(conn: sqlite3.Connection) -> str | None:
+    """Tag des ersten trade_proposals-Laufs. Davor kann es kein revision_verdict
+    gegeben haben — ohne diese Grenze waechst die Gruppe 'nie geprueft' auf Dauer
+    als Altlast mit und die Auswertung wird unbrauchbar."""
+    row = conn.execute(
+        "SELECT MIN(date) AS d FROM predictions WHERE run_type = 'trade_proposals'"
+    ).fetchone()
+    return row["d"] if row and row["d"] else None
+
+
+def load_revision_effectiveness(
+    conn: sqlite3.Connection, since_date: str,
+) -> dict:
+    """B.9/Block 1 in der Fassung nach E3: verdient der 16:10-Lauf seine Kosten?
+
+    Durch die Abloesung hat jede Trade-Idee genau EIN Outcome — 'Trefferquote nach
+    run_type' waere damit sinnlos. Verglichen werden stattdessen drei Gruppen:
+      confirmed — vom 16:10-Lauf bestaetigte Signale (run_type='trade_proposals')
+      rejected  — vom 16:10-Lauf abgelehnte (revision_verdict gedreht/verworfen)
+      unchecked — nie geprueft (z.B. weil der Lauf ausfiel)
+
+    Liegt die Trefferquote der abgelehnten unter der der bestaetigten, filtert der
+    Lauf richtig."""
+    start = _first_trade_proposals_date(conn)
+    empty = {"total": 0, "correct": 0, "pl_eur": 0.0}
+    if start is None:
+        return {"confirmed": dict(empty), "rejected": dict(empty),
+                "unchecked": dict(empty), "since": since_date}
+    floor = max(since_date, start)
+
+    def _agg(where: str) -> dict:
+        r = conn.execute(
+            f"""SELECT COUNT(*) AS total,
+                       COALESCE(SUM(CASE WHEN o.correct_direction_eod
+                                         THEN 1 ELSE 0 END), 0) AS correct,
+                       COALESCE(SUM(o.profit_loss_eur), 0) AS pl
+                FROM outcomes o JOIN predictions p ON p.id = o.prediction_id
+                WHERE p.date >= ? AND {where}""",
+            (floor,),
+        ).fetchone()
+        return {"total": int(r["total"]), "correct": int(r["correct"]),
+                "pl_eur": round(float(r["pl"]), 2)}
+
+    return {
+        "confirmed": _agg("p.run_type = 'trade_proposals'"),
+        "rejected":  _agg("p.run_type = 'pre_market' AND "
+                          "p.revision_verdict IN ('gedreht', 'verworfen')"),
+        "unchecked": _agg("p.run_type = 'pre_market' AND "
+                          "p.revision_verdict IS NULL"),
+        "since": floor,
+    }
+
+
+def load_revision_verdict_stats(
+    conn: sqlite3.Connection, since_date: str,
+) -> list[sqlite3.Row]:
+    """B.9/Block 2: wie oft wurde bestaetigt / geschwaecht / gedreht / verworfen,
+    und wie liefen die Gruppen danach."""
+    return conn.execute(
+        """SELECT p.revision_verdict AS revision_verdict, COUNT(*) AS n,
+                  ROUND(AVG(COALESCE(o.profit_loss_eur, 0)), 2) AS avg_pl
+           FROM predictions p
+           LEFT JOIN outcomes o ON o.prediction_id = p.id
+           WHERE p.date >= ? AND p.revision_verdict IS NOT NULL
+           GROUP BY p.revision_verdict
+           ORDER BY n DESC""",
+        (since_date,),
+    ).fetchall()
+
+
+def load_guardrail_reject_stats(
+    conn: sqlite3.Connection, since_date: str,
+) -> list[sqlite3.Row]:
+    """B.9/Block 3: welche Guardrails greifen wie oft — getrennt nach weicher
+    Warnung (enforced=0, pre_market) und harter Ablehnung (enforced=1, 16:10)."""
+    return conn.execute(
+        """SELECT rule, enforced, COUNT(*) AS n
+           FROM guardrail_rejects
+           WHERE date >= ?
+           GROUP BY rule, enforced
+           ORDER BY n DESC""",
+        (since_date,),
+    ).fetchall()
+
+
+def load_skipped_ticker_stats(
+    conn: sqlite3.Connection, since_date: str,
+) -> list[sqlite3.Row]:
+    """B.9/Block 4: welcher Ticker wurde diese Woche wie oft und warum
+    uebersprungen, plus sein kumulativer Stand aus ticker_status."""
+    return conn.execute(
+        """SELECT s.ticker, COUNT(*) AS n_week,
+                  GROUP_CONCAT(DISTINCT s.reason) AS reasons,
+                  ts.skip_count AS skip_total, ts.inactive, ts.retry_after
+           FROM skipped_tickers s
+           LEFT JOIN ticker_status ts ON ts.ticker = s.ticker
+           WHERE s.date >= ?
+           GROUP BY s.ticker
+           ORDER BY n_week DESC""",
+        (since_date,),
+    ).fetchall()
+
+
+def load_sector_mapping_coverage(conn: sqlite3.Connection) -> dict:
+    """Anteil der Ticker mit Sub-Sektor-Zuordnung. B.10 nennt eine stabil hohe
+    Quote als Voraussetzung dafuer, SECTOR_GUARDRAIL_STRICT auf True zu stellen."""
+    universe = (config.SP500_FULL_TICKERS if config.USE_FULL_SP500
+                else config.SP500_MVP_TICKERS)
+    marks = ",".join("?" * len(universe))
+    row = conn.execute(
+        f"""SELECT COUNT(*) AS n FROM ticker_sectors
+            WHERE sector_id IS NOT NULL AND ticker IN ({marks})""",
+        universe,
+    ).fetchone()
+    mapped, total = int(row["n"]), len(universe)
+    return {"mapped": mapped, "total": total,
+            "pct": round(mapped / total * 100, 1) if total else 0.0}

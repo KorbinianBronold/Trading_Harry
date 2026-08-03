@@ -1183,3 +1183,121 @@ def test_load_predictions_for_revalidation_is_scoped(in_memory_db):
         "ticker": "NVDA", "direction": "long"})
     rows = db.load_predictions_for_revalidation(in_memory_db, "2026-07-30")
     assert {r["id"] for r in rows} == {keep}
+
+
+# --- Sprint 3B / Plan 2, Task 18: Weekly-Aggregate fuer die vier B.9-Bloecke ---
+
+def _outcome(conn, pred_id, correct, pl):
+    conn.execute(
+        """INSERT INTO outcomes (prediction_id, evaluated_date,
+                                 correct_direction_eod, profit_loss_eur)
+           VALUES (?, '2026-07-31', ?, ?)""",
+        (pred_id, 1 if correct else 0, pl))
+    conn.commit()
+
+
+def test_revision_effectiveness_splits_confirmed_from_rejected(in_memory_db):
+    """Der Kern von B.9/Block 1 in der Fassung nach E3."""
+    db.init_schema(in_memory_db)
+    good = db.save_prediction(in_memory_db, {
+        "date": "2026-07-30", "run_type": "trade_proposals",
+        "ticker": "AAPL", "direction": "long"})
+    bad = db.save_prediction(in_memory_db, {
+        "date": "2026-07-30", "run_type": "pre_market",
+        "ticker": "NVDA", "direction": "long"})
+    db.record_revision(in_memory_db, bad, verdict="gedreht")
+    _outcome(in_memory_db, good, correct=True, pl=25.0)
+    _outcome(in_memory_db, bad, correct=False, pl=-30.0)
+
+    out = db.load_revision_effectiveness(in_memory_db, since_date="2026-07-01")
+    assert out["confirmed"]["total"] == 1 and out["confirmed"]["correct"] == 1
+    assert out["rejected"]["total"] == 1 and out["rejected"]["correct"] == 0
+    assert out["confirmed"]["pl_eur"] == 25.0
+    assert out["rejected"]["pl_eur"] == -30.0
+
+
+def test_revision_effectiveness_excludes_rows_before_the_first_1610_run(in_memory_db):
+    """Sonst waechst 'nie geprueft' auf Dauer als Altlast mit."""
+    db.init_schema(in_memory_db)
+    old = db.save_prediction(in_memory_db, {
+        "date": "2026-07-01", "run_type": "pre_market",
+        "ticker": "MSFT", "direction": "long"})
+    _outcome(in_memory_db, old, correct=False, pl=-10.0)
+    db.save_prediction(in_memory_db, {
+        "date": "2026-07-30", "run_type": "trade_proposals",
+        "ticker": "AAPL", "direction": "long"})
+
+    out = db.load_revision_effectiveness(in_memory_db, since_date="2026-06-01")
+    assert out["unchecked"]["total"] == 0, "Altlast vor dem ersten 16:10-Lauf"
+
+
+def test_revision_effectiveness_is_empty_without_any_1610_run(in_memory_db):
+    db.init_schema(in_memory_db)
+    db.save_prediction(in_memory_db, {
+        "date": "2026-07-30", "run_type": "pre_market",
+        "ticker": "AAPL", "direction": "long"})
+    out = db.load_revision_effectiveness(in_memory_db, since_date="2026-07-01")
+    assert out["confirmed"]["total"] == 0
+    assert out["rejected"]["total"] == 0
+
+
+def test_revision_verdict_stats_group_by_verdict(in_memory_db):
+    db.init_schema(in_memory_db)
+    for verdict in ("bestaetigt", "bestaetigt", "gedreht"):
+        pid = db.save_prediction(in_memory_db, {
+            "date": "2026-07-30", "run_type": "pre_market",
+            "ticker": "AAPL", "direction": "long"})
+        db.record_revision(in_memory_db, pid, verdict=verdict)
+    rows = {r["revision_verdict"]: r["n"]
+            for r in db.load_revision_verdict_stats(in_memory_db, "2026-07-01")}
+    assert rows == {"bestaetigt": 2, "gedreht": 1}
+
+
+def test_guardrail_reject_stats_split_soft_from_hard(in_memory_db):
+    """enforced trennt jetzt sinnvoll: 0 = Warnung aus pre_market,
+    1 = Ablehnung aus trade_proposals."""
+    db.init_schema(in_memory_db)
+    db.log_guardrail_reject(in_memory_db, {
+        "date": "2026-07-30", "run_type": "pre_market", "ticker": "AAPL",
+        "direction": "long", "rule": "vix_no_new_longs", "detail": "x", "enforced": 0})
+    db.log_guardrail_reject(in_memory_db, {
+        "date": "2026-07-30", "run_type": "trade_proposals", "ticker": "AAPL",
+        "direction": "long", "rule": "vix_no_new_longs", "detail": "x", "enforced": 1})
+    rows = db.load_guardrail_reject_stats(in_memory_db, "2026-07-01")
+    by_key = {(r["rule"], r["enforced"]): r["n"] for r in rows}
+    assert by_key[("vix_no_new_longs", 0)] == 1
+    assert by_key[("vix_no_new_longs", 1)] == 1
+
+
+def test_skipped_ticker_stats_join_event_log_with_cumulative_status(in_memory_db):
+    """B.9/Block 4. Im Plan ohne Test geblieben — die Funktion verbindet das
+    Ereignis-Log (mehrere Zeilen je Ticker) mit dem kumulativen ticker_status,
+    und genau dieser Join ist die Stelle, an der man sich vertun kann."""
+    db.init_schema(in_memory_db)
+    db.log_skipped_ticker(in_memory_db, "FAKE", "2026-07-30", "pre_market", "no data")
+    db.log_skipped_ticker(in_memory_db, "FAKE", "2026-07-31", "pre_market", "no data")
+    db.log_skipped_ticker(in_memory_db, "MSFT", "2026-06-01", "pre_market", "alt")
+    in_memory_db.commit()
+
+    rows = {r["ticker"]: r for r in
+            db.load_skipped_ticker_stats(in_memory_db, "2026-07-01")}
+    assert "MSFT" not in rows, "vor since_date, darf nicht auftauchen"
+    assert rows["FAKE"]["n_week"] == 2
+    assert rows["FAKE"]["skip_total"] == 2
+    assert "no data" in rows["FAKE"]["reasons"]
+
+
+def test_sector_mapping_coverage_counts_mapped_tickers(in_memory_db):
+    """B.10 nennt die Abdeckung als Voraussetzung dafuer,
+    SECTOR_GUARDRAIL_STRICT irgendwann auf True zu stellen."""
+    import config
+    db.init_schema(in_memory_db)
+    sid = in_memory_db.execute(
+        "SELECT id FROM sectors WHERE name='Retail'").fetchone()["id"]
+    in_memory_db.execute(
+        "INSERT INTO ticker_sectors (ticker, sector_id) VALUES ('AMZN', ?)", (sid,))
+    in_memory_db.commit()
+    out = db.load_sector_mapping_coverage(in_memory_db)
+    assert out["mapped"] == 1
+    assert out["total"] == len(config.SP500_MVP_TICKERS)
+    assert 0.0 <= out["pct"] <= 100.0
