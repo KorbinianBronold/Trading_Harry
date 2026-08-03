@@ -5,7 +5,7 @@ Ausführungsstand präzisiert (gemerged, aber Workflow deaktiviert)
 
 > **Dieses Dokument beschreibt den IST-Zustand des Codes.**
 >
-> ⚠️ **Stand 2026-08-04 — teilweise überholt.** Sprint 3B / Plan 2 ist zu 17 von 20
+> ⚠️ **Stand 2026-08-04 — teilweise überholt.** Sprint 3B / Plan 2 ist zu 19 von 20
 > Tasks umgesetzt und liegt **direkt auf `main`, gepusht** (nicht, wie hier bis
 > 2026-08-03 behauptet, auf einem ungemergten Branch — den gab es nie). Der Umbau ist
 > damit **gemerged, aber noch nicht scharf**: `analyze.yml` steht auf

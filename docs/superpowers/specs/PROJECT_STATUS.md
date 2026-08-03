@@ -1,15 +1,16 @@
 # PROJECT_STATUS.md — Shares_Future (Trading_Harry)
 
-**Zuletzt aktualisiert:** 2026-08-04 — P2.4 korrigiert: Workflow ist deaktiviert, der
-Plan-2-Code lief nie; Migration (Schritt 1) erledigt
+**Zuletzt aktualisiert:** 2026-08-04 — Tasks 18 und 19 umgesetzt (19/20); P2.4 korrigiert
+(Workflow deaktiviert, Plan-2-Code lief nie), Migration und Altlasten-Abschluss erledigt
 **Aktueller Branch:** `main` — die 25 Plan-2-Commits (`fd7e20a`…`58782e4`) liegen
 **direkt auf `main` und sind gepusht**. `git ls-remote --heads origin` kennt nur
 `refs/heads/main` (Stand 2026-08-03: `feee447`); einen Branch
 `sprint3b/plan2-pipeline-umbau` gibt es weder lokal noch remote.
 **Letzter Merge:** Sprint 2 / Plan 1 (2026-05-22) — Sprint 3 in Arbeit, Roadmap s. Abschnitt 2
 
-> **Stand 2026-07-31:** Sprint 3B / Plan 2 ist zu **17 von 20 Tasks** umgesetzt.
-> Offen sind Task 18 (Weekly-Aggregate), 19 (Weekly-Mail) und 20 (Doku-Abschluss).
+> **Stand 2026-08-04:** Sprint 3B / Plan 2 ist zu **19 von 20 Tasks** umgesetzt.
+> Offen ist nur noch Task 20 (Doku-Abschluss). Tasks 18 (`0fec73b`) und 19
+> (`ae0a79c`) sind am 2026-08-04 dazugekommen.
 > Details, Entscheidungen und Befunde: Abschnitt „Sprint 3B / Plan 2" weiter unten.
 > 513 Tests, 93,00 % Coverage.
 >
@@ -100,7 +101,7 @@ Plan-2-Code lief nie; Migration (Schritt 1) erledigt
 | Sprint | Inhalt | Status |
 |---|---|---|
 | 3A | Roadmap + Doku aktualisieren | ✅ erledigt (dieses Dokument) |
-| 3B | Cron-Struktur + Pipeline-Umbau | 🟡 **Plan 1 abgeschlossen** (2026-07-29); **Plan 2 zu 17/20 Tasks umgesetzt** (2026-07-31, direkt auf `main` gepusht) |
+| 3B | Cron-Struktur + Pipeline-Umbau | 🟡 **Plan 1 abgeschlossen** (2026-07-29); **Plan 2 zu 19/20 Tasks umgesetzt** (2026-08-04, direkt auf `main`) |
 | **3B-M** | **Mail-Provider-Wechsel (Zwischensprint)** | ✅ **ABGESCHLOSSEN 2026-07-30** — Mailversand läuft über **Resend**, eigene Domain verifiziert, Zustellung live bestätigt. Details s. unten |
 | 3C | Ranking-Überarbeitung | 📋 spezifiziert, Implementierung offen |
 | 3D | Learning Modul | ⚠️ **Platzhalter — Planungssession ausstehend** |
@@ -512,7 +513,7 @@ Geliefert: `sectors` / `ticker_sectors` / `ticker_status` / `guardrail_rejects` 
 `sector_momentum`, `SECTOR_ALIASES`-Normalisierung, Skip-Zähler mit Auto-Retry,
 beide Momentum-Signale, Markt-Kontext (Phase 0b), Gap-Erkennung, B-05.
 
-**Plan 2 (Pipeline-Umbau) ist geschrieben und zu 17/20 Tasks umgesetzt**
+**Plan 2 (Pipeline-Umbau) ist geschrieben und zu 19/20 Tasks umgesetzt**
 (2026-07-30/31). Spec: `docs/superpowers/specs/2026-07-30-sprint3b-plan2-pipeline-umbau-design.md`,
 Plan-Datei: `docs/superpowers/plans/2026-07-30-sprint3b-plan2-pipeline-umbau.md`.
 **Vollständiger Stand, Entscheidungen und Befunde: eigener Abschnitt weiter unten.**
@@ -533,7 +534,7 @@ Zwei Dinge, die Plan 2 mitnehmen muss und die nicht aus dem Code hervorgehen:
 
 ---
 
-## Sprint 3B / Plan 2 — Pipeline-Umbau 🟡 17 von 20 Tasks
+## Sprint 3B / Plan 2 — Pipeline-Umbau 🟡 19 von 20 Tasks
 
 **Wo der Code liegt:** 25 Commits (`fd7e20a`…`58782e4`) **direkt auf `main`, gepusht**.
 Es gab nie einen Branch `sprint3b/plan2-pipeline-umbau` — remote existiert nur
@@ -578,13 +579,17 @@ enthält u. a. noch die **alte** Cron-Tabelle mit `midday`/`evaluate`/`position_
 `c2c8e1c` in `.gitignore`, die Dateien wurden also erzwungen hinzugefügt und sind
 seitdem trotz Ignore-Regel getrackt. Kein Produktivcode, keine Testabdeckung.
 
-### P2.3 — Offen: Tasks 18–20
+### P2.3 — Offen: nur noch Task 20
 
-| Task | Inhalt |
-|---|---|
-| **18** | Fünf Weekly-Aggregate in `src/db.py`: `load_revision_effectiveness`, `load_revision_verdict_stats`, `load_guardrail_reject_stats`, `load_skipped_ticker_stats`, `load_sector_mapping_coverage` |
-| **19** | Weekly-Mail um die vier B.9-Blöcke erweitern; `hold_days_recommended` als Spalte in der Tagesmail (B.11) |
-| **20** | Doku-Abschluss + Aufräumliste aus P2.6 |
+| Task | Inhalt | Stand |
+|---|---|---|
+| **18** | Fünf Weekly-Aggregate in `src/db.py`: `load_revision_effectiveness`, `load_revision_verdict_stats`, `load_guardrail_reject_stats`, `load_skipped_ticker_stats`, `load_sector_mapping_coverage` | ✅ `0fec73b` (2026-08-04) |
+| **19** | Weekly-Mail um die vier B.9-Blöcke erweitern; `hold_days_recommended` als Spalte in der Tagesmail (B.11) | ✅ `ae0a79c` (2026-08-04) |
+| **20** | Doku-Abschluss + Aufräumliste aus P2.6 | ⏳ offen |
+
+Zu Task 18 gegenüber dem Plantext ergänzt: ein Test für `load_skipped_ticker_stats`.
+Der Plan implementierte die Funktion ohne Test, obwohl gerade ihr Join zwischen dem
+Ereignis-Log (`skipped_tickers`) und dem kumulativen `ticker_status` fehleranfällig ist.
 
 **Danach ausstehend:** ein Gesamt-Review über die kompletten Plan-2-Commits, dann die
 Live-Verifikation (s. P2.4). Beides prüft Code, der **auf `main` liegt, aber noch nie
@@ -693,6 +698,7 @@ Alles unkritisch, alles bewusst vertagt. Vollständige Liste im SDD-Ledger
 | Docstrings mit 3 statt 1–2 Sätzen, unvollständiger Satz | `epic_to_ticker`, `revalidate_one`, `_forced_candidates` |
 | Docstring nennt Phase 1d nicht als Ausnahme | `_mock_all_other_phases` in `tests/unit/test_main.py` |
 | Plan-Erratum: „8 Tests" statt 7 | Plan-Datei, Task 7 Step 4 |
+| **`cost_summary` in `run_weekly()` ist hart auf Nullen verdrahtet** — die Weekly-Mail meldet dauerhaft „Run-Kosten Woche: 0.0 EUR", obwohl `cost_tracking` echte Werte führt (3,3143 EUR für den 29.07.). Es gibt bislang nur `save_cost_tracking()`, keine Lesefunktion. Fix wäre ein `db.load_cost_summary(conn, since)` mit `SUM`/`AVG` plus eine Zeile in `run_weekly()`. *(gefunden 2026-08-04 bei Task 19, bewusst nicht dort behoben — Task 19 sollte den Plan unverändert umsetzen)* | `main.py:run_weekly()`, `src/email_sender.py:render_weekly_html()` |
 
 ### P2.7 — Bekannte, bewusst akzeptierte Lücke
 
