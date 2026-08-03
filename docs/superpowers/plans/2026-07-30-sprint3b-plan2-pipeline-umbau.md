@@ -3848,7 +3848,8 @@ Vor der Meldung „Plan 2 fertig":
 - [ ] In `predictions` existiert je Ticker und Tag genau **eine** offene Zeile
 - [ ] `git log --oneline` zeigt einen Commit je Task
 - [x] ~~**Nicht gepusht** — das macht Korbinian selbst~~
-      → **überholt (Nachtrag 2026-08-03):** Die 25 Commits sind bereits auf `main`
-      gepusht; ein Feature-Branch existierte nie. Die drei noch offenen Haken oben
-      (Migration, Docker-Smoke, echter Lauf) prüfen damit **produktiven** Code —
-      sie sind nachgelagerte Kontrolle, kein Gate. S. PROJECT_STATUS.md, P2.4.
+      → **überholt (Nachtrag 2026-08-03, präzisiert 2026-08-04):** Die 25 Commits sind
+      bereits auf `main` gepusht; ein Feature-Branch existierte nie. Ausgeführt wurde der
+      Code aber nie — `analyze.yml` steht auf `disabled_manually`, letzter Pipeline-Lauf
+      2026-07-13. Die offenen Haken oben bleiben damit ein Gate vor der ersten
+      Ausführung. Migration ✅ am 2026-08-04. S. PROJECT_STATUS.md, P2.4.

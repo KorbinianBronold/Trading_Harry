@@ -1,12 +1,12 @@
 # Shares_Future – Live Workflow & Operationen
 
-**Zuletzt aktualisiert:** 2026-08-03 — Overview auf den Ist-Stand gezogen; der Rest des
+**Zuletzt aktualisiert:** 2026-08-04 — Overview auf den Ist-Stand gezogen; der Rest des
 Dokuments ist als überholt markiert und wartet auf Task 20
 
 > 🛑 **Achtung: Dieses Dokument ist ab „Cron-Jobs" grossflächig überholt.**
 > Es beschreibt die Pipeline vor Sprint 3B / Plan 2. Die Run-Types `midday`,
 > `evaluate` und `position_check` **existieren nicht mehr** (in `02ab4ba`/`59f5e2c`
-> restlos entfernt, produktiv auf `main`). Jeder Befehl unten, der sie aufruft,
+> restlos entfernt, gemerged auf `main`). Jeder Befehl unten, der sie aufruft,
 > schlägt heute mit einem argparse-Fehler fehl. Auch die Kostenzahlen sind widerlegt
 > — s. CLAUDE.md, Abschnitt „Cron-Jobs — die zwei Fallen".
 > **Verbindlich sind `.github/workflows/analyze.yml` und

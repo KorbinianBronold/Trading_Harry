@@ -1,7 +1,7 @@
 # Shares_Future – SP500 CFD Research Tool
 
-**Zuletzt aktualisiert:** 2026-08-03 — Branch-Aussage zu Sprint 3B / Plan 2 korrigiert
-(Code liegt auf `main`, nicht auf einem Feature-Branch)
+**Zuletzt aktualisiert:** 2026-08-04 — Branch-Aussage zu Sprint 3B / Plan 2 korrigiert
+(Code liegt auf `main`, nicht auf einem Feature-Branch; Pipeline ist deaktiviert)
 
 ## Projektübersicht
 Automatisiertes Research-Tool zur täglichen Analyse von S&P 500 Aktien,
@@ -122,8 +122,9 @@ und der getroffenen Entscheidungen. Kurzfassung:
   auf `main` und sind gepusht**. Einen Branch `sprint3b/plan2-pipeline-umbau` gibt es
   weder lokal noch remote (`git ls-remote --heads origin` kennt nur `refs/heads/main`,
   geprüft 2026-08-03). Offen: Tasks 18–20, ein Gesamt-Review über die Plan-2-Commits
-  und die Live-Verifikation — beides findet damit **nach** dem faktischen Rollout
-  statt, nicht davor. Run-Types sind seither
+  und die Live-Verifikation. ⚠️ Der Code ist **gemerged, aber nie ausgeführt**:
+  `analyze.yml` steht auf `disabled_manually`, letzter Pipeline-Lauf 2026-07-13.
+  Run-Types sind seither
   `pre_market` / `trade_proposals` / `close` / `weekly`.
 - **3C** offen (Ranking-Überarbeitung)
 - **3D / 3E / 3F** sind ⚠️ **Platzhalter** — bei Erreichen aktiv nachfragen und den

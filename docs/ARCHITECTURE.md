@@ -1,14 +1,16 @@
 # Shares_Future – Architektur & Design
 
-**Zuletzt aktualisiert:** 2026-08-03 — Branch-Aussage in beiden Warnblöcken korrigiert
+**Zuletzt aktualisiert:** 2026-08-04 — Branch-Aussage in beiden Warnblöcken korrigiert,
+Ausführungsstand präzisiert (gemerged, aber Workflow deaktiviert)
 
 > **Dieses Dokument beschreibt den IST-Zustand des Codes.**
 >
-> ⚠️ **Stand 2026-08-03 — teilweise überholt.** Sprint 3B / Plan 2 ist zu 17 von 20
+> ⚠️ **Stand 2026-08-04 — teilweise überholt.** Sprint 3B / Plan 2 ist zu 17 von 20
 > Tasks umgesetzt und liegt **direkt auf `main`, gepusht** (nicht, wie hier bis
 > 2026-08-03 behauptet, auf einem ungemergten Branch — den gab es nie). Der Umbau ist
-> also **produktiv**. Damit gilt für die Modulbeschreibungen unten Folgendes
-> **bereits jetzt anders**:
+> damit **gemerged, aber noch nicht scharf**: `analyze.yml` steht auf
+> `disabled_manually`, der letzte Pipeline-Lauf war am 2026-07-13. Für den **Code**
+> gilt unten trotzdem bereits Folgendes anders:
 >
 > | Was hier steht | Was tatsächlich gilt |
 > |---|---|

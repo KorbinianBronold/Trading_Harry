@@ -1,11 +1,21 @@
 import pytest
 from unittest.mock import patch, MagicMock
 from datetime import datetime, timedelta
+from freezegun import freeze_time
 from src.providers.finnhub_provider import FinnhubProvider
 
+# 23:30 UTC am 21.05. ist in Berlin (CEST, UTC+2) bereits 01:30 am 22.05. — genau die
+# Stunden, in denen das Kalenderdatum des Runners von Berlin abweicht. Die Fixture-Daten
+# unten sind deshalb hart gesetzt statt aus der Wanduhr abgeleitet: `datetime.now()` haette
+# die Erwartung an die Zeitzone des Runners gekoppelt und den Test in UTC-CI rot gemacht,
+# obwohl der Provider korrekt rechnet. Der fixierte Zeitpunkt prueft zusaetzlich, dass
+# `get_earnings_calendar()` wirklich in Berlin-Zeit rechnet — mit naivem `now()` kaeme 15.
+BERLIN_MIDNIGHT_EDGE = "2026-05-21T23:30:00+00:00"   # Berlin: 2026-05-22
 
+
+@freeze_time(BERLIN_MIDNIGHT_EDGE)
 def test_get_earnings_calendar_returns_days_to_next():
-    future_date = (datetime.now() + timedelta(days=14)).strftime("%Y-%m-%d")
+    future_date = "2026-06-05"          # 14 Tage nach dem Berliner 2026-05-22
     fake_client = MagicMock()
     fake_client.earnings_calendar.return_value = {
         "earningsCalendar": [
@@ -44,8 +54,9 @@ def test_get_earnings_calendar_handles_api_error():
     assert out == {"days_to_next": None, "last_beat_pct": None}
 
 
+@freeze_time(BERLIN_MIDNIGHT_EDGE)
 def test_get_earnings_calendar_returns_beat_pct_when_actual_present():
-    past_date = (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d")
+    past_date = "2026-04-22"           # 30 Tage vor dem Berliner 2026-05-22
     fake_client = MagicMock()
     fake_client.earnings_calendar.return_value = {
         "earningsCalendar": [

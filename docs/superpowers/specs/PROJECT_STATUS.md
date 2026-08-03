@@ -1,6 +1,7 @@
 # PROJECT_STATUS.md — Shares_Future (Trading_Harry)
 
-**Zuletzt aktualisiert:** 2026-08-03
+**Zuletzt aktualisiert:** 2026-08-04 — P2.4 korrigiert: Workflow ist deaktiviert, der
+Plan-2-Code lief nie; Migration (Schritt 1) erledigt
 **Aktueller Branch:** `main` — die 25 Plan-2-Commits (`fd7e20a`…`58782e4`) liegen
 **direkt auf `main` und sind gepusht**. `git ls-remote --heads origin` kennt nur
 `refs/heads/main` (Stand 2026-08-03: `feee447`); einen Branch
@@ -15,8 +16,10 @@
 > **Korrektur 2026-08-03:** Dieses Dokument und `CLAUDE.md` behaupteten bis hierher,
 > der Plan-2-Code liege auf einem eigenen, ungepushten Feature-Branch. Das war falsch —
 > gegen das echte Repo gegengeprüft existiert remote ausschliesslich `main`, und alle
-> Plan-2-Commits sind dessen Vorfahren. Der Code ist also **bereits ausgerollt**;
-> Review und Live-Verifikation holen das nach, statt es abzusichern (s. P2.3/P2.4).
+> Plan-2-Commits sind dessen Vorfahren. Der Code ist also **gemerged** — aber **nicht
+> ausgeführt**: `analyze.yml` steht auf `disabled_manually`, der letzte `analyze`-Lauf
+> war am 2026-07-13 (s. P2.4). Review und Live-Verifikation bleiben damit ein echtes
+> Gate vor der ersten Ausführung.
 
 ---
 
@@ -584,19 +587,39 @@ seitdem trotz Ignore-Regel getrackt. Kein Produktivcode, keine Testabdeckung.
 | **20** | Doku-Abschluss + Aufräumliste aus P2.6 |
 
 **Danach ausstehend:** ein Gesamt-Review über die kompletten Plan-2-Commits, dann die
-Live-Verifikation (s. P2.4). Beides prüft Code, der **bereits auf `main` liegt** — es
-ist eine nachgelagerte Kontrolle, kein Gate vor dem Rollout.
+Live-Verifikation (s. P2.4). Beides prüft Code, der **auf `main` liegt, aber noch nie
+gelaufen ist** — die Verifikation bleibt damit ein echtes Gate vor der ersten Ausführung.
 
 ### P2.4 — ⏳ Live-Verifikation steht noch aus (Korbinian)
 
-⚠️ **Sie findet nach dem faktischen Rollout statt, nicht davor.** Ursprünglich war sie
-als Abnahme vor dem Merge geplant; da die Commits direkt auf `main` gepusht wurden, ist
-der Umbau bereits scharf. `analyze.yml` fährt seit `02ab4ba` die neuen Crons, also läuft
-in Actions schon die ungeprüfte Fassung. Ein Befund hier ist damit ein Produktionsfehler
-und kein Abnahmemangel — Konsequenz wäre ein Fix-Commit oder ein `git revert`, nicht ein
-zurückgehaltener Branch.
+⚠️ **Der Plan-2-Code wurde bis heute kein einziges Mal ausgeführt.** Belegt am 2026-08-04
+über die GitHub-API:
 
-Bewusst **nicht** von Subagenten ausgeführt — kostet echtes Geld und verschickt echte Post:
+| Prüfung | Befund |
+|---|---|
+| `GET /actions/workflows` | `analyze.yml` → **`state=disabled_manually`** |
+| Letzter `analyze`-Lauf | **2026-07-13** — seither nur noch `tests` auf Push |
+| Release-Asset `db-latest` | zuletzt **2026-07-13T18:47Z** hochgeladen |
+
+Der Umbau ist also **gemerged, aber nicht scharf**. Eine frühere Fassung dieses Abschnitts
+behauptete das Gegenteil („läuft produktiv") — das war falsch und ist hiermit korrigiert.
+Praktisch heisst das: Die Verifikation unten ist weiterhin eine **Abnahme vor der ersten
+Ausführung**, kein Nachziehen hinter einem laufenden System. Ein Befund hier kostet nichts
+ausser Nacharbeit.
+
+**Vor dem Wiedereinschalten von `analyze.yml` zu klären:** In `predictions` liegen **12
+offene Zeilen** — 3 vom 2026-07-13 (eine davon mit `run_type='midday'`, den es nicht mehr
+gibt) und 9 vom 2026-07-29. Bei `MAX_HOLD_DAYS = 5` sind alle weit überfällig. Sobald die
+Pipeline wieder läuft, wertet der Evaluator sie gegen Kurse von Wochen später aus und
+schreibt das als Lerndaten weg. Für eine Intraday-These ist das Rauschen. Entweder vorher
+schliessen/verwerfen oder bewusst als `learnable=0` markieren.
+
+✅ **Schritt 1 ist erledigt** (2026-08-04): `init_schema()` gegen eine Kopie der
+produktiven DB ergänzt `superseded_by` und `revision_verdict` sauber. Reines SQLite,
+keine API-Aufrufe, kein Mailversand.
+
+Die Schritte 2 und 3 bewusst **nicht** von Subagenten ausführen — sie kosten echtes Geld
+und verschicken echte Post:
 
 ```bash
 # 1. Migration gegen eine KOPIE der Produktions-DB, nie gegen das Original
