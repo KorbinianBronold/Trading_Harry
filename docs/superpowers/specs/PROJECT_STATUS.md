@@ -1,13 +1,22 @@
 # PROJECT_STATUS.md — Shares_Future (Trading_Harry)
 
-**Zuletzt aktualisiert:** 2026-07-31
-**Aktueller Branch:** `sprint3b/plan2-pipeline-umbau` (25 Commits, **nicht** gepusht, nicht gemerged)
+**Zuletzt aktualisiert:** 2026-08-03
+**Aktueller Branch:** `main` — die 25 Plan-2-Commits (`fd7e20a`…`58782e4`) liegen
+**direkt auf `main` und sind gepusht**. `git ls-remote --heads origin` kennt nur
+`refs/heads/main` (Stand 2026-08-03: `feee447`); einen Branch
+`sprint3b/plan2-pipeline-umbau` gibt es weder lokal noch remote.
 **Letzter Merge:** Sprint 2 / Plan 1 (2026-05-22) — Sprint 3 in Arbeit, Roadmap s. Abschnitt 2
 
 > **Stand 2026-07-31:** Sprint 3B / Plan 2 ist zu **17 von 20 Tasks** umgesetzt.
 > Offen sind Task 18 (Weekly-Aggregate), 19 (Weekly-Mail) und 20 (Doku-Abschluss).
 > Details, Entscheidungen und Befunde: Abschnitt „Sprint 3B / Plan 2" weiter unten.
 > 513 Tests, 93,00 % Coverage.
+>
+> **Korrektur 2026-08-03:** Dieses Dokument und `CLAUDE.md` behaupteten bis hierher,
+> der Plan-2-Code liege auf einem eigenen, ungepushten Feature-Branch. Das war falsch —
+> gegen das echte Repo gegengeprüft existiert remote ausschliesslich `main`, und alle
+> Plan-2-Commits sind dessen Vorfahren. Der Code ist also **bereits ausgerollt**;
+> Review und Live-Verifikation holen das nach, statt es abzusichern (s. P2.3/P2.4).
 
 ---
 
@@ -88,7 +97,7 @@
 | Sprint | Inhalt | Status |
 |---|---|---|
 | 3A | Roadmap + Doku aktualisieren | ✅ erledigt (dieses Dokument) |
-| 3B | Cron-Struktur + Pipeline-Umbau | 🟡 **Plan 1 abgeschlossen** (2026-07-29); **Plan 2 zu 17/20 Tasks umgesetzt** (2026-07-31, Branch `sprint3b/plan2-pipeline-umbau`) |
+| 3B | Cron-Struktur + Pipeline-Umbau | 🟡 **Plan 1 abgeschlossen** (2026-07-29); **Plan 2 zu 17/20 Tasks umgesetzt** (2026-07-31, direkt auf `main` gepusht) |
 | **3B-M** | **Mail-Provider-Wechsel (Zwischensprint)** | ✅ **ABGESCHLOSSEN 2026-07-30** — Mailversand läuft über **Resend**, eigene Domain verifiziert, Zustellung live bestätigt. Details s. unten |
 | 3C | Ranking-Überarbeitung | 📋 spezifiziert, Implementierung offen |
 | 3D | Learning Modul | ⚠️ **Platzhalter — Planungssession ausstehend** |
@@ -523,8 +532,11 @@ Zwei Dinge, die Plan 2 mitnehmen muss und die nicht aus dem Code hervorgehen:
 
 ## Sprint 3B / Plan 2 — Pipeline-Umbau 🟡 17 von 20 Tasks
 
-**Branch:** `sprint3b/plan2-pipeline-umbau`, 25 Commits, **nicht gepusht, nicht gemerged**.
-**Stand 2026-07-31:** 513 Tests, 93,00 % Coverage. Suite grün, Branch in sich konsistent.
+**Wo der Code liegt:** 25 Commits (`fd7e20a`…`58782e4`) **direkt auf `main`, gepusht**.
+Es gab nie einen Branch `sprint3b/plan2-pipeline-umbau` — remote existiert nur
+`refs/heads/main` (`git ls-remote --heads origin`, 2026-08-03). Die Arbeit entstand in
+einem anderen Klon und kam hier per Fast-Forward-Pull auf `main` an.
+**Stand 2026-07-31:** 513 Tests, 93,00 % Coverage. Suite grün, Stand in sich konsistent.
 
 **Spec:** `docs/superpowers/specs/2026-07-30-sprint3b-plan2-pipeline-umbau-design.md`
 **Plan:** `docs/superpowers/plans/2026-07-30-sprint3b-plan2-pipeline-umbau.md`
@@ -553,6 +565,16 @@ Zwei Dinge, die Plan 2 mitnehmen muss und die nicht aus dem Code hervorgehen:
 **Zwei Commits ausserhalb des Plans**, beide auf ausdrückliche Anweisung:
 `70f883b` und `58782e4` — Sperre gegen ausgehende HTTP-Aufrufe in Tests (s. P2.5).
 
+**Ein weiterer Commit gehört zu keinem Task und war bislang nirgends dokumentiert:**
+`feee447` „add random" (2026-07-31) — aktuelle Spitze von `main` und `origin/main`. Er
+legt vier Dateien unter `random/` ab: die beiden Wegwerf-Sonden `_fake_ticker_probe.py`
+und `_phase1_sector_probe.py` (Realtests gegen die echte Capital.com-API, laufen gegen
+eine DB-Kopie), `claude_commands.md` und `project_ideas.md` (unsortierte Ideensammlung,
+enthält u. a. noch die **alte** Cron-Tabelle mit `midday`/`evaluate`/`position_check`
+— durch B.1 überholt, nicht als Stand lesen). Zu beachten: `random/` steht seit
+`c2c8e1c` in `.gitignore`, die Dateien wurden also erzwungen hinzugefügt und sind
+seitdem trotz Ignore-Regel getrackt. Kein Produktivcode, keine Testabdeckung.
+
 ### P2.3 — Offen: Tasks 18–20
 
 | Task | Inhalt |
@@ -561,10 +583,18 @@ Zwei Dinge, die Plan 2 mitnehmen muss und die nicht aus dem Code hervorgehen:
 | **19** | Weekly-Mail um die vier B.9-Blöcke erweitern; `hold_days_recommended` als Spalte in der Tagesmail (B.11) |
 | **20** | Doku-Abschluss + Aufräumliste aus P2.6 |
 
-**Danach ausstehend:** ein Gesamt-Review über den kompletten Branch, dann die
-Live-Verifikation (s. P2.4).
+**Danach ausstehend:** ein Gesamt-Review über die kompletten Plan-2-Commits, dann die
+Live-Verifikation (s. P2.4). Beides prüft Code, der **bereits auf `main` liegt** — es
+ist eine nachgelagerte Kontrolle, kein Gate vor dem Rollout.
 
 ### P2.4 — ⏳ Live-Verifikation steht noch aus (Korbinian)
+
+⚠️ **Sie findet nach dem faktischen Rollout statt, nicht davor.** Ursprünglich war sie
+als Abnahme vor dem Merge geplant; da die Commits direkt auf `main` gepusht wurden, ist
+der Umbau bereits scharf. `analyze.yml` fährt seit `02ab4ba` die neuen Crons, also läuft
+in Actions schon die ungeprüfte Fassung. Ein Befund hier ist damit ein Produktionsfehler
+und kein Abnahmemangel — Konsequenz wäre ein Fix-Commit oder ein `git revert`, nicht ein
+zurückgehaltener Branch.
 
 Bewusst **nicht** von Subagenten ausgeführt — kostet echtes Geld und verschickt echte Post:
 
