@@ -6,9 +6,11 @@ __pycache__/
 .coverage
 htmlcov/
 data/tracking.db
-data/tracking.db.backup-2026-08-04T0055
+data/tracking.db.backup-*
 data/*.json
-data/*.log
+# Laufprotokolle landen auch im Repo-Wurzelverzeichnis (z.B. pre_market.log),
+# nicht nur unter data/.
+*.log
 *.egg-info/
 .venv/
 venv/
