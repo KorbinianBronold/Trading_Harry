@@ -1329,20 +1329,38 @@ def test_revision_verdict_stats_group_by_verdict(in_memory_db):
     assert rows == {"bestaetigt": 2, "gedreht": 1}
 
 
-def test_guardrail_reject_stats_split_soft_from_hard(in_memory_db):
-    """enforced trennt jetzt sinnvoll: 0 = Warnung aus pre_market,
-    1 = Ablehnung aus trade_proposals."""
+def test_guardrail_reject_stats_separate_the_two_runs(in_memory_db):
+    """Block 3 muss nach run_type UND enforced trennen.
+
+    enforced heisst 'dieser Check hat das Signal tatsaechlich verworfen' —
+    so liest es auch signal_checks.blocks(). Es heisst NICHT 'aus welchem Lauf',
+    und beide Laeufe schreiben beide Werte:
+
+      * pre_market schreibt enforced=1, wenn der klassische GuardrailsChecker
+        greift (ranking.py verwirft den Kandidaten dort wirklich),
+      * trade_proposals schreibt enforced=0 fuer die immer weichen Checks
+        (Klumpenrisiko, Opening-Gap, einseitiges Momentum).
+
+    Ohne run_type in der Gruppierung liest man die harten Ablehnungen des
+    Morgenlaufs als Ablehnungen des 16:10-Laufs."""
     db.init_schema(in_memory_db)
-    db.log_guardrail_reject(in_memory_db, {
-        "date": "2026-07-30", "run_type": "pre_market", "ticker": "AAPL",
-        "direction": "long", "rule": "vix_no_new_longs", "detail": "x", "enforced": 0})
-    db.log_guardrail_reject(in_memory_db, {
-        "date": "2026-07-30", "run_type": "trade_proposals", "ticker": "AAPL",
-        "direction": "long", "rule": "vix_no_new_longs", "detail": "x", "enforced": 1})
+    for run_type, rule, enforced in [
+        ("pre_market",      "rr_ratio",         1),   # klassischer Guardrail
+        ("pre_market",      "sector_cluster",   0),   # weiche Warnung (E4)
+        ("trade_proposals", "vix_no_new_longs", 1),   # harte Ablehnung
+        ("trade_proposals", "sector_cluster",   0),   # weich, auch um 16:10
+    ]:
+        db.log_guardrail_reject(in_memory_db, {
+            "date": "2026-07-30", "run_type": run_type, "ticker": "AAPL",
+            "direction": "long", "rule": rule, "detail": "x",
+            "enforced": enforced})
+
     rows = db.load_guardrail_reject_stats(in_memory_db, "2026-07-01")
-    by_key = {(r["rule"], r["enforced"]): r["n"] for r in rows}
-    assert by_key[("vix_no_new_longs", 0)] == 1
-    assert by_key[("vix_no_new_longs", 1)] == 1
+    by_key = {(r["run_type"], r["rule"], r["enforced"]): r["n"] for r in rows}
+    assert by_key[("pre_market", "rr_ratio", 1)] == 1
+    assert by_key[("pre_market", "sector_cluster", 0)] == 1
+    assert by_key[("trade_proposals", "vix_no_new_longs", 1)] == 1
+    assert by_key[("trade_proposals", "sector_cluster", 0)] == 1
 
 
 def test_skipped_ticker_stats_join_event_log_with_cumulative_status(in_memory_db):

@@ -344,8 +344,9 @@ def render_weekly_html(payload: dict) -> str:
             payload.get("verdict_stats") or [],
             ["revision_verdict", "n", "avg_pl"])
         + _weekly_simple_table(
-            "Guardrails", ["Regel", "hart?", "Anzahl"],
-            payload.get("guardrail_stats") or [], ["rule", "enforced", "n"])
+            "Guardrails", ["Lauf", "Regel", "verworfen?", "Anzahl"],
+            payload.get("guardrail_stats") or [],
+            ["run_type", "rule", "enforced", "n"])
         + _weekly_simple_table(
             "Übersprungene Ticker", ["Ticker", "diese Woche", "Gründe",
                                      "gesamt", "inaktiv", "Retry ab"],

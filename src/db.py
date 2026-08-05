@@ -1128,13 +1128,22 @@ def load_revision_verdict_stats(
 def load_guardrail_reject_stats(
     conn: sqlite3.Connection, since_date: str,
 ) -> list[sqlite3.Row]:
-    """B.9/Block 3: welche Guardrails greifen wie oft — getrennt nach weicher
-    Warnung (enforced=0, pre_market) und harter Ablehnung (enforced=1, 16:10)."""
+    """B.9/Block 3: welche Guardrails greifen wie oft — getrennt nach Lauf und
+    danach, ob der Check tatsaechlich verworfen hat.
+
+    `enforced` heisst 'dieser Check hat das Signal wirklich verworfen', genau so
+    liest es auch signal_checks.blocks(). Es heisst NICHT 'aus welchem Lauf', und
+    beide Laeufe schreiben beide Werte: pre_market schreibt enforced=1, wenn der
+    klassische GuardrailsChecker greift (ranking.py verwirft den Kandidaten dort
+    wirklich), und trade_proposals schreibt enforced=0 fuer die immer weichen
+    Checks (Klumpenrisiko, Opening-Gap, einseitiges Momentum). Ohne run_type in
+    der Gruppierung liest man die harten Ablehnungen des Morgenlaufs als
+    Ablehnungen des 16:10-Laufs."""
     return conn.execute(
-        """SELECT rule, enforced, COUNT(*) AS n
+        """SELECT run_type, rule, enforced, COUNT(*) AS n
            FROM guardrail_rejects
            WHERE date >= ?
-           GROUP BY rule, enforced
+           GROUP BY run_type, rule, enforced
            ORDER BY n DESC""",
         (since_date,),
     ).fetchall()
