@@ -575,8 +575,16 @@ blocks(results)            -> bool                 # blockiert irgendein Ergebni
 - Ein Check, der **nicht** anschlägt, gibt `None` zurück und erzeugt **keine** Zeile —
   wörtlich B.3.1: „keines vorhanden → kein Check, kein Log-Eintrag".
 - Ob ein anschlagender Check das Signal auch **blockiert**, entscheidet nicht dieses
-  Modul, sondern der Aufrufer über `enforce` (E4). Um 15:00 wird nur erhoben und
-  mit `enforced=0` protokolliert, um 16:10 durchgesetzt.
+  Modul, sondern der Aufrufer über `enforce` (E4). Um 15:00 wird nur erhoben, um
+  16:10 durchgesetzt.
+
+⚠️ **`enforced` in `guardrail_rejects` ist kein Lauf-Kennzeichen.** Die Spalte sagt
+„dieser Check hat das Signal tatsächlich verworfen" — so liest sie auch
+`signal_checks.blocks()`. **Beide Läufe schreiben beide Werte:** `pre_market` schreibt
+`enforced=1`, wenn der klassische `GuardrailsChecker` in `ranking.py` greift (dort wird
+der Kandidat wirklich verworfen), und `trade_proposals` schreibt `enforced=0` für die
+immer weichen Checks (Klumpenrisiko, Opening-Gap, einseitiges Momentum). Wer die Läufe
+trennen will, gruppiert nach `run_type` — Weekly-Block 3 tut das.
 
 ---
 

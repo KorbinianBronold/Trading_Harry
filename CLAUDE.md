@@ -1,7 +1,7 @@
 # Shares_Future – SP500 CFD Research Tool
 
-**Zuletzt aktualisiert:** 2026-08-04 — Sprint 3B / Plan 2 codeseitig fertig (20 von 20);
-Branch-Aussage korrigiert (Code liegt auf `main`, Pipeline ist deaktiviert)
+**Zuletzt aktualisiert:** 2026-08-06 — Task-20-Review abgeschlossen, acht Defekte behoben
+(Details: PROJECT_STATUS.md, P2.8). Code liegt auf `main`, Pipeline weiterhin deaktiviert.
 
 ## Projektübersicht
 Automatisiertes Research-Tool zur täglichen Analyse von S&P 500 Aktien,
@@ -52,9 +52,17 @@ Die Pipeline-Phasen lassen sich an `main.py:run_pipeline()` ablesen.
   ein Vorschlag. Sonst prüft Phase 4a die Signale desselben Laufs gegen ihre eigene,
   Sekunden alte Analyse.
 - Tests ausserhalb `tests/live/` dürfen **nicht** nach draussen telefonieren. Ein
-  Autouse-Fixture in `tests/conftest.py` sperrt jeden `requests.get`/`post`. Anlass
-  waren zwei reale Vorfälle: echte Mails aus einem Testlauf und eine echte
+  Autouse-Fixture in `tests/conftest.py` sperrt auf **Transport-Ebene**
+  (`requests.adapters.HTTPAdapter.send`, `httpx.Client.send`) und legt den
+  Anthropic-Client zusätzlich still. Nur `requests.get`/`post` zu patchen reichte
+  nicht: finnhub nutzt `requests.Session`, das Anthropic-SDK httpx. Anlass waren
+  zwei reale Vorfälle: echte Mails aus einem Testlauf und eine echte
   Capital.com-Session aus einem Unit-Test, die still geschluckt wurde.
+- Der Bar des **laufenden** Tages wird überschrieben, abgeschlossene Tage nie.
+  Capital.coms DAY-Bar existiert schon während des Tages und bewegt sich weiter
+  (inkl. erweiterter Handelszeiten). Wer sie einfriert, lässt den 16:10-Lauf
+  „frische" Kurse gegen sich selbst vergleichen und schreibt den echten
+  Tagesschluss nie.
 
 ## Cron-Jobs — die zwei Fallen
 Zeitplan und Run-Types stehen in `.github/workflows/analyze.yml`. Zwei Dinge, die
@@ -62,6 +70,13 @@ man dort **nicht** sieht:
 
 **DST.** Cron ist UTC-fix, GitHub Actions passt nicht an die Sommerzeit an. Die
 Kommentare im Workflow gelten für CEST; im Winter (CET) läuft alles 1 h früher.
+
+⚠️ Für `trade_proposals` ist das **nicht** nur eine Verschiebung: der Lauf hängt an
+der **US-Eröffnung** (10:10 America/New_York), nicht an Berlin. Deshalb gibt es
+**zwei** Cron-Slots — 14:10 UTC unter EDT, 15:10 UTC unter EST — und der Workflow
+verwirft den jeweils falschen anhand von `TZ=America/New_York date +%z`. Maßgeblich
+ist bewusst die US-Zeitzone: EU und USA schalten an verschiedenen Wochenenden um.
+Mit nur dem Sommer-Slot lief der Lauf von November bis März **vor** der Eröffnung.
 
 **Kosten.** Die Schätzungen im Workflow und in älteren Dokumenten sind
 nachweislich zu niedrig. Erster echter Messlauf am 2026-07-29: ein `pre_market`
@@ -73,7 +88,9 @@ sie werden nirgends im Code gelesen (verifiziert 2026-07-30). Es gibt **keinen**
 Deckel auf die Zahl der Tiefenanalysen ausser `CostCapExceeded`, und Phase 2 macht
 *einen* Haiku-Call über alle Ticker statt 30er-Batches. Jede Hochrechnung, die mit
 „80 Slots" argumentiert, ist damit die optimistische Untergrenze. Der Fix gehört zu
-Sprint 3C (C.4, technischer Pre-Filter).
+Sprint 3C (C.4, technischer Pre-Filter) — der Pre-Filter ist dort **nicht** eine
+bessere Auswahl innerhalb eines bestehenden Deckels, sondern die einzige
+Mengenbegrenzung überhaupt.
 Details, Laufzeit-Hochrechnung und der Cron-Konflikt: PROJECT_STATUS.md, F.1.
 
 ## Wichtige Befehle

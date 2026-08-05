@@ -14,7 +14,7 @@
 ```bash
 # 1. Setup (einmalig)
 python -m pip install -r requirements.txt
-pytest tests/ --cov=src --cov-fail-under=80  # Stand 2026-08-03: 513 passed, 7 skipped, 93% Coverage
+pytest tests/ --cov=src --cov-fail-under=80  # Stand 2026-08-06: 539 passed, 7 skipped, 93% Coverage
 
 # 2. Lokal ausführen — ACHTUNG: kein Mock-Modus. Ein Lauf ruft echte APIs auf,
 #    kostet Geld und verschickt echte Mail. Gefahrlos nur über Docker gegen eine
@@ -128,7 +128,7 @@ Carry-Over-Tabellen). Kein kritischer Bug aktiv.
 ## First Run Checklist
 
 - [ ] `requirements.txt` installiert + Python 3.12+ aktiv
-- [ ] `pytest tests/ -q` → 513 passed, 7 skipped (✅ lokal grün, Stand 2026-08-03)
+- [ ] `pytest tests/ -q` → 539 passed, 7 skipped (✅ lokal grün, Stand 2026-08-06)
 - [ ] GitHub Secrets: ANTHROPIC_API_KEY, RESEND_API_KEY, EMAIL_TO, EMAIL_FROM
 - [ ] `.github/workflows/analyze.yml` aktiviert (nicht FINNHUB_API_KEY!)
 - [ ] `workflow_dispatch` auf `analyze.yml` testen

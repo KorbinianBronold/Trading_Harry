@@ -1,7 +1,10 @@
 # PROJECT_STATUS.md — Shares_Future (Trading_Harry)
 
-**Zuletzt aktualisiert:** 2026-08-04 — Plan 2 codeseitig fertig (20/20); B.1/B.2/B.3 auf
-E1–E5 nachgezogen; P2.4 korrigiert (Workflow deaktiviert, Code lief nie)
+**Zuletzt aktualisiert:** 2026-08-06 — Task-20-Review abgeschlossen: **acht Defekte behoben**
+(3 Criticals, eingefrorene Tagesbar, beide Weekly-Blöcke, Winter-Cron, Netzsperre), Details
+in **P2.8**. Kosten- und `MAX_DEEP_ANALYSIS`-Aussagen sind in B.1, B.13, C.4 und F.1
+vereinheitlicht — die Widersprüche gegen die eigene Korrekturbox sind raus.
+⚠️ **Weiterhin ungeprüft live:** `analyze.yml` steht auf `disabled_manually`, P2.4 offen.
 **Aktueller Branch:** `main` — die 25 Plan-2-Commits (`fd7e20a`…`58782e4`) liegen
 **direkt auf `main` und sind gepusht**. `git ls-remote --heads origin` kennt nur
 `refs/heads/main` (Stand 2026-08-03: `feee447`); einen Branch
@@ -123,20 +126,32 @@ E1–E5 nachgezogen; P2.4 korrigiert (Workflow deaktiviert, Code lief nie)
 
 | Run-Type | Zeit (Berlin) | Änderung | Kosten (geschätzt) |
 |---|---|---|---|
-| `pre_market` | 15:00 Mo–Fr | **unverändert** — volle Pipeline Phase 0–5 | ~3,20 EUR (500 Ticker) |
-| `trade_proposals` | 16:10 Mo–Fr | **NEU** — ersetzt `evaluate` vollständig (anderer Zweck, s. B.2) | ~1,00 EUR |
-| `close` | 22:30 Mo–Fr | **vereinfacht** (s. B.5) | ~0,00 EUR |
+| `pre_market` | 15:00 Mo–Fr | **unverändert** — volle Pipeline Phase 0–5 | **3,31 EUR bei 20 Tickern** (gemessen) |
+| `trade_proposals` | 16:10 Mo–Fr¹ | **NEU** — ersetzt `evaluate` vollständig (anderer Zweck, s. B.2) | ~0,5–0,7 EUR (E1) |
+| `close` | 22:30 Mo–Fr | **vereinfacht** (s. B.6) | ~0,00 EUR |
 | `weekly` | So 20:00 | Struktur unverändert, **Inhalt erweitert** (s. B.9) | ~0,00 EUR |
 | ~~`midday`~~ | — | **komplett entfernen** | — |
 | ~~`evaluate`~~ | — | **ersetzt durch `trade_proposals`** | — |
 | ~~`position_check`~~ | — | **komplett entfernen** | — |
 
+¹ Der Cron hängt an der **US-Eröffnung**, nicht an Berlin: 10:10 America/New_York, also
+14:10 UTC unter EDT und 15:10 UTC unter EST. `analyze.yml` hat beide Slots, der Workflow
+verwirft den jeweils falschen. Mit nur dem Sommer-Slot lief der Lauf von November bis
+März **vor** der Eröffnung (Fix 2026-08-06).
+
 **`pre_market` bleibt explizit unverändert.** Der frühere Plan, ihn in `pre_open` (nur Phase 0+1)
 und `post_open` (Phase 0–4) aufzuspalten, ist verworfen.
 
-**Kostenwirkung:** alt ~6,60 EUR/Tag → neu ~4,20 EUR/Tag (bei 500 Tickern), also
-~139 EUR → **~88 EUR/Monat**. Das trifft das für Sprint 3F gesetzte ~90-EUR-Ziel bereits
-ohne den technischen Pre-Filter aus 3C — der schafft zusätzlichen Puffer.
+⚠️ **Kostenwirkung — die frühere Rechnung hier war falsch und ist zurückgezogen.**
+Sie lautete „alt ~6,60 → neu ~4,20 EUR/Tag bei 500 Tickern, ~88 EUR/Monat, 3F-Ziel
+bereits getroffen". Beide Eingangsgrößen stimmen nicht: der erste echte Messlauf am
+2026-07-29 kostete **3,31 EUR für 20 Ticker** (nicht ~3,20 EUR für 500), und einen Deckel
+auf Phase 3 gibt es nicht (`MAX_DEEP_ANALYSIS` ist tot). Das ~90-EUR-Ziel für 3F ist damit
+**nicht** getroffen, sondern offen — die belastbare Hochrechnung steht in F.1.
+
+Gesichert ist nur die *Richtung*: der Wegfall von `midday` und der Ersatz von `evaluate`
+durch das billige `trade_proposals` (E1) senken die Tageskosten. Um wie viel, entscheidet
+sich erst mit dem Pre-Filter aus C.4.
 
 **Zu entfernen (vollständig, keine Leichen):**
 - `midday`: Cron-Eintrag in `analyze.yml`, Run-Type in `main.py:RUN_TYPES`, Dispatch in `main()`,
@@ -542,7 +557,8 @@ im Free-Tarif, 3 000 im Pro-Tarif):
 - die `MAX_COST_PER_RUN_EUR`-Prüfung würde racy — der Deckel könnte überschritten werden
 
 **Löst nicht das Kostenproblem aus F.1.** Parallelisierung verkürzt die Laufzeit, nicht
-die Rechnung. Für 3F braucht es zusätzlich ein kleineres `MAX_DEEP_ANALYSIS`, ein
+die Rechnung. Für 3F braucht es zusätzlich einen **überhaupt erst zu bauenden** Deckel auf
+Phase 3 — `MAX_DEEP_ANALYSIS` ist eine tote Konstante und deckelt heute nichts —, ein
 günstigeres Modell für Phase 3 oder einen deutlich schärferen Pre-Filter aus 3C.
 
 ### B.12 — Stand der Umsetzung: Plan 1 fertig, Plan 2 umgesetzt
@@ -692,9 +708,18 @@ python main.py --run-type trade_proposals
 ```
 
 Zu prüfen: 16:10-Mail kommt an; je Ticker genau **eine** offene Zeile in `predictions`;
-`guardrail_rejects` enthält `enforced=0` aus dem Morgenlauf und ggf. `enforced=1` aus
-dem 16:10-Lauf; `cost_tracking` weist den 16:10-Lauf mit **deutlich unter 1 EUR** aus.
-Liegt er höher, stimmt E1 nicht und der Prompt oder die Eingabemenge muss nachgesehen werden.
+`guardrail_rejects` enthält Zeilen aus **beiden** Läufen; `cost_tracking` weist den
+16:10-Lauf mit **deutlich unter 1 EUR** aus. Liegt er höher, stimmt E1 nicht und der
+Prompt oder die Eingabemenge muss nachgesehen werden.
+
+⚠️ **`enforced` trennt nicht die Läufe** (korrigiert 2026-08-06). Die Spalte heißt
+„dieser Check hat das Signal tatsächlich verworfen" — so liest sie auch
+`signal_checks.blocks()` — und **beide Läufe schreiben beide Werte**: `pre_market`
+schreibt `enforced=1`, wenn der klassische `GuardrailsChecker` greift (`ranking.py`
+verwirft den Kandidaten dort wirklich), und `trade_proposals` schreibt `enforced=0` für
+die immer weichen Checks (Klumpenrisiko, Opening-Gap, einseitiges Momentum). Wer die
+Läufe auseinanderhalten will, muss nach `run_type` gruppieren — Weekly-Block 3 tut das
+seit dem Fix.
 
 ### P2.5 — Befunde aus der Umsetzung
 
@@ -749,6 +774,35 @@ Alles unkritisch, alles bewusst vertagt. Vollständige Liste im SDD-Ledger
 | Docstring nennt Phase 1d nicht als Ausnahme | `_mock_all_other_phases` in `tests/unit/test_main.py` |
 | Plan-Erratum: „8 Tests" statt 7 | Plan-Datei, Task 7 Step 4 |
 | **`cost_summary` in `run_weekly()` ist hart auf Nullen verdrahtet** — die Weekly-Mail meldet dauerhaft „Run-Kosten Woche: 0.0 EUR", obwohl `cost_tracking` echte Werte führt (3,3143 EUR für den 29.07.). Es gibt bislang nur `save_cost_tracking()`, keine Lesefunktion. Fix wäre ein `db.load_cost_summary(conn, since)` mit `SUM`/`AVG` plus eine Zeile in `run_weekly()`. *(gefunden 2026-08-04 bei Task 19, bewusst nicht dort behoben — Task 19 sollte den Plan unverändert umsetzen)* | `main.py:run_weekly()`, `src/email_sender.py:render_weekly_html()` |
+
+### P2.8 — Review von Task 20: acht behobene Defekte (2026-08-05/06)
+
+Das Gesamt-Review über die Plan-2-Commits (`a57f9dc`…`92773c8`) lief über drei getrennte
+Reviewer. Alle Befunde wurden vor der Umsetzung am Code nachgeprüft; jeder Fix hat einen
+eigenen Commit und einen Test, der vorher rot war.
+
+| # | Defekt | Wirkung, wenn er live gegangen wäre | Fix |
+|---|---|---|---|
+| C1 | Ablösung lief über **zwei** Commits (`save_prediction` + `record_revision`) | Bricht der Lauf dazwischen ab, stehen dauerhaft **zwei offene Zeilen** für dieselbe Trade-Idee. Der Evaluator schließt beide, jede Kennzahl zählt doppelt — genau die Doppelzählung, die E3 verhindern soll. Kein UNIQUE (Befund 8), kein Reparaturlauf | `db.supersede_prediction()` legt INSERT und UPDATE in **eine** Transaktion — so heißt die Funktion auch in Spec 5.2 |
+| C2 | Übersprungene Ticker bekamen einen **erfundenen** 16:10-Einstieg | `collect()` liefert sie gar nicht zurück, `snapshot.get("price") or pred["entry_price"]` fiel still auf den 15:00-Kurs zurück — und löste die Morgenzeile trotzdem ab. P&L und jeder 3D-Vergleich erben den Fehler lautlos | Ohne frischen Kurs bleibt die Zeile offen und gilt als „nicht geprüft" (Spec 7.1); der Claude-Call entfällt |
+| C3 | Nur `RevalidationError` gefangen | `call_claude` reicht nach zwei Retries die **rohe** Exception durch; ein 429/529 kommt als `APIStatusError`. Der entkam bis aus `run_trade_proposals` heraus: `save_cost_tracking()` lief nie, ausgegebenes Geld blieb unverbucht. Bei ~27 Calls je Lauf kein Randfall | Breit gefangen, `CostCapExceeded` vorher durchgereicht. Zusätzlich überlebt das Teilergebnis jetzt einen Deckel-Abbruch |
+| — | **Eingefrorene Tagesbar** | `_ensure_today_bar()` stieg bei vorhandener Zeile aus. Der 15:00-Lauf schrieb damit eine Pre-Market-Quote fest: der 16:10-Lauf verglich „frische" Kurse **gegen sich selbst** (Opening-Gap konnte nie feuern) und der echte Tagesschluss wurde **nie** geschrieben — die Zeile blieb dauerhaft falsch und verfälschte jeden daraus gerechneten Indikator | Laufender Tag wird überschrieben, abgeschlossene Tage nie. Grundlage: Read-only-Sonde, s. unten |
+| — | Weekly-Block 3 ließ `run_type` fallen | Harte Ablehnungen des **Morgenlaufs** lasen sich als Ablehnungen des 16:10-Laufs | Gruppierung nach `(run_type, rule, enforced)` |
+| — | Weekly-Block 2 jointe auf `p.id` | Bestätigte Zeilen sind `superseded` und bekommen **nie** ein Outcome — das hängt am Nachfolger. „bestätigt: Ø 0 EUR / gedreht: −18 EUR" hätte Bestätigen als wertlos ausgewiesen | Join über `COALESCE(superseded_by, id)`; `avg_pl` bleibt NULL statt 0, dazu `n_evaluated` |
+| — | `trade_proposals`-Cron nur für die US-Sommerzeit | Von November bis März lief der Lauf um 09:10 ET — **20 min vor** der Eröffnung. Lautlos: kein Fehler, nur vier Monate Unsinnsdaten pro Jahr | Zweiter Slot (15:10 UTC); der Workflow verwirft den zur aktuellen US-Zeitzone falschen |
+| — | Netzsperre der Tests nur auf `requests.get/post` | finnhub nutzt `requests.Session`, das Anthropic-SDK **httpx** — der teuerste Pfad war der einzige ungeschützte. Mit Key in der `.env` machte jeder Test, der `call_claude` zu mocken vergaß, echte Calls | Sperre auf Transport-Ebene (`HTTPAdapter.send`, `httpx.Client.send`); Anthropic-Client zusätzlich stillgelegt, weil das SDK die Exception sonst zu „Connection error." verschluckt |
+
+**Read-only-Sonde gegen Capital.com (2026-08-05, 22:05 UTC), Grundlage des Bar-Fixes:**
+- Für einen noch nicht eröffneten Tag gibt es **gar keine** Bar — 2026-08-06 fehlte
+  vollständig. Eine Pre-Open-Quote als eigener Sonderfall existiert also nicht.
+- Die Bar des laufenden Tages **bewegt sich weiter**: AAPLs Volumen lief zwischen zwei
+  Abrufen von 63024 auf 63028 — zwei Stunden **nach** dem regulären US-Schluss. Die
+  DAY-Bar deckt damit auch die erweiterten Handelszeiten ab und existiert um 15:00 Berlin
+  (09:00 ET, Pre-Market) längst.
+
+**Nicht bestätigt:** die Annahme, die `enforced`-Polarität sei vertauscht. Beide
+Schreibstellen sagen die Wahrheit (s. Korrekturbox in P2.4); falsch war nur ihre
+Beschreibung.
 
 ### P2.7 — Bekannte, bewusst akzeptierte Lücke
 
@@ -978,10 +1032,17 @@ Reiner Python-Filter (ATR, RSI, Volume, Market Cap) **ohne Claude-Kosten**, der 
 vor dem Haiku-Batching reduziert.
 
 **Ziel:** Vorbereitung der 500-Ticker-Skalierung (Sprint 3F) bei überschaubaren Kosten
-(~90 EUR/Monat angestrebt). Da `MAX_DEEP_ANALYSIS = 80` die teure Phase 3 ohnehin deckelt,
-wirkt der Pre-Filter primär auf die Phase-2-Kosten und die Laufzeit — der große Hebel für 3F
-ist trotzdem, dass die 80 Phase-3-Slots mit den *besten* Kandidaten gefüllt werden statt mit
-zufällig durchgerutschten.
+(~90 EUR/Monat angestrebt).
+
+⚠️ **Es gibt keinen Deckel auf Phase 3.** `MAX_DEEP_ANALYSIS = 80` wird nirgends im Code
+gelesen (verifiziert 2026-07-30, erneut 2026-08-06) — `analyze_assets()` analysiert
+**jeden** nicht-`exclude`ten Ticker, begrenzt nur durch `CostCapExceeded`. Der Pre-Filter
+ist damit **nicht** eine Verbesserung der Auswahl innerhalb eines bestehenden Deckels,
+sondern **die einzige Mengenbegrenzung überhaupt**, die C.4 einzuziehen hat. Er wirkt auf
+Phase-2-Kosten, Phase-3-Kosten und Laufzeit zugleich.
+
+Wer hier einen Deckel voraussetzt, unterschätzt die 500-Ticker-Kosten um ein Vielfaches —
+siehe die Korrekturbox in F.1.
 
 ---
 
@@ -1078,11 +1139,13 @@ Annahme, dass der Deckel greift)*:
 
 **Der Hebel:** Phase 3 läuft strikt sequenziell (`src/deep_analysis.py`, `for td in
 ticker_datas:`). Bei 5 parallelen Analysen fallen die 72 Minuten auf ~15.
-**Entschieden am 2026-07-29: die Parallelisierung wird nach Plan 2 vorgezogen** —
-Details, Zahlen und die beiden Thread-Safety-Haken in Abschnitt B.13.
+~~Entschieden am 2026-07-29: die Parallelisierung wird nach Plan 2 vorgezogen.~~
+**Am 2026-07-30 mit Entscheidung E2 zurückgenommen — B.13 gehört wieder zu 3F.**
+Die Actions-Minuten-Begründung trug nach E1 nicht mehr (Details in B.13).
 
 Das löst allerdings **nur die Laufzeit, nicht die Kosten**; dafür braucht es entweder
-ein kleineres `MAX_DEEP_ANALYSIS`, ein günstigeres Modell für Phase 3, oder den
+einen **überhaupt erst zu bauenden** Deckel auf Phase 3 (`MAX_DEEP_ANALYSIS` ist eine
+tote Konstante, s. Korrekturbox unten), ein günstigeres Modell für Phase 3, oder den
 technischen Pre-Filter aus 3C mit deutlich schärferer Wirkung.
 
 **Actions-Minuten:** Das Repo ist derzeit **public**, damit sind die Minuten unbegrenzt
