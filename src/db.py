@@ -428,9 +428,12 @@ def get_tables(conn: sqlite3.Connection) -> list[str]:
 def upsert_price_history(
     conn: sqlite3.Connection, ticker: str, date: str,
     open_: float, high: float, low: float, close: float, volume: int,
-    source: str = "yfinance",
+    source: str = "capital.com",
 ) -> None:
-    """Inserts or overwrites one price_history row for `ticker`/`date`."""
+    """Inserts or overwrites one price_history row for `ticker`/`date`.
+
+    Gegenstueck zu insert_price_bar_if_missing: gedacht fuer den Bar des noch
+    laufenden Tages, der sich bis zum Schluss weiter bewegt."""
     conn.execute(
         """INSERT OR REPLACE INTO price_history
            (ticker, date, open, high, low, close, volume, source)

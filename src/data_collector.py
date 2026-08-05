@@ -272,17 +272,25 @@ def _ensure_today_bar(
     conn,
     date: str,
 ) -> None:
-    """Append today's bar to price_history via INSERT OR IGNORE.
+    """Schreibt den Bar fuer `date` — den laufenden Tag bewusst ueberschreibend,
+    abgeschlossene Tage nie.
 
     Tries single-bar fetch (get_ohlc_after) first; falls back to full
-    history fetch for fresh installs without historical_loader data."""
-    existing = conn.execute(
-        "SELECT 1 FROM price_history WHERE ticker=? AND date=?",
-        (ticker, date),
-    ).fetchone()
-    if existing:
-        return
+    history fetch for fresh installs without historical_loader data.
 
+    Kein vorzeitiges Aussteigen mehr, wenn fuer (ticker, date) schon eine Zeile
+    existiert. Capital.coms DAY-Bar des laufenden Tages existiert bereits waehrend
+    des Tages und veraendert sich weiter (verifiziert 2026-08-05: AAPLs Volumen
+    lief um 22:07 UTC noch hoch, zwei Stunden nach dem regulaeren US-Schluss — die
+    Bar deckt also auch die erweiterten Handelszeiten ab und existiert um 15:00
+    Berlin, mitten im Pre-Market, laengst).
+
+    Mit dem alten Aussteiger schrieb der 15:00-Lauf eine Pre-Market-Quote fest,
+    gegen die danach niemand mehr ankam: der 16:10-Lauf verglich 'frische' Kurse
+    gegen sich selbst — der Opening-Gap-Check konnte nie feuern —, und der echte
+    Tagesschluss aus dem 22:30-Lauf wurde nie geschrieben. Die Zeile blieb
+    dauerhaft eine Pre-Market-Quote und verfaelschte jeden Indikator, der spaeter
+    daraus gerechnet wurde."""
     df: pd.DataFrame | None = None
     try:
         _ohlc = price_provider.get_ohlc_after(ticker, date, date)
@@ -307,7 +315,12 @@ def _ensure_today_bar(
         d = ts.strftime("%Y-%m-%d") if hasattr(ts, "strftime") else str(ts)[:10]
         if d > date:
             continue
-        db.insert_price_bar_if_missing(
+        # Der laufende Tag wird ueberschrieben, abgeschlossene Tage nie: auf der
+        # Historie beruhen saemtliche Indikatoren, die darf kein spaeterer Lauf
+        # umschreiben.
+        writer = (db.upsert_price_history if d == date
+                  else db.insert_price_bar_if_missing)
+        writer(
             conn, ticker=ticker, date=d,
             open_=float(row.get("Open", 0)),
             high=float(row.get("High", 0)),
