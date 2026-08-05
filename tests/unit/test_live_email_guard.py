@@ -129,3 +129,54 @@ def test_guard_blocks_send_daily_email_without_mock():
     }
     with pytest.raises(EmailSendError, match="Ungemockter POST-Aufruf"):
         send_daily_email(payload, "test-key", "from@test.com", "to@test.com")
+
+
+def test_guard_blocks_a_requests_session():
+    """Die Sperre lag auf requests.get/post — der finnhub-SDK ruft aber
+    self._session.get() auf und lief damit komplett daran vorbei.
+
+    Genau diese Bauart hat schon zweimal echte Fremdaufrufe aus Unit-Tests
+    gelassen; ein Schutz, der nur die Modulfunktionen kennt, ist keiner."""
+    import pytest
+    import requests
+
+    with pytest.raises(RuntimeError, match="Ungemockter"):
+        requests.Session().get("https://finnhub.io/api/v1/stock/profile2")
+
+
+def test_guard_blocks_httpx_the_anthropic_transport():
+    """Der teuerste Pfad ueberhaupt war ungeschuetzt: das Anthropic-SDK
+    transportiert ueber httpx, nicht ueber requests. Mit einem
+    ANTHROPIC_API_KEY in der .env -- config.py ruft load_dotenv() -- macht jeder
+    Test, der call_claude() zu mocken vergisst, echte und abgerechnete Calls."""
+    import pytest
+    import httpx
+
+    with pytest.raises(RuntimeError, match="Ungemockter"):
+        httpx.Client().get("https://api.anthropic.com/v1/messages")
+
+
+def test_guard_covers_every_requests_verb():
+    """PUT/DELETE/PATCH waren nie gesperrt."""
+    import pytest
+    import requests
+
+    for verb in ("put", "delete", "patch", "head"):
+        with pytest.raises(RuntimeError, match="Ungemockter"):
+            getattr(requests, verb)("https://api.resend.com/emails")
+
+
+def test_guard_blocks_the_real_call_claude_path():
+    """Der teure Pfad, End-to-End geprueft.
+
+    Die httpx-Sperre allein genuegt nicht: sie verhindert den Aufruf zwar, aber
+    das Anthropic-SDK faengt die Exception und wirft sie als
+    APIConnectionError('Connection error.') neu. Die Meldung der Sperre ginge
+    verloren -- der Entwickler saehe nur 'Connection error.' und wuesste nicht,
+    warum. Genau dieses Verschlucken hat den zweiten Vorfall so lange verdeckt.
+    Deshalb wird der Client zusaetzlich direkt stillgelegt."""
+    import pytest
+    from src.utils import call_claude
+
+    with pytest.raises(RuntimeError, match="Ungemockter POST-Aufruf"):
+        call_claude(model="claude-haiku-4-5-20251001", system="s", user="u")

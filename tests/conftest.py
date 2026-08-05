@@ -59,14 +59,42 @@ def tmp_db_path(tmp_path: Path) -> Path:
     return tmp_path / "test.db"
 
 
+def _refuse(verb: str, url: str) -> RuntimeError:
+    """Die eine Fehlermeldung der Sperre — nennt Verb und Zieladresse."""
+    return RuntimeError(
+        f"Ungemockter {verb}-Aufruf an {url} blockiert.\n"
+        "Tests ausserhalb von tests/live/ duerfen nicht nach draussen "
+        "telefonieren -- weder Mail verschicken noch Kurse, "
+        "Fundamentaldaten, Kontostaende oder Claude-Antworten abrufen.\n"
+        "Moegliche Loesungen:\n"
+        "  - die aufrufende Funktion mocken (z.B. main.collect)\n"
+        "  - den Provider mocken (z.B. main.CapitalComProvider)\n"
+        "  - die Versandfunktion mocken (z.B. src.email_sender._send)\n"
+        "  - den Claude-Aufruf mocken (z.B. main.revalidate_one)\n"
+        "Ein echter Fremdsystem-Test gehoert nach tests/live/ und traegt "
+        "den Marker live_api oder live_email."
+    )
+
+
 @pytest.fixture(autouse=True)
 def _block_outgoing_http(monkeypatch, request):
     """Sperrt jeden ausgehenden HTTP-Aufruf ausserhalb von tests/live/.
 
-    Deckt bewusst ALLE Fremdsysteme ab, nicht nur den Mailversand: Kursanbieter,
-    Fundamentaldaten und Mail laufen im Produktivcode saemtlich ueber
-    requests.get / requests.post (geprueft, es gibt keinen weiteren Einstieg --
-    kein Session-Objekt, kein urllib, kein httpx).
+    Die Sperre sitzt auf der TRANSPORT-Ebene, nicht auf den bequemen
+    Modulfunktionen. requests.get/post allein zu patchen reichte nachweislich
+    nicht:
+
+      * der finnhub-SDK ruft self._session.get() auf einem eigenen
+        requests.Session-Objekt auf und lief komplett daran vorbei,
+      * das Anthropic-SDK transportiert ueber httpx statt requests -- mit einem
+        ANTHROPIC_API_KEY in der .env (config.py ruft load_dotenv()) machte damit
+        jeder Test, der call_claude() zu mocken vergass, echte und abgerechnete
+        Calls,
+      * PUT/DELETE/PATCH/HEAD waren nie gesperrt.
+
+    requests.adapters.HTTPAdapter.send ist der Punkt, durch den JEDER
+    requests-Aufruf laeuft -- Modulfunktion wie Session. httpx.Client.send und
+    httpx.AsyncClient.send sind das Gegenstueck fuer das Anthropic-SDK.
 
     Anlass: zwei reale Vorfaelle. Erst gingen aus einem gewoehnlichen Testlauf
     echte Mails an die private Adresse raus, weil ein neuer Sendepfad nicht
@@ -79,27 +107,34 @@ def _block_outgoing_http(monkeypatch, request):
     if any(m in request.keywords for m in LIVE_MARKERS):
         return
 
-    def _blocked(verb: str):
-        """Baut den Ersatz fuer requests.<verb>, der die Zieladresse nennt."""
-        def _fail(*args, **kwargs):
-            url = args[0] if args else kwargs.get("url", "<unbekannte Adresse>")
-            raise RuntimeError(
-                f"Ungemockter {verb}-Aufruf an {url} blockiert.\n"
-                "Tests ausserhalb von tests/live/ duerfen nicht nach draussen "
-                "telefonieren -- weder Mail verschicken noch Kurse, "
-                "Fundamentaldaten oder Kontostaende abrufen.\n"
-                "Moegliche Loesungen:\n"
-                "  - die aufrufende Funktion mocken (z.B. main.collect)\n"
-                "  - den Provider mocken (z.B. main.CapitalComProvider)\n"
-                "  - die Versandfunktion mocken (z.B. src.email_sender._send)\n"
-                "  - oder gezielt requests.get / requests.post patchen\n"
-                "Ein echter Fremdsystem-Test gehoert nach tests/live/ und traegt "
-                "den Marker live_api oder live_email."
-            )
-        return _fail
+    def _blocked_adapter_send(self, request_obj, *args, **kwargs):
+        raise _refuse(getattr(request_obj, "method", "?") or "?",
+                      getattr(request_obj, "url", "<unbekannte Adresse>"))
 
-    monkeypatch.setattr("requests.get", _blocked("GET"))
-    monkeypatch.setattr("requests.post", _blocked("POST"))
+    def _blocked_httpx_send(self, request_obj, *args, **kwargs):
+        raise _refuse(getattr(request_obj, "method", "?") or "?",
+                      getattr(request_obj, "url", "<unbekannte Adresse>"))
+
+    monkeypatch.setattr(
+        "requests.adapters.HTTPAdapter.send", _blocked_adapter_send)
+    monkeypatch.setattr("httpx.Client.send", _blocked_httpx_send)
+    monkeypatch.setattr("httpx.AsyncClient.send", _blocked_httpx_send)
+
+    # Der Anthropic-Client wird zusaetzlich direkt stillgelegt. Die httpx-Sperre
+    # allein verhindert den Aufruf zwar zuverlaessig, aber das SDK FAENGT die
+    # Exception und wirft sie als APIConnectionError('Connection error.') neu --
+    # die Meldung der Sperre geht verloren, und @retry_with_backoff haengt noch
+    # zwei Wartezyklen an jeden solchen Test. Genau dieses Verschlucken war der
+    # Grund fuer den zweiten Vorfall. Hier bricht es sofort und lesbar ab.
+    import src.utils
+
+    class _BlockedAnthropic:
+        class messages:
+            @staticmethod
+            def create(*args, **kwargs):
+                raise _refuse("POST", "https://api.anthropic.com/v1/messages")
+
+    monkeypatch.setattr(src.utils, "_anthropic_client", _BlockedAnthropic())
 
 
 @pytest.fixture
