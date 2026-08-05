@@ -871,6 +871,85 @@ def test_skipped_ticker_is_never_superseded_on_a_stale_price(tmp_db_path, mocker
     assert [c["verdict"] for c in changes] == ["nicht_geprueft"]
 
 
+def _tp_run_mocks(mocker, prices):
+    """Die immergleichen Mocks fuer einen run_trade_proposals-Lauf."""
+    mocker.patch("main.CapitalComProvider", return_value=MagicMock())
+    mocker.patch("main.FinnhubProvider", return_value=MagicMock())
+    mocker.patch("main.collect", return_value=(prices, 0))
+    mocker.patch("main.fetch_market_context", return_value={"vix_level": 18.0})
+    mocker.patch("main.collect_sector_momentum", return_value={})
+    mocker.patch("main.run_policy_monitor", return_value={"policy_risk_level": "low",
+                                                         "events": []})
+    mocker.patch("main.check_open_positions", return_value=[])
+    return mocker.patch("main.send_trade_proposals_email")
+
+
+def test_transient_api_error_does_not_kill_the_run(tmp_db_path, mocker):
+    """C3: call_claude reicht nach zwei Retries die rohe Exception durch.
+
+    Ein 429/529 der Anthropic-API kommt als APIStatusError an — kein
+    RevalidationError. Frueher entkam der bis aus run_trade_proposals heraus:
+    save_cost_tracking() lief nie, jeder bereits ausgegebene EUR blieb
+    unverbucht, und die schon abgeloesten Ticker sah niemand. Bei ~27
+    sequentiellen Calls je Lauf ist ein transienter Fehler kein Randfall."""
+    from src import db
+    conn = db.connect(str(tmp_db_path)); db.init_schema(conn)
+    pid = _pred_row(conn)
+    conn.commit(); conn.close()
+
+    mail = _tp_run_mocks(mocker, [{"ticker": "AAPL", "price": 101.0}])
+    mocker.patch("main.revalidate_one",
+                 side_effect=RuntimeError("529 overloaded_error"))
+
+    from main import run_trade_proposals
+    run_trade_proposals(date="2026-07-30", db_path=str(tmp_db_path))
+
+    conn = db.connect(str(tmp_db_path))
+    row = conn.execute("SELECT * FROM predictions WHERE id=?", (pid,)).fetchone()
+    assert row["status"] == "open", "nie auf Basis eines Fehlers abloesen"
+    assert row["revision_verdict"] is None
+    n_cost = conn.execute("SELECT COUNT(*) c FROM cost_tracking").fetchone()["c"]
+    assert n_cost == 1, "die Kosten des Laufs muessen verbucht werden"
+    conn.close()
+
+    mail.assert_called_once()
+    changes = mail.call_args.kwargs["payload"]["signal_changes"]
+    assert [c["verdict"] for c in changes] == ["nicht_geprueft"]
+
+
+def test_cost_cap_keeps_the_already_checked_signals(tmp_db_path, mocker):
+    """Ein Abbruch am Kostendeckel darf das bereits Geleistete nicht verwerfen.
+
+    Frueher hing das Ergebnis an `payload[...] = _revalidate_all(...)`: reisst der
+    Aufruf ab, findet die Zuweisung nie statt und die Mail meldet '0 Signale' —
+    obwohl die ersten Zeilen in der DB laengst abgeloest sind. Spec 7.1 verlangt
+    Teilergebnis plus Warnbalken."""
+    from src import db
+    from src.cost_tracker import CostCapExceeded
+    conn = db.connect(str(tmp_db_path)); db.init_schema(conn)
+    _pred_row(conn, ticker="AAPL")
+    _pred_row(conn, ticker="MSFT")
+    conn.commit(); conn.close()
+
+    mail = _tp_run_mocks(mocker, [{"ticker": "AAPL", "price": 101.0},
+                                  {"ticker": "MSFT", "price": 101.0}])
+    mocker.patch("main.revalidate_one", side_effect=[
+        {"verdict": "bestaetigt", "probability_pct": 70, "reason": "haelt",
+         "entry_window_low": 100.5, "entry_window_high": 101.5},
+        CostCapExceeded("Deckel erreicht"),
+    ])
+
+    from main import run_trade_proposals
+    run_trade_proposals(date="2026-07-30", db_path=str(tmp_db_path))
+
+    changes = mail.call_args.kwargs["payload"]["signal_changes"]
+    assert len(changes) == 1, "das bereits gepruefte Signal bleibt in der Mail"
+    assert changes[0]["ticker"] == "AAPL"
+    assert changes[0]["verdict"] == "bestaetigt"
+    summary = mail.call_args.kwargs["payload"]["cost_summary"]
+    assert summary["aborted_at_phase"] == "revalidation"
+
+
 @pytest.mark.parametrize("phase,target", [
     ("market_context",  "main.fetch_market_context"),
     ("data_collection", "main.collect"),
@@ -1000,10 +1079,11 @@ def test_signal_changes_have_consistent_keys_on_revalidation_failure(tmp_db_path
     mocker.patch("main.revalidate_one", side_effect=RevalidationError("kaputt"))
 
     from main import _revalidate_all
-    out = _revalidate_all(
+    out: list[dict] = []
+    _revalidate_all(
         conn=conn, date="2026-07-30", snapshots={"AAPL": {"price": 101.0}},
         sector_mom={}, market_ctx={"vix_level": 18.0}, policy_context={},
-        cost_tracker=CostTracker(),
+        cost_tracker=CostTracker(), out=out,
     )
     conn.close()
 

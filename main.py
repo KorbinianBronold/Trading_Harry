@@ -556,10 +556,13 @@ def run_trade_proposals(date: str, db_path: str) -> None:
                                    "keine Nachrichtenlage in dieser Prüfung."]
 
         current_phase = "revalidation"
-        payload["signal_changes"] = _revalidate_all(
+        # out= statt Zuweisung: bricht der Lauf hier am Kostendeckel ab, sind die
+        # bis dahin geprueften Signale schon persistiert und muessen auch in der
+        # Mail stehen (Spec 7.1: Teilergebnis plus Warnbalken).
+        _revalidate_all(
             conn=conn, date=date, snapshots=snapshots, sector_mom=sector_mom,
             market_ctx=market_ctx, policy_context=policy_context,
-            cost_tracker=cost_tracker,
+            cost_tracker=cost_tracker, out=payload["signal_changes"],
         )
 
         current_phase = "portfolio_check"
@@ -635,17 +638,22 @@ def _unchecked_row(pred, reason: str) -> dict:
 def _revalidate_all(
     conn, date: str, snapshots: dict, sector_mom: dict,
     market_ctx: dict, policy_context: dict, cost_tracker: CostTracker,
+    out: list[dict],
 ) -> list[dict]:
     """Prueft jedes heutige offene pre_market-Signal nach und persistiert das
-    Ergebnis. Gibt die Zeilen fuer die Mail zurueck.
+    Ergebnis. Haengt die Zeilen fuer die Mail an `out` an.
 
     Ein Fehlschlag betrifft immer nur EIN Signal: die zugehoerige Zeile bleibt dann
-    unangetastet offen und erscheint in der Mail als 'nicht geprueft'."""
+    unangetastet offen und erscheint in der Mail als 'nicht geprueft'.
+
+    `out` gehoert bewusst dem Aufrufer statt als Rueckgabewert zu entstehen: reisst
+    der Lauf am Kostendeckel ab, ist das bereits Gepruefte laengst in der DB
+    abgeloest. Haenge es an einer Zuweisung, ginge es fuer die Mail verloren und
+    der Nutzer laese '0 Signale' neben dem Warnbalken (Spec 7.1: Teilergebnis)."""
     open_preds = db.load_predictions_for_revalidation(conn, date)
     log.info(f"Re-Validierung: {len(open_preds)} offene pre_market-Signale")
 
     counts = signal_checks.cluster_counts(conn, [p["ticker"] for p in open_preds])
-    out: list[dict] = []
     for pred in open_preds:
         ticker = pred["ticker"]
         snapshot = snapshots.get(ticker, {})
@@ -692,7 +700,18 @@ def _revalidate_all(
                     conn, ticker, date),
                 policy_context=policy_context, cost_tracker=cost_tracker,
             )
-        except RevalidationError as e:
+        except CostCapExceeded:
+            # Deckel gilt fuer den ganzen Lauf, nicht fuer ein Signal — muss
+            # durch bis zum Handler in run_trade_proposals. Dasselbe Muster wie
+            # in den uebrigen Phasen.
+            raise
+        except Exception as e:
+            # Bewusst breit: call_claude() reicht nach zwei Retries die rohe
+            # Exception durch, ein 429/529 kommt also als APIStatusError an und
+            # nicht als RevalidationError. Frueher entkam der bis aus
+            # run_trade_proposals heraus — save_cost_tracking() lief nie und die
+            # bereits abgeloesten Ticker sah niemand. Ein Fehlschlag darf immer
+            # nur EIN Signal kosten (Spec 7.1).
             log.warning(f"{ticker}: Re-Validierung fehlgeschlagen, Zeile bleibt "
                         f"unveraendert offen: {e}")
             out.append(_unchecked_row(pred, str(e)))
