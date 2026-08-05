@@ -635,15 +635,20 @@ allein 93 %). Suite grün unter Europe/Berlin **und** UTC.
 **Zwei Commits ausserhalb des Plans**, beide auf ausdrückliche Anweisung:
 `70f883b` und `58782e4` — Sperre gegen ausgehende HTTP-Aufrufe in Tests (s. P2.5).
 
-**Ein weiterer Commit gehört zu keinem Task und war bislang nirgends dokumentiert:**
-`feee447` „add random" (2026-07-31) — aktuelle Spitze von `main` und `origin/main`. Er
-legt vier Dateien unter `random/` ab: die beiden Wegwerf-Sonden `_fake_ticker_probe.py`
-und `_phase1_sector_probe.py` (Realtests gegen die echte Capital.com-API, laufen gegen
-eine DB-Kopie), `claude_commands.md` und `project_ideas.md` (unsortierte Ideensammlung,
-enthält u. a. noch die **alte** Cron-Tabelle mit `midday`/`evaluate`/`position_check`
-— durch B.1 überholt, nicht als Stand lesen). Zu beachten: `random/` steht seit
-`c2c8e1c` in `.gitignore`, die Dateien wurden also erzwungen hinzugefügt und sind
-seitdem trotz Ignore-Regel getrackt. Kein Produktivcode, keine Testabdeckung.
+**Ein weiterer Commit gehörte zu keinem Task:** `feee447` „add random" (2026-07-31) legte
+vier Dateien unter `random/` ab — getrackt *und* in `.gitignore`, weil sie erzwungen
+hinzugefügt worden waren (Ignore-Regeln greifen bei bereits getrackten Dateien nicht).
+
+**Aufgelöst am 2026-08-06:**
+- die beiden Sonden sind produktive Werkzeuge geworden und liegen jetzt bei den anderen:
+  `setup/probe_ticker_deactivation.py` (Realtest der B.7-Deaktivierung) und
+  `setup/probe_sector_mapping.py` (Abdeckung der `finnhubIndustry`-Rohwerte). Beide laufen
+  gegen eine **Kopie** der DB, `data/tracking.db` bleibt unberührt.
+- `claude_commands.md` gelöscht — dokumentierte einen Docker-**Cron-Container**, den es nie
+  gab (CLAUDE.md: „kein Scheduler/Cron im Container"), sonst nur Claude-CLI-Aufrufe.
+- `project_ideas.md` gelöscht — enthielt die **alte** Cron-Tabelle mit
+  `midday`/`evaluate`/`position_check` und eine von der realen Sprint-Struktur überholte
+  Sprint-Aufteilung. Die drei noch offenen Ideen daraus stehen jetzt in Abschnitt 2b.
 
 ### P2.3 — Alle 20 Tasks umgesetzt
 
@@ -1152,6 +1157,21 @@ technischen Pre-Filter aus 3C mit deutlich schärferer Wirkung.
 und kostenlos. Geplant ist der Wechsel auf privat — dann greifen 2 000 Minuten/Monat
 (Free-Tarif). Bei 95 min/Tag × 22 Handelstage wären allein `pre_market` ≈ 2 090 Minuten
 fällig, also über dem Kontingent. Rechnung s. B.13.
+
+---
+
+## 2b. Ideen ohne Sprint-Zuordnung
+
+Gerettet aus `random/project_ideas.md`, bevor die Datei aufgelöst wurde (2026-08-06).
+Alles andere darin war entweder erledigt (Gap-Erkennung, Cron-Umbau) oder von der
+tatsächlichen Sprint-Struktur überholt. **Keine Zusagen — nur festgehalten, damit sie
+nicht verloren gehen.**
+
+| Idee | Notiz |
+|---|---|
+| **Social-Media-Signale** (X/Twitter, Truth Social) | Trendsetter über `config` konfigurierbar (Trump, Musk, …), deren Posts in die Analyse einfliessen. Grösster Brocken der drei; berührt Guardrails (Belegpflicht) und Kosten. |
+| **Roh-Requests/-Responses hinter einem Flag loggen** | Kleine Änderung in `src/utils.py` (Debug-Logging des Response-Texts). Hilfreich, um Prompt- und Parse-Fehler nachzuvollziehen, statt sie aus der Wirkung zu erraten. |
+| **SQLite später ggf. auf DuckDB/DWH** | Bewusst *nicht* jetzt. Erst relevant, wenn die Auswertungen über einzelne Läufe hinausgehen (3D/3F). |
 
 ---
 
