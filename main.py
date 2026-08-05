@@ -438,7 +438,10 @@ def _persist_revision(
         db.record_revision(conn, pred["id"], "verworfen")
         return None
 
-    new_id = db.save_prediction(conn, {
+    # E3: INSERT der neuen Zeile und Abloesung der alten in EINER Transaktion —
+    # zwei getrennte Commits liessen bei einem Abbruch dazwischen zwei offene
+    # Zeilen stehen, und der Evaluator schloesse beide.
+    return db.supersede_prediction(conn, pred["id"], {
         "date": date, "run_type": "trade_proposals",
         "asset_class": pred["asset_class"], "ticker": ticker, "direction": direction,
         "entry_price": entry,
@@ -465,9 +468,7 @@ def _persist_revision(
         "hold_days_recommended": pred["hold_days_recommended"],
         "intraday_range_pct": pred["intraday_range_pct"],
         "sector_etf_momentum": etf_mom, "sector_db_momentum": db_mom,
-    })
-    db.record_revision(conn, pred["id"], verdict["verdict"], superseded_by=new_id)
-    return new_id
+    }, verdict=verdict["verdict"])
 
 
 def run_trade_proposals(date: str, db_path: str) -> None:

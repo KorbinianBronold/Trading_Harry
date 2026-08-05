@@ -439,8 +439,11 @@ def upsert_price_history(
     )
 
 
-def save_prediction(conn: sqlite3.Connection, pred: dict) -> int:
+def _insert_prediction(conn: sqlite3.Connection, pred: dict) -> int:
     """Inserts one predictions row from a flat dict and returns its new id.
+
+    Committet bewusst NICHT — so kann supersede_prediction() den INSERT mit dem
+    UPDATE der abgeloesten Zeile in eine Transaktion legen.
 
     `learnable` faellt auf True zurueck, wenn der Aufrufer den Schluessel
     weglaesst: die INSERT-Spaltenliste listet ihn immer explizit auf, ein
@@ -468,8 +471,42 @@ def save_prediction(conn: sqlite3.Connection, pred: dict) -> int:
         f"INSERT INTO predictions ({', '.join(cols)}) VALUES ({placeholders})",
         values,
     )
-    conn.commit()
     return cur.lastrowid
+
+
+def save_prediction(conn: sqlite3.Connection, pred: dict) -> int:
+    """Inserts one predictions row and commits. Siehe _insert_prediction."""
+    new_id = _insert_prediction(conn, pred)
+    conn.commit()
+    return new_id
+
+
+def supersede_prediction(
+    conn: sqlite3.Connection, old_id: int, new_pred: dict, verdict: str,
+) -> int:
+    """Legt die trade_proposals-Nachfolgezeile an und loest die pre_market-Zeile
+    im SELBEN Commit ab (E3). Gibt die ID der neuen Zeile zurueck.
+
+    Warum eine Transaktion und nicht zwei Aufrufe: zwischen einem committeten
+    INSERT und einem noch offenen UPDATE stuenden zwei offene, lernbare Zeilen
+    fuer dieselbe (date, ticker, direction) in der DB. Bricht der Lauf genau dort
+    ab — Lock, abgebrochener Actions-Job, Runner-Timeout —, ist dieser Zustand
+    dauerhaft: es gibt weder ein UNIQUE ueber die drei Spalten (Befund 8) noch
+    einen Reparaturlauf. Der Evaluator schliesst dann beide Zeilen und jede
+    Kennzahl zaehlt doppelt. Genau das soll E3 verhindern."""
+    try:
+        new_id = _insert_prediction(conn, new_pred)
+        conn.execute(
+            """UPDATE predictions
+               SET revision_verdict = ?, superseded_by = ?, status = 'superseded'
+               WHERE id = ?""",
+            (verdict, new_id, old_id),
+        )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    return new_id
 
 
 def load_open_predictions(conn: sqlite3.Connection) -> list[sqlite3.Row]:

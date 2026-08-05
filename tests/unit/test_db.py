@@ -1152,6 +1152,82 @@ def test_record_revision_without_successor_keeps_it_open(in_memory_db):
     assert row["revision_verdict"] == "gedreht"
 
 
+class _UpdateFailsConn:
+    """Reicht alles an die echte Verbindung durch, laesst aber jedes
+    UPDATE predictions scheitern — simuliert den Abbruch (Lock, Job-Kill,
+    Runner-Timeout) genau zwischen INSERT und UPDATE."""
+
+    def __init__(self, real):
+        self._real = real
+
+    def execute(self, sql, *args, **kwargs):
+        if sql.strip().upper().startswith("UPDATE PREDICTIONS"):
+            raise sqlite3.OperationalError("database is locked")
+        return self._real.execute(sql, *args, **kwargs)
+
+    def __getattr__(self, name):
+        return getattr(self._real, name)
+
+
+def test_supersede_prediction_is_atomic(in_memory_db):
+    """C1: INSERT der Nachfolgezeile und UPDATE der abgeloesten Zeile muessen in
+    EINER Transaktion liegen.
+
+    Reisst der UPDATE weg, darf keine zweite offene Zeile zurueckbleiben. Sonst
+    stehen zwei offene, lernbare Zeilen fuer dieselbe (date, ticker, direction) in
+    der DB, der Evaluator schliesst beide, und Weekly-P&L wie Mail-Footer zaehlen
+    doppelt — exakt die Doppelzaehlung, die E3 verhindern soll. Ein UNIQUE ueber
+    die drei Spalten gibt es laut Befund 8 nicht, ein Reparaturlauf ebenso wenig:
+    der Zustand bliebe dauerhaft."""
+    db.init_schema(in_memory_db)
+    old = db.save_prediction(in_memory_db, {
+        "date": "2026-07-30", "run_type": "pre_market",
+        "ticker": "AAPL", "direction": "long"})
+
+    with pytest.raises(sqlite3.OperationalError):
+        db.supersede_prediction(
+            _UpdateFailsConn(in_memory_db), old,
+            {"date": "2026-07-30", "run_type": "trade_proposals",
+             "ticker": "AAPL", "direction": "long"},
+            verdict="bestaetigt")
+
+    open_rows = in_memory_db.execute(
+        "SELECT * FROM predictions WHERE status = 'open' AND learnable = 1"
+    ).fetchall()
+    assert len(open_rows) == 1, (
+        "nach dem Fehlschlag darf nur die pre_market-Zeile offen sein — sonst "
+        "schliesst der Evaluator beide")
+    assert open_rows[0]["id"] == old
+    assert open_rows[0]["revision_verdict"] is None
+
+
+def test_supersede_prediction_writes_both_sides(in_memory_db):
+    """Der Normalfall: neue Zeile entsteht, alte wird im selben Zug abgeloest."""
+    db.init_schema(in_memory_db)
+    old = db.save_prediction(in_memory_db, {
+        "date": "2026-07-30", "run_type": "pre_market",
+        "ticker": "AAPL", "direction": "long", "entry_price": 100.0})
+
+    new_id = db.supersede_prediction(in_memory_db, old, {
+        "date": "2026-07-30", "run_type": "trade_proposals",
+        "ticker": "AAPL", "direction": "long", "entry_price": 101.5,
+    }, verdict="bestaetigt")
+
+    old_row = in_memory_db.execute(
+        "SELECT * FROM predictions WHERE id=?", (old,)).fetchone()
+    new_row = in_memory_db.execute(
+        "SELECT * FROM predictions WHERE id=?", (new_id,)).fetchone()
+    assert old_row["status"] == "superseded"
+    assert old_row["superseded_by"] == new_id
+    assert old_row["revision_verdict"] == "bestaetigt"
+    assert new_row["run_type"] == "trade_proposals"
+    assert new_row["entry_price"] == 101.5
+    assert new_row["status"] == "open"
+    # Die neue Zeile traegt bewusst KEIN Urteil — es sitzt auf der alten, weil in
+    # drei von sechs Ausgaengen gar keine neue entsteht.
+    assert new_row["revision_verdict"] is None
+
+
 def test_superseded_predictions_are_invisible_to_the_evaluator(in_memory_db):
     """Der Kern von E3: eine Trade-Idee, genau EIN Outcome. Ohne das zaehlt
     jede Kennzahl doppelt."""
