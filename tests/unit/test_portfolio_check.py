@@ -242,3 +242,38 @@ def test_check_one_position_uses_no_web_search(mocker):
         trend_context={}, policy_context={}, cost_tracker=CostTracker(),
     )
     assert call.call_args.kwargs["tools"] == []
+
+
+# ---------- Prompt und Aufruf muessen zusammenpassen (Review 2026-08-06) ----------
+
+
+def test_prompt_does_not_ask_for_a_tool_the_call_never_provides():
+    """B.5 hat web_search entfernt (`tools=[]`), der Prompt verlangte sie weiter.
+
+    Damit bekam das Modell eine Anweisung, die es nur durch Erfinden erfuellen
+    kann: 'You may use web_search up to 3 times', dazu 'sources_used: >= 2
+    distinct domains, even for HALTEN' -- und im selben Prompt 'Never invent
+    prices or URLs'. Zwei Regeln, die sich ohne Werkzeug ausschliessen.
+
+    Das ist kein Schoenheitsfehler: `reason` wird persistiert und steht als
+    ERSTE Sektion in der Tagesmail. Was das Modell unter diesem Druck
+    zusammenreimt, liest der Nutzer als Begruendung fuer eine Halte- oder
+    Schliessen-Empfehlung."""
+    from src.portfolio_check import SYSTEM_PROMPT
+
+    assert "web_search" not in SYSTEM_PROMPT, (
+        "Der Prompt nennt weiterhin web_search, obwohl tools=[] uebergeben wird")
+    assert "sources_used" not in SYSTEM_PROMPT, (
+        "Ohne Websuche kann das Modell keine Quellen belegen -- die Pflicht "
+        "erzeugt nur erfundene URLs")
+    assert "distinct domains" not in SYSTEM_PROMPT
+
+
+def test_prompt_still_carries_the_rules_that_do_not_depend_on_tools():
+    """Die Entschaerfung darf den Rest nicht mitnehmen: die drei Aktionen, die
+    Intraday-Vorgabe und das Verbot erfundener Preise gelten unveraendert."""
+    from src.portfolio_check import SYSTEM_PROMPT
+
+    for needle in ("HALTEN", "SCHLIESSEN", "ANPASSEN",
+                   "market_context_changed", "Intraday", "Never invent prices"):
+        assert needle in SYSTEM_PROMPT, f"'{needle}' fehlt im Prompt"

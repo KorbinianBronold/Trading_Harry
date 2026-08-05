@@ -22,8 +22,12 @@ from src.utils import call_claude, extract_json_blob
 
 log = logging.getLogger("shares_future.portfolio_check")
 
+# v2 seit 2026-08-06: v1 verlangte weiterhin web_search und >= 2 Quell-Domains,
+# obwohl B.5 den Aufruf auf tools=[] gestellt hat. Das Modell konnte die Vorgabe
+# nur durch Erfinden erfuellen — und `reason` steht als erste Sektion in der
+# Tagesmail. v1 bleibt als Beleg dessen liegen, was vorher lief (Regel 10).
 SYSTEM_PROMPT = (Path(__file__).resolve().parent.parent
-                 / "prompts" / "portfolio_check_v1.txt").read_text()
+                 / "prompts" / "portfolio_check_v2.txt").read_text()
 
 MODEL = "claude-sonnet-4-6"
 MAX_TOKENS = 2048
