@@ -340,9 +340,9 @@ def render_weekly_html(payload: dict) -> str:
         f'<p><b>Run-Kosten Woche:</b> {_h(cost.get("total_eur"))} EUR</p>'
         + _weekly_revision_block(payload.get("revision_effectiveness"))
         + _weekly_simple_table(
-            "Signal-Veränderungen", ["Urteil", "Anzahl", "Ø P/L"],
+            "Signal-Veränderungen", ["Urteil", "Anzahl", "ausgewertet", "Ø P/L"],
             payload.get("verdict_stats") or [],
-            ["revision_verdict", "n", "avg_pl"])
+            ["revision_verdict", "n", "n_evaluated", "avg_pl"])
         + _weekly_simple_table(
             "Guardrails", ["Lauf", "Regel", "verworfen?", "Anzahl"],
             payload.get("guardrail_stats") or [],

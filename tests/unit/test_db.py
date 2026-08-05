@@ -1329,6 +1329,61 @@ def test_revision_verdict_stats_group_by_verdict(in_memory_db):
     assert rows == {"bestaetigt": 2, "gedreht": 1}
 
 
+def test_revision_verdict_stats_read_pl_from_the_successor(in_memory_db):
+    """Block 2 muss das P&L der abloesenden Zeile lesen.
+
+    Eine bestaetigte pre_market-Zeile ist status='superseded' und bekommt damit
+    per Konstruktion NIE ein Outcome — das haengt an der Nachfolgezeile, und die
+    traegt kein revision_verdict. Ein Join auf p.id allein liefert deshalb fuer
+    'bestaetigt', 'geschwaecht' und 'unveraendert' strukturell 0,00 EUR, waehrend
+    'gedreht' und 'verworfen' echte Zahlen zeigen (die bleiben ja offen). Die
+    Weekly-Mail laese dann 'bestaetigt: 0 EUR / gedreht: -18 EUR' — als waere
+    Bestaetigen wertlos."""
+    db.init_schema(in_memory_db)
+
+    old = db.save_prediction(in_memory_db, {
+        "date": "2026-07-30", "run_type": "pre_market",
+        "ticker": "AAPL", "direction": "long"})
+    new = db.supersede_prediction(in_memory_db, old, {
+        "date": "2026-07-30", "run_type": "trade_proposals",
+        "ticker": "AAPL", "direction": "long"}, verdict="bestaetigt")
+    db.save_outcome(in_memory_db, {
+        "prediction_id": new, "direction": "long",
+        "evaluated_date": "2026-07-31", "profit_loss_eur": 42.0})
+
+    flipped = db.save_prediction(in_memory_db, {
+        "date": "2026-07-30", "run_type": "pre_market",
+        "ticker": "MSFT", "direction": "long"})
+    db.record_revision(in_memory_db, flipped, verdict="gedreht")
+    db.save_outcome(in_memory_db, {
+        "prediction_id": flipped, "direction": "long",
+        "evaluated_date": "2026-07-31", "profit_loss_eur": -18.0})
+
+    rows = {r["revision_verdict"]: r
+            for r in db.load_revision_verdict_stats(in_memory_db, "2026-07-01")}
+    assert rows["bestaetigt"]["avg_pl"] == 42.0
+    assert rows["gedreht"]["avg_pl"] == -18.0
+
+
+def test_revision_verdict_stats_tell_flat_from_unevaluated(in_memory_db):
+    """Ein noch nicht ausgewertetes Urteil darf nicht wie 0,00 EUR aussehen.
+
+    AVG(COALESCE(pl, 0)) macht aus 'noch kein Outcome' eine Null und damit ein
+    Ergebnis, das von einem echten Nullergebnis nicht zu unterscheiden ist.
+    n_evaluated sagt, worauf der Schnitt beruht."""
+    db.init_schema(in_memory_db)
+    pid = db.save_prediction(in_memory_db, {
+        "date": "2026-07-30", "run_type": "pre_market",
+        "ticker": "AAPL", "direction": "long"})
+    db.record_revision(in_memory_db, pid, verdict="verworfen")
+
+    rows = {r["revision_verdict"]: r
+            for r in db.load_revision_verdict_stats(in_memory_db, "2026-07-01")}
+    assert rows["verworfen"]["n"] == 1
+    assert rows["verworfen"]["n_evaluated"] == 0
+    assert rows["verworfen"]["avg_pl"] is None, "kein Outcome heisst kein Schnitt"
+
+
 def test_guardrail_reject_stats_separate_the_two_runs(in_memory_db):
     """Block 3 muss nach run_type UND enforced trennen.
 

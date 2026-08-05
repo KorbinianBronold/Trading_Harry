@@ -1112,12 +1112,26 @@ def load_revision_verdict_stats(
     conn: sqlite3.Connection, since_date: str,
 ) -> list[sqlite3.Row]:
     """B.9/Block 2: wie oft wurde bestaetigt / geschwaecht / gedreht / verworfen,
-    und wie liefen die Gruppen danach."""
+    und wie liefen die Gruppen danach.
+
+    Der Join laeuft ueber COALESCE(superseded_by, id), nicht ueber id allein: eine
+    bestaetigte pre_market-Zeile ist status='superseded' und bekommt damit per
+    Konstruktion nie ein eigenes Outcome — das haengt an der Nachfolgezeile, und
+    die traegt kein revision_verdict. Ueber id allein waere das P&L von
+    'bestaetigt', 'geschwaecht' und 'unveraendert' strukturell immer 0,00 EUR,
+    waehrend 'gedreht' und 'verworfen' echte Zahlen zeigen — die bleiben ja offen.
+    Die Mail laese dann, Bestaetigen sei wertlos.
+
+    avg_pl bleibt bewusst NULL, solange nichts ausgewertet ist: AVG(COALESCE(pl,0))
+    machte aus 'noch kein Outcome' eine Null, die von einem echten Nullergebnis
+    nicht zu unterscheiden waere. n_evaluated sagt, worauf der Schnitt beruht."""
     return conn.execute(
         """SELECT p.revision_verdict AS revision_verdict, COUNT(*) AS n,
-                  ROUND(AVG(COALESCE(o.profit_loss_eur, 0)), 2) AS avg_pl
+                  COUNT(o.id) AS n_evaluated,
+                  ROUND(AVG(o.profit_loss_eur), 2) AS avg_pl
            FROM predictions p
-           LEFT JOIN outcomes o ON o.prediction_id = p.id
+           LEFT JOIN outcomes o
+                  ON o.prediction_id = COALESCE(p.superseded_by, p.id)
            WHERE p.date >= ? AND p.revision_verdict IS NOT NULL
            GROUP BY p.revision_verdict
            ORDER BY n DESC""",
