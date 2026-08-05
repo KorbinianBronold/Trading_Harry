@@ -2,7 +2,13 @@ name: analyze
 on:
   schedule:
     - cron: '0 13 * * 1-5'    # pre_market       15:00 Berlin (CEST)
-    - cron: '10 14 * * 1-5'   # trade_proposals  16:10 Berlin (CEST)
+    # trade_proposals haengt als einziger Lauf an der US-Eroeffnung, nicht an
+    # Berlin: er soll 40 min danach liegen, also um 10:10 America/New_York.
+    # Das sind 14:10 UTC, solange New York auf EDT steht, und 15:10 UTC auf EST.
+    # Beide Slots feuern ganzjaehrig (Cron ist UTC-fix); der Schritt
+    # "Determine run_type" wirft den jeweils falschen weg.
+    - cron: '10 14 * * 1-5'   # trade_proposals  10:10 New York (EDT)
+    - cron: '10 15 * * 1-5'   # trade_proposals  10:10 New York (EST)
     - cron: '30 20 * * 1-5'   # close            22:30 Berlin (CEST)
     - cron: '0 18 * * 0'      # weekly           So 20:00 Berlin (CEST)
 
@@ -60,13 +66,35 @@ jobs:
           case "${{ github.event.schedule }}" in
             "0 13 * * 1-5")  T="pre_market" ;;
             "10 14 * * 1-5") T="trade_proposals" ;;
+            "10 15 * * 1-5") T="trade_proposals" ;;
             "30 20 * * 1-5") T="close" ;;
             "0 18 * * 0")    T="weekly" ;;
             *)               T="close" ;;
           esac
+
+          # Von den beiden trade_proposals-Slots ist immer nur einer richtig.
+          # Massgeblich ist die US-Zeitzone, NICHT Europe/Berlin: EU und USA
+          # schalten an verschiedenen Wochenenden um, in den Zwischenwochen
+          # stimmt eine Berliner Rechnung nicht. 10:10 New York ist 14:10 UTC
+          # unter EDT (-0400) und 15:10 UTC unter EST (-0500).
+          # Ohne diesen Filter lief der Lauf von Anfang November bis Mitte Maerz
+          # um 09:10 ET -- 20 Minuten VOR der Eroeffnung. Der Opening-Gap-Check
+          # verglich dort zwei Pre-Open-Kurse und feuerte nie.
+          if [ "$T" = "trade_proposals" ]; then
+            NY_OFFSET=$(TZ=America/New_York date +%z)
+            UTC_HOUR=$(date -u +%H)
+            case "$NY_OFFSET:$UTC_HOUR" in
+              "-0400:14"|"-0500:15") ;;
+              *) echo "Slot $UTC_HOUR:10 UTC passt nicht zu New York ($NY_OFFSET)"\
+                      "— uebersprungen, der andere Slot ist heute der richtige."
+                 echo "type=" >> "$GITHUB_OUTPUT"
+                 exit 0 ;;
+            esac
+          fi
           echo "type=$T" >> "$GITHUB_OUTPUT"
 
       - name: Run analysis
+        if: steps.rt.outputs.type != ''
         run: python main.py --run-type ${{ steps.rt.outputs.type }}
 
       - name: Upload tracking.db to Release db-latest
@@ -76,7 +104,10 @@ jobs:
         # Marktkontext, Predictions, Sektor-Mapping, Kosten). Der hochgeladene
         # Stand ist schlimmstenfalls unvollstaendig, aber nie schlechter als der
         # vorherige. Der Job bleibt trotzdem rot, das Fehlersignal geht nicht verloren.
-        if: always()
+        #
+        # Der uebersprungene DST-Slot ist ausgenommen: dort lief keine Analyse,
+        # ein Upload wuerde nur den unveraenderten Stand neu hochladen.
+        if: always() && steps.rt.outputs.type != ''
         run: |
           gh release view db-latest >/dev/null 2>&1 \
             || gh release create db-latest --title "DB latest" \

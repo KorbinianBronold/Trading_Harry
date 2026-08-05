@@ -67,10 +67,31 @@ def test_workflow_has_no_removed_run_types(removed):
     assert removed not in WORKFLOW
 
 
-def test_workflow_schedules_trade_proposals_at_1410_utc():
-    """16:10 Berlin (CEST) == 14:10 UTC."""
-    assert "'10 14 * * 1-5'" in WORKFLOW
+def test_trade_proposals_has_a_slot_for_both_us_dst_phases():
+    """Der Lauf soll 40 min NACH der US-Eroeffnung liegen, also um 10:10
+    America/New_York. Das ist 14:10 UTC, solange New York auf EDT steht, und
+    15:10 UTC auf EST.
+
+    Mit nur dem 14:10-Slot lief er von Anfang November bis Mitte Maerz um
+    09:10 ET — 20 Minuten VOR der Eroeffnung. Der Opening-Gap-Check haette dort
+    zwei Pre-Open-Kurse verglichen und nie gefeuert, und die Re-Validierung
+    haette auf Kursen von vor dem Opening stattgefunden. Genau die Praemisse des
+    Laufs faellt damit weg, und zwar lautlos."""
+    assert "'10 14 * * 1-5'" in WORKFLOW, "Slot fuer die US-Sommerzeit (EDT)"
+    assert "'10 15 * * 1-5'" in WORKFLOW, "Slot fuer die US-Winterzeit (EST)"
     assert 'T="trade_proposals"' in WORKFLOW
+
+
+def test_the_wrong_trade_proposals_slot_is_skipped():
+    """Cron ist UTC-fix, also feuern BEIDE Slots das ganze Jahr. Ohne Filter
+    liefe der 16:10-Lauf zweimal taeglich — und einer davon zur falschen Zeit."""
+    step = _step("Determine run_type")
+    assert "America/New_York" in step, (
+        "Der Slot-Filter muss an der US-Zeitzone haengen, nicht an Europe/Berlin: "
+        "EU und USA schalten die Sommerzeit an verschiedenen Wochenenden um")
+    assert '"-0400:14"' in step and '"-0500:15"' in step
+    assert "if: steps.rt.outputs.type != ''" in _step("Run analysis"), (
+        "Der uebersprungene Slot darf die Analyse nicht starten")
 
 
 def test_every_cron_has_a_matching_case_branch():
@@ -78,3 +99,16 @@ def test_every_cron_has_a_matching_case_branch():
     crons = set(re.findall(r"- cron: '([^']+)'", WORKFLOW))
     cases = set(re.findall(r'"([0-9*/, -]+)"\)\s+T=', WORKFLOW))
     assert crons == cases, f"Cron/case-Mismatch: {crons ^ cases}"
+
+
+def test_every_case_branch_and_dispatch_option_is_a_real_run_type():
+    """Der Job stirbt sonst mit argparse Exit 2, und zwar erst zur Laufzeit.
+
+    Genau dieser Bruch ist der Grund, warum analyze.yml und main.py:RUN_TYPES
+    laut Spec 6.5 zusammen wechseln muessen. Da die Pipeline seit dem Umbau nie
+    gelaufen ist, ist diese statische Pruefung das einzige Signal, das es gibt."""
+    from main import RUN_TYPES
+    opts = re.search(r"options: \[([^\]]+)\]", WORKFLOW).group(1)
+    assert {o.strip() for o in opts.split(",")} == set(RUN_TYPES)
+    for t in set(re.findall(r'T="([a-z_]+)"', WORKFLOW)):
+        assert t in RUN_TYPES, f"case-Zweig '{t}' ist kein bekannter Run-Type"
