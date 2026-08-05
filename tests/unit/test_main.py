@@ -823,6 +823,54 @@ def test_revalidation_failure_leaves_the_row_untouched(tmp_db_path, mocker):
     conn.close()
 
 
+def test_skipped_ticker_is_never_superseded_on_a_stale_price(tmp_db_path, mocker):
+    """C2: collect() gibt uebersprungene Ticker gar nicht erst zurueck — weder die
+    per B.7 stillgelegten noch die mit fehlgeschlagenem Abruf.
+
+    Ohne frischen Kurs darf der 16:10-Lauf die Morgenzeile NICHT abloesen. Sonst
+    faellt der Einstieg auf den 15:00-Kurs zurueck (`snapshot.get("price") or
+    pred["entry_price"]`) und die neue Zeile behauptet einen Nachmittags-Einstieg,
+    den es nie gab — P&L, correct_direction_eod und jeder 3D-Vergleich von
+    Morgen- gegen Nachmittags-probability_pct erben den Fehler stillschweigend.
+
+    Der Claude-Call entfaellt gleich mit: er saehe nur 'CURRENT SNAPSHOT: {}'."""
+    from src import db
+    conn = db.connect(str(tmp_db_path)); db.init_schema(conn)
+    pid = _pred_row(conn)
+    conn.commit(); conn.close()
+
+    mocker.patch("main.CapitalComProvider", return_value=MagicMock())
+    mocker.patch("main.FinnhubProvider", return_value=MagicMock())
+    # AAPL wurde uebersprungen -> taucht in der Ergebnisliste nicht auf.
+    mocker.patch("main.collect", return_value=([], 1))
+    mocker.patch("main.fetch_market_context", return_value={"vix_level": 18.0})
+    mocker.patch("main.collect_sector_momentum", return_value={})
+    mocker.patch("main.run_policy_monitor", return_value={"policy_risk_level": "low",
+                                                         "events": []})
+    mocker.patch("main.check_open_positions", return_value=[])
+    reval = mocker.patch("main.revalidate_one")
+    mail = mocker.patch("main.send_trade_proposals_email")
+
+    from main import run_trade_proposals
+    run_trade_proposals(date="2026-07-30", db_path=str(tmp_db_path))
+
+    reval.assert_not_called(), "ohne frischen Kurs kein Claude-Call"
+
+    conn = db.connect(str(tmp_db_path))
+    row = conn.execute("SELECT * FROM predictions WHERE id=?", (pid,)).fetchone()
+    assert row["status"] == "open", "die Morgenzeile bleibt offen"
+    assert row["revision_verdict"] is None
+    assert row["superseded_by"] is None
+    n_new = conn.execute(
+        "SELECT COUNT(*) c FROM predictions WHERE run_type='trade_proposals'"
+    ).fetchone()["c"]
+    assert n_new == 0, "keine Zeile mit erfundenem 16:10-Einstieg"
+    conn.close()
+
+    changes = mail.call_args.kwargs["payload"]["signal_changes"]
+    assert [c["verdict"] for c in changes] == ["nicht_geprueft"]
+
+
 @pytest.mark.parametrize("phase,target", [
     ("market_context",  "main.fetch_market_context"),
     ("data_collection", "main.collect"),

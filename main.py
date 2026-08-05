@@ -618,6 +618,20 @@ def run_trade_proposals(date: str, db_path: str) -> None:
         conn.close()
 
 
+def _unchecked_row(pred, reason: str) -> dict:
+    """Die Mail-Zeile fuer ein Signal, das der 16:10-Lauf nicht pruefen konnte.
+
+    Dieselben Schluessel wie im Normalpfad (nur als None) — sonst faellt ein
+    spaeterer direkter Dict-Zugriff (statt .get()) bei einer 'nicht_geprueft'-Zeile
+    mit KeyError um."""
+    return {"ticker": pred["ticker"], "direction": pred["direction"],
+            "verdict": "nicht_geprueft",
+            "probability_before": pred["probability_pct"],
+            "probability_after": None,
+            "entry_window_low": None, "entry_window_high": None,
+            "reason": reason, "checks": []}
+
+
 def _revalidate_all(
     conn, date: str, snapshots: dict, sector_mom: dict,
     market_ctx: dict, policy_context: dict, cost_tracker: CostTracker,
@@ -635,6 +649,17 @@ def _revalidate_all(
     for pred in open_preds:
         ticker = pred["ticker"]
         snapshot = snapshots.get(ticker, {})
+        if not snapshot.get("price"):
+            # Spec 7.1: ohne frischen Kurs nie abloesen. collect() liefert
+            # uebersprungene Ticker gar nicht erst zurueck (stillgelegt per B.7
+            # oder Abruf fehlgeschlagen). Der Einstieg fiele sonst still auf den
+            # 15:00-Kurs zurueck und die neue Zeile behauptete einen
+            # Nachmittags-Einstieg, den es nie gab. Der Claude-Call entfaellt
+            # gleich mit — er saehe einen leeren Snapshot.
+            log.warning(f"{ticker}: kein frischer Kurs zum 16:10-Lauf "
+                        f"(uebersprungen?), Zeile bleibt unveraendert offen")
+            out.append(_unchecked_row(pred, "kein frischer Kurs zum 16:10-Lauf"))
+            continue
         etf_mom, db_mom = signal_checks.momentum_for(conn, ticker, sector_mom)
         sector = db.get_ticker_sector(conn, ticker)
         sector_name = sector["name"] if sector else None
@@ -670,15 +695,7 @@ def _revalidate_all(
         except RevalidationError as e:
             log.warning(f"{ticker}: Re-Validierung fehlgeschlagen, Zeile bleibt "
                         f"unveraendert offen: {e}")
-            # Dieselben Schluessel wie im Normalpfad unten (nur als None) — sonst
-            # faellt ein spaeterer direkter Dict-Zugriff (statt .get()) bei einer
-            # 'nicht_geprueft'-Zeile mit KeyError um.
-            out.append({"ticker": ticker, "direction": pred["direction"],
-                        "verdict": "nicht_geprueft",
-                        "probability_before": pred["probability_pct"],
-                        "probability_after": None,
-                        "entry_window_low": None, "entry_window_high": None,
-                        "reason": str(e), "checks": []})
+            out.append(_unchecked_row(pred, str(e)))
             continue
 
         new_id = _persist_revision(
