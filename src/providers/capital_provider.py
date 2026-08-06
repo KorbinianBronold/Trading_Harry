@@ -5,7 +5,7 @@ Session is created lazily on first call and reused for the lifetime of the
 provider instance (one instance per run).
 """
 import logging
-from datetime import date as _date, timedelta
+from datetime import date as _date, datetime as _datetime, timedelta, timezone
 
 import pandas as pd
 import requests
@@ -18,6 +18,21 @@ log = logging.getLogger("shares_future.capital")
 # Capital.com beantwortet /prices mit max>1000 per HTTP 400. Empirisch am
 # 2026-07-27 ermittelt: max=1000 liefert 1000 Bars, max=1001 einen 400er.
 MAX_BARS_PER_REQUEST = 1000
+
+
+def _not_in_future(ts: str) -> str:
+    """Klemmt einen 'to'-Zeitstempel auf 'jetzt' (UTC).
+
+    Capital.com beantwortet ein 'to' in der Zukunft mit HTTP 400 -- gemessen am
+    2026-08-06 genuegen fuenf Minuten. Das Verhalten steht NICHT in der API-Doku
+    (CapitalcomPublicAPI.pdf S. 73 nennt nur das Format). Ausgeloest wird es
+    davon, dass das Laufdatum aus Europe/Berlin stammt, die API aber laut Doku
+    auf snapshotTimeUTC filtert: zwischen 00:00 und 02:00 Berlin laeuft das
+    Berliner Datum dem UTC-Datum voraus."""
+    now = _datetime.now(timezone.utc).replace(tzinfo=None)
+    parsed = _datetime.fromisoformat(ts)
+    return min(parsed, now).strftime("%Y-%m-%dT%H:%M:%S")
+
 
 TICKER_MAP: dict[str, str] = {
     "GC=F":    "GOLD",
@@ -188,7 +203,7 @@ class CapitalComProvider(DataProvider):
                     "resolution": "DAY",
                     "max":        1000,
                     "from":       f"{start_dt.isoformat()}T00:00:00",
-                    "to":         f"{end_dt.isoformat()}T00:00:00",
+                    "to":         _not_in_future(f"{end_dt.isoformat()}T00:00:00"),
                 },
                 timeout=30,
             )

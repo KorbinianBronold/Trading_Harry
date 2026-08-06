@@ -339,3 +339,37 @@ def test_ticker_map_is_injective():
     machen — genau ein Ticker gewaenne, der andere verschwaende lautlos."""
     from src.providers.capital_provider import TICKER_MAP
     assert len(set(TICKER_MAP.values())) == len(TICKER_MAP)
+
+
+def test_to_parameter_is_clamped_to_now(monkeypatch):
+    """Capital.com wirft HTTP 400, wenn 'to' in der Zukunft liegt -- schon fuenf
+    Minuten reichen (gemessen 2026-08-06). Das steht nicht in der API-Doku.
+
+    Ausgeloest wird es davon, dass main.py das Laufdatum aus Europe/Berlin
+    ableitet, die API aber auf snapshotTimeUTC filtert: zwischen 00:00 und 02:00
+    Berlin laeuft das Berliner Datum dem UTC-Datum voraus."""
+    from datetime import datetime, timedelta, timezone
+    from src.providers.capital_provider import CapitalComProvider
+
+    seen = {}
+
+    class _Resp:
+        status_code = 200
+        def raise_for_status(self): pass
+        def json(self): return {"prices": []}
+
+    def _fake_get(url, headers=None, params=None, timeout=None):
+        seen.update(params)
+        return _Resp()
+
+    monkeypatch.setattr("src.providers.capital_provider.requests.get", _fake_get)
+    prov = CapitalComProvider()
+    monkeypatch.setattr(prov, "_headers", lambda: {})
+    monkeypatch.setattr(prov, "_map", lambda t: t)
+
+    morgen = (datetime.now(timezone.utc) + timedelta(days=1)).date().isoformat()
+    prov.get_ohlc_after("AAPL", start_date=morgen, end_date=morgen)
+
+    to_dt = datetime.fromisoformat(seen["to"])
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    assert to_dt <= now, f"'to' liegt in der Zukunft: {seen['to']}"
