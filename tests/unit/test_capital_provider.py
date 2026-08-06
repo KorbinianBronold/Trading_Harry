@@ -373,3 +373,65 @@ def test_to_parameter_is_clamped_to_now(monkeypatch):
     to_dt = datetime.fromisoformat(seen["to"])
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     assert to_dt <= now, f"'to' liegt in der Zukunft: {seen['to']}"
+
+
+def test_get_intraday_ohlc_keeps_the_full_timestamp(monkeypatch):
+    """_parse_prices schneidet snapshotTime auf [:10] und indiziert nach Datum.
+    Fuer MINUTE-Bars fielen damit alle Minuten eines Tages auf denselben
+    Indexwert -- Intraday braucht einen eigenen Parser."""
+    import pandas as pd
+    from src.providers.capital_provider import CapitalComProvider
+
+    payload = {"prices": [
+        {"snapshotTime": "2026-08-05T13:30:00",
+         "openPrice": {"bid": 309.09}, "highPrice": {"bid": 309.6},
+         "lowPrice": {"bid": 307.8}, "closePrice": {"bid": 307.94},
+         "lastTradedVolume": 431},
+        {"snapshotTime": "2026-08-05T13:31:00",
+         "openPrice": {"bid": 307.91}, "highPrice": {"bid": 308.9},
+         "lowPrice": {"bid": 307.5}, "closePrice": {"bid": 308.78},
+         "lastTradedVolume": 381},
+    ]}
+
+    class _Resp:
+        status_code = 200
+        def raise_for_status(self): pass
+        def json(self): return payload
+
+    monkeypatch.setattr("src.providers.capital_provider.requests.get",
+                        lambda *a, **k: _Resp())
+    prov = CapitalComProvider()
+    monkeypatch.setattr(prov, "_headers", lambda: {})
+    monkeypatch.setattr(prov, "_map", lambda t: t)
+
+    df = prov.get_intraday_ohlc("AAPL", "2026-08-05T13:30:00", "2026-08-05T13:32:00")
+    assert df is not None and len(df) == 2, "beide Minuten muessen erhalten bleiben"
+    assert df.index[0] == pd.Timestamp("2026-08-05 13:30:00")
+    assert df.index[1] == pd.Timestamp("2026-08-05 13:31:00")
+    assert float(df["Open"].iloc[0]) == 309.09
+
+
+def test_get_intraday_ohlc_passes_the_resolution(monkeypatch):
+    """Laut PDF S.73 sind MINUTE, MINUTE_5, MINUTE_15, MINUTE_30, HOUR, HOUR_4,
+    DAY und WEEK zulaessig. Der Code kannte bisher nur DAY."""
+    from src.providers.capital_provider import CapitalComProvider
+    seen = {}
+
+    class _Resp:
+        status_code = 200
+        def raise_for_status(self): pass
+        def json(self): return {"prices": []}
+
+    def _fake_get(url, headers=None, params=None, timeout=None):
+        seen.update(params)
+        return _Resp()
+
+    monkeypatch.setattr("src.providers.capital_provider.requests.get", _fake_get)
+    prov = CapitalComProvider()
+    monkeypatch.setattr(prov, "_headers", lambda: {})
+    monkeypatch.setattr(prov, "_map", lambda t: t)
+
+    prov.get_intraday_ohlc("AAPL", "2026-08-05T13:30:00", "2026-08-05T14:00:00",
+                           resolution="MINUTE_5")
+    assert seen["resolution"] == "MINUTE_5"
+    assert seen["max"] == 1000

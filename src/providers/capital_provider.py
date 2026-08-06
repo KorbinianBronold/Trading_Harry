@@ -137,6 +137,58 @@ class CapitalComProvider(DataProvider):
         df = df.set_index("Date").sort_index()
         return df if not df.empty else None
 
+    def _parse_intraday(self, prices: list[dict]) -> pd.DataFrame | None:
+        """Wie _parse_prices, aber mit vollem Zeitstempel als Index.
+
+        _parse_prices schneidet snapshotTime auf [:10]; bei MINUTE-Bars fielen
+        damit alle Minuten eines Tages auf denselben Indexwert."""
+        if not prices:
+            return None
+        rows = []
+        for p in prices:
+            snap = (p.get("snapshotTimeUTC") or p.get("snapshotTime", "")).replace("/", "-")
+            rows.append({
+                "Ts":     snap[:19],
+                "Open":   float(p["openPrice"]["bid"]),
+                "High":   float(p["highPrice"]["bid"]),
+                "Low":    float(p["lowPrice"]["bid"]),
+                "Close":  float(p["closePrice"]["bid"]),
+                "Volume": int(p.get("lastTradedVolume") or 0),
+            })
+        df = pd.DataFrame(rows)
+        df["Ts"] = pd.to_datetime(df["Ts"])
+        df = df.set_index("Ts").sort_index()
+        return df if not df.empty else None
+
+    def get_intraday_ohlc(
+        self, ticker: str, start_utc: str, end_utc: str,
+        resolution: str = "MINUTE",
+    ) -> pd.DataFrame | None:
+        """Intraday-Bars zwischen zwei UTC-Zeitstempeln (YYYY-MM-DDTHH:MM:SS).
+
+        Zulaessige Resolutions laut CapitalcomPublicAPI.pdf S. 73: MINUTE,
+        MINUTE_5, MINUTE_15, MINUTE_30, HOUR, HOUR_4, DAY, WEEK. max ist auf 1000
+        gedeckelt -- das Fenster 14:10-00:00 UTC sind ~590 Minutenbars und passt
+        damit in einen einzigen Call. Gibt None bei jedem Fehler zurueck."""
+        epic = self._map(ticker)
+        try:
+            resp = requests.get(
+                f"{config.CAPITAL_COM_BASE_URL}/api/v1/prices/{epic}",
+                headers=self._headers(),
+                params={
+                    "resolution": resolution,
+                    "max":        MAX_BARS_PER_REQUEST,
+                    "from":       start_utc,
+                    "to":         _not_in_future(end_utc),
+                },
+                timeout=30,
+            )
+            resp.raise_for_status()
+            return self._parse_intraday(resp.json().get("prices", []))
+        except Exception as e:
+            log.warning(f"{ticker}: Capital.com intraday fetch failed: {e}")
+            return None
+
     def get_price_history(self, ticker: str, days: int = 90) -> pd.DataFrame | None:
         """Fetches the last `days` daily bars for `ticker`; returns None on any
         request/parse failure instead of raising.
