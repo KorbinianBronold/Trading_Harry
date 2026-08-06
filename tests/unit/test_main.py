@@ -1123,3 +1123,72 @@ def test_opening_gap_reaches_the_revalidation_prompt(tmp_db_path, mocker):
 
     fired = {c.rule for c in reval.call_args.kwargs["checks"]}
     assert "opening_gap" in fired
+
+
+# ---------- Task 5 (Preismodell): final_close ----------
+
+
+def test_final_close_writes_final_bars_for_tickers_and_etfs(tmp_db_path, mocker):
+    """final_close ist der EINZIGE Schreiber von price_history -- inklusive der
+    Sub-Sektor-ETFs. Nur mit genau einem Schreiber, der ausschliesslich finale
+    Bars schreibt, kann der Frozen-Bar-Bug nicht wiederkehren."""
+    import pandas as pd
+    from src import db
+    conn = db.connect(str(tmp_db_path)); db.init_schema(conn); conn.close()
+
+    def _bar(close):
+        return pd.DataFrame(
+            {"Open": [close - 1], "High": [close + 2], "Low": [close - 2],
+             "Close": [close], "Volume": [1000]},
+            index=pd.DatetimeIndex([pd.Timestamp("2026-08-05")]))
+
+    prov = MagicMock()
+    prov._source_name = "capital.com"
+    prov.get_ohlc_after.side_effect = lambda t, *a, **k: _bar(100.0)
+    mocker.patch("main.CapitalComProvider", return_value=prov)
+    mocker.patch("main.evaluate_open_predictions", return_value=0)
+    mocker.patch("main.config.SP500_MVP_TICKERS", ["AAPL"])
+    mocker.patch("main.config.USE_FULL_SP500", False)
+    mocker.patch("main.config.SUB_SECTOR_ETFS", {"Semis": "SOXX"})
+    mocker.patch("main.build_commodity_crypto_inputs",
+                 return_value=[{"ticker": "BTC-USD"}])
+
+    from main import run_final_close
+    run_final_close(date="2026-08-06", db_path=str(tmp_db_path))
+
+    conn = db.connect(str(tmp_db_path))
+    tickers = {r["ticker"] for r in conn.execute(
+        "SELECT DISTINCT ticker FROM price_history").fetchall()}
+    conn.close()
+    assert tickers == {"AAPL", "BTC-USD", "SOXX"}
+
+
+def test_final_close_treats_a_missing_bar_as_normal(tmp_db_path, mocker):
+    """Wochenende und Feiertag: fuer Aktien gibt es keine neue Tagesbar, fuer
+    Crypto schon. Das ist der erwartete Normalfall, kein Fehler -- der Job
+    ueberspringt den Ticker und endet gruen."""
+    from src import db
+    conn = db.connect(str(tmp_db_path)); db.init_schema(conn); conn.close()
+
+    prov = MagicMock()
+    prov._source_name = "capital.com"
+    prov.get_ohlc_after.return_value = None          # keine Bar, kein Fehler
+    mocker.patch("main.CapitalComProvider", return_value=prov)
+    mocker.patch("main.evaluate_open_predictions", return_value=0)
+    mocker.patch("main.config.SP500_MVP_TICKERS", ["AAPL"])
+    mocker.patch("main.config.USE_FULL_SP500", False)
+    mocker.patch("main.config.SUB_SECTOR_ETFS", {})
+    mocker.patch("main.build_commodity_crypto_inputs", return_value=[])
+
+    from main import run_final_close
+    run_final_close(date="2026-08-06", db_path=str(tmp_db_path))   # darf nicht werfen
+
+    conn = db.connect(str(tmp_db_path))
+    n = conn.execute("SELECT COUNT(*) c FROM price_history").fetchone()["c"]
+    conn.close()
+    assert n == 0
+
+
+def test_final_close_is_a_known_run_type():
+    from main import RUN_TYPES
+    assert "final_close" in RUN_TYPES

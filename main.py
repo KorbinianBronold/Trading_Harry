@@ -39,7 +39,7 @@ log = logging.getLogger("shares_future.main")
 
 BERLIN = ZoneInfo("Europe/Berlin")
 
-RUN_TYPES = ["pre_market", "trade_proposals", "close", "weekly"]
+RUN_TYPES = ["pre_market", "trade_proposals", "close", "final_close", "weekly"]
 
 
 class MailDeliveryError(RuntimeError):
@@ -736,6 +736,77 @@ def _revalidate_all(
     return out
 
 
+def _write_final_bar(conn, price_provider, ticker: str, target: str) -> bool:
+    """Holt die finale Tagesbar fuer `ticker` am Handelstag `target` und schreibt
+    sie. True, wenn eine Bar geschrieben wurde.
+
+    Eine fehlende Bar ist der erwartete Normalfall, kein Fehler: am Wochenende
+    und an Feiertagen gibt es fuer Aktien keine neue Tagesbar, fuer Crypto
+    schon."""
+    try:
+        df = price_provider.get_ohlc_after(ticker, target, target)
+    except Exception as e:
+        log.warning(f"{ticker}: finaler Abruf fehlgeschlagen: {e}")
+        return False
+    if df is None or df.empty:
+        log.info(f"{ticker}: keine neue Tagesbar fuer {target} (Wochenende/Feiertag?)")
+        return False
+
+    _raw = getattr(price_provider, "_source_name", None)
+    source = _raw if isinstance(_raw, str) else "capital.com"
+    written = False
+    for ts, row in df.iterrows():
+        d = ts.strftime("%Y-%m-%d") if hasattr(ts, "strftime") else str(ts)[:10]
+        if d != target:
+            continue
+        db.upsert_price_history(
+            conn, ticker=ticker, date=d,
+            open_=float(row.get("Open", 0)), high=float(row.get("High", 0)),
+            low=float(row.get("Low", 0)), close=float(row.get("Close", 0)),
+            volume=int(row.get("Volume", 0) or 0), source=source,
+        )
+        written = True
+    if not written:
+        log.info(f"{ticker}: Antwort enthielt keine Bar fuer {target}")
+    return written
+
+
+def run_final_close(date: str, db_path: str) -> None:
+    """Run-Type final_close (00:15 UTC, taeglich): holt die FINALE Tages-OHLC und
+    bewertet danach die offenen Predictions.
+
+    `date` ist das UTC-Laufdatum; ausgewertet wird der UTC-Vortag. Die Tagesbar
+    wird laut openingHours (`zone: UTC`) um 00:00 UTC final -- vorher gelesen
+    waere sie provisorisch, und High/Low koennen sich bis dahin nur ausweiten.
+    Genau darauf beruhen TP- und SL-Pruefung.
+
+    Der Lauf ist bewusst schlank: kein Claude-Call, keine Mail. Die Ergebnisse
+    erscheinen in der Fussleiste der naechsten pre_market-Mail."""
+    conn = db.connect(db_path)
+    db.init_schema(conn)
+    price_provider = CapitalComProvider()
+
+    target = (date_cls.fromisoformat(date) - timedelta(days=1)).isoformat()
+    log.info(f"final_close: finalisiere Handelstag {target}")
+
+    _tickers = (config.SP500_FULL_TICKERS if config.USE_FULL_SP500
+                else config.SP500_MVP_TICKERS)
+    cc_tickers = [d["ticker"] for d in build_commodity_crypto_inputs()]
+    etfs = sorted(set(config.SUB_SECTOR_ETFS.values()))
+
+    written = 0
+    for ticker in list(_tickers) + cc_tickers + etfs:
+        if _write_final_bar(conn, price_provider, ticker, target):
+            written += 1
+    conn.commit()
+    log.info(f"final_close: {written} finale Bars fuer {target} geschrieben")
+
+    n = evaluate_open_predictions(
+        conn=conn, today=date, price_provider=price_provider)
+    log.info(f"final_close: {n} Predictions bewertet")
+    conn.close()
+
+
 def run_weekly(date: str, db_path: str) -> None:
     conn = db.connect(db_path)
     db.init_schema(conn)
@@ -772,6 +843,8 @@ def main(argv: list[str] | None = None) -> None:
             run_trade_proposals(date=date, db_path=ns.db_path)
         elif ns.run_type == "close":
             run_close(date=date, db_path=ns.db_path)
+        elif ns.run_type == "final_close":
+            run_final_close(date=date, db_path=ns.db_path)
         elif ns.run_type == "weekly":
             run_weekly(date=date, db_path=ns.db_path)
         else:  # pragma: no cover — argparse validated
