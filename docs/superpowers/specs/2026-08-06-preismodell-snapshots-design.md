@@ -152,22 +152,71 @@ close (20:30 UTC)
   └─ nur noch cleanup_old_data()
 ```
 
-### 4.3 Das Auswertungsfenster
+### 4.3 Das Auswertungsfenster — ab dem Signal, nicht ab dem Tag
+
+**Der Defekt.** Heute ruft der Evaluator `get_ohlc_after(start_date=pred["date"], …)`
+auf, und `_walk_forward_hit` beginnt bei `bars.iloc[0]` — beim Bar des **Prognosetags
+selbst**. Dessen Spanne läuft ab 08:00 UTC (`openingHours`, s. 2.3), das Signal entsteht
+aber erst um 09:00 ET (`pre_market`) beziehungsweise 10:10 ET (`trade_proposals`).
+TP/SL-Treffer aus den Stunden davor sind Artefakte: die Position gab es da noch nicht.
+
+**Was NICHT die Lösung ist.** Den ganzen Tag D auszuschliessen wäre kein beseitigtes
+Artefakt, sondern ein gespiegeltes. Sprint 3D verfolgt die Trefferquote getrennt nach
+Intraday (`hold_day = 1`) und Extended (`hold_day 2–5`); ohne Tag D könnte eine
+Intraday-These **nie** am selben Tag als getroffen erfasst werden. Der Fehler ist nicht
+„Tag D zählt", sondern „der falsche Teil von Tag D zählt".
+
+**Die Festlegung.** Das Fenster beginnt am **Signal-Zeitpunkt** und läuft bis zum Ende
+des Handelstags D, danach folgen die Tagesbars D+1 … D+MAX_HOLD_DAYS.
+
+Umsetzung über dieselbe `resolution`-Fähigkeit, die für `price_open` ohnehin entsteht:
+
+1. `MINUTE`-Bars von `signal_time` bis Tagesende abrufen. Das Fenster 14:10–00:00 UTC
+   sind ~590 Bars und passt mit `max = 1000` in **einen** Call.
+2. Diese Bars zu **einer synthetischen Tagesbar für D** verdichten:
+   `High = max(highs)`, `Low = min(lows)`, `Close = letzter Close`.
+3. Sie wird Element 1 der Sequenz, danach die finalen Tagesbars aus `price_history`.
+
+**`_walk_forward_hit` bleibt dadurch unverändert.** Das ist der Punkt der Verdichtung:
+die Funktion zählt `day_offset` je Bar, und daraus wird `days_to_close`. Minutenbars
+direkt in die Sequenz zu geben, würde jede Minute als „Tag" zählen und genau die
+Kennzahl zerstören, die 3D braucht. Nach der Verdichtung heisst `days_to_close == 1`
+exakt „am Signaltag getroffen".
+
+**`signal_time`** ergibt sich aus dem `run_type` der Zeile: `pre_market` → 09:00 ET,
+`trade_proposals` → 10:10 ET, jeweils über `America/New_York` in UTC umgerechnet (nicht
+hartkodiert, damit die US-Zeitumstellung nicht erneut zum Thema wird).
+
+**Kosten und Aufwand** (geprüft, nicht geschätzt): Capital.com berechnet nichts pro
+Call — das Kostentracking des Projekts erfasst ausschliesslich Claude. Das Rate-Limit
+liegt laut PDF (S. 6, S. 39) bei **10 Requests/Sekunde**. Ein Zusatz-Call je offener
+Prediction je Lauf bedeutet bei ~27 Predictions und maximal 5 Haltetagen ≤ 135 Calls
+pro Nacht, also rund 14 Sekunden.
+
+Die Minutendaten von Tag D ändern sich nach dessen Abschluss nie mehr, werden aber bei
+jeder Auswertung erneut geholt — bis zu fünfmal je Prediction. Das ist **bewusst in Kauf
+genommen**: der Evaluator bleibt zustandslos und selbstheilend, und ein fehlgeschlagener
+Lauf braucht keinen Nachhol-Pfad. Bei 3F-Grösse (500 Ticker → ~2 500 Calls/Nacht) lohnt
+es, die synthetische Bar einmalig in `final_close` zu berechnen und auf der
+Prediction-Zeile zu speichern; das ist der Skalierungspfad, nicht der jetzige Bau.
+
+**Randfälle.** Liegen für das Fenster keine Minutendaten vor (Feiertag, Handelsstopp,
+Abruffehler), entfällt die synthetische Bar und die Auswertung beginnt bei D+1 — die
+Prediction wird also nicht schlechter behandelt als heute. Für Commodities/Crypto gilt
+dasselbe Verfahren; dort ist das Tagesende ebenfalls 00:00 UTC.
+
+**Folge für die Daten:** Outcomes ändern sich gegenüber heute — die Rückwärts-Artefakte
+verschwinden, die Intraday-Treffer bleiben erhalten. Alte und neue Outcomes sind nicht
+direkt vergleichbar; 3D muss den Umstellungstag kennen.
+
+### 4.4 Sichtbarkeit und Reihenfolge
 
 `final_close` am UTC-Tag **X** kennt finale Bars bis einschliesslich **X-1**.
 
-- Eine Prediction vom Tag D wird über Bars **nach** D ausgewertet.
-- Der erste auswertbare Bar für sie ist D+1 — verfügbar also erst im Lauf **X = D+2**.
 - `evaluate_open_predictions(today=X)` filtert weiterhin `date < X`; das schliesst D ein.
+- Eine Prediction vom Tag D ist damit bereits im Lauf **X = D+1** auswertbar — über die
+  synthetische Bar aus 4.3. Ohne sie wäre es frühestens D+2.
 - `evaluated_date` ist der Tag des Bars, der geschlossen hat (E7).
-
-⚠️ **Verhaltensänderung, die ausdrücklich beschlossen werden muss:** heute ruft der
-Evaluator `get_ohlc_after(start_date=pred["date"], …)` auf, und `_walk_forward_hit`
-beginnt bei `bars.iloc[0]` — also beim Bar des **Prognosetags selbst**. Dessen Spanne
-umfasst 08:00–00:00 UTC und damit Stunden **vor** dem Signal (das um 09:00 bzw. 10:10 ET
-entsteht). TP/SL-Treffer aus dieser Zeit sind Artefakte. Das neue Fenster beginnt
-deshalb **strikt nach** dem Prognosetag. Outcomes werden dadurch anders — vermutlich
-weniger Treffer und mehr `timeout`, dafür ohne Rückwärts-Artefakte.
 
 ---
 
@@ -270,7 +319,12 @@ in F.1 beschriebenen Cron-Konflikt.
 - Migration gegen eine bestehende DB; zweimaliges `init_schema` ist idempotent.
 - `final_close`: schreibt finale Bars für Ticker **und** ETFs.
 - **Wochenende:** kein neuer Bar → INFO, kein Fehler, Job grün.
-- Evaluator liest `price_history`; das Fenster beginnt strikt **nach** dem Prognosetag.
+- Evaluator liest `price_history` für D+1 aufwärts.
+- **Das Fenster beginnt am Signal-Zeitpunkt:** ein TP-Treffer *vor* dem Signal am selben
+  Tag zählt **nicht**, einer *danach* zählt mit `days_to_close == 1` (Intraday für 3D).
+- Die synthetische Tagesbar verdichtet korrekt: `High` = Maximum, `Low` = Minimum,
+  `Close` = letzter Wert des Fensters.
+- Fehlen Minutendaten für das Fenster, beginnt die Auswertung bei D+1, ohne Fehler.
 - `evaluated_date` = Handelstag, und `_aggregate_yesterday_outcomes` findet ihn (E7).
 - `load_sector_db_momentum` liefert auch dann Werte, wenn für heute keine Bar existiert.
 - `pre_market` warnt, wenn die finale Bar des letzten Handelstags fehlt.
@@ -300,7 +354,8 @@ Nach jedem Schnitt ist der Stand grün und in sich konsistent.
 | 1 | 400er-Fix (`to` klemmen) + `resolution`-Parameter im Provider — Voraussetzung für alles Weitere |
 | 2 | Schema-Migration: die vier neuen Spalten |
 | 3 | `final_close`: Run-Type, Preisabruf für Ticker + ETFs, `upsert_price_history`, Wochenend-Fall |
-| 4 | Evaluator wandert, `evaluated_date`-Semantik, Auswertungsfenster, Footer-Verbindung |
+| 4a | Synthetische Signaltag-Bar: `signal_time` je `run_type`, `MINUTE`-Abruf, Verdichtung zu einer Tagesbar. Rein funktional, ohne Evaluator-Umbau testbar |
+| 4b | Evaluator wandert nach `final_close`, liest `price_history`, stellt die Bar aus 4a voran; `evaluated_date`-Semantik (E7) und Footer-Verbindung |
 | 5 | `pre_market`/`trade_proposals` auf Snapshots umstellen; `_ensure_today_bar()` und der ETF-Schreiber in `sector_momentum` entfallen; `e5e27c8` wird zurückgebaut |
 | 6 | Die fünf Sweep-Stellen aus Abschnitt 5 nachziehen, `load_sector_db_momentum` zuerst |
 | 7 | Cron, Concurrency-Lock, Sichtbarkeitswarnung |
