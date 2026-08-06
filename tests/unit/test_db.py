@@ -1455,3 +1455,33 @@ def test_sector_mapping_coverage_counts_mapped_tickers(in_memory_db):
     assert out["mapped"] == 1
     assert out["total"] == len(config.SP500_MVP_TICKERS)
     assert 0.0 <= out["pct"] <= 100.0
+
+
+def test_migration_adds_the_three_decision_snapshots(tmp_db_path):
+    """Additiv und idempotent -- muss auch gegen eine bestehende tracking.db
+    laufen. entry_price bleibt unangetastet."""
+    conn = db.connect(str(tmp_db_path))
+    db.init_schema(conn)
+    db.init_schema(conn)  # zweimal: idempotent
+    cols = {r["name"] for r in conn.execute(
+        "PRAGMA table_info(predictions)").fetchall()}
+    assert {"price_premarket", "price_open", "price_1610",
+            "is_premarket"}.issubset(cols)
+    assert "entry_price" in cols, "die bestehende Spalte bleibt"
+    conn.close()
+
+
+def test_save_prediction_persists_the_snapshots(in_memory_db):
+    db.init_schema(in_memory_db)
+    pid = db.save_prediction(in_memory_db, {
+        "date": "2026-08-06", "run_type": "trade_proposals",
+        "ticker": "AAPL", "direction": "long", "entry_price": 310.0,
+        "price_premarket": 308.5, "price_open": 309.09, "price_1610": 310.0,
+        "is_premarket": 0,
+    })
+    row = in_memory_db.execute(
+        "SELECT * FROM predictions WHERE id=?", (pid,)).fetchone()
+    assert row["price_premarket"] == 308.5
+    assert row["price_open"] == 309.09
+    assert row["price_1610"] == 310.0
+    assert row["is_premarket"] == 0

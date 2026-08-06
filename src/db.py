@@ -280,7 +280,23 @@ def _apply_migrations(conn: sqlite3.Connection) -> None:
         "PRAGMA table_info(price_history)"
     ).fetchall()}
     if "premarket_price" not in ph_cols:
+        # TOTE SPALTE -- nie geschrieben, nie gelesen. Der Vorboersenkurs gehoert
+        # seit dem Preismodell-Umbau (2026-08-06) zur Entscheidung und steht in
+        # predictions.price_premarket, nicht in der Kurshistorie. Bleibt nur
+        # stehen, weil ein DROP COLUMN bestehende DBs anfassen wuerde.
         conn.execute("ALTER TABLE price_history ADD COLUMN premarket_price REAL")
+
+    pred_cols = {r["name"] for r in conn.execute(
+        "PRAGMA table_info(predictions)"
+    ).fetchall()}
+    for col, coltype in (
+        ("price_premarket", "REAL"),
+        ("price_open",      "REAL"),
+        ("price_1610",      "REAL"),
+        ("is_premarket",    "INTEGER"),
+    ):
+        if col not in pred_cols:
+            conn.execute(f"ALTER TABLE predictions ADD COLUMN {col} {coltype}")
     conn.commit()
 
 
@@ -467,6 +483,9 @@ def _insert_prediction(conn: sqlite3.Connection, pred: dict) -> int:
         # D9 (Plan 2 / Task 10): standen seit Plan 1 im Schema, aber nicht in
         # dieser Liste — deshalb blieben sie bis hierher immer NULL.
         "sector_etf_momentum", "sector_db_momentum",
+        # Preismodell 2026-08-06: die drei Entscheidungs-Snapshots. entry_price
+        # bleibt daneben unveraendert bestehen.
+        "price_premarket", "price_open", "price_1610", "is_premarket",
     ]
     placeholders = ", ".join(["?"] * len(cols))
     values = [pred.get(c) for c in cols]
