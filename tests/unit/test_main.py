@@ -1250,3 +1250,56 @@ def test_opening_price_comes_from_the_minute_bar_not_the_day_bar(tmp_db_path, mo
     assert row["price_open"] == 309.09, "der echte Eroeffnungskurs"
     assert row["price_1610"] == 311.0
     assert row["is_premarket"] == 0, "10:10 ET liegt nach der Eroeffnung"
+
+
+def test_opening_price_stays_null_for_commodities_and_crypto(tmp_db_path, mocker):
+    """E6: 24/7-Instrumente haben keinen Eroeffnungskurs. Krypto und Rohstoffe
+    handeln durchgehend und haetten um 13:30 UTC selbstverstaendlich eine
+    Minutenbar -- nur beschreibt die kein Eroeffnungs-Ereignis. _opening_prices
+    darf deshalb nur mit Aktien-Tickern aufgerufen werden; price_open muss fuer
+    eine Krypto-/Rohstoff-Zeile aus demselben Lauf NULL bleiben, waehrend die
+    Aktienzeile ihren echten Wert bekommt."""
+    from src import db
+    conn = db.connect(str(tmp_db_path)); db.init_schema(conn)
+    _pred_row(conn, ticker="AAPL", entry_price=100.0,
+              tp_price=106.0, sl_price=98.0)
+    _pred_row(conn, ticker="BTC-USD", asset_class="crypto",
+              entry_price=64000.0, tp_price=70000.0, sl_price=62000.0)
+    conn.commit(); conn.close()
+
+    mocker.patch("main.CapitalComProvider", return_value=MagicMock())
+    mocker.patch("main.FinnhubProvider", return_value=MagicMock())
+    # Erster collect()-Aufruf liefert die Aktien (sp_tds), der zweite Krypto/
+    # Rohstoffe (cc_tds) -- dieselbe Reihenfolge wie in run_trade_proposals.
+    mocker.patch("main.collect", side_effect=[
+        ([{"ticker": "AAPL", "price": 101.0}], 0),
+        ([{"ticker": "BTC-USD", "price": 65000.0}], 0),
+    ])
+    mocker.patch("main.fetch_market_context", return_value={"vix_level": 18.0})
+    mocker.patch("main.collect_sector_momentum", return_value={})
+    mocker.patch("main.run_policy_monitor", return_value={"policy_risk_level": "low",
+                                                         "events": []})
+    mocker.patch("main.check_open_positions", return_value=[])
+    mocker.patch("main.send_trade_proposals_email")
+
+    import pandas as pd
+    prov = main.CapitalComProvider.return_value
+    prov.get_intraday_ohlc.return_value = pd.DataFrame(
+        {"Open": [309.09], "High": [309.6], "Low": [307.8],
+         "Close": [307.94], "Volume": [431]},
+        index=pd.to_datetime(["2026-07-30 13:30:00"]))
+    mocker.patch("main.revalidate_one", return_value={
+        "verdict": "bestaetigt", "probability_pct": 70, "reason": "ok",
+        "entry_window_low": 100.0, "entry_window_high": 102.0})
+
+    from main import run_trade_proposals
+    run_trade_proposals(date="2026-07-30", db_path=str(tmp_db_path))
+
+    conn = db.connect(str(tmp_db_path))
+    rows = {r["ticker"]: r for r in conn.execute(
+        "SELECT * FROM predictions WHERE run_type='trade_proposals'").fetchall()}
+    conn.close()
+    assert set(rows) == {"AAPL", "BTC-USD"}, "beide Zeilen muessen abgeloest sein"
+    assert rows["AAPL"]["price_open"] == 309.09, "Aktie bekommt den echten Open"
+    assert rows["BTC-USD"]["price_open"] is None, (
+        "24/7-Instrument hat keinen Eroeffnungskurs -- NULL statt erfundenem Wert (E6)")

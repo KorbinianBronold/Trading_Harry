@@ -183,8 +183,12 @@ def _opening_prices(price_provider, tickers: list[str], date: str) -> dict[str, 
     auseinander.
 
     Zum Abrufzeitpunkt (10:10 ET) liegt die Eroeffnung bereits in der
-    Vergangenheit, der Abruf ist also rein historisch. Commodities und Crypto
-    haben keine Eroeffnung -- fuer sie bleibt der Wert schlicht aus (E6)."""
+    Vergangenheit, der Abruf ist also rein historisch.
+
+    Der Aufrufer uebergibt ausschliesslich Aktien. Krypto und Rohstoffe handeln
+    durchgehend und haetten zwar eine Minutenbar um 13:30 UTC, aber keinen
+    Eroeffnungskurs -- der Wert waere ein beliebiger Zeitpunkt, kein Ereignis.
+    Fuer sie bleibt price_open NULL (E6)."""
     start = signal_window.regular_open_utc(date)
     end = (datetime.fromisoformat(start) + timedelta(minutes=1)).strftime(
         "%Y-%m-%dT%H:%M:%S")
@@ -573,7 +577,8 @@ def run_trade_proposals(date: str, db_path: str) -> None:
             conn=conn, date=date, run_type="trade_proposals")
         snapshots = {td["ticker"]: td for td in (sp_tds + cc_tds)}
 
-        opens = _opening_prices(price_provider, list(snapshots), date)
+        opens = _opening_prices(
+            price_provider, [td["ticker"] for td in sp_tds], date)
         for _t, _snap in snapshots.items():
             _snap["price_open"] = opens.get(_t)
 
