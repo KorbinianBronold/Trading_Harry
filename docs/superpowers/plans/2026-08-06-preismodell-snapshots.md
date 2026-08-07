@@ -1089,6 +1089,30 @@ evaluated_date ist ab jetzt der Handelstag, nicht das Laufdatum -- sonst findet
 _aggregate_yesterday_outcomes nichts mehr."
 ```
 
+### Umsetzung — zwei Commits
+
+Task 6 ist bewusst in zwei Commits zerlegt worden, damit später trennbar bleibt,
+welche der beiden Verhaltensänderungen welchen Effekt auf die Outcome-Historie
+hatte.
+
+- **`71e2db2`** — der geplante Teil. Das Auswertungsfenster beginnt am
+  Signal-Zeitpunkt statt am Tagesbeginn, der Evaluator liest die finalen
+  Tagesbars über das neue `db.load_price_history_after` statt sie selbst live zu
+  holen, und `evaluated_date` ist der Handelstag statt des Laufdatums. Sieben
+  bestehende Tests waren auf den alten Datenweg verdrahtet und hielten die von
+  Spec 4.3 verworfene Annahme „der ganze Tag D zählt" fest; sie sind neu
+  ausgedrückt (`days_to_close` fällt um eins, weil ein `close`-Lauf am
+  Prognosetag keinen Signal-Zeitpunkt hat).
+
+- **`efea2bd`** — der Hold-Days-Fix, ein bei der Umsetzung gefundener
+  **vorbestehender** Defekt: `_walk_forward_hit` lieferte `timeout`, sobald in
+  den *verfügbaren* Bars kein Treffer lag, ohne zu prüfen, ob das Fenster
+  abgelaufen ist. Dadurch schloss jede Prediction beim ersten Auswertungslauf
+  und `MAX_HOLD_DAYS = 5` war nie in Kraft. Neu: unvollständiges Fenster →
+  `pending`, die Prediction bleibt offen und erzeugt keine `outcomes`-Zeile.
+  Dazu die Notbremse `MAX_OPEN_CALENDAR_DAYS = 14` gegen Zombie-Zeilen von
+  verstummten Tickern.
+
 ---
 
 ## Task 7: Snapshots befüllen, `_ensure_today_bar` zurückbauen
