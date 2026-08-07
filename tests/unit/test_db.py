@@ -945,6 +945,74 @@ def test_sector_db_momentum_uses_the_last_final_day(in_memory_db):
     assert out[sid]["ticker_count"] == 3
 
 
+def _sector_with(conn, name: str, bars: dict[str, list[tuple[str, float]]]) -> int:
+    """Legt einen Sub-Sektor an und haengt je Ticker die uebergebenen
+    (Datum, Close)-Bars ein. Gibt die sector_id zurueck."""
+    sid = resolve_sector_id(conn, name)
+    for ticker, rows in bars.items():
+        upsert_ticker_sector(conn, ticker, sid)
+        for d, close in rows:
+            _bar(conn, ticker, d, close)
+    conn.commit()
+    return sid
+
+
+def test_sector_db_momentum_ignores_stillgelegte_ticker(in_memory_db):
+    """Ein stillgelegter Ticker trug seine letzte je vorhandene Tagesbewegung
+    dauerhaft weiter, weil 'die letzten zwei Bars' kein Alter kennt.
+
+    Gemessen mit zwei lebenden Tickern (+2 %) und einem seit Maerz toten
+    (+50 %): das Sektor-Momentum sprang von None auf 18,0, und ticker_count
+    erreichte faelschlich das Minimum -- aus 'kein Signal' wurde 'starkes
+    Signal', auf das D9 gehandelt haette. Kein Uebervorsichts-Riegel."""
+    init_schema(in_memory_db)
+    sid = _sector_with(in_memory_db, "Semiconductors", {
+        "AAPL": [("2026-08-04", 100.0), ("2026-08-05", 102.0)],
+        "MSFT": [("2026-08-04", 100.0), ("2026-08-05", 102.0)],
+        # Seit Maerz tot, damals +50 %.
+        "DEAD": [("2026-03-02", 100.0), ("2026-03-03", 150.0)],
+    })
+
+    out = db.compute_sector_db_momentum(in_memory_db, date="2026-08-06")
+    assert out[sid]["ticker_count"] == 2, "der tote Ticker zaehlt nicht mit"
+    assert out[sid]["momentum"] is None, (
+        "zwei Ticker unterschreiten min_tickers=3 -- ohne Riegel waeren es 18,0")
+
+
+def test_sector_db_momentum_ignores_ticker_with_a_gap(in_memory_db):
+    """Frischer letzter Bar, aber der Vorgaenger liegt Monate davor: die
+    Fuenf-Monats-Bewegung wuerde als *Tages*performance verrechnet. Eine reine
+    Frischepruefung auf den letzten Bar liesse genau diesen Fall durch."""
+    init_schema(in_memory_db)
+    sid = _sector_with(in_memory_db, "Pharmaceuticals", {
+        "JNJ": [("2026-08-04", 100.0), ("2026-08-05", 102.0)],
+        "LLY": [("2026-08-04", 100.0), ("2026-08-05", 102.0)],
+        # Letzter Bar ist frisch, der davor stammt vom 1. Maerz.
+        "GAPY": [("2026-03-01", 100.0), ("2026-08-05", 150.0)],
+    })
+
+    out = db.compute_sector_db_momentum(in_memory_db, date="2026-08-06")
+    assert out[sid]["ticker_count"] == 2, "der Ticker mit Luecke zaehlt nicht mit"
+    assert out[sid]["momentum"] is None
+
+
+def test_sector_db_momentum_counts_a_friday_bar_on_monday(in_memory_db):
+    """Gegenprobe: der Riegel darf den Normalbetrieb nicht abschneiden.
+
+    Montagslauf (2026-08-10), letzter finaler Bar ist der Freitag (08-07) --
+    drei Kalendertage. Ein zu scharfer Riegel waere derselbe stille Ausfall
+    noch einmal, nur andersherum."""
+    init_schema(in_memory_db)
+    sid = _sector_with(in_memory_db, "Semiconductors", {
+        t: [("2026-08-06", 100.0), ("2026-08-07", 102.0)]
+        for t in ("NVDA", "AVGO", "AMD")
+    })
+
+    out = db.compute_sector_db_momentum(in_memory_db, date="2026-08-10")
+    assert out[sid]["ticker_count"] == 3, "Freitagsbar am Montag zaehlt regulaer"
+    assert out[sid]["momentum"] == pytest.approx(2.0)
+
+
 def test_save_and_load_sector_momentum_upserts(in_memory_db):
     init_schema(in_memory_db)
     sid = resolve_sector_id(in_memory_db, "Semiconductors")

@@ -370,10 +370,20 @@ def get_ticker_sector(conn: sqlite3.Connection, ticker: str) -> sqlite3.Row | No
     ).fetchone()
 
 
+# Wie alt eine Bar hoechstens sein darf, um noch als "aktuelle Tagesperformance"
+# zu zaehlen -- in Kalendertagen, damit Wochenenden und Feiertage abgedeckt sind
+# (Montagslauf: letzter finaler Bar ist Freitag, also drei Tage).
+# Ohne diesen Riegel traegt ein stillgelegter Ticker seine letzte je vorhandene
+# Tagesbewegung dauerhaft ins Sektor-Momentum -- gemessen sprang es dadurch von
+# None auf 18,0, und ticker_count erreichte faelschlich das Minimum.
+SECTOR_MOMENTUM_MAX_BAR_AGE_DAYS = 5
+
+
 def compute_sector_db_momentum(
     conn: sqlite3.Connection,
     date: str,
     min_tickers: int = config.SECTOR_DB_MOMENTUM_MIN_TICKERS,
+    max_bar_age_days: int = SECTOR_MOMENTUM_MAX_BAR_AGE_DAYS,
 ) -> dict[int, dict]:
     """Berechnet je Sub-Sektor die durchschnittliche Tagesperformance aller
     zugeordneten Ticker aus price_history — reines SQL, keine API-Calls, 0 EUR.
@@ -384,8 +394,16 @@ def compute_sector_db_momentum(
     auf exakte Gleichheit mit heute traefe nie, db_momentum bliebe dauerhaft
     NULL und der D9-Guardrail waere lautlos tot.
 
+    Zwei Riegel gegen veraltete Daten, beide noetig: der letzte Bar darf
+    hoechstens `max_bar_age_days` alt sein (sonst traegt ein stillgelegter oder
+    delisteter Ticker seine letzte je vorhandene Bewegung dauerhaft weiter), und
+    die beiden Bars duerfen nicht weiter auseinanderliegen (sonst wird die
+    Bewegung eines Tickers mit Luecke -- letzter Bar frisch, Vorgaenger Monate
+    davor -- als Tagesperformance verrechnet).
+
     Gibt {sector_id: {"momentum": float | None, "ticker_count": int}} zurueck.
-    `momentum` ist None, wenn weniger als `min_tickers` Ticker zwei Bars haben."""
+    `momentum` ist None, wenn weniger als `min_tickers` Ticker zwei brauchbare
+    Bars haben."""
     rows = conn.execute(
         """WITH last_two AS (
              SELECT ts.sector_id AS sector_id, ph.ticker AS ticker,
@@ -402,8 +420,10 @@ def compute_sector_db_momentum(
            JOIN last_two prev
              ON prev.ticker = cur.ticker AND prev.rn = 2
            WHERE cur.rn = 1 AND prev.close > 0
+             AND julianday(?) - julianday(cur.date) <= ?
+             AND julianday(cur.date) - julianday(prev.date) <= ?
            GROUP BY cur.sector_id""",
-        (date,),
+        (date, date, max_bar_age_days, max_bar_age_days),
     ).fetchall()
     out: dict[int, dict] = {}
     for r in rows:
