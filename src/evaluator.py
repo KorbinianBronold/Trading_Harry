@@ -26,12 +26,36 @@ log = logging.getLogger("shares_future.evaluator")
 # bestimmen (ueber alle config.MAX_HOLD_DAYS Tage hinweg).
 MAX_HOLD_DAYS = config.MAX_HOLD_DAYS
 
+# Notbremse gegen Zombie-Predictions. Seit der Evaluator eine Prediction bei
+# unvollstaendigem Fenster offen laesst, braucht es eine obere Schranke: liefert
+# ein Ticker dauerhaft keine neuen Bars mehr -- stillgelegt per B.7, delistet,
+# Datenausfall --, wuerde die Zeile sonst nie geschlossen und in jeder Auswertung
+# als "noch laufend" mitgeschleppt. Grosszuegig gegenueber MAX_HOLD_DAYS = 5
+# Handelstagen (Wochenenden, Feiertage, ein ausgefallener Lauf), aber endlich.
+MAX_OPEN_CALENDAR_DAYS = 14
+
 
 def _walk_forward_hit(
     ohlc: pd.DataFrame, direction: str, tp: float, sl: float,
 ) -> tuple[str, float | None, int]:
     """Walk through up to MAX_HOLD_DAYS bars. Return (exit_reason, exit_price, day).
-    If no hit and no full window, returns ('timeout', last_close, day_count)."""
+
+    Ohne Treffer haengt der Ausgang davon ab, ob das Fenster abgelaufen ist:
+      - weniger als MAX_HOLD_DAYS Bars -> 'pending', die Prediction ist noch
+        nicht entschieden und bleibt offen
+      - MAX_HOLD_DAYS Bars             -> 'timeout'
+      - gar keine Bar                  -> 'data_missing'
+
+    'pending' und 'data_missing' sind bewusst verschieden: "noch nicht
+    entschieden" gegen "keine Daten vorhanden". Frueher lieferte diese Funktion
+    in allen drei Faellen 'timeout', sobald in den VERFUEGBAREN Bars kein
+    Treffer lag -- damit schloss jede Prediction beim ersten Auswertungslauf und
+    MAX_HOLD_DAYS war nie in Kraft.
+
+    exit_price traegt auch bei 'pending' schon den letzten Close, damit die
+    Notbremse in evaluate_open_predictions ihn ohne zweite Berechnung
+    verwenden kann. Ueber den Kalender entscheidet der Aufrufer: diese Funktion
+    kennt nur Bars, nicht das Datum."""
     bars = ohlc.iloc[:MAX_HOLD_DAYS]
     for day_offset, (_, bar) in enumerate(bars.iterrows(), start=1):
         if direction == "long":
@@ -51,6 +75,8 @@ def _walk_forward_hit(
     if len(bars) == 0:
         return "data_missing", None, 0
     last_close = float(bars["Close"].iloc[-1])
+    if len(bars) < MAX_HOLD_DAYS:
+        return "pending", last_close, len(bars)
     return "timeout", last_close, len(bars)
 
 
@@ -140,6 +166,20 @@ def evaluate_open_predictions(
             ohlc, direction=pred["direction"],
             tp=float(pred["tp_price"]), sl=float(pred["sl_price"]),
         )
+
+        if reason == "pending":
+            # Das Fenster laeuft noch. Die Prediction bleibt offen und wird beim
+            # naechsten Lauf erneut geprueft — es entsteht KEINE outcomes-Zeile,
+            # sonst zaehlte dieselbe Idee mehrfach. Nur die Notbremse schliesst
+            # hier, damit ein verstummter Ticker keine Zombie-Zeile hinterlaesst.
+            age_days = (date_cls.fromisoformat(today)
+                        - date_cls.fromisoformat(pred["date"])).days
+            if age_days <= MAX_OPEN_CALENDAR_DAYS:
+                continue
+            log.info(f"{ticker}: Fenster unvollstaendig, aber {age_days} Tage "
+                     f"alt — wird als timeout geschlossen")
+            reason = "timeout"
+
         pl_eur = _profit_loss_eur(
             entry=float(pred["entry_price"]) if pred["entry_price"] else None,
             exit_price=exit_price, direction=pred["direction"],

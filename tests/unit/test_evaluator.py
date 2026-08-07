@@ -146,29 +146,89 @@ def test_short_sl_hit(in_memory_db):
     assert row["status"] == "closed_sl"
 
 
-def test_timeout_counts_only_bars_after_the_prediction_day(in_memory_db):
-    """Frueher 'timeout nach drei Tagen', jetzt nach zweien -- die Fixture hat
-    unveraendert drei Bars, aber die erste ist der Prognosetag selbst und
-    faellt fuer einen close-Lauf aus dem Fenster. Keine abgeschwaechte
-    Erwartung, sondern ein kleiner gewordener Auswertungszeitraum."""
+def test_incomplete_window_keeps_the_prediction_open(in_memory_db):
+    """Frueher 'timeout nach drei Tagen'. Zwei Dinge haben sich seither
+    verschoben, deshalb der neue Name:
+
+    1. Die erste Fixture-Bar ist der Prognosetag selbst und faellt fuer einen
+       close-Lauf aus dem Fenster -- es bleiben zwei Bars statt drei.
+    2. Zwei Bars sind kein abgelaufenes Fenster. MAX_HOLD_DAYS = 5 war bis
+       hierher nie in Kraft: der Evaluator schloss jede Prediction beim ersten
+       Lauf als 'timeout', weil er nur die VERFUEGBAREN Bars ansah und nicht
+       fragte, ob der Auswertungszeitraum ueberhaupt vorbei ist.
+
+    Solange das Fenster laeuft, ist die Prediction schlicht noch nicht
+    entschieden: keine outcomes-Zeile, kein geschlossener Status."""
     db.init_schema(in_memory_db)
     pid = _make_pred(in_memory_db, "TIMEOUT", direction="long",
                      entry=100.0, tp=110.0, sl=90.0)
     _load_bars(in_memory_db, "TIMEOUT")
-    evaluate_open_predictions(
+    n = evaluate_open_predictions(
         conn=in_memory_db, today="2026-05-22", price_provider=_provider(),
     )
+    assert n == 0, "der Rueckgabewert zaehlt geschlossene Predictions"
+    row = in_memory_db.execute(
+        "SELECT status FROM predictions WHERE id=?", (pid,),
+    ).fetchone()
+    assert row["status"] == "open"
+    assert in_memory_db.execute(
+        "SELECT COUNT(*) AS n FROM outcomes WHERE prediction_id=?", (pid,),
+    ).fetchone()["n"] == 0
+
+
+def test_full_window_without_a_hit_times_out(in_memory_db):
+    """Die Gegenprobe: sind MAX_HOLD_DAYS Bars da und keine reisst TP oder SL,
+    ist die Prediction entschieden und schliesst als timeout."""
+    db.init_schema(in_memory_db)
+    pid = _make_pred(in_memory_db, "FLAT", direction="long",
+                     entry=100.0, tp=110.0, sl=90.0)
+    for d, close in [("2026-05-20", 100.1), ("2026-05-21", 100.2),
+                     ("2026-05-22", 100.3), ("2026-05-25", 100.4),
+                     ("2026-05-26", 100.5)]:
+        db.upsert_price_history(in_memory_db, "FLAT", d,
+                                100.0, 101.0, 99.0, close, 0)
+    in_memory_db.commit()
+    n = evaluate_open_predictions(
+        conn=in_memory_db, today="2026-05-27", price_provider=_provider(),
+    )
+    assert n == 1
     row = in_memory_db.execute(
         "SELECT status, closed_price FROM predictions WHERE id=?", (pid,),
     ).fetchone()
     assert row["status"] == "closed_timeout"
-    assert row["closed_price"] == 100.5  # day-3 close
+    assert row["closed_price"] == 100.5
     out = in_memory_db.execute(
         "SELECT exit_reason, days_to_close FROM outcomes WHERE prediction_id=?",
         (pid,),
     ).fetchone()
     assert out["exit_reason"] == "timeout"
-    assert out["days_to_close"] == 2
+    assert out["days_to_close"] == 5
+
+
+def test_stale_prediction_times_out_despite_an_incomplete_window(in_memory_db):
+    """Notbremse gegen Zombie-Zeilen: liefert ein Ticker dauerhaft keine neuen
+    Bars mehr -- stillgelegt per B.7, delistet, Datenausfall --, wuerde die
+    Prediction ohne diese Grenze ewig offen bleiben und in jeder Auswertung als
+    'noch laufend' mitgeschleppt."""
+    db.init_schema(in_memory_db)
+    pid = _make_pred(in_memory_db, "TIMEOUT", direction="long",
+                     entry=100.0, tp=110.0, sl=90.0)
+    _load_bars(in_memory_db, "TIMEOUT")
+    n = evaluate_open_predictions(          # 20 Kalendertage nach dem Signal
+        conn=in_memory_db, today="2026-06-08", price_provider=_provider(),
+    )
+    assert n == 1
+    row = in_memory_db.execute(
+        "SELECT status, closed_price FROM predictions WHERE id=?", (pid,),
+    ).fetchone()
+    assert row["status"] == "closed_timeout"
+    assert row["closed_price"] == 100.5
+    out = in_memory_db.execute(
+        "SELECT exit_reason, days_to_close FROM outcomes WHERE prediction_id=?",
+        (pid,),
+    ).fetchone()
+    assert out["exit_reason"] == "timeout"
+    assert out["days_to_close"] == 2, "die Notbremse zaehlt die Bars, die da sind"
 
 
 def test_pessimistic_overlap_closes_at_sl(in_memory_db):
@@ -263,7 +323,13 @@ def test_window_starts_at_the_signal_not_at_midnight(in_memory_db, mocker):
     10:10 ET. Ein TP-Treffer davor ist ein Artefakt.
 
     Hier reisst der TP nur VOR dem Signal -- danach bleibt der Kurs darunter.
-    Das darf nicht als Treffer zaehlen."""
+    Das darf nicht als Treffer zaehlen.
+
+    Seit der Hold-Days-Korrektur faellt die Antwort noch deutlicher aus: eine
+    einzelne Bar ohne Treffer ist ein unvollstaendiges Fenster, die Prediction
+    bleibt offen und es entsteht gar keine outcomes-Zeile. Die Zusicherung
+    haelt beide Formen aus, weil es hier um den TP geht und nicht darum, wann
+    geschlossen wird."""
     import pandas as pd
     from src import db
     from src.evaluator import evaluate_open_predictions
@@ -285,13 +351,17 @@ def test_window_starts_at_the_signal_not_at_midnight(in_memory_db, mocker):
 
     row = in_memory_db.execute(
         "SELECT * FROM outcomes WHERE prediction_id=?", (pid,)).fetchone()
-    assert row["exit_reason"] != "tp_hit", (
+    assert row is None or row["exit_reason"] != "tp_hit", (
         "ein TP-Treffer vor dem Signal darf nicht zaehlen")
 
 
 def test_intraday_hit_closes_on_day_one(in_memory_db, mocker):
     """Und die Gegenprobe: reisst der TP NACH dem Signal am selben Tag, muss er
-    mit days_to_close == 1 zaehlen. Genau daran haengt 3Ds hold_day=1."""
+    mit days_to_close == 1 zaehlen. Genau daran haengt 3Ds hold_day=1.
+
+    Seit der Hold-Days-Korrektur ist dieser Wert eindeutig: ein unvollstaendiges
+    Fenster laeuft nicht mehr in einen timeout, days_to_close == 1 kann also nur
+    noch 'am Signaltag getroffen' heissen."""
     import pandas as pd
     from src import db
     from src.evaluator import evaluate_open_predictions
