@@ -682,7 +682,9 @@ def test_fill_price_gaps_backfills_missing_bars(in_memory_db, mocker):
         index=pd.to_datetime(["2026-07-21", "2026-07-22"]),
     )
 
-    n = _fill_price_gaps("AAPL", provider, in_memory_db, date="2026-07-22")
+    # Lauftag 07-23, damit die Luecke (07-21, 07-22) nur ABGESCHLOSSENE Tage
+    # enthaelt: der laufende Tag wird seit dem Preismodell-Umbau nie geschrieben.
+    n = _fill_price_gaps("AAPL", provider, in_memory_db, date="2026-07-23")
     assert n == 2
     dates = [r["date"] for r in in_memory_db.execute(
         "SELECT date FROM price_history WHERE ticker='AAPL' ORDER BY date").fetchall()]
@@ -709,7 +711,8 @@ def test_fill_price_gaps_ignores_bars_outside_the_window(in_memory_db, mocker):
         index=pd.to_datetime(["2026-07-17", "2026-07-21",
                               "2026-07-22", "2026-07-29"]),
     )
-    n = _fill_price_gaps("AAPL", provider, in_memory_db, date="2026-07-22")
+    # Lauftag 07-23, siehe oben: 07-22 muss ein abgeschlossener Tag sein.
+    n = _fill_price_gaps("AAPL", provider, in_memory_db, date="2026-07-23")
     assert n == 2
     dates = [r["date"] for r in in_memory_db.execute(
         "SELECT date FROM price_history WHERE ticker='AAPL' ORDER BY date").fetchall()]
@@ -818,3 +821,35 @@ def test_collect_does_not_write_price_history(in_memory_db, mocker):
     assert after == before, "collect() darf price_history nicht mehr anfassen"
     assert td is not None
     assert td["price"] == 321.5, "der Entscheidungskurs kommt live, nicht aus der DB"
+
+
+def test_gap_fill_never_writes_the_current_day(in_memory_db, mocker):
+    """price_history enthaelt nur FINALE Bars. Der laufende Tag ist noch nicht
+    final -- ihn nachzuladen brachte genau die provisorische Teilbar zurueck,
+    deren Beseitigung der ganze Umbau ist.
+
+    Der Pfad greift nur nach einem Ausfall (wenn mehr als ein Handelstag fehlt),
+    aber dann eben doch."""
+    from src import db as _dbmod
+    from src.data_collector import _fill_price_gaps
+    _dbmod.init_schema(in_memory_db)
+    # Letzte Bar liegt vier Handelstage zurueck -> Luecke, der Pfad feuert.
+    _dbmod.upsert_price_history(in_memory_db, "AAPL", "2026-07-31",
+                                100, 101, 99, 100, 10)
+    in_memory_db.commit()
+
+    provider = mocker.MagicMock()
+    provider._source_name = "capital.com"
+    provider.get_ohlc_after.return_value = pd.DataFrame(
+        {"Open": [100.0, 101.0, 102.0], "High": [101.0, 102.0, 103.0],
+         "Low": [99.0, 100.0, 101.0], "Close": [100.5, 101.5, 102.5],
+         "Volume": [10, 11, 12]},
+        index=pd.to_datetime(["2026-08-03", "2026-08-04", "2026-08-05"]))
+
+    _fill_price_gaps("AAPL", provider, in_memory_db, date="2026-08-05")
+
+    dates = {r["date"] for r in in_memory_db.execute(
+        "SELECT date FROM price_history WHERE ticker='AAPL'").fetchall()}
+    assert "2026-08-05" not in dates, (
+        "der laufende Tag ist noch nicht final und gehoert final_close")
+    assert {"2026-08-03", "2026-08-04"} <= dates, "die Luecke davor wird gefuellt"

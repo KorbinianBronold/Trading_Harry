@@ -33,8 +33,15 @@ class CheckResult:
 def daily_change_pct(
     conn: sqlite3.Connection, ticker: str, date: str,
 ) -> float | None:
-    """Tagesperformance in Prozent aus den letzten zwei Bars bis einschliesslich
-    `date`. None, wenn weniger als zwei Bars vorliegen oder der Vortagesschluss 0 ist."""
+    """Tagesperformance des letzten ABGESCHLOSSENEN Handelstags, in Prozent.
+
+    Nimmt die beiden letzten Bars bis einschliesslich `date`. Seit dem
+    Preismodell-Umbau (2026-08-06) enthaelt price_history nur finale Bars; der
+    laufende Tag ist hier also bewusst NICHT enthalten. Das ist die richtige
+    Grundlage: relative Staerke und D9 vergleichen abgeschlossene Tage, eine
+    Teilbar waere kein Vergleichsmassstab.
+
+    None, wenn weniger als zwei Bars vorliegen oder der Vortagesschluss 0 ist."""
     rows = conn.execute(
         """SELECT close FROM price_history
            WHERE ticker = ? AND date <= ?

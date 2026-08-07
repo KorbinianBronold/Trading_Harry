@@ -920,6 +920,31 @@ def test_compute_sector_db_momentum_ignores_unmapped_tickers(in_memory_db):
     assert compute_sector_db_momentum(in_memory_db, date="2026-07-27") == {}
 
 
+def test_sector_db_momentum_uses_the_last_final_day(in_memory_db):
+    """Der Join lief auf cur.date = heute, also exakte Gleichheit. Seit
+    price_history nur noch finale Bars enthaelt, existiert die heutige Zeile zur
+    Laufzeit nicht -- der Join traefe nie, db_momentum bliebe dauerhaft NULL, D9
+    koennte 'beide Signale vorhanden' nie erfuellen und der Sektor-Guardrail
+    waere lautlos tot."""
+    db.init_schema(in_memory_db)
+    in_memory_db.execute(
+        "INSERT INTO sectors (name, etf) VALUES ('Semis', 'SOXX')")
+    sid = in_memory_db.execute(
+        "SELECT id FROM sectors WHERE name='Semis'").fetchone()["id"]
+    for t in ("AAPL", "MSFT", "NVDA"):
+        in_memory_db.execute(
+            "INSERT INTO ticker_sectors (ticker, sector_id) VALUES (?, ?)", (t, sid))
+        db.upsert_price_history(in_memory_db, t, "2026-08-04", 100, 101, 99, 100, 10)
+        db.upsert_price_history(in_memory_db, t, "2026-08-05", 100, 103, 100, 102, 10)
+    in_memory_db.commit()
+
+    # Lauf am 2026-08-06: fuer heute gibt es noch keine finale Bar.
+    out = db.compute_sector_db_momentum(in_memory_db, date="2026-08-06")
+    assert sid in out, "der Sektor muss trotzdem einen Wert bekommen"
+    assert out[sid]["momentum"] == pytest.approx(2.0), "102 gegen 100 sind +2 %"
+    assert out[sid]["ticker_count"] == 3
+
+
 def test_save_and_load_sector_momentum_upserts(in_memory_db):
     init_schema(in_memory_db)
     sid = resolve_sector_id(in_memory_db, "Semiconductors")

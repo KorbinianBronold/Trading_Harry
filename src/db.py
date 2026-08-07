@@ -378,24 +378,32 @@ def compute_sector_db_momentum(
     """Berechnet je Sub-Sektor die durchschnittliche Tagesperformance aller
     zugeordneten Ticker aus price_history — reines SQL, keine API-Calls, 0 EUR.
 
+    Nimmt die beiden letzten finalen Bars bis einschliesslich `date`, nicht
+    'heute gegen gestern'. Seit dem Preismodell-Umbau (2026-08-06) enthaelt
+    price_history nur finale Tagesbars und endet zur Laufzeit bei D-1; ein Join
+    auf exakte Gleichheit mit heute traefe nie, db_momentum bliebe dauerhaft
+    NULL und der D9-Guardrail waere lautlos tot.
+
     Gibt {sector_id: {"momentum": float | None, "ticker_count": int}} zurueck.
-    `momentum` ist None, wenn weniger als `min_tickers` Ticker des Sub-Sektors
-    einen Vortagesbar haben; der Durchschnitt waere dann statistisch wertlos.
-    Ticker ohne Vortagesbar zaehlen nicht mit."""
+    `momentum` ist None, wenn weniger als `min_tickers` Ticker zwei Bars haben."""
     rows = conn.execute(
-        """SELECT ts.sector_id AS sector_id,
+        """WITH last_two AS (
+             SELECT ts.sector_id AS sector_id, ph.ticker AS ticker,
+                    ph.close AS close, ph.date AS date,
+                    ROW_NUMBER() OVER (PARTITION BY ph.ticker
+                                       ORDER BY ph.date DESC) AS rn
+             FROM ticker_sectors ts
+             JOIN price_history ph ON ph.ticker = ts.ticker AND ph.date <= ?
+           )
+           SELECT cur.sector_id AS sector_id,
                   AVG((cur.close - prev.close) / prev.close * 100.0) AS momentum,
                   COUNT(*) AS n
-           FROM ticker_sectors ts
-           JOIN price_history cur
-             ON cur.ticker = ts.ticker AND cur.date = ?
-           JOIN price_history prev
-             ON prev.ticker = ts.ticker
-            AND prev.date = (SELECT MAX(p.date) FROM price_history p
-                             WHERE p.ticker = ts.ticker AND p.date < ?)
-           WHERE prev.close > 0
-           GROUP BY ts.sector_id""",
-        (date, date),
+           FROM last_two cur
+           JOIN last_two prev
+             ON prev.ticker = cur.ticker AND prev.rn = 2
+           WHERE cur.rn = 1 AND prev.close > 0
+           GROUP BY cur.sector_id""",
+        (date,),
     ).fetchall()
     out: dict[int, dict] = {}
     for r in rows:

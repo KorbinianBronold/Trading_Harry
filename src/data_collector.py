@@ -221,6 +221,10 @@ def _fill_price_gaps(
     Kein Nachladen, wenn der Ticker noch gar keine Historie hat (das uebernimmt
     setup/historical_loader.py) oder wenn nur der heutige Bar fehlt — der ist zur
     Laufzeit noch nicht final und wird erst vom final_close-Lauf geschrieben."""
+    # Seit dem Preismodell-Umbau (2026-08-06) fuellt final_close die Historie
+    # taeglich auf; echte Luecken entstehen nur noch bei laengeren Ausfaellen und
+    # werden sonst mit setup/historical_loader.py --all nachgeladen. Die Funktion
+    # bleibt als Sicherheitsnetz stehen, greift im Normalbetrieb aber nicht mehr.
     row = conn.execute(
         "SELECT MAX(date) AS last_date FROM price_history WHERE ticker = ?",
         (ticker,),
@@ -252,7 +256,10 @@ def _fill_price_gaps(
     inserted = 0
     for ts, r in df.iterrows():
         d = ts.strftime("%Y-%m-%d") if hasattr(ts, "strftime") else str(ts)[:10]
-        if d <= last_date or d > date:
+        # `>= date` statt `> date`: der laufende Tag ist noch nicht final und
+        # gehoert final_close. Ihn hier nachzuladen brachte die provisorische
+        # Teilbar zurueck, deren Beseitigung der ganze Umbau ist.
+        if d <= last_date or d >= date:
             continue
         db.insert_price_bar_if_missing(
             conn, ticker=ticker, date=d,
