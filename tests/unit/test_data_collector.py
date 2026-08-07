@@ -133,9 +133,36 @@ from src.db import init_schema
 from src.data_collector import _process_ticker, _classify_data_quality
 
 
+def _seed_price_history(conn, ticker: str, df: pd.DataFrame) -> None:
+    """Legt `df` direkt als Kurshistorie von `ticker` in die DB.
+
+    Seit dem Preismodell-Umbau (2026-08-06) ist final_close der alleinige
+    Schreiber von price_history; _process_ticker liest sie nur noch. Damit gehoert
+    die Historie ins Test-Setup. Vorher kam sie ueber den Schreib-Seiteneffekt
+    der Datensammlung herein — das prueft eine Verkettung zweier Funktionen statt
+    des Vertrags von _process_ticker. In Produktion legt sie
+    setup/historical_loader.py an."""
+    from src import db as _dbm
+    for ts, row in df.iterrows():
+        _dbm.upsert_price_history(
+            conn, ticker=ticker, date=ts.strftime("%Y-%m-%d"),
+            open_=float(row["Open"]), high=float(row["High"]),
+            low=float(row["Low"]), close=float(row["Close"]),
+            volume=int(row["Volume"]), source="capital.com",
+        )
+    conn.commit()
+
+
 def _good_provider(df: pd.DataFrame, fundamentals: dict | None = None) -> MagicMock:
     p = MagicMock()
     p.get_price_history.return_value = df
+    # Der Entscheidungskurs kommt seit dem Preismodell-Umbau live statt aus der
+    # DB. Ohne festen Rueckgabewert lieferte der MagicMock hier einen
+    # Platzhalter, und "price" waere ein Zufallswert.
+    p.get_premarket_price.return_value = float(df["Close"].iloc[-1])
+    # Kein Gap-Nachladen im Test: _fill_price_gaps soll nicht auf einem
+    # MagicMock-DataFrame arbeiten.
+    p.get_ohlc_after.return_value = None
     p.get_fundamentals.return_value = fundamentals or {
         "pe_ratio": 28.4, "forward_pe": 26.2,
         "market_cap_b": 2800.0, "debt_equity": 1.45,
@@ -162,6 +189,7 @@ def _earnings_provider(days_to_next: int | None = 14, beat_pct: float | None = 4
 def test_process_ticker_returns_full_ticker_data(in_memory_db):
     init_schema(in_memory_db)
     df = _df_monotonic_up(250)
+    _seed_price_history(in_memory_db, "AAPL", df)
     out = _process_ticker(
         ticker="AAPL",
         price_provider=_good_provider(df),
@@ -183,9 +211,17 @@ def test_process_ticker_returns_full_ticker_data(in_memory_db):
     assert out["intraday_range_pct"] is not None
 
 
-def test_process_ticker_writes_price_history_and_indicators(in_memory_db):
+def test_process_ticker_writes_indicators(in_memory_db):
+    """_process_ticker schreibt eine technical_indicators-Zeile.
+
+    Frueher hiess dieser Test '..._writes_price_history_and_indicators' und
+    sicherte beides zu. Die price_history-Haelfte ist mit dem Preismodell-Umbau
+    (2026-08-06) absichtlich weggefallen: final_close ist der alleinige Schreiber
+    der Kurshistorie, Phase 1 liest sie nur noch. Dass sie unangetastet bleibt,
+    sichert test_collect_does_not_write_price_history zu."""
     init_schema(in_memory_db)
     df = _df_monotonic_up(80)
+    _seed_price_history(in_memory_db, "AAPL", df)
     _process_ticker(
         ticker="AAPL",
         price_provider=_good_provider(df),
@@ -194,13 +230,9 @@ def test_process_ticker_writes_price_history_and_indicators(in_memory_db):
         date="2026-05-19",
         run_type="pre_market",
     )
-    ph = in_memory_db.execute(
-        "SELECT COUNT(*) AS c FROM price_history WHERE ticker=?", ("AAPL",)
-    ).fetchone()["c"]
     ti = in_memory_db.execute(
         "SELECT COUNT(*) AS c FROM technical_indicators WHERE ticker=?", ("AAPL",)
     ).fetchone()["c"]
-    assert ph == 80
     assert ti == 1
 
 
@@ -229,6 +261,7 @@ def test_process_ticker_skips_on_none_price_history(in_memory_db):
 def test_process_ticker_skips_on_too_few_bars(in_memory_db):
     init_schema(in_memory_db)
     short_df = _df_monotonic_up(10)  # < MIN_BARS for indicators
+    _seed_price_history(in_memory_db, "NEW", short_df)
 
     out = _process_ticker(
         ticker="NEW",
@@ -249,6 +282,7 @@ def test_process_ticker_skips_on_too_few_bars(in_memory_db):
 def test_process_ticker_tolerates_missing_earnings(in_memory_db):
     init_schema(in_memory_db)
     df = _df_monotonic_up(80)
+    _seed_price_history(in_memory_db, "AAPL", df)
     out = _process_ticker(
         ticker="AAPL",
         price_provider=_good_provider(df),
@@ -293,6 +327,8 @@ from src.data_collector import collect, BATCH_PAUSE_EVERY
 def test_collect_returns_list_of_ticker_data(in_memory_db):
     init_schema(in_memory_db)
     df = _df_monotonic_up(80)
+    for t in ("AAPL", "MSFT", "NVDA"):
+        _seed_price_history(in_memory_db, t, df)
     pp = _good_provider(df)
     ep = _earnings_provider()
 
@@ -314,11 +350,14 @@ def test_collect_returns_list_of_ticker_data(in_memory_db):
 def test_collect_skips_failed_tickers_but_continues(in_memory_db):
     init_schema(in_memory_db)
     df = _df_monotonic_up(80)
+    # "BAD" bleibt ohne Historie und faellt daran aus — seit dem Preismodell-Umbau
+    # ist die fehlende DB-Historie der Ausfallgrund, nicht ein leerer Providerabruf.
+    for t in ("AAPL", "MSFT"):
+        _seed_price_history(in_memory_db, t, df)
 
     pp = MagicMock()
-    def history(ticker, days=90):
-        return None if ticker == "BAD" else df
-    pp.get_price_history.side_effect = history
+    pp.get_ohlc_after.return_value = None
+    pp.get_premarket_price.return_value = float(df["Close"].iloc[-1])
     pp.get_fundamentals.return_value = {
         "pe_ratio": 25, "forward_pe": 24, "market_cap_b": 1000,
         "debt_equity": 1.0, "sector": "Technology",
@@ -347,6 +386,8 @@ def test_collect_pauses_between_batches(in_memory_db):
     ep = _earnings_provider()
 
     tickers = [f"T{i}" for i in range(BATCH_PAUSE_EVERY + 1)]
+    for t in tickers:
+        _seed_price_history(in_memory_db, t, df)
     with patch("src.data_collector.time.sleep") as sleep_mock:
         collect(
             tickers=tickers,
@@ -378,108 +419,17 @@ def _ohlcv_rows(n: int = 90, end: str = "2026-05-21") -> list[tuple]:
     return rows
 
 
-def test_todays_bar_is_refetched_even_when_a_row_exists(in_memory_db, mocker):
-    """Frueher hiess dieser Test 'no fetch when today in db' und sicherte die
-    Ersparnis eines Abrufs ab. Genau die war der Fehler.
-
-    Capital.coms DAY-Bar des laufenden Tages existiert schon waehrend des Tages
-    und bewegt sich bis zum Schluss weiter (Sonde 2026-08-05). Wer den Abruf
-    ueberspringt, sobald irgendeine Zeile fuer heute existiert, friert die
-    15:00-Pre-Market-Quote fuer den ganzen Tag ein: der 16:10-Lauf vergleicht
-    dann 'frische' Kurse gegen sich selbst und der echte Tagesschluss wird nie
-    geschrieben. Der Abruf je Lauf ist der Preis dafuer, dass die Kurse stimmen —
-    close (B.6) holt ohnehin bereits alle Ticker.
-
-    Erhalten bleibt die zweite Haelfte der urspruenglichen Zusage: liefert der
-    Abruf nichts, faellt der Ticker nicht aus, sondern rechnet auf der Historie
-    aus der DB weiter."""
-    _db.init_schema(in_memory_db)
-    for d, o, h, l, c, v in _ohlcv_rows(90, "2026-05-21"):
-        _db.upsert_price_history(in_memory_db, "AAPL", d, o, h, l, c, v)
-
-    mock_price = mocker.MagicMock()
-    mock_price.get_ohlc_after.return_value   = None
-    mock_price.get_price_history.return_value = None
-    mock_earn  = mocker.MagicMock()
-    mock_earn.get_earnings_calendar.return_value = {}
-    mock_earn.get_fundamentals.return_value      = {}
-
-    from src.data_collector import _process_ticker
-    td = _process_ticker("AAPL", mock_price, mock_earn, in_memory_db, "2026-05-21", "test")
-
-    mock_price.get_ohlc_after.assert_called_once()
-    assert td is not None, "ohne frische Bar rechnet der Ticker auf der Historie weiter"
-
-
-def test_incremental_fetches_and_persists_missing_today(in_memory_db, mocker):
-    """When today is missing, get_ohlc_after is called and bar is stored."""
-    import pandas as pd
-    _db.init_schema(in_memory_db)
-    for d, o, h, l, c, v in _ohlcv_rows(89, "2026-05-20"):
-        _db.upsert_price_history(in_memory_db, "AAPL", d, o, h, l, c, v)
-
-    today_df = pd.DataFrame(
-        {"Open": [101.0], "High": [104.0], "Low": [100.0], "Close": [103.0], "Volume": [2_000_000]},
-        index=pd.DatetimeIndex(["2026-05-21"]),
-    )
-    today_df.index.name = "Date"
-
-    mock_price = mocker.MagicMock()
-    mock_price.get_ohlc_after.return_value = today_df
-    mock_earn  = mocker.MagicMock()
-    mock_earn.get_earnings_calendar.return_value = {}
-    mock_earn.get_fundamentals.return_value      = {}
-
-    from src.data_collector import _process_ticker
-    td = _process_ticker("AAPL", mock_price, mock_earn, in_memory_db, "2026-05-21", "test")
-
-    mock_price.get_ohlc_after.assert_called_once()
-    assert td is not None
-    row = in_memory_db.execute(
-        "SELECT close FROM price_history WHERE ticker='AAPL' AND date='2026-05-21'"
-    ).fetchone()
-    assert row is not None
-    assert row["close"] == pytest.approx(103.0)
-
-
-def test_incremental_fallback_to_full_history_when_ohlc_after_none(in_memory_db, mocker):
-    """If get_ohlc_after returns None, full history fetch is attempted."""
-    import pandas as pd
-    _db.init_schema(in_memory_db)
-
-    full_df_rows = _ohlcv_rows(90, "2026-05-21")
-    idx = pd.DatetimeIndex([r[0] for r in full_df_rows])
-    full_df = pd.DataFrame(
-        {
-            "Open":   [r[1] for r in full_df_rows],
-            "High":   [r[2] for r in full_df_rows],
-            "Low":    [r[3] for r in full_df_rows],
-            "Close":  [r[4] for r in full_df_rows],
-            "Volume": [r[5] for r in full_df_rows],
-        },
-        index=idx,
-    )
-    full_df.index.name = "Date"
-
-    mock_price = mocker.MagicMock()
-    mock_price.get_ohlc_after.return_value    = None
-    mock_price.get_price_history.return_value = full_df
-    mock_earn  = mocker.MagicMock()
-    mock_earn.get_earnings_calendar.return_value = {}
-    mock_earn.get_fundamentals.return_value      = {}
-
-    from src.data_collector import _process_ticker
-    td = _process_ticker("AAPL", mock_price, mock_earn, in_memory_db, "2026-05-21", "test")
-
-    mock_price.get_price_history.assert_called_once()
-    assert td is not None
-
-
 # ---------- Sub-Sektor-Verknuepfung (Sprint 3B / Plan 1, Task 4) ----------
 
 def _run_ticker(conn, ticker: str, raw_sector: str | None, date: str = "2026-05-19"):
     """Laesst _process_ticker fuer `ticker` mit dem gegebenen Finnhub-Rohsektor
-    laufen und gibt das TickerData-Dict zurueck."""
+    laufen und gibt das TickerData-Dict zurueck.
+
+    Seedet vorher die Kurshistorie: ohne sie steigt _process_ticker vor dem
+    Sektor-Mapping aus und die Sektor-Zusicherungen waeren gruen, ohne je
+    geprueft zu haben."""
+    df = _df_monotonic_up(250)
+    _seed_price_history(conn, ticker, df)
     ep = _earnings_provider()
     ep.get_fundamentals.return_value = {
         "pe_ratio": 28.4, "market_cap_b": 2800.0, "sector": raw_sector,
@@ -487,7 +437,7 @@ def _run_ticker(conn, ticker: str, raw_sector: str | None, date: str = "2026-05-
     }
     return _process_ticker(
         ticker=ticker,
-        price_provider=_good_provider(_df_monotonic_up(250)),
+        price_provider=_good_provider(df),
         earnings_provider=ep,
         conn=conn,
         date=date,
@@ -602,6 +552,7 @@ def test_collect_retries_inactive_ticker_after_retry_date(in_memory_db):
     for _ in range(config.TICKER_MAX_SKIPS + 1):
         db.log_skipped_ticker(in_memory_db, ticker="BACK", date="2026-07-01",
                               run_type="pre_market", reason="x")
+    _seed_price_history(in_memory_db, "BACK", _df_monotonic_up(250))
 
     results, _ = collect(
         tickers=["BACK"], price_provider=_good_provider(_df_monotonic_up(250)),
@@ -622,6 +573,7 @@ def test_collect_resets_skip_counter_after_successful_run(in_memory_db):
     db.log_skipped_ticker(in_memory_db, ticker="AAPL", date="2026-07-01",
                           run_type="pre_market", reason="x")
     assert db.get_ticker_status(in_memory_db, "AAPL")["skip_count"] == 1
+    _seed_price_history(in_memory_db, "AAPL", _df_monotonic_up(250))
 
     results, _ = collect(
         tickers=["AAPL"], price_provider=_good_provider(_df_monotonic_up(250)),
@@ -665,6 +617,7 @@ def test_process_ticker_links_sector_from_fundamentals_cache(in_memory_db):
         {"pe_ratio": 15.0, "market_cap_b": 400.0, "sector": "Pharmaceuticals"},
         fetched_date="2026-05-19",
     )
+    _seed_price_history(in_memory_db, "JNJ", _df_monotonic_up(250))
     ep = _earnings_provider()
     _process_ticker(
         ticker="JNJ",
@@ -774,7 +727,7 @@ def test_fill_price_gaps_noop_over_weekend(in_memory_db, mocker):
     )
     in_memory_db.commit()
     provider = mocker.MagicMock()
-    # Montag: nur der heutige Bar fehlt, den holt _ensure_today_bar — kein Gap-Fetch
+    # Montag: nur der heutige Bar fehlt, den holt final_close — kein Gap-Fetch
     assert _fill_price_gaps("AAPL", provider, in_memory_db, date="2026-07-27") == 0
     provider.get_ohlc_after.assert_not_called()
 
@@ -836,85 +789,32 @@ def test_fill_price_gaps_survives_empty_response(in_memory_db, mocker):
     assert _fill_price_gaps("AAPL", provider, in_memory_db, date="2026-07-24") == 0
 
 
-# ---------- Eingefrorene Tagesbar (Review 2026-08-05) ----------
+# ---------- Preismodell-Umbau: nur final_close schreibt (2026-08-06) ----------
 
 
-def _bar_df(date: str, close: float) -> pd.DataFrame:
-    return pd.DataFrame(
-        {"Open": [close - 1], "High": [close + 1], "Low": [close - 2],
-         "Close": [close], "Volume": [1234]},
-        index=pd.DatetimeIndex([pd.Timestamp(date)], name="Date"),
-    )
+def test_collect_does_not_write_price_history(in_memory_db, mocker):
+    """final_close ist der einzige Schreiber. Schreibt die Datensammlung weiter
+    mit, kann die Teilbar des laufenden Tages wieder in die Historie geraten --
+    genau der Frozen-Bar-Bug."""
+    from src import db as _dbmod
+    from src.data_collector import _process_ticker
+    _dbmod.init_schema(in_memory_db)
+    for d, o, h, l, c, v in _ohlcv_rows(90, "2026-08-05"):
+        _dbmod.upsert_price_history(in_memory_db, "AAPL", d, o, h, l, c, v)
+    before = in_memory_db.execute(
+        "SELECT COUNT(*) c FROM price_history").fetchone()["c"]
 
+    mock_price = mocker.MagicMock()
+    mock_price.get_premarket_price.return_value = 321.5
+    mock_earn = mocker.MagicMock()
+    mock_earn.get_earnings_calendar.return_value = {}
+    mock_earn.get_fundamentals.return_value = {}
 
-def test_todays_bar_is_refreshed_not_frozen(in_memory_db, mocker):
-    """Der Bar des LAUFENDEN Tages muss ueberschrieben werden.
+    td = _process_ticker("AAPL", mock_price, mock_earn, in_memory_db,
+                         "2026-08-06", "pre_market")
 
-    Sonde gegen Capital.com am 2026-08-05 (read-only): der DAY-Bar eines
-    laufenden Tages existiert bereits und veraendert sich weiter — AAPLs Volumen
-    lief zwischen zwei Abrufen um 22:07 UTC noch von 63024 auf 63028 hoch, also
-    zwei Stunden nach dem regulaeren US-Schluss. Die DAY-Bar deckt damit auch die
-    erweiterten Handelszeiten ab, und um 15:00 Berlin (09:00 ET, Pre-Market)
-    existiert sie folglich schon.
-
-    Frueher stieg _ensure_today_bar aus, sobald irgendeine Zeile fuer
-    (ticker, date) existierte, und insert_price_bar_if_missing war INSERT OR
-    IGNORE. Der 15:00-Lauf schrieb damit eine Pre-Market-Quote, und weder der
-    16:10-Lauf noch der 22:30-Lauf kamen je dagegen an: der 16:10-Lauf verglich
-    'frische' Kurse gegen sich selbst (Opening-Gap immer 0,00 %), und der echte
-    Tagesschluss wurde nie geschrieben — die Zeile blieb dauerhaft eine
-    Pre-Market-Quote und verfaelschte jeden daraus gerechneten Indikator."""
-    from src import db
-    from src.data_collector import _ensure_today_bar
-    db.init_schema(in_memory_db)
-    db.upsert_price_history(
-        in_memory_db, ticker="AAPL", date="2026-08-05",
-        open_=100.0, high=100.5, low=99.5, close=100.0, volume=10,
-        source="capital.com")
-    in_memory_db.commit()
-
-    provider = mocker.MagicMock()
-    provider._source_name = "capital.com"
-    provider.get_ohlc_after.return_value = _bar_df("2026-08-05", 105.0)
-
-    _ensure_today_bar("AAPL", provider, in_memory_db, date="2026-08-05")
-
-    row = in_memory_db.execute(
-        "SELECT * FROM price_history WHERE ticker='AAPL' AND date='2026-08-05'"
-    ).fetchone()
-    assert row["close"] == 105.0, "der laufende Tag wird nachgezogen"
-    assert row["volume"] == 1234
-    n = in_memory_db.execute(
-        "SELECT COUNT(*) c FROM price_history WHERE ticker='AAPL'").fetchone()["c"]
-    assert n == 1, "kein Duplikat, dieselbe Zeile"
-
-
-def test_closed_days_are_never_overwritten(in_memory_db, mocker):
-    """Abgeschlossene Handelstage bleiben unantastbar — sonst schriebe ein
-    spaeterer Lauf die Historie um, auf der alle Indikatoren beruhen."""
-    from src import db
-    from src.data_collector import _ensure_today_bar
-    db.init_schema(in_memory_db)
-    db.upsert_price_history(
-        in_memory_db, ticker="AAPL", date="2026-08-04",
-        open_=200.0, high=200.5, low=199.5, close=200.0, volume=99,
-        source="capital.com")
-    in_memory_db.commit()
-
-    provider = mocker.MagicMock()
-    provider._source_name = "capital.com"
-    # Der Abruf liefert den Vortag mit abweichenden Werten gleich mit.
-    provider.get_ohlc_after.return_value = pd.concat([
-        _bar_df("2026-08-04", 111.0), _bar_df("2026-08-05", 105.0)])
-
-    _ensure_today_bar("AAPL", provider, in_memory_db, date="2026-08-05")
-
-    old = in_memory_db.execute(
-        "SELECT * FROM price_history WHERE ticker='AAPL' AND date='2026-08-04'"
-    ).fetchone()
-    assert old["close"] == 200.0, "der abgeschlossene Vortag bleibt, wie er war"
-    assert old["volume"] == 99
-    new = in_memory_db.execute(
-        "SELECT * FROM price_history WHERE ticker='AAPL' AND date='2026-08-05'"
-    ).fetchone()
-    assert new["close"] == 105.0, "der laufende Tag wird geschrieben"
+    after = in_memory_db.execute(
+        "SELECT COUNT(*) c FROM price_history").fetchone()["c"]
+    assert after == before, "collect() darf price_history nicht mehr anfassen"
+    assert td is not None
+    assert td["price"] == 321.5, "der Entscheidungskurs kommt live, nicht aus der DB"

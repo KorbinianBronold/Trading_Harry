@@ -61,9 +61,17 @@ def test_collect_computes_etf_momentum_from_fetched_bars(in_memory_db):
     assert round(stored[sid]["etf_momentum"], 4) == 2.0
 
 
-def test_collect_persists_etf_bars_into_price_history(in_memory_db):
-    """Die 19 ETF-Symbole stehen in keiner Phase-1-Ticker-Liste — ohne diesen
-    Schreibpfad hat spaeter niemand ihre Bars."""
+def test_collect_never_writes_price_history(in_memory_db):
+    """sector_momentum fasst price_history nicht an — final_close ist der
+    alleinige Schreiber (Preismodell-Umbau 2026-08-06).
+
+    Die Umkehrung des frueheren test_collect_persists_etf_bars_into_price_history.
+    Dieses Modul war der dritte, leicht uebersehene Schreiber: es legte die Bars
+    der Sektor-ETFs per INSERT OR IGNORE ab, und zwar die Teilbar des laufenden
+    Tages. Da compute_relative_strength den Ticker GEGEN seinen Sub-Sektor-ETF
+    vergleicht und beide Seiten aus price_history liest, war die ETF-Seite
+    genauso eingefroren wie die Ticker-Seite. Die ETF-Bars holt seit Task 5 der
+    final_close-Lauf, und zwar final."""
     from src.sector_momentum import collect_sector_momentum
     db.init_schema(in_memory_db)
 
@@ -71,12 +79,9 @@ def test_collect_persists_etf_bars_into_price_history(in_memory_db):
         conn=in_memory_db, date="2026-07-27", run_type="pre_market",
         price_provider=_provider(_etf_frame(100.0, 102.0)),
     )
-    rows = in_memory_db.execute(
-        "SELECT date, close FROM price_history WHERE ticker='SOXX' ORDER BY date"
-    ).fetchall()
-    assert [(r["date"], r["close"]) for r in rows] == [
-        ("2026-07-24", 100.0), ("2026-07-27", 102.0),
-    ]
+    n = in_memory_db.execute(
+        "SELECT COUNT(*) AS c FROM price_history").fetchone()["c"]
+    assert n == 0, "sector_momentum darf price_history nicht schreiben"
 
 
 def test_collect_ignores_etf_bars_after_the_run_date(in_memory_db):

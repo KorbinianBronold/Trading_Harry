@@ -9,7 +9,12 @@ koennen, welches Signal besser predictet.
 
 Das Modul erhebt und persistiert nur. Die Guardrail-Auswertung (hartes Reject nur
 bei uebereinstimmenden Signalen, sonst weiche Warnung) gehoert zu Phase B.3.
-Eingefuehrt in Sprint 3B / Plan 1 (Entscheidung D9)."""
+Eingefuehrt in Sprint 3B / Plan 1 (Entscheidung D9).
+
+Schreibt seit dem Preismodell-Umbau (2026-08-06) KEINE ETF-Bars mehr in
+price_history -- das macht final_close, und zwar mit finalen Bars. Vorher
+landete hier die Teilbar des laufenden Tages per INSERT OR IGNORE und fror
+damit die ETF-Seite der relativen Staerke ein."""
 import logging
 
 import pandas as pd
@@ -41,8 +46,8 @@ def _daily_change_pct(df: pd.DataFrame | None) -> float | None:
 def _fetch_etf_momentum(
     price_provider: DataProvider, conn, etf: str, date: str,
 ) -> float | None:
-    """Holt die letzten Bars des Sektor-ETF, schreibt sie in price_history und
-    gibt die Tagesperformance zurueck. None bei jedem Abruf- oder Datenproblem.
+    """Holt die letzten Bars des Sektor-ETF und gibt die Tagesperformance zurueck.
+    None bei jedem Abruf- oder Datenproblem. Schreibt nichts (s. Modul-Docstring).
 
     Bars nach `date` werden verworfen, damit das ETF-Signal denselben Handelstag
     misst wie das DB-Signal."""
@@ -60,16 +65,6 @@ def _fetch_etf_momentum(
         log.warning(f"{etf}: nur Bars nach {date} — kein ETF-Momentum")
         return None
 
-    _raw = getattr(price_provider, "_source_name", None)
-    source = _raw if isinstance(_raw, str) else "capital.com"
-    for ts, row in df.iterrows():
-        db.insert_price_bar_if_missing(
-            conn, ticker=etf, date=_bar_date(ts),
-            open_=float(row.get("Open", 0)), high=float(row.get("High", 0)),
-            low=float(row.get("Low", 0)), close=float(row.get("Close", 0)),
-            volume=int(row.get("Volume", 0) or 0), source=source,
-        )
-    conn.commit()
     return _daily_change_pct(df)
 
 

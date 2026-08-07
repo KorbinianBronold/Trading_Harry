@@ -34,6 +34,12 @@ def test_full_pipeline_writes_predictions_and_sends_email(tmp_path, monkeypatch)
     fake_provider_cls = MagicMock()
     fake_provider = MagicMock()
     fake_provider.get_price_history.return_value = _mock_ohlc()
+    fake_provider.get_ohlc_after.return_value = None
+    # Der Entscheidungskurs kommt seit dem Preismodell-Umbau (2026-08-06) live
+    # statt aus dem letzten DB-Close. Derselbe Wert wie zuvor, damit Guardrails
+    # und TP/SL-Fixtures unveraendert greifen.
+    fake_provider.get_premarket_price.return_value = float(
+        _mock_ohlc()["Close"].iloc[-1])
     fake_provider.get_fundamentals.return_value = {
         "pe_ratio": 25.0, "forward_pe": 23.0, "market_cap_b": 200.0,
         "debt_equity": 1.0, "sector": "Technology", "analyst_upside": 5.0,
@@ -125,6 +131,24 @@ def test_full_pipeline_writes_predictions_and_sends_email(tmp_path, monkeypatch)
         "new_sl_price": None, "new_tp_price": None,
         "market_context_changed": False, "sources_used": [],
     })
+
+    # Kurshistorie ins Setup: seit dem Preismodell-Umbau (2026-08-06) ist
+    # final_close der alleinige Schreiber von price_history, Phase 1 liest sie
+    # nur noch. In Produktion legt sie setup/historical_loader.py an; frueher
+    # schrieb der Fallback der Datensammlung sie hier stillschweigend mit.
+    from src import db as _seed_db
+    _seed_conn = _seed_db.connect(str(db_path))
+    _seed_db.init_schema(_seed_conn)
+    for _t in ("AAPL", "MSFT", "NVDA", "GC=F", "BTC-USD"):
+        for _ts, _row in _mock_ohlc().iterrows():
+            _seed_db.upsert_price_history(
+                _seed_conn, ticker=_t, date=_ts.strftime("%Y-%m-%d"),
+                open_=float(_row["Open"]), high=float(_row["High"]),
+                low=float(_row["Low"]), close=float(_row["Close"]),
+                volume=int(_row["Volume"]), source="capital.com",
+            )
+    _seed_conn.commit()
+    _seed_conn.close()
 
     with patch("src.market_context.call_claude",
                side_effect=[_r(market_ctx_resp, web_search_calls=2)]), \

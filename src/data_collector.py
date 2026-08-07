@@ -219,8 +219,8 @@ def _fill_price_gaps(
     die Anzahl neu eingefuegter Zeilen zurueck.
 
     Kein Nachladen, wenn der Ticker noch gar keine Historie hat (das uebernimmt
-    setup/historical_loader.py bzw. der Fallback in _ensure_today_bar) oder wenn
-    nur der heutige Bar fehlt — dafuer ist _ensure_today_bar zustaendig."""
+    setup/historical_loader.py) oder wenn nur der heutige Bar fehlt — der ist zur
+    Laufzeit noch nicht final und wird erst vom final_close-Lauf geschrieben."""
     row = conn.execute(
         "SELECT MAX(date) AS last_date FROM price_history WHERE ticker = ?",
         (ticker,),
@@ -230,7 +230,7 @@ def _fill_price_gaps(
         return 0
 
     missing = _expected_trading_days(last_date, date)
-    # Nur der heutige Bar fehlt -> _ensure_today_bar erledigt das ohne Extra-Call.
+    # Nur der heutige Bar fehlt -> der ist noch nicht final, den holt final_close.
     if len(missing) <= 1:
         return 0
 
@@ -266,72 +266,6 @@ def _fill_price_gaps(
     return inserted
 
 
-def _ensure_today_bar(
-    ticker: str,
-    price_provider: DataProvider,
-    conn,
-    date: str,
-) -> None:
-    """Schreibt den Bar fuer `date` — den laufenden Tag bewusst ueberschreibend,
-    abgeschlossene Tage nie.
-
-    Tries single-bar fetch (get_ohlc_after) first; falls back to full
-    history fetch for fresh installs without historical_loader data.
-
-    Kein vorzeitiges Aussteigen mehr, wenn fuer (ticker, date) schon eine Zeile
-    existiert. Capital.coms DAY-Bar des laufenden Tages existiert bereits waehrend
-    des Tages und veraendert sich weiter (verifiziert 2026-08-05: AAPLs Volumen
-    lief um 22:07 UTC noch hoch, zwei Stunden nach dem regulaeren US-Schluss — die
-    Bar deckt also auch die erweiterten Handelszeiten ab und existiert um 15:00
-    Berlin, mitten im Pre-Market, laengst).
-
-    Mit dem alten Aussteiger schrieb der 15:00-Lauf eine Pre-Market-Quote fest,
-    gegen die danach niemand mehr ankam: der 16:10-Lauf verglich 'frische' Kurse
-    gegen sich selbst — der Opening-Gap-Check konnte nie feuern —, und der echte
-    Tagesschluss aus dem 22:30-Lauf wurde nie geschrieben. Die Zeile blieb
-    dauerhaft eine Pre-Market-Quote und verfaelschte jeden Indikator, der spaeter
-    daraus gerechnet wurde."""
-    df: pd.DataFrame | None = None
-    try:
-        _ohlc = price_provider.get_ohlc_after(ticker, date, date)
-        df = _ohlc if isinstance(_ohlc, pd.DataFrame) else None
-    except Exception as e:
-        log.warning(f"{ticker}: single-bar fetch failed: {e}")
-
-    if df is None or df.empty:
-        try:
-            _hist = price_provider.get_price_history(ticker, days=200)
-            df = _hist if isinstance(_hist, pd.DataFrame) else None
-        except Exception as e:
-            log.warning(f"{ticker}: full-history fallback failed: {e}")
-            return
-
-    if df is None or df.empty:
-        return
-
-    _raw_source = getattr(price_provider, "_source_name", None)
-    source = _raw_source if isinstance(_raw_source, str) else "capital.com"
-    for ts, row in df.iterrows():
-        d = ts.strftime("%Y-%m-%d") if hasattr(ts, "strftime") else str(ts)[:10]
-        if d > date:
-            continue
-        # Der laufende Tag wird ueberschrieben, abgeschlossene Tage nie: auf der
-        # Historie beruhen saemtliche Indikatoren, die darf kein spaeterer Lauf
-        # umschreiben.
-        writer = (db.upsert_price_history if d == date
-                  else db.insert_price_bar_if_missing)
-        writer(
-            conn, ticker=ticker, date=d,
-            open_=float(row.get("Open", 0)),
-            high=float(row.get("High", 0)),
-            low=float(row.get("Low", 0)),
-            close=float(row.get("Close", 0)),
-            volume=int(row.get("Volume", 0) or 0),
-            source=source,
-        )
-    conn.commit()
-
-
 def _persist_indicators(conn, ticker: str, date: str, td: dict) -> None:
     """Writes one row of computed technical indicators for `ticker`/`date` to
     the technical_indicators table."""
@@ -349,6 +283,21 @@ def _persist_indicators(conn, ticker: str, date: str, td: dict) -> None:
     })
 
 
+def _live_price(price_provider, ticker: str, df) -> float:
+    """Aktueller Kurs fuer die Entscheidung. Faellt auf den letzten finalen Close
+    zurueck, wenn der Live-Abruf nichts liefert -- ein alter Kurs ist besser als
+    gar keine Analyse, und der Ticker wird dadurch nicht uebersprungen."""
+    try:
+        live = price_provider.get_premarket_price(ticker)
+    except Exception as e:
+        log.warning(f"{ticker}: Live-Kurs nicht abrufbar: {e}")
+        live = None
+    if live is not None:
+        return float(live)
+    log.warning(f"{ticker}: kein Live-Kurs, nutze letzten finalen Close")
+    return float(df["Close"].iloc[-1])
+
+
 def _process_ticker(
     ticker: str,
     price_provider: DataProvider,
@@ -361,9 +310,8 @@ def _process_ticker(
     computes indicators from the last 200 DB days, and fetches fundamentals/earnings
     (cache-first). Returns the TickerData dict, or None (with a skipped_tickers row)
     if there's insufficient or low-quality data."""
-    # Step 1: Luecken schliessen, dann den heutigen Bar sicherstellen (Spec B.8)
+    # Step 1: Luecken schliessen (Spec B.8)
     _fill_price_gaps(ticker, price_provider, conn, date)
-    _ensure_today_bar(ticker, price_provider, conn, date)
 
     # Step 2: Load last 200 days from DB for indicator calculation
     df = db.load_price_history_from_db(conn, ticker, as_of_date=date, limit=200)
@@ -381,7 +329,11 @@ def _process_ticker(
     pc = compute_price_changes(df)
     td: dict[str, Any] = {
         "ticker": ticker,
-        "price":  float(df["Close"].iloc[-1]),
+        # Entscheidungskurs kommt LIVE, nicht aus price_history: die Historie
+        # enthaelt seit dem Preismodell-Umbau nur noch finale Tagesbars und endet
+        # damit bei D-1. Ohne diesen Abruf analysierte die Pipeline auf dem
+        # Schluss von gestern.
+        "price": _live_price(price_provider, ticker, df),
         **pc,
         "rsi_14":             compute_rsi_14(df),
         "rsi_trend":          compute_rsi_trend(df),

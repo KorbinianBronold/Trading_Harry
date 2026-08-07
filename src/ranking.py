@@ -97,6 +97,8 @@ def _to_prediction_row(
         "asset_class": analysis.get("asset_class"),
         "ticker": analysis["ticker"], "direction": analysis["direction"],
         "entry_price": analysis["current_price"],
+        "price_premarket": analysis.get("price_premarket"),
+        "is_premarket":    analysis.get("is_premarket"),
         "tp_price": analysis["tp_price"], "tp_pct": analysis.get("tp_pct"),
         "sl_price": analysis["sl_price"], "sl_pct": analysis.get("sl_pct"),
         "rr_ratio": analysis["rr_ratio"],
