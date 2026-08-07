@@ -8,9 +8,12 @@ Trading-day precision is intentionally approximated by calendar days: Capital.co
 returns weekday-only bars, so iterating bars in order corresponds to trading-day
 order. We cap at config.MAX_HOLD_DAYS bars (currently 5 trading days)."""
 import logging
+from datetime import date as date_cls, timedelta
+
 import pandas as pd
 
 from src import db
+from src.signal_window import signal_time_utc, day_end_utc, collapse_to_daily_bar
 import config
 
 log = logging.getLogger("shares_future.evaluator")
@@ -64,6 +67,40 @@ def _profit_loss_eur(
     return round(eur, 2)
 
 
+def _bar_sequence(conn, price_provider, pred) -> "pd.DataFrame | None":
+    """Baut die Auswertungssequenz fuer eine Prediction.
+
+    Element 1 ist die synthetische Tagesbar des SIGNALTAGS -- verdichtet aus den
+    Minutenbars ab dem Signal-Zeitpunkt. Danach folgen die finalen Tagesbars aus
+    price_history. Die Verdichtung ist noetig, damit _walk_forward_hit weiterhin
+    je Bar einen Tag zaehlt: Minutenbars direkt in der Sequenz wuerden
+    days_to_close zerstoeren, und daran haengt 3Ds hold_day.
+
+    Fehlt das Intraday-Fenster (Feiertag, Handelsstopp, Abruffehler), beginnt die
+    Sequenz bei D+1 -- die Prediction wird dadurch nicht schlechter behandelt."""
+    frames = []
+    start = signal_time_utc(pred["run_type"], pred["date"])
+    if start is not None:
+        try:
+            intraday = price_provider.get_intraday_ohlc(
+                pred["ticker"], start, day_end_utc(pred["date"]))
+        except Exception as e:
+            log.warning(f"{pred['ticker']}: Intraday-Abruf fehlgeschlagen: {e}")
+            intraday = None
+        bar = collapse_to_daily_bar(intraday)
+        if bar is not None:
+            frames.append(pd.DataFrame(
+                [bar], index=pd.to_datetime([pred["date"]])))
+
+    later = db.load_price_history_after(conn, pred["ticker"], pred["date"])
+    if later is not None and not later.empty:
+        frames.append(later)
+
+    if not frames:
+        return None
+    return pd.concat(frames)
+
+
 def evaluate_open_predictions(
     conn,
     today: str,
@@ -81,18 +118,18 @@ def evaluate_open_predictions(
     closed = 0
     for pred in rows:
         ticker = pred["ticker"]
-        try:
-            ohlc = price_provider.get_ohlc_after(
-                ticker, start_date=pred["date"], end_date=today,
-            )
-        except Exception as e:
-            log.warning(f"{ticker}: provider raised in evaluator: {e}")
-            ohlc = None
+        # E7: evaluated_date ist der Handelstag, dessen Bar geschlossen hat --
+        # nicht das Laufdatum. final_close laeuft am Folgetag; mit dem Laufdatum
+        # faende _aggregate_yesterday_outcomes (WHERE evaluated_date = today - 1)
+        # nichts mehr und die Fussleiste der Tagesmail zeigte stumm Nullen.
+        evaluated_day = (date_cls.fromisoformat(today) - timedelta(days=1)).isoformat()
+
+        ohlc = _bar_sequence(conn, price_provider, pred)
 
         if ohlc is None or ohlc.empty:
             db.update_outcome_close(
                 conn, prediction_id=pred["id"], exit_reason="data_missing",
-                exit_price=None, days_to_close=0, closed_date=today,
+                exit_price=None, days_to_close=0, closed_date=evaluated_day,
                 profit_loss_eur=None, correct_direction_eod=None,
                 direction=pred["direction"],
             )
@@ -117,7 +154,7 @@ def evaluate_open_predictions(
         db.update_outcome_close(
             conn, prediction_id=pred["id"], exit_reason=reason,
             exit_price=exit_price, days_to_close=day,
-            closed_date=today, profit_loss_eur=pl_eur,
+            closed_date=evaluated_day, profit_loss_eur=pl_eur,
             correct_direction_eod=correct,
             direction=pred["direction"],
         )

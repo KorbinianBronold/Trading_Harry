@@ -1072,6 +1072,33 @@ def load_price_history_from_db(
     return df.set_index("Date").sort_index()
 
 
+def load_price_history_after(
+    conn: sqlite3.Connection, ticker: str, after_date: str, limit: int = 10,
+) -> "pd.DataFrame | None":
+    """Finale Tagesbars STRIKT NACH `after_date`, aufsteigend sortiert.
+
+    Fuer die Walk-Forward-Auswertung: der Signaltag selbst kommt als verdichtete
+    Intraday-Bar dazu (s. src/signal_window.py), hier folgen nur die Tage danach.
+
+    Nicht zu verwechseln mit load_price_history_from_db, das `<= date` liest und
+    die Indikatoren speist."""
+    import pandas as pd
+    rows = conn.execute(
+        """SELECT date, open, high, low, close, volume
+           FROM price_history
+           WHERE ticker = ? AND date > ?
+           ORDER BY date ASC LIMIT ?""",
+        (ticker, after_date, limit),
+    ).fetchall()
+    if not rows:
+        return None
+    df = pd.DataFrame([{
+        "Open": r["open"], "High": r["high"], "Low": r["low"],
+        "Close": r["close"], "Volume": r["volume"],
+    } for r in rows], index=pd.to_datetime([r["date"] for r in rows]))
+    return df
+
+
 # --- Weekly-Aggregate fuer die vier B.9-Bloecke (Sprint 3B / Plan 2, Task 18) ---
 
 def _first_trade_proposals_date(conn: sqlite3.Connection) -> str | None:

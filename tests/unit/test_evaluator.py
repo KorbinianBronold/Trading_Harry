@@ -20,9 +20,9 @@ def _ohlc(ticker: str) -> pd.DataFrame:
 
 def _make_pred(conn, ticker: str, direction: str = "long",
                entry: float = 100.0, tp: float = 105.0, sl: float = 95.0,
-               date: str = "2026-05-19") -> int:
+               date: str = "2026-05-19", run_type: str = "close") -> int:
     return db.save_prediction(conn, {
-        "date": date, "run_type": "close", "asset_class": "stock",
+        "date": date, "run_type": run_type, "asset_class": "stock",
         "ticker": ticker, "direction": direction,
         "entry_price": entry, "tp_price": tp, "tp_pct": 5.0,
         "sl_price": sl, "sl_pct": 5.0, "rr_ratio": 1.0,
@@ -39,28 +39,52 @@ def _make_pred(conn, ticker: str, direction: str = "long",
     })
 
 
-def _provider_for(df_map: dict[str, pd.DataFrame]) -> MagicMock:
+def _load_bars(conn, ticker: str) -> None:
+    """Legt die Fixture-Bars als finale Tagesbars in price_history ab.
+
+    Seit dem Umbau auf das Preismodell holt der Evaluator die Bars nicht mehr
+    selbst beim Provider, sondern liest sie aus price_history -- der Live-Abruf
+    lief zum close-Zeitpunkt und lieferte provisorische High/Low."""
+    for _, r in _ohlc(ticker).iterrows():
+        db.upsert_price_history(
+            conn, ticker, r.name.strftime("%Y-%m-%d"),
+            float(r["Open"]), float(r["High"]), float(r["Low"]),
+            float(r["Close"]), 0)
+    conn.commit()
+
+
+def _provider(intraday: pd.DataFrame | None = None) -> MagicMock:
+    """Provider-Doppel. Der Evaluator fragt ihn nur noch nach dem
+    Intraday-Fenster des Signaltags; alles danach kommt aus price_history."""
     provider = MagicMock()
-    def _get(ticker, start_date=None, end_date=None):
-        df = df_map.get(ticker)
-        if df is None:
-            return None
-        if start_date is not None:
-            df = df[df.index >= pd.Timestamp(start_date)]
-        if end_date is not None:
-            df = df[df.index <= pd.Timestamp(end_date)]
-        return df if not df.empty else None
-    provider.get_ohlc_after = _get
+    provider.get_intraday_ohlc.return_value = intraday
     return provider
 
 
+def _intraday_from_fixture(ticker: str, date: str) -> pd.DataFrame:
+    """Die Fixture-Bar von `date` als Intraday-Fenster ab dem Signal-Zeitpunkt.
+
+    Eine einzelne Zeile genuegt: collapse_to_daily_bar verdichtet ohnehin auf
+    High=Max / Low=Min / Close=letzter."""
+    row = _ohlc(ticker).loc[pd.Timestamp(date)]
+    return pd.DataFrame(
+        {"Open": [row["Open"]], "High": [row["High"]], "Low": [row["Low"]],
+         "Close": [row["Close"]], "Volume": [0]},
+        index=pd.to_datetime([f"{date} 14:10:00"]))
+
+
 def test_long_tp_hit(in_memory_db):
+    """days_to_close ist von 2 auf 1 gewandert, und das ist die korrekte neue
+    Erwartung: das Fenster beginnt am Signal-Zeitpunkt, nicht am Tagesbeginn.
+    Ein close-Lauf hat gar keinen Signal-Zeitpunkt am Prognosetag -- er
+    entscheidet nach Handelsschluss --, also ist die Bar vom 2026-05-20 die
+    erste, in der die Position ueberhaupt existiert."""
     db.init_schema(in_memory_db)
     pid = _make_pred(in_memory_db, "LONG_TP", direction="long",
                      entry=100.0, tp=105.0, sl=95.0)
-    provider = _provider_for({"LONG_TP": _ohlc("LONG_TP")})
+    _load_bars(in_memory_db, "LONG_TP")
     evaluate_open_predictions(
-        conn=in_memory_db, today="2026-05-20", price_provider=provider,
+        conn=in_memory_db, today="2026-05-20", price_provider=_provider(),
     )
     row = in_memory_db.execute(
         "SELECT status, closed_price FROM predictions WHERE id=?", (pid,),
@@ -73,16 +97,16 @@ def test_long_tp_hit(in_memory_db):
     ).fetchone()
     assert out["exit_reason"] == "tp_hit"
     assert out["tp_hit"] == 1
-    assert out["days_to_close"] == 2
+    assert out["days_to_close"] == 1
 
 
 def test_long_sl_hit(in_memory_db):
     db.init_schema(in_memory_db)
     pid = _make_pred(in_memory_db, "LONG_SL", direction="long",
                      entry=100.0, tp=105.0, sl=95.0)
-    provider = _provider_for({"LONG_SL": _ohlc("LONG_SL")})
+    _load_bars(in_memory_db, "LONG_SL")
     evaluate_open_predictions(
-        conn=in_memory_db, today="2026-05-20", price_provider=provider,
+        conn=in_memory_db, today="2026-05-20", price_provider=_provider(),
     )
     row = in_memory_db.execute(
         "SELECT status, closed_price FROM predictions WHERE id=?", (pid,),
@@ -98,9 +122,9 @@ def test_short_tp_hit(in_memory_db):
     db.init_schema(in_memory_db)
     pid = _make_pred(in_memory_db, "SHORT_TP", direction="short",
                      entry=100.0, tp=95.0, sl=105.0)
-    provider = _provider_for({"SHORT_TP": _ohlc("SHORT_TP")})
+    _load_bars(in_memory_db, "SHORT_TP")
     evaluate_open_predictions(
-        conn=in_memory_db, today="2026-05-20", price_provider=provider,
+        conn=in_memory_db, today="2026-05-20", price_provider=_provider(),
     )
     row = in_memory_db.execute(
         "SELECT status FROM predictions WHERE id=?", (pid,),
@@ -112,9 +136,9 @@ def test_short_sl_hit(in_memory_db):
     db.init_schema(in_memory_db)
     pid = _make_pred(in_memory_db, "SHORT_SL", direction="short",
                      entry=100.0, tp=95.0, sl=105.0)
-    provider = _provider_for({"SHORT_SL": _ohlc("SHORT_SL")})
+    _load_bars(in_memory_db, "SHORT_SL")
     evaluate_open_predictions(
-        conn=in_memory_db, today="2026-05-20", price_provider=provider,
+        conn=in_memory_db, today="2026-05-20", price_provider=_provider(),
     )
     row = in_memory_db.execute(
         "SELECT status FROM predictions WHERE id=?", (pid,),
@@ -122,13 +146,17 @@ def test_short_sl_hit(in_memory_db):
     assert row["status"] == "closed_sl"
 
 
-def test_timeout_after_three_days(in_memory_db):
+def test_timeout_counts_only_bars_after_the_prediction_day(in_memory_db):
+    """Frueher 'timeout nach drei Tagen', jetzt nach zweien -- die Fixture hat
+    unveraendert drei Bars, aber die erste ist der Prognosetag selbst und
+    faellt fuer einen close-Lauf aus dem Fenster. Keine abgeschwaechte
+    Erwartung, sondern ein kleiner gewordener Auswertungszeitraum."""
     db.init_schema(in_memory_db)
     pid = _make_pred(in_memory_db, "TIMEOUT", direction="long",
                      entry=100.0, tp=110.0, sl=90.0)
-    provider = _provider_for({"TIMEOUT": _ohlc("TIMEOUT")})
+    _load_bars(in_memory_db, "TIMEOUT")
     evaluate_open_predictions(
-        conn=in_memory_db, today="2026-05-22", price_provider=provider,
+        conn=in_memory_db, today="2026-05-22", price_provider=_provider(),
     )
     row = in_memory_db.execute(
         "SELECT status, closed_price FROM predictions WHERE id=?", (pid,),
@@ -140,14 +168,19 @@ def test_timeout_after_three_days(in_memory_db):
         (pid,),
     ).fetchone()
     assert out["exit_reason"] == "timeout"
-    assert out["days_to_close"] == 3
+    assert out["days_to_close"] == 2
 
 
 def test_pessimistic_overlap_closes_at_sl(in_memory_db):
+    """Die Regel 'TP und SL in derselben Bar -> pessimistisch SL' gilt
+    unveraendert; nur die Bar, in der sie greift, ist eine andere. Die einzige
+    Fixture-Bar ist der Prognosetag selbst, also braucht dieser Fall einen Lauf
+    MIT Signal-Zeitpunkt (trade_proposals) und das Intraday-Fenster."""
     db.init_schema(in_memory_db)
     pid = _make_pred(in_memory_db, "OVERLAP", direction="long",
-                     entry=100.0, tp=105.0, sl=95.0)
-    provider = _provider_for({"OVERLAP": _ohlc("OVERLAP")})
+                     entry=100.0, tp=105.0, sl=95.0,
+                     run_type="trade_proposals")
+    provider = _provider(_intraday_from_fixture("OVERLAP", "2026-05-19"))
     evaluate_open_predictions(
         conn=in_memory_db, today="2026-05-20", price_provider=provider,
     )
@@ -166,9 +199,8 @@ def test_data_missing_closes_with_data_missing_reason(in_memory_db):
     db.init_schema(in_memory_db)
     pid = _make_pred(in_memory_db, "GONE", direction="long",
                      entry=100.0, tp=105.0, sl=95.0)
-    provider = _provider_for({})
     evaluate_open_predictions(
-        conn=in_memory_db, today="2026-05-20", price_provider=provider,
+        conn=in_memory_db, today="2026-05-20", price_provider=_provider(),
     )
     row = in_memory_db.execute(
         "SELECT status FROM predictions WHERE id=?", (pid,),
@@ -185,9 +217,9 @@ def test_evaluate_ignores_already_closed(in_memory_db):
     pid = _make_pred(in_memory_db, "LONG_TP", direction="long")
     db.close_prediction(in_memory_db, pid, status="closed_tp",
                         closed_date="2026-05-20", closed_price=105.0)
-    provider = _provider_for({"LONG_TP": _ohlc("LONG_TP")})
+    _load_bars(in_memory_db, "LONG_TP")
     evaluate_open_predictions(
-        conn=in_memory_db, today="2026-05-21", price_provider=provider,
+        conn=in_memory_db, today="2026-05-21", price_provider=_provider(),
     )
     out_count = in_memory_db.execute(
         "SELECT COUNT(*) AS n FROM outcomes WHERE prediction_id=?", (pid,),
@@ -223,3 +255,114 @@ def test_walk_forward_helper_honors_five_day_cap():
     assert reason == "tp_hit"
     assert exit_price == 110.0
     assert day == 5
+
+
+def test_window_starts_at_the_signal_not_at_midnight(in_memory_db, mocker):
+    """Der alte Fehler war nicht 'Tag D zaehlt', sondern 'der falsche Teil von
+    Tag D zaehlt': die Tagesbar laeuft ab 08:00 UTC, das Signal entsteht erst um
+    10:10 ET. Ein TP-Treffer davor ist ein Artefakt.
+
+    Hier reisst der TP nur VOR dem Signal -- danach bleibt der Kurs darunter.
+    Das darf nicht als Treffer zaehlen."""
+    import pandas as pd
+    from src import db
+    from src.evaluator import evaluate_open_predictions
+    db.init_schema(in_memory_db)
+    pid = db.save_prediction(in_memory_db, {
+        "date": "2026-08-05", "run_type": "trade_proposals", "ticker": "AAPL",
+        "direction": "long", "entry_price": 100.0,
+        "tp_price": 110.0, "sl_price": 95.0})
+
+    prov = mocker.MagicMock()
+    # Fenster ab 14:10 UTC: Hoch nur 104 -- der TP bei 110 wird nicht erreicht.
+    prov.get_intraday_ohlc.return_value = pd.DataFrame(
+        {"Open": [100.0], "High": [104.0], "Low": [99.0],
+         "Close": [103.0], "Volume": [500]},
+        index=pd.to_datetime(["2026-08-05 14:10:00"]))
+
+    evaluate_open_predictions(conn=in_memory_db, today="2026-08-06",
+                              price_provider=prov)
+
+    row = in_memory_db.execute(
+        "SELECT * FROM outcomes WHERE prediction_id=?", (pid,)).fetchone()
+    assert row["exit_reason"] != "tp_hit", (
+        "ein TP-Treffer vor dem Signal darf nicht zaehlen")
+
+
+def test_intraday_hit_closes_on_day_one(in_memory_db, mocker):
+    """Und die Gegenprobe: reisst der TP NACH dem Signal am selben Tag, muss er
+    mit days_to_close == 1 zaehlen. Genau daran haengt 3Ds hold_day=1."""
+    import pandas as pd
+    from src import db
+    from src.evaluator import evaluate_open_predictions
+    db.init_schema(in_memory_db)
+    pid = db.save_prediction(in_memory_db, {
+        "date": "2026-08-05", "run_type": "trade_proposals", "ticker": "AAPL",
+        "direction": "long", "entry_price": 100.0,
+        "tp_price": 110.0, "sl_price": 95.0})
+
+    prov = mocker.MagicMock()
+    prov.get_intraday_ohlc.return_value = pd.DataFrame(
+        {"Open": [100.0], "High": [112.0], "Low": [99.0],
+         "Close": [111.0], "Volume": [500]},
+        index=pd.to_datetime(["2026-08-05 14:10:00"]))
+
+    evaluate_open_predictions(conn=in_memory_db, today="2026-08-06",
+                              price_provider=prov)
+
+    row = in_memory_db.execute(
+        "SELECT * FROM outcomes WHERE prediction_id=?", (pid,)).fetchone()
+    assert row["exit_reason"] == "tp_hit"
+    assert row["days_to_close"] == 1, "Intraday-Treffer ist Tag 1"
+
+
+def test_evaluated_date_is_the_trading_day_not_the_run_date(in_memory_db, mocker):
+    """Sonst findet _aggregate_yesterday_outcomes (WHERE evaluated_date =
+    today - 1) nichts mehr und die Fussleiste der Tagesmail zeigt stumm Nullen."""
+    import pandas as pd
+    from src import db
+    from src.evaluator import evaluate_open_predictions
+    db.init_schema(in_memory_db)
+    pid = db.save_prediction(in_memory_db, {
+        "date": "2026-08-05", "run_type": "trade_proposals", "ticker": "AAPL",
+        "direction": "long", "entry_price": 100.0,
+        "tp_price": 110.0, "sl_price": 95.0})
+
+    prov = mocker.MagicMock()
+    prov.get_intraday_ohlc.return_value = pd.DataFrame(
+        {"Open": [100.0], "High": [112.0], "Low": [99.0],
+         "Close": [111.0], "Volume": [500]},
+        index=pd.to_datetime(["2026-08-05 14:10:00"]))
+
+    evaluate_open_predictions(conn=in_memory_db, today="2026-08-06",
+                              price_provider=prov)
+
+    row = in_memory_db.execute(
+        "SELECT * FROM outcomes WHERE prediction_id=?", (pid,)).fetchone()
+    assert row["evaluated_date"] == "2026-08-05", (
+        "evaluated_date ist der Handelstag, dessen Bar geschlossen hat")
+
+
+def test_missing_intraday_data_falls_back_to_the_next_day(in_memory_db, mocker):
+    """Feiertag, Handelsstopp oder Abruffehler: ohne Fenster beginnt die
+    Auswertung bei D+1, statt zu scheitern."""
+    import pandas as pd
+    from src import db
+    from src.evaluator import evaluate_open_predictions
+    db.init_schema(in_memory_db)
+    pid = db.save_prediction(in_memory_db, {
+        "date": "2026-08-05", "run_type": "trade_proposals", "ticker": "AAPL",
+        "direction": "long", "entry_price": 100.0,
+        "tp_price": 110.0, "sl_price": 95.0})
+    db.upsert_price_history(in_memory_db, "AAPL", "2026-08-06",
+                            99.0, 115.0, 98.0, 114.0, 100)
+
+    prov = mocker.MagicMock()
+    prov.get_intraday_ohlc.return_value = None   # kein Fenster
+
+    evaluate_open_predictions(conn=in_memory_db, today="2026-08-07",
+                              price_provider=prov)
+
+    row = in_memory_db.execute(
+        "SELECT * FROM outcomes WHERE prediction_id=?", (pid,)).fetchone()
+    assert row["exit_reason"] == "tp_hit", "der Tagesbar von D+1 traegt den Treffer"

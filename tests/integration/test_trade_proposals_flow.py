@@ -99,13 +99,20 @@ def test_evaluator_closes_exactly_one_outcome(tmp_db_path, mocker):
     assert len(db.load_open_predictions(conn)) == 1, (
         "Vorbedingung: von den zwei Zeilen darf genau eine offen sein")
 
+    # Das Fenster beginnt am Signal-Zeitpunkt des 16:10-Laufs, der Treffer liegt
+    # also im Intraday-Fenster des Prognosetags selbst.
     provider = MagicMock()
-    provider.get_ohlc_after.return_value = pd.DataFrame(
-        {"High": [107.0], "Low": [100.5], "Close": [106.5]},
-        index=["2026-07-31"])
+    provider.get_intraday_ohlc.return_value = pd.DataFrame(
+        {"Open": [101.0], "High": [107.0], "Low": [100.5], "Close": [106.5],
+         "Volume": [0]},
+        index=pd.to_datetime(["2026-07-30 14:10:00"]))
     from src.evaluator import evaluate_open_predictions
     closed = evaluate_open_predictions(conn=conn, today="2026-07-31",
                                        price_provider=provider)
     assert closed == 1
-    assert conn.execute("SELECT COUNT(*) AS n FROM outcomes").fetchone()["n"] == 1
+    out = conn.execute("SELECT exit_reason FROM outcomes").fetchall()
+    assert len(out) == 1
+    assert out[0]["exit_reason"] == "tp_hit", (
+        "sonst wird dieser Test auf dem data_missing-Pfad gruen und prueft den "
+        "E3-Mechanismus gegen einen degenerierten Fall")
     conn.close()

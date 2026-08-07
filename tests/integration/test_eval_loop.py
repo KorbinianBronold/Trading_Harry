@@ -1,5 +1,4 @@
 """Predict on Tag 0, 3-day OHLC fixture, evaluator closes correctly."""
-import pandas as pd
 from unittest.mock import MagicMock
 
 from src import db
@@ -25,15 +24,17 @@ def test_predict_then_evaluate_two_days_later_tp_hit(tmp_path):
         "learnable": True, "hold_days_recommended": 2,
         "intraday_range_pct": 1.5,
     })
-    idx = pd.to_datetime(["2026-05-19", "2026-05-20", "2026-05-21"])
-    df = pd.DataFrame({
-        "Open":  [100.0, 100.0, 102.0],
-        "High":  [101.0, 105.5, 104.0],
-        "Low":   [99.0,   99.5, 101.0],
-        "Close": [100.0, 104.0, 103.0],
-    }, index=idx)
+    # Finale Tagesbars stehen seit dem Preismodell-Umbau in price_history; der
+    # Evaluator holt sie nicht mehr selbst beim Provider.
+    for date, o, h, l, c in [
+        ("2026-05-19", 100.0, 101.0,  99.0, 100.0),
+        ("2026-05-20", 100.0, 105.5,  99.5, 104.0),
+        ("2026-05-21", 102.0, 104.0, 101.0, 103.0),
+    ]:
+        db.upsert_price_history(conn, "AAPL", date, o, h, l, c, 0)
+    conn.commit()
     provider = MagicMock()
-    provider.get_ohlc_after.return_value = df
+    provider.get_intraday_ohlc.return_value = None
 
     evaluate_open_predictions(conn=conn, today="2026-05-21", price_provider=provider)
 
@@ -47,4 +48,8 @@ def test_predict_then_evaluate_two_days_later_tp_hit(tmp_path):
         (pid,),
     ).fetchone()
     assert out["exit_reason"] == "tp_hit"
-    assert out["days_to_close"] == 2  # entry-day bar included; bar 2 = 2026-05-20 hits TP
+    # Frueher 2: die Bar des Prognosetags zaehlte komplett mit. Sie laeuft aber
+    # ab 08:00 UTC, waehrend der close-Lauf erst nach Handelsschluss entscheidet
+    # — Treffer aus dieser Zeit gab es fuer die Position nie. Erste Bar im
+    # Fenster ist damit 2026-05-20, und genau die reisst den TP.
+    assert out["days_to_close"] == 1
