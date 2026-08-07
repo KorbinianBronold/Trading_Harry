@@ -24,11 +24,31 @@ Das System folgt einer **Pipeline-Architektur** mit 9 Phasen (0, 0b, 1, 1c, 1d, 
 
 **Reihenfolge beachten:** Ranking (Phase 4) läuft seit B.5 **vor** dem Portfolio-Check (4a), nicht danach. Phase 4a bekommt dadurch die fertigen Phase-3-Analysen und braucht keinen eigenen `web_search`.
 
+### Die zentrale Trennung: Historie gegen Snapshot
+
+Seit dem Preismodell-Umbau (2026-08-07, PROJECT_STATUS P3) sind zwei Dinge sauber
+getrennt, die vorher dieselbe Quelle hatten:
+
+| | Wofür | Wo |
+|---|---|---|
+| **Indikator-Historie** | RSI, ATR, SMA, MACD — braucht abgeschlossene Tage | `price_history` — **ausschliesslich finale Tagesbars** |
+| **Entscheidungs-Snapshot** | Der Kurs, zu dem eine Aussage getroffen wurde | `predictions.price_premarket` / `price_open` / `price_1610` |
+
+**`price_history` hat genau EINEN Schreiber:** `final_close` (00:15 UTC, täglich).
+`setup/historical_loader.py` bleibt als manueller Backfill der einzige weitere.
+Die Vermischung beider Begriffe war der Frozen-Bar-Bug: der 15:00-Lauf schrieb eine
+Pre-Market-Quote als „Tagesbar" fest, und alles Spätere las sie als Tatsache. Mit einem
+einzigen Schreiber, der nur finale Bars kennt, kann das strukturell nicht wiederkehren.
+
+Konsequenz: `price_history` endet zur Laufzeit der Analyse-Läufe bei **D-1**. Der
+Entscheidungskurs kommt deshalb live über `get_premarket_price()`, nicht aus dem letzten
+DB-Close.
+
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                      ORCHESTRATOR (main.py)                      │
-│  Dispatch: --run-type {pre_market|trade_proposals|close|weekly}  │
-└─────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────┐
+│                        ORCHESTRATOR (main.py)                            │
+│ Dispatch: --run-type {pre_market|trade_proposals|close|final_close|weekly}│
+└──────────────────────────────────────────────────────────────────────────┘
                               ↓
 ┌─────────────────────────────────────────────────────────────────┐
 │                  PHASE 0: TREND-ANALYSE                          │
@@ -464,9 +484,28 @@ def check_open_positions(
 
 ---
 
-### 8. **`src/evaluator.py`** (Täglich, nach Close)
+### 8. **`src/evaluator.py`** (Täglich, im `final_close`-Lauf)
 
 Walk-Forward OHLC-Hit-Check für gestrige Setups.
+
+> **Seit dem Preismodell-Umbau (2026-08-07, PROJECT_STATUS P3)** läuft die Auswertung
+> nicht mehr im `close`-Lauf um 20:30 UTC, sondern in `final_close` um 00:15 UTC, und
+> sie liest `price_history` statt selbst live zu holen. Grund: `_walk_forward_hit`
+> prüft TP **und** SL gegen `High`/`Low`, und beide können sich im Tagesverlauf nur
+> **ausweiten**. Eine provisorische Bar hat eine engere Spanne als die finale — sie
+> meldet systematisch zu wenige Treffer und zu viele `timeout`.
+>
+> **Das Fenster beginnt am Signal-Zeitpunkt**, nicht am Tagesbeginn: die Tagesbar läuft
+> ab 08:00 UTC, das Signal entsteht erst um 09:00 ET (`pre_market`) bzw. 10:10 ET
+> (`trade_proposals`). Treffer aus der Zeit davor sind Artefakte. Den ganzen Prognosetag
+> auszuschliessen wäre aber das *gespiegelte* Artefakt — 3D verfolgt die Trefferquote
+> getrennt nach Intraday (`hold_day = 1`) und Extended. Deshalb kommt der Signaltag als
+> **eine verdichtete Bar** in die Sequenz (s. `src/signal_window.py`): so zählt
+> `_walk_forward_hit` weiterhin je Bar einen Tag, und `days_to_close == 1` heisst
+> weiterhin „am Signaltag getroffen".
+>
+> `evaluated_date` bezeichnet den **Handelstag**, dessen Bar geschlossen hat — nicht das
+> Laufdatum. Sonst fände `_aggregate_yesterday_outcomes` nichts mehr.
 
 ```python
 def evaluate_open_predictions(
@@ -603,6 +642,34 @@ revalidate_one(...) -> dict   # {verdict, probability_pct, reason, ...}
 **Das Modul urteilt nur.** Was mit dem Urteil geschieht — Ablösung der `pre_market`-Zeile
 über `superseded_by`, eine neue Prediction oder blosse Warnung — entscheidet
 `main.run_trade_proposals()`. In drei von sechs Ausgängen entsteht gar keine neue Zeile.
+
+---
+
+### 10c. **`src/signal_window.py`** (neu im Preismodell-Umbau, 2026-08-07)
+
+Reine Funktionen: **keine DB, kein Netz, kein Claude.** Deshalb ohne einen einzigen
+Mock testbar.
+
+| Funktion | Zweck |
+|---|---|
+| `signal_time_utc(run_type, date)` | Wann das Signal entstand — 09:00 ET für `pre_market`, 10:10 ET für `trade_proposals` |
+| `regular_open_utc(date)` | Die **reguläre** US-Eröffnung (09:30 ET) |
+| `is_premarket(date, now_utc)` | Lag der Erhebungszeitpunkt vor der Eröffnung? |
+| `day_end_utc(date)` | Tagesgrenze — 00:00 UTC des Folgetags |
+| `collapse_to_daily_bar(df)` | Verdichtet Intraday-Bars zu **einer** Tagesbar |
+
+**Die Verdichtung ist der Kern.** `High` = Maximum, `Low` = Minimum, `Close` = letzter.
+Ohne sie zählte `_walk_forward_hit` jede Minute als eigenen „Tag" und zerstörte
+`days_to_close` — die Kennzahl, an der 3Ds `hold_day` hängt.
+
+**Alle Zeiten hängen an `America/New_York`, nie an `Europe/Berlin`.** EU und USA schalten
+die Sommerzeit an verschiedenen Wochenenden um; in den Zwischenwochen ginge eine Berliner
+Rechnung daneben.
+
+⚠️ `marketStatus` aus `/markets/{epic}` taugt **nicht** zur Vorbörsen-Erkennung: es
+meldete am 2026-08-06 um 08:37 ET `TRADEABLE`, mitten in der Vorbörse. Es beschreibt die
+Handelbarkeit des CFDs inklusive erweiterter Zeiten, nicht die Sitzungsphase. Deshalb die
+Uhr.
 
 ---
 
@@ -771,8 +838,8 @@ TOTAL: ~3.50 EUR
 
 - **Unit Tests** (155): Isolierte Module, Mock-Claude, Fixtures
 - **Integration Tests** (3): Volle Pipeline mit 5 Aktien + E2E HTML-Render
-- **Coverage Gate**: 80% Minimum (aktuell 92.45%)
-- **Baseline**: `pytest tests/ -q` → 411 passed, 7 skipped, 0 failures (Stand 2026-07-30).
+- **Coverage Gate**: 80% Minimum (aktuell 93.29%)
+- **Baseline**: `pytest tests/ -q` → 570 passed, 7 skipped, 0 failures (Stand 2026-08-07).
   Die 7 übersprungenen sind die Live-Tests unter `tests/live/`; sie laufen nur mit
   `--run-live` und sprechen dann echte APIs an (inkl. echtem Mailversand).
 
@@ -785,6 +852,9 @@ Plan: `docs/superpowers/plans/2026-05-21-sprint2-plan1-capital-provider-db-incre
 - **capital_provider.py** – CapitalComProvider (alleiniger OHLC-Provider, GET /positions, premarket)
 - **fundamentals_cache** – Finnhub-Fundamentals mit 7-Tage TTL
 - **DB-Incremental-Update** – täglich nur 1 Bar fetchen, Indikatoren aus DB (200 Tage)
+  *(der Bar-Abruf im Analyse-Lauf ist im Preismodell-Umbau entfallen, s. P3 — die
+  Indikatoren kommen weiterhin aus der DB, die Tagesbar schreibt nur noch
+  `final_close`. Steht hier als Sprint-2-Historie, nicht als Ist-Zustand)*
 - **position_check Run-Type** – Capital.com Position-Read + Claude + Status-Mail
   *(in Sprint 3B / Plan 2 restlos entfernt, `59f5e2c` — steht hier nur als
   Sprint-2-Historie, nicht als Ist-Zustand)*

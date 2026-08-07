@@ -1,7 +1,8 @@
 # Shares_Future – SP500 CFD Research Tool
 
-**Zuletzt aktualisiert:** 2026-08-06 — Task-20-Review abgeschlossen, acht Defekte behoben
-(Details: PROJECT_STATUS.md, P2.8). Code liegt auf `main`, Pipeline weiterhin deaktiviert.
+**Zuletzt aktualisiert:** 2026-08-07 — Preismodell-Umbau abgeschlossen (drei
+Entscheidungs-Snapshots, Run-Type `final_close`, Evaluator auf finalen Bars; Details:
+PROJECT_STATUS.md, P3). Code liegt auf `main`, Pipeline weiterhin deaktiviert.
 
 ## Projektübersicht
 Automatisiertes Research-Tool zur täglichen Analyse von S&P 500 Aktien,
@@ -58,11 +59,20 @@ Die Pipeline-Phasen lassen sich an `main.py:run_pipeline()` ablesen.
   nicht: finnhub nutzt `requests.Session`, das Anthropic-SDK httpx. Anlass waren
   zwei reale Vorfälle: echte Mails aus einem Testlauf und eine echte
   Capital.com-Session aus einem Unit-Test, die still geschluckt wurde.
-- Der Bar des **laufenden** Tages wird überschrieben, abgeschlossene Tage nie.
-  Capital.coms DAY-Bar existiert schon während des Tages und bewegt sich weiter
-  (inkl. erweiterter Handelszeiten). Wer sie einfriert, lässt den 16:10-Lauf
-  „frische" Kurse gegen sich selbst vergleichen und schreibt den echten
-  Tagesschluss nie.
+- `price_history` enthält **ausschliesslich finale Tagesbars** und hat **genau einen
+  Schreiber**: `final_close` (00:15 UTC, täglich). Entscheidungskurse gehören nicht
+  dorthin, sondern in `predictions.price_premarket` / `price_open` / `price_1610`.
+  Die Vermischung beider war der Frozen-Bar-Bug. `setup/historical_loader.py` bleibt
+  als manueller Backfill der einzige weitere Schreiber.
+- ⚠️ Capital.com beantwortet ein `to` **in der Zukunft** (UTC) mit HTTP 400 — fünf
+  Minuten genügen. Nicht dokumentiert, empirisch ermittelt. `_not_in_future()` klemmt es.
+- ⚠️ Der `open` der Tages-Bar ist **nicht** der Eröffnungskurs: die Bar beginnt laut
+  `openingHours` um 08:00 UTC, also vorbörslich. Gemessen 0,47 % Abweichung bei AAPL
+  (310,54 gegen 309,09). Der echte Eröffnungskurs kommt aus einer `MINUTE`-Bar.
+- ⚠️ **Ein neuer Ticker braucht erst `setup/historical_loader.py --tickers <X>`**,
+  bevor er in die Config kommt. Ohne Historie wird er als `insufficient bars`
+  übersprungen und zählt Richtung Deaktivierung — der stille Bootstrap-Pfad ist
+  mit `_ensure_today_bar` weggefallen.
 
 ## Cron-Jobs — die zwei Fallen
 Zeitplan und Run-Types stehen in `.github/workflows/analyze.yml`. Zwei Dinge, die
@@ -142,7 +152,12 @@ und der getroffenen Entscheidungen. Kurzfassung:
   und die Live-Verifikation. ⚠️ Der Code ist **gemerged, aber nie ausgeführt**:
   `analyze.yml` steht auf `disabled_manually`, letzter Pipeline-Lauf 2026-07-13.
   Run-Types sind seither
-  `pre_market` / `trade_proposals` / `close` / `weekly`.
+  `pre_market` / `trade_proposals` / `close` / `final_close` / `weekly`.
+- **Preismodell-Umbau** (2026-08-06/07) abgeschlossen: drei Entscheidungs-Snapshots
+  in `predictions`, neuer Run-Type `final_close`, Evaluator auf finale Bars.
+  Spec: `docs/superpowers/specs/2026-08-06-preismodell-snapshots-design.md`,
+  Stand und Befunde in PROJECT_STATUS, Abschnitt P3. ⚠️ Ebenfalls **nie in einem
+  echten Pipelinelauf ausgeführt** — verifiziert wurde nur lesend gegen die API.
 - **3C** offen (Ranking-Überarbeitung)
 - **3D / 3E / 3F** sind ⚠️ **Platzhalter** — bei Erreichen aktiv nachfragen und den
   Sprint gemeinsam ausarbeiten, **bevor** Code entsteht. Die Stichpunkte dort sind

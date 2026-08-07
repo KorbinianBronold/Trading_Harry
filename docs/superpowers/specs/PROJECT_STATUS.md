@@ -1,6 +1,10 @@
 # PROJECT_STATUS.md — Shares_Future (Trading_Harry)
 
-**Zuletzt aktualisiert:** 2026-08-06 — Task-20-Review abgeschlossen: **acht Defekte behoben**
+**Zuletzt aktualisiert:** 2026-08-07 — **Preismodell-Umbau abgeschlossen** (Abschnitt P3):
+drei Entscheidungs-Snapshots in `predictions`, neuer Run-Type `final_close`, Evaluator auf
+finalen Bars, `price_history` mit genau einem Schreiber. 570 Tests grün, Coverage 93,29 %.
+⚠️ Ebenfalls **nie live ausgeführt** — P2.4 bleibt offen.
+Davor, 2026-08-06 — Task-20-Review abgeschlossen: **acht Defekte behoben**
 (3 Criticals, eingefrorene Tagesbar, beide Weekly-Blöcke, Winter-Cron, Netzsperre), Details
 in **P2.8**. Kosten- und `MAX_DEEP_ANALYSIS`-Aussagen sind in B.1, B.13, C.4 und F.1
 vereinheitlicht — die Widersprüche gegen die eigene Korrekturbox sind raus.
@@ -129,6 +133,7 @@ vereinheitlicht — die Widersprüche gegen die eigene Korrekturbox sind raus.
 | `pre_market` | 15:00 Mo–Fr | **unverändert** — volle Pipeline Phase 0–5 | **3,31 EUR bei 20 Tickern** (gemessen) |
 | `trade_proposals` | 16:10 Mo–Fr¹ | **NEU** — ersetzt `evaluate` vollständig (anderer Zweck, s. B.2) | ~0,5–0,7 EUR (E1) |
 | `close` | 22:30 Mo–Fr | **vereinfacht** (s. B.6) | ~0,00 EUR |
+| `final_close` | 02:15 / 01:15 (= **00:15 UTC**), **täglich** | **NEU** (Preismodell-Umbau, s. P3) — holt die finalen Tagesbars und bewertet. Kein Claude-Call, keine Mail | ~0,00 EUR |
 | `weekly` | So 20:00 | Struktur unverändert, **Inhalt erweitert** (s. B.9) | ~0,00 EUR |
 | ~~`midday`~~ | — | **komplett entfernen** | — |
 | ~~`evaluate`~~ | — | **ersetzt durch `trade_proposals`** | — |
@@ -791,7 +796,7 @@ eigenen Commit und einen Test, der vorher rot war.
 | C1 | Ablösung lief über **zwei** Commits (`save_prediction` + `record_revision`) | Bricht der Lauf dazwischen ab, stehen dauerhaft **zwei offene Zeilen** für dieselbe Trade-Idee. Der Evaluator schließt beide, jede Kennzahl zählt doppelt — genau die Doppelzählung, die E3 verhindern soll. Kein UNIQUE (Befund 8), kein Reparaturlauf | `db.supersede_prediction()` legt INSERT und UPDATE in **eine** Transaktion — so heißt die Funktion auch in Spec 5.2 |
 | C2 | Übersprungene Ticker bekamen einen **erfundenen** 16:10-Einstieg | `collect()` liefert sie gar nicht zurück, `snapshot.get("price") or pred["entry_price"]` fiel still auf den 15:00-Kurs zurück — und löste die Morgenzeile trotzdem ab. P&L und jeder 3D-Vergleich erben den Fehler lautlos | Ohne frischen Kurs bleibt die Zeile offen und gilt als „nicht geprüft" (Spec 7.1); der Claude-Call entfällt |
 | C3 | Nur `RevalidationError` gefangen | `call_claude` reicht nach zwei Retries die **rohe** Exception durch; ein 429/529 kommt als `APIStatusError`. Der entkam bis aus `run_trade_proposals` heraus: `save_cost_tracking()` lief nie, ausgegebenes Geld blieb unverbucht. Bei ~27 Calls je Lauf kein Randfall | Breit gefangen, `CostCapExceeded` vorher durchgereicht. Zusätzlich überlebt das Teilergebnis jetzt einen Deckel-Abbruch |
-| — | **Eingefrorene Tagesbar** | `_ensure_today_bar()` stieg bei vorhandener Zeile aus. Der 15:00-Lauf schrieb damit eine Pre-Market-Quote fest: der 16:10-Lauf verglich „frische" Kurse **gegen sich selbst** (Opening-Gap konnte nie feuern) und der echte Tagesschluss wurde **nie** geschrieben — die Zeile blieb dauerhaft falsch und verfälschte jeden daraus gerechneten Indikator | Laufender Tag wird überschrieben, abgeschlossene Tage nie. Grundlage: Read-only-Sonde, s. unten |
+| — | **Eingefrorene Tagesbar** | `_ensure_today_bar()` stieg bei vorhandener Zeile aus. Der 15:00-Lauf schrieb damit eine Pre-Market-Quote fest: der 16:10-Lauf verglich „frische" Kurse **gegen sich selbst** (Opening-Gap konnte nie feuern) und der echte Tagesschluss wurde **nie** geschrieben — die Zeile blieb dauerhaft falsch und verfälschte jeden daraus gerechneten Indikator | Laufender Tag wird überschrieben, abgeschlossene Tage nie. Grundlage: Read-only-Sonde, s. unten. ⚠️ **Am 2026-08-07 überholt** — der Preismodell-Umbau (P3) hat `_ensure_today_bar()` ganz entfernt; `price_history` hat jetzt nur noch einen Schreiber, damit kann das Einfrieren strukturell nicht mehr entstehen |
 | — | Weekly-Block 3 ließ `run_type` fallen | Harte Ablehnungen des **Morgenlaufs** lasen sich als Ablehnungen des 16:10-Laufs | Gruppierung nach `(run_type, rule, enforced)` |
 | — | Weekly-Block 2 jointe auf `p.id` | Bestätigte Zeilen sind `superseded` und bekommen **nie** ein Outcome — das hängt am Nachfolger. „bestätigt: Ø 0 EUR / gedreht: −18 EUR" hätte Bestätigen als wertlos ausgewiesen | Join über `COALESCE(superseded_by, id)`; `avg_pl` bleibt NULL statt 0, dazu `n_evaluated` |
 | — | `trade_proposals`-Cron nur für die US-Sommerzeit | Von November bis März lief der Lauf um 09:10 ET — **20 min vor** der Eröffnung. Lautlos: kein Fehler, nur vier Monate Unsinnsdaten pro Jahr | Zweiter Slot (15:10 UTC); der Workflow verwirft den zur aktuellen US-Zeitzone falschen |
@@ -816,6 +821,94 @@ Beschreibung.
 der 16:10-Portfolio-Check bekommt einen etwas ärmeren Trend-Kontext als der Morgenlauf.
 Die Rotationsfelder aus `market_context` werden am Aufrufort ergänzt (`41a724a`), der Rest
 bleibt offen. Im Docstring von `load_trend_context()` dokumentiert.
+
+---
+
+## Preismodell-Umbau — drei Entscheidungs-Snapshots + finale Tages-OHLC (P3) ✅ CODE FERTIG
+
+**Spec:** `docs/superpowers/specs/2026-08-06-preismodell-snapshots-design.md`
+**Plan:** `docs/superpowers/plans/2026-08-06-preismodell-snapshots.md`
+**Umgesetzt:** 2026-08-06/07, 11 Tasks, 13 Commits.
+**Stand danach:** 570 Tests grün, 7 skipped, Coverage 93,29 %.
+
+### P3.1 — Worum es ging
+
+Das Preismodell trennt jetzt zwei Dinge, die vorher dieselbe Quelle hatten und
+deshalb ständig verwechselt wurden:
+
+| | Was | Quelle |
+|---|---|---|
+| **Indikator-Historie** | RSI, ATR, SMA, MACD — braucht abgeschlossene Tage | `price_history`, **nur finale Bars, ein Schreiber** |
+| **Entscheidungs-Snapshot** | Der Kurs, zu dem eine Aussage getroffen wurde | `predictions.price_premarket` / `price_open` / `price_1610` |
+
+Genau diese Vermischung war der Frozen-Bar-Bug aus P2.8: der 15:00-Lauf schrieb eine
+Pre-Market-Quote als „Tagesbar" fest, und alles Spätere las sie als Tatsache.
+
+### P3.2 — Die Änderungen
+
+| SHA | Was | Warum |
+|---|---|---|
+| `413ed68` | `to` nie in der Zukunft an Capital.com | Undokumentierter HTTP 400, fünf Minuten genügen. `final_close` läuft um Mitternacht genau dort hinein und wäre strukturell gescheitert |
+| `e912f48` | Intraday-Abruf mit `resolution`-Parameter | Der Code kannte nur `DAY`. Eigener Parser, weil `_parse_prices` `snapshotTime` auf `[:10]` schneidet — Minutenbars kollabierten sonst auf einen Index |
+| `c1fdcc5` | Drei Entscheidungs-Snapshots in `predictions` | Additiv, `entry_price` unangetastet, damit 3D beide Zeitpunkte vergleichen kann |
+| `0ee4f76` | `src/signal_window.py` | Signal-Zeitpunkt und Verdichtung, reine Funktionen ohne Netz |
+| `5372732` | `run_final_close` | Holt die finalen Tagesbars für Ticker, Commodities/Crypto **und** Sub-Sektor-ETFs |
+| `71e2db2` | Auswertung ab dem Signal-Zeitpunkt | Fenster beginnt am Signal, nicht am Tagesbeginn |
+| `efea2bd` | Predictions bleiben offen, solange ihr Fenster läuft | s. P3.4, Befund 1 |
+| `11a3337` | `price_history` hat nur noch einen Schreiber | `_ensure_today_bar()` und der ETF-Schreiber in `sector_momentum` entfallen |
+| `c327487` | Echten Eröffnungskurs und Vorbörsen-Markierung befüllen | Lücke, die eine Selbstprüfung des Plans gefunden hat: beide Werte wurden nur gelesen, nie erzeugt |
+| `75aef35` | Kein erfundener Eröffnungskurs für Krypto/Rohstoffe (E6) | s. P3.4, Befund 4 |
+| `b659ef4` | Sektor-Momentum ohne die Bar des laufenden Tages | Der Join lief auf exakte Datumsgleichheit mit heute — hätte lautlos D9 abgeschaltet |
+| `f291096` | Veraltete Bars fälschen das Sektor-Momentum nicht mehr | s. P3.4, Befund 3 |
+| `587a7ee` | `final_close`-Cron, Concurrency-Lock, Ausfallwarnung | Der Lock existierte in **keinem** Workflow |
+
+### P3.3 — Warum der Cron täglich läuft und DST hier keine Rolle spielt
+
+`final_close` hängt an der **Bar-Grenze**, nicht an einer Börsensitzung.
+`instrument.openingHours` meldet `zone: UTC` und schliesst auf 00:00 UTC — Job und
+Datenquelle liegen am selben Anker, eine Zeitumstellung verschiebt beide nicht
+gegeneinander. **Anders als `trade_proposals`, der an der US-Sitzung hängt und deshalb
+zwei Slots braucht.** Diese Frage ist damit beantwortet und soll nicht erneut aufkommen.
+
+**Täglich statt Mo–Fr:** freitags schliesst der Handel um 21:00 UTC, die Bar wird erst
+danach final — erst der **Samstagslauf** holt Freitags Schlusskurs. Ohne den Samstag
+fehlte jede Woche ein Handelstag in der Historie.
+
+### P3.4 — Vier Befunde, die erst die Umsetzung zutage gefördert hat
+
+Das ist der eigentliche Ertrag des Umbaus — alle vier waren vorher unsichtbar.
+
+1. **`MAX_HOLD_DAYS = 5` war nie in Kraft.** `_walk_forward_hit` lieferte `timeout`,
+   sobald in den *verfügbaren* Bars kein Treffer lag, ohne zu prüfen, ob das Fenster
+   überhaupt abgelaufen war. **Jede Prediction schloss beim ersten Auswertungslauf**,
+   am Tag nach ihrer Entstehung. Vorbestehend, behoben in `efea2bd` (neuer Zustand
+   `pending` plus Notbremse `MAX_OPEN_CALENDAR_DAYS = 14` gegen Zombie-Zeilen).
+2. **`_ensure_today_bar` war als Test-Fixture tragend.** 13 Tests bezogen ihre
+   Kurshistorie aus dem Seiteneffekt dieser Funktion statt aus eigenem Setup. Der
+   Rückbau legte das offen; sie seeden jetzt selbst, was den Vertrag von
+   `_process_ticker` ehrlicher prüft.
+3. **Der Riegel gegen veraltete Bars.** Die Umstellung auf „die letzten zwei Bars"
+   behob den stillen Totalausfall, öffnete aber eine zweite Lücke: ein stillgelegter
+   Ticker trug seine letzte je vorhandene Tagesbewegung dauerhaft weiter. Gemessen
+   sprang das Sektor-Momentum dadurch von `None` auf **18,0**, und `ticker_count`
+   erreichte fälschlich das Minimum — aus „kein Signal" wurde „starkes Signal", auf
+   das D9 gehandelt hätte. Behoben in `f291096` mit **zwei** Riegeln: Bar-Alter und
+   Abstand der beiden Bars (Letzterer fängt den Ticker mit frischem letztem Bar und
+   monatealtem Vorgänger).
+4. **Krypto und Rohstoffe bekamen einen erfundenen Eröffnungskurs.** Die Annahme, der
+   `MINUTE`-Abruf liefere für 24/7-Instrumente keine Bar, war falsch — sie handeln
+   durchgehend. Der Wert war kein Eröffnungskurs, sondern der Kurs zu einem
+   bedeutungslosen Zeitpunkt (BTC-USD 64060,9, GC=F 4196,98). Die Tests waren dabei
+   **grün** — aufgefallen ist es nur bei einer Live-Prüfung gegen die echte API.
+   Behoben in `75aef35`, jetzt mit eigenem Test.
+
+### P3.5 — ⏳ Nie live ausgeführt
+
+⚠️ Wie schon Sprint 3B / Plan 2 ist auch dieser Umbau **nie in einem echten
+Pipelinelauf gelaufen**. `analyze.yml` steht unverändert auf `disabled_manually`.
+Verifiziert wurde gegen die echte Capital.com-API, aber **ausschliesslich lesend** und
+in Wegwerf-Datenbanken; `data/tracking.db` wurde nie angefasst. **P2.4 bleibt offen
+und gehört Korbinian.**
 
 ---
 
@@ -1172,6 +1265,8 @@ nicht verloren gehen.**
 | **Social-Media-Signale** (X/Twitter, Truth Social) | Trendsetter über `config` konfigurierbar (Trump, Musk, …), deren Posts in die Analyse einfliessen. Grösster Brocken der drei; berührt Guardrails (Belegpflicht) und Kosten. |
 | **Roh-Requests/-Responses hinter einem Flag loggen** | Kleine Änderung in `src/utils.py` (Debug-Logging des Response-Texts). Hilfreich, um Prompt- und Parse-Fehler nachzuvollziehen, statt sie aus der Wirkung zu erraten. |
 | **SQLite später ggf. auf DuckDB/DWH** | Bewusst *nicht* jetzt. Erst relevant, wenn die Auswertungen über einzelne Läufe hinausgehen (3D/3F). |
+| **Gap-Analyse Final-Close → nächster Open** | Mit `price_open` und der finalen Tages-OHLC liegen seit dem Preismodell-Umbau (P3) beide Seiten vor. Offen ist, ob die Lücke prognostisch etwas trägt. |
+| **Fair-Value-Gap-Erkennung im Lernmodul** | Setzt die Gap-Analyse voraus. Gehört zu 3D, nicht davor. |
 
 ---
 
@@ -1180,6 +1275,10 @@ nicht verloren gehen.**
 | # | Datei | Bug | Schwere | Geplant in |
 |---|---|---|---|---|
 | B-03 | `config.py:SP500_FULL_TICKERS` | Ist Stub (= MVP-Liste), `USE_FULL_SP500=true` würde nur 20 Ticker laufen lassen | Mittel | Sprint 3F |
+| B-11 | `src/evaluator.py` | **`days_to_close` ist bei der Notbremse mehrdeutig.** Schliesst eine Prediction über `MAX_OPEN_CALENDAR_DAYS = 14` bei unvollständigem Fenster, entsteht bei nur einer Bar `days_to_close = 1` — derselbe Wert wie bei einem echten Intraday-Treffer. Unterscheidbar bleibt es an `exit_reason` (`timeout` gegen `tp_hit`/`sl_hit`). **Für 3D: `days_to_close` nie ohne `exit_reason` auswerten.** Bewusst nicht behoben — ein eigener `exit_reason` schlüge in die Weekly-Statistik (`GROUP BY exit_reason`) durch, für einen seltenen Fall | Niedrig | 3D beachten |
+| B-12 | `src/data_collector.py` | **Neue Ticker brauchen einen manuellen Backfill.** Mit dem Wegfall von `_ensure_today_bar` (P3) entfällt der stille Bootstrap-Pfad: ein neu in die Config aufgenommener Ticker hat keine Historie, wird als `insufficient bars: 0 < 20` mit `learnable=False` übersprungen und zählt nach `TICKER_MAX_SKIPS = 20` Läufen Richtung Deaktivierung. Reihenfolge ab jetzt: erst `setup/historical_loader.py --tickers <X>`, dann in die Config | Niedrig (Bedienung) | dokumentiert |
+| B-13 | `src/sector_momentum.py` | `_fetch_etf_momentum` nimmt weiterhin `conn`, ohne noch zu schreiben — toter Parameter seit dem Rückbau des ETF-Schreibers. Absichtlich nicht entfernt, weil es Aufrufer nach sich zöge | Kosmetisch | Aufräumlauf |
+| B-14 | `tests/unit/test_data_collector.py` | `test_process_ticker_skips_on_none_price_history` trägt einen irreführenden Namen: sein Provider-Mock ist totes Setup, `_process_ticker` liest die Historie nicht mehr über den Provider. Die Zusicherungen gelten unverändert und prüfen etwas Sinnvolles (Ticker ohne DB-Historie wird übersprungen und nicht-lernbar protokolliert) — nur der Name passt nicht mehr | Kosmetisch | Aufräumlauf |
 
 **Behoben (2026-07-29, im ersten echten Gesamtlauf gefunden):**
 
