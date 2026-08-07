@@ -2,6 +2,7 @@ import argparse
 from unittest.mock import patch, MagicMock
 import pytest
 
+import main
 from main import (
     run_pipeline, run_weekly, run_close, parse_args, build_commodity_crypto_inputs,
 )
@@ -1192,3 +1193,60 @@ def test_final_close_treats_a_missing_bar_as_normal(tmp_db_path, mocker):
 def test_final_close_is_a_known_run_type():
     from main import RUN_TYPES
     assert "final_close" in RUN_TYPES
+
+
+# ---------- Task 7b (Preismodell): price_open und is_premarket befuellen ----------
+
+
+def test_premarket_flag_comes_from_the_clock():
+    """15:00 Berlin ist 09:00 ET -- eine halbe Stunde VOR der Eroeffnung. Der
+    Kurs ist duenn gehandelt und darf in der Analyse nicht als regulaerer Kurs
+    behandelt werden.
+
+    Aus der Uhr abgeleitet, nicht aus marketStatus: das Feld meldete am
+    2026-08-06 um 08:37 ET TRADEABLE -- mitten in der Vorboerse."""
+    from main import _premarket_flag
+    assert _premarket_flag("2026-08-05", "2026-08-05T13:00:00") == 1
+    assert _premarket_flag("2026-08-05", "2026-08-05T14:10:00") == 0
+
+
+def test_opening_price_comes_from_the_minute_bar_not_the_day_bar(tmp_db_path, mocker):
+    """Der 'Open' der Tagesbar ist NICHT der Eroeffnungskurs: Capital.com laesst
+    die Tagesbar um 08:00 UTC beginnen (openingHours, erweiterte Zeiten). Bei
+    AAPL am 2026-08-05 lagen beide 0,47 % auseinander -- Tagesbar 310,54 gegen
+    tatsaechlicher Open 309,09. Deshalb ein eigener MINUTE-Abruf.
+
+    Entry/TP/SL liegen bewusst auf derselben Kursskala wie der 16:10-Kurs: die
+    R/R-Ratio wird in _persist_revision gegen den AKTUELLEN Kurs neu gerechnet,
+    und ein Setup mit negativem Reward wuerde vom harten Guardrail zu Recht
+    verworfen -- dann entstuende gar keine trade_proposals-Zeile."""
+    import pandas as pd
+    from src import db
+    conn = db.connect(str(tmp_db_path)); db.init_schema(conn)
+    _pred_row(conn, ticker="AAPL", entry_price=305.0,
+              tp_price=341.0, sl_price=301.0)
+    conn.commit(); conn.close()
+
+    mail = _tp_run_mocks(mocker, [{"ticker": "AAPL", "price": 311.0}])
+    # _tp_run_mocks hat CapitalComProvider bereits gepatcht -- hier gezielt den
+    # Intraday-Abruf nachruesten, den _opening_prices braucht.
+    prov = main.CapitalComProvider.return_value
+    prov.get_intraday_ohlc.return_value = pd.DataFrame(
+        {"Open": [309.09], "High": [309.6], "Low": [307.8],
+         "Close": [307.94], "Volume": [431]},
+        index=pd.to_datetime(["2026-07-30 13:30:00"]))
+    mocker.patch("main.revalidate_one", return_value={
+        "verdict": "bestaetigt", "probability_pct": 70, "reason": "ok",
+        "entry_window_low": 310.0, "entry_window_high": 312.0})
+
+    from main import run_trade_proposals
+    run_trade_proposals(date="2026-07-30", db_path=str(tmp_db_path))
+
+    conn = db.connect(str(tmp_db_path))
+    row = conn.execute(
+        "SELECT * FROM predictions WHERE run_type='trade_proposals'").fetchone()
+    conn.close()
+    assert row is not None, "die Ablösezeile muss entstanden sein"
+    assert row["price_open"] == 309.09, "der echte Eroeffnungskurs"
+    assert row["price_1610"] == 311.0
+    assert row["is_premarket"] == 0, "10:10 ET liegt nach der Eroeffnung"

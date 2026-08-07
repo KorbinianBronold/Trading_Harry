@@ -8,11 +8,12 @@ import argparse
 import logging
 import sys
 import traceback
-from datetime import date as date_cls, datetime, timedelta
+from datetime import date as date_cls, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 import config
 from src import db
+from src import signal_window
 from src.cost_tracker import CostTracker, CostCapExceeded
 from src.data_collector import collect
 from src.sector_momentum import collect_sector_momentum
@@ -162,6 +163,45 @@ def load_recent_outcomes_aggregate(conn, today: str) -> dict:
     }
 
 
+def _premarket_flag(date: str, now_utc: str | None = None) -> int:
+    """1, wenn der Erhebungszeitpunkt vor der regulaeren US-Eroeffnung liegt.
+
+    Aus der Uhr, nicht aus marketStatus: das Feld meldete am 2026-08-06 um
+    08:37 ET `TRADEABLE`, mitten in der Vorboerse. Es beschreibt die
+    Handelbarkeit des CFDs einschliesslich erweiterter Zeiten, nicht die
+    Sitzungsphase."""
+    now = now_utc or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+    return 1 if signal_window.is_premarket(date, now) else 0
+
+
+def _opening_prices(price_provider, tickers: list[str], date: str) -> dict[str, float]:
+    """Tatsaechlicher Eroeffnungskurs je Ticker, minutengenau.
+
+    Der 'Open' der Tagesbar taugt dafuer nicht: Capital.com laesst sie um
+    08:00 UTC beginnen (openingHours, erweiterte Zeiten). Bei AAPL am 2026-08-05
+    lagen Tagesbar-Open (310,54) und tatsaechlicher Open (309,09) 0,47 %
+    auseinander.
+
+    Zum Abrufzeitpunkt (10:10 ET) liegt die Eroeffnung bereits in der
+    Vergangenheit, der Abruf ist also rein historisch. Commodities und Crypto
+    haben keine Eroeffnung -- fuer sie bleibt der Wert schlicht aus (E6)."""
+    start = signal_window.regular_open_utc(date)
+    end = (datetime.fromisoformat(start) + timedelta(minutes=1)).strftime(
+        "%Y-%m-%dT%H:%M:%S")
+    out: dict[str, float] = {}
+    for ticker in tickers:
+        try:
+            df = price_provider.get_intraday_ohlc(ticker, start, end)
+        except Exception as e:
+            log.warning(f"{ticker}: Eroeffnungskurs nicht abrufbar: {e}")
+            continue
+        if df is None or df.empty:
+            log.info(f"{ticker}: kein Eroeffnungs-Bar (24/7-Instrument?)")
+            continue
+        out[ticker] = float(df["Open"].iloc[0])
+    return out
+
+
 def run_pipeline(run_type: str, date: str, db_path: str) -> None:
     """Full Phase 0–5 pipeline. Seit Sprint 3B / Plan 2 nur noch fuer pre_market —
     midday ist entfallen, trade_proposals hat einen eigenen, schlankeren Ablauf."""
@@ -306,6 +346,14 @@ def run_pipeline(run_type: str, date: str, db_path: str) -> None:
             policy_context=policy_context, extra_context=extra_context,
             cost_tracker=cost_tracker,
         )
+
+        # Der 15:00-Kurs ist regulaer vorboerslich (09:00 ET). Die Markierung
+        # geht in die Prediction-Zeile und in den Re-Validierungs-Prompt --
+        # ein duenn gehandelter Vorboersenkurs ist kein Sitzungskurs.
+        _pm = _premarket_flag(date)
+        for _a in deep_stocks + deep_cc:
+            _a["price_premarket"] = _a.get("current_price")
+            _a["is_premarket"] = _pm
 
         current_phase = "ranking"
         # Phase 4 — Ranking + persist predictions (market_ctx kommt aus Phase 0b)
@@ -524,6 +572,10 @@ def run_trade_proposals(date: str, db_path: str) -> None:
             earnings_provider=earnings_provider,
             conn=conn, date=date, run_type="trade_proposals")
         snapshots = {td["ticker"]: td for td in (sp_tds + cc_tds)}
+
+        opens = _opening_prices(price_provider, list(snapshots), date)
+        for _t, _snap in snapshots.items():
+            _snap["price_open"] = opens.get(_t)
 
         current_phase = "open_positions"
         _forced_candidates(price_provider)   # nur fuer den Log — Phase 4a sieht sie ohnehin
