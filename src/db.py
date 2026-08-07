@@ -1255,6 +1255,12 @@ def load_skipped_ticker_stats(
     ).fetchall()
 
 
+def load_final_bar_date(conn: sqlite3.Connection) -> str | None:
+    """Datum der neuesten finalen Tagesbar in price_history, oder None."""
+    row = conn.execute("SELECT MAX(date) AS d FROM price_history").fetchone()
+    return row["d"] if row and row["d"] else None
+
+
 def load_sector_mapping_coverage(conn: sqlite3.Connection) -> dict:
     """Anteil der Ticker mit Sub-Sektor-Zuordnung. B.10 nennt eine stabil hohe
     Quote als Voraussetzung dafuer, SECTOR_GUARDRAIL_STRICT auf True zu stellen."""

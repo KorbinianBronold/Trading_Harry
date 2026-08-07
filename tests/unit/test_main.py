@@ -1303,3 +1303,21 @@ def test_opening_price_stays_null_for_commodities_and_crypto(tmp_db_path, mocker
     assert rows["AAPL"]["price_open"] == 309.09, "Aktie bekommt den echten Open"
     assert rows["BTC-USD"]["price_open"] is None, (
         "24/7-Instrument hat keinen Eroeffnungskurs -- NULL statt erfundenem Wert (E6)")
+
+
+def test_pre_market_warns_when_the_final_bar_is_missing(in_memory_db):
+    """final_close verschickt keine Mail. Faellt er aus, wird nichts mehr
+    bewertet -- und niemand merkt es. Deshalb prueft pre_market, ob die finale
+    Bar des letzten Handelstags vorliegt."""
+    from src import db
+    from main import _final_bar_warning
+    db.init_schema(in_memory_db)
+    db.upsert_price_history(in_memory_db, "AAPL", "2026-08-03",
+                            100, 101, 99, 100, 10)
+
+    warn = _final_bar_warning(in_memory_db, date="2026-08-06")
+    assert warn is not None and "final_close" in warn
+
+    db.upsert_price_history(in_memory_db, "AAPL", "2026-08-05",
+                            100, 101, 99, 100, 10)
+    assert _final_bar_warning(in_memory_db, date="2026-08-06") is None

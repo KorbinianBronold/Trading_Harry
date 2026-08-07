@@ -206,6 +206,22 @@ def _opening_prices(price_provider, tickers: list[str], date: str) -> dict[str, 
     return out
 
 
+def _final_bar_warning(conn, date: str) -> str | None:
+    """Warnt, wenn fuer den letzten Werktag keine finale Tagesbar vorliegt.
+
+    final_close verschickt bewusst keine Mail. Faellt er aus, wird nichts mehr
+    bewertet und niemand merkt es -- die Weekly saehe nur duenner aus. Diese
+    Pruefung macht den Ausfall in der Tagesmail sichtbar."""
+    d = date_cls.fromisoformat(date) - timedelta(days=1)
+    while d.weekday() >= 5:          # Sa/So ueberspringen
+        d -= timedelta(days=1)
+    newest = db.load_final_bar_date(conn)
+    if newest is not None and newest >= d.isoformat():
+        return None
+    return (f"⚠️ Keine finale Tagesbar für {d.isoformat()} "
+            f"(neueste: {newest or 'keine'}) — lief final_close?")
+
+
 def run_pipeline(run_type: str, date: str, db_path: str) -> None:
     """Full Phase 0–5 pipeline. Seit Sprint 3B / Plan 2 nur noch fuer pre_market —
     midday ist entfallen, trade_proposals hat einen eigenen, schlankeren Ablauf."""
@@ -392,6 +408,9 @@ def run_pipeline(run_type: str, date: str, db_path: str) -> None:
 
     # Always: write cost summary + send mail (even on partial run)
     payload["yesterday_outcomes"] = _aggregate_yesterday_outcomes(conn, today=date)
+    _warn = _final_bar_warning(conn, date=date)
+    if _warn:
+        payload["briefing"] = [*payload.get("briefing", []), _warn]
     payload["cost_summary"] = cost_tracker.summary(run_type=run_type, date=date)
     db.save_cost_tracking(conn, payload["cost_summary"])
 

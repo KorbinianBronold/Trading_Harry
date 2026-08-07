@@ -112,3 +112,19 @@ def test_every_case_branch_and_dispatch_option_is_a_real_run_type():
     assert {o.strip() for o in opts.split(",")} == set(RUN_TYPES)
     for t in set(re.findall(r'T="([a-z_]+)"', WORKFLOW)):
         assert t in RUN_TYPES, f"case-Zweig '{t}' ist kein bekannter Run-Type"
+
+
+def test_final_close_runs_daily_not_only_on_weekdays():
+    """Der Samstagslauf holt Freitags Schlusskurs: openingHours schliesst
+    freitags um 21:00 UTC, die Bar wird also erst nach Mitternacht final."""
+    assert "'15 0 * * *'" in WORKFLOW
+    assert 'T="final_close"' in WORKFLOW
+
+
+def test_workflow_has_a_concurrency_lock():
+    """Zwei Laeufe auf derselben DB gewinnen den Release-Upload nach
+    Zufallsprinzip -- wer zuletzt hochlaedt, gewinnt."""
+    assert "concurrency:" in WORKFLOW
+    assert "cancel-in-progress: false" in WORKFLOW, (
+        "Ein laufender Job schreibt bereits phasenweise in die DB -- ihn "
+        "abzuschneiden waere schlimmer als zu warten")

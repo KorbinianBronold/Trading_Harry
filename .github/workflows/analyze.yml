@@ -11,16 +11,33 @@ on:
     - cron: '10 15 * * 1-5'   # trade_proposals  10:10 New York (EST)
     - cron: '30 20 * * 1-5'   # close            22:30 Berlin (CEST)
     - cron: '0 18 * * 0'      # weekly           So 20:00 Berlin (CEST)
+    # final_close haengt an der BAR-GRENZE, nicht an einer Boersensitzung:
+    # openingHours meldet `zone: UTC` und schliesst auf 00:00 UTC. Job und
+    # Datenquelle liegen damit am selben Anker -- eine Zeitumstellung verschiebt
+    # beide nicht gegeneinander, es gibt hier also KEINE DST-Kopplung (anders als
+    # bei trade_proposals, der zwei Slots braucht).
+    # Taeglich, nicht Mo-Fr: freitags schliesst der Handel um 21:00 UTC, die Bar
+    # wird erst danach final -- erst der Samstagslauf holt sie.
+    # 15 statt 0: Puffer auf die Bar-Grenze. Actions-Crons verspaeten sich nur.
+    - cron: '15 0 * * *'      # final_close       00:15 UTC, taeglich
 
   workflow_dispatch:
     inputs:
       run_type:
         type: choice
-        options: [pre_market, trade_proposals, close, weekly]
+        options: [pre_market, trade_proposals, close, final_close, weekly]
         default: close
 
 permissions:
   contents: write
+
+concurrency:
+  # Zwei gleichzeitige Laeufe arbeiten auf derselben tracking.db, und beim
+  # Release-Upload gewinnt schlicht der, der zuletzt hochlaedt.
+  # cancel-in-progress: false, weil ein laufender Job bereits phasenweise
+  # persistiert -- ihn abzuschneiden waere schlimmer als zu warten.
+  group: analyze-${{ github.repository }}
+  cancel-in-progress: false
 
 jobs:
   run:
@@ -69,6 +86,7 @@ jobs:
             "10 15 * * 1-5") T="trade_proposals" ;;
             "30 20 * * 1-5") T="close" ;;
             "0 18 * * 0")    T="weekly" ;;
+            "15 0 * * *")    T="final_close" ;;
             *)               T="close" ;;
           esac
 
