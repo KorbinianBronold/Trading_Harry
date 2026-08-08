@@ -365,3 +365,39 @@ def test_load_ticker_history_reuses_a_passed_provider(tmp_path):
     assert n == 1
     MockCap.assert_not_called()
     provider.get_price_history.assert_called_once()
+
+
+# ---------- Der laufende Tag ist nicht final ----------
+
+def test_loader_never_writes_todays_provisional_bar(tmp_db_path, mocker):
+    """price_history enthaelt ausschliesslich FINALE Tagesbars -- der Loader ist
+    als manueller Backfill der zweite Schreiber und muss sich daran halten.
+
+    Aufgefallen am 2026-08-08 (Samstag): `--universe` schrieb den vier
+    Krypto-Tickern eine Bar von genau diesem Tag. Krypto handelt durchgehend,
+    die UTC-Tagesbar schliesst erst um 00:00 UTC -- der Wert war also eine
+    Teilbar. Genau die Vermischung von provisorisch und final war der
+    Frozen-Bar-Bug, dessen Beseitigung der Preismodell-Umbau ist."""
+    import pandas as pd
+    from datetime import date as date_cls
+    from src import db
+    conn = db.connect(str(tmp_db_path)); db.init_schema(conn); conn.close()
+
+    today = date_cls.today().isoformat()
+    yesterday = (date_cls.today() - timedelta(days=1)).isoformat()
+    prov = MagicMock()
+    prov.get_price_history.return_value = pd.DataFrame(
+        {"Open": [1.0, 2.0], "High": [1.0, 2.0], "Low": [1.0, 2.0],
+         "Close": [1.0, 2.0], "Volume": [1, 2]},
+        index=pd.to_datetime([yesterday, today]),
+    )
+
+    from setup.historical_loader import load_ticker_history
+    load_ticker_history("BTC-USD", db_path=str(tmp_db_path), provider=prov)
+
+    conn = db.connect(str(tmp_db_path))
+    dates = [r["date"] for r in conn.execute(
+        "SELECT date FROM price_history WHERE ticker='BTC-USD'").fetchall()]
+    conn.close()
+    assert today not in dates, "Der laufende Tag ist noch nicht final"
+    assert yesterday in dates

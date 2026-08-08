@@ -13,6 +13,7 @@ import logging
 import sqlite3
 import sys
 import time
+from datetime import date as _date_cls
 from pathlib import Path
 
 # Direktaufruf ("python setup/historical_loader.py") legt nur setup/ auf sys.path —
@@ -63,9 +64,22 @@ def load_ticker_history(
     conn.row_factory = sqlite3.Row
     db.init_schema(conn)
 
+    # Der laufende Tag ist noch nicht final: price_history enthaelt
+    # ausschliesslich finale Tagesbars, und der Loader ist als manueller
+    # Backfill der zweite Schreiber neben final_close. Aufgefallen am
+    # 2026-08-08 (Samstag), als --universe den vier Krypto-Tickern eine Bar
+    # von genau diesem Tag schrieb -- Krypto handelt durchgehend, die
+    # UTC-Tagesbar schliesst erst um 00:00 UTC. Die Vermischung von
+    # provisorisch und final war der Frozen-Bar-Bug.
+    today = _date_cls.today().isoformat()
+
     inserted = 0
+    skipped_today = 0
     for ts, row in df.iterrows():
         d   = ts.strftime("%Y-%m-%d")
+        if d >= today:
+            skipped_today += 1
+            continue
         cur = conn.execute(
             """INSERT OR IGNORE INTO price_history
                (ticker, date, open, high, low, close, volume, source)
@@ -83,7 +97,11 @@ def load_ticker_history(
         inserted += cur.rowcount
     conn.commit()
     conn.close()
-    log.info(f"{ticker}: {inserted}/{len(df)} rows inserted")
+    log.info(
+        f"{ticker}: {inserted}/{len(df)} rows inserted"
+        + (f" ({skipped_today} noch nicht finale Bar(s) uebersprungen)"
+           if skipped_today else "")
+    )
     return inserted
 
 
