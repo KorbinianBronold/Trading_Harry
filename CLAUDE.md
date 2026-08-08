@@ -1,8 +1,10 @@
 # Shares_Future – SP500 CFD Research Tool
 
-**Zuletzt aktualisiert:** 2026-08-07 — Preismodell-Umbau abgeschlossen (drei
-Entscheidungs-Snapshots, Run-Type `final_close`, Evaluator auf finalen Bars; Details:
-PROJECT_STATUS.md, P3). Code liegt auf `main`, Pipeline weiterhin deaktiviert.
+**Zuletzt aktualisiert:** 2026-08-08 — Ursache der leeren 04.08.-Läufe geklärt (CI-DB ohne
+Historie), CI-Bootstrap gebaut, vier Sichtbarkeits-Fixes und zwei Historien-Defekte
+behoben; `final_close` und der Evaluator erstmals real verifiziert (PROJECT_STATUS P2.4,
+P2.9, P3.5). Code liegt auf `main`, Pipeline weiterhin deaktiviert.
+⏳ Offen: `pre_market`-Lauf (kostet Geld, verschickt Mail) und der Docker-Smoke-Test.
 
 ## Projektübersicht
 Automatisiertes Research-Tool zur täglichen Analyse von S&P 500 Aktien,
@@ -63,7 +65,17 @@ Die Pipeline-Phasen lassen sich an `main.py:run_pipeline()` ablesen.
   Schreiber**: `final_close` (00:15 UTC, täglich). Entscheidungskurse gehören nicht
   dorthin, sondern in `predictions.price_premarket` / `price_open` / `price_1610`.
   Die Vermischung beider war der Frozen-Bar-Bug. `setup/historical_loader.py` bleibt
-  als manueller Backfill der einzige weitere Schreiber.
+  als manueller Backfill der einzige weitere Schreiber — und hält sich seit `0b025a8`
+  an dieselbe Regel: der **laufende Tag** wird nie geschrieben. Bei Krypto fiel das auf
+  (durchgehender Handel, UTC-Bar schliesst erst 00:00), bei Aktien nicht.
+- `src/universe.py:full_universe()` ist die **eine Quelle**, welche Ticker das System
+  anfasst (Aktien + Rohstoffe + Krypto + Sub-Sektor-ETFs). `run_final_close`, der
+  Bootstrap und der Historien-Guard lesen alle dort — getrennt gepflegt liefen sie
+  auseinander, und ein neuer Ticker bekäme Backfill ohne Fortschreibung oder umgekehrt.
+- Lückenerkennung prüft den **gesamten jüngsten Abschnitt** (200 Bars), nicht nur
+  `MAX(date)`. Sonst blendet die erste Bar nach einem Ausfall das Loch dahinter für
+  immer aus. ⚠️ Innenliegende Lücken zählen erst ab **zwei** aufeinanderfolgenden
+  Handelstagen: einzelne fehlende Wochentage sind US-Feiertage (35 der 1000 AAPL-Bars).
 - ⚠️ Capital.com beantwortet ein `to` **in der Zukunft** (UTC) mit HTTP 400 — fünf
   Minuten genügen. Nicht dokumentiert, empirisch ermittelt. `_not_in_future()` klemmt es.
 - ⚠️ Der `open` der Tages-Bar ist **nicht** der Eröffnungskurs: die Bar beginnt laut
@@ -109,9 +121,15 @@ Standardaufrufe (`pytest tests/ --cov=src --cov-fail-under=80`, `python main.py
 
 ```bash
 # historical_loader.py: genau EIN Modus-Flag ist Pflicht (--tickers / --all /
-# --full-sp500 / --reactivate / --list-inactive). Ein Aufruf ohne Flag bricht mit
-# argparse-Fehler ab und startet NICHT mehr stillschweigend den MVP-Pull.
-python setup/historical_loader.py --all
+# --universe / --full-sp500 / --reactivate / --list-inactive / --report-coverage).
+# Ein Aufruf ohne Flag bricht mit argparse-Fehler ab und startet NICHT mehr
+# stillschweigend den MVP-Pull.
+python setup/historical_loader.py --all        # nur die 20 MVP-Aktien
+python setup/historical_loader.py --universe   # + Rohstoffe, Krypto, Sektor-ETFs
+
+# Sieht die DB gesund aus? Bars je Universums-Ticker, markiert alles unter
+# MIN_BARS_RSI. Reine DB-Abfrage, keine Capital.com-Calls.
+python setup/historical_loader.py --report-coverage
 
 # Ticker-Status (Sprint 3B / B.7) – reine DB-Operationen, keine Capital.com-Calls
 python setup/historical_loader.py --list-inactive          # stillgelegte Ticker + Retry-Datum
@@ -155,6 +173,12 @@ und der getroffenen Entscheidungen. Kurzfassung:
   ungeklärt und die erste Frage der Verifikation (PROJECT_STATUS, P2.4).
   Run-Types sind seither
   `pre_market` / `trade_proposals` / `close` / `final_close` / `weekly`.
+  ✅ **Ursache geklärt (2026-08-08):** die CI-DB (`db-latest`) hatte nie echte Historie —
+  19 Bars je Aktie, eine unter `MIN_BARS_RSI = 20`. Kein stiller Ausfall; die Pipeline
+  verhielt sich korrekt. Details und die sechs Folge-Commits: PROJECT_STATUS P2.4/P2.9.
+  ⚠️ **`db-latest` nie als Datenquelle verwenden**, ohne die Abdeckung zu prüfen — es
+  bestückt sich sonst nur aus den CI-eigenen Schreibvorgängen selbst. Dafür gibt es den
+  Workflow `bootstrap-db` (nur `workflow_dispatch`).
 - **Preismodell-Umbau** (2026-08-06/07) abgeschlossen: drei Entscheidungs-Snapshots
   in `predictions`, neuer Run-Type `final_close`, Evaluator auf finale Bars.
   Spec: `docs/superpowers/specs/2026-08-06-preismodell-snapshots-design.md`,

@@ -692,30 +692,54 @@ weshalb der Irrtum entstand.
 **Aber: die Läufe erzeugten keine Predictions.** In der `db-latest`-DB gibt es für den
 2026-08-04 zwar `cost_tracking`-Zeilen für `pre_market` und `trade_proposals`, aber
 **keine einzige `predictions`-Zeile** — die jüngsten stammen vom 2026-07-13. Technisch
-erfolgreich (Exit 0, Mail raus, DB hochgeladen), inhaltlich ohne Ergebnis. **Warum, ist
-ungeklärt** und die erste Frage der weiteren Verifikation: keine Kandidaten aus dem
-Quick-Filter, alles von Guardrails verworfen, oder ein stiller Ausfall?
+erfolgreich (Exit 0, Mail raus, DB hochgeladen), inhaltlich ohne Ergebnis.
 
-Damit gilt: die **Mechanik** von Plan 2 ist einmal durchgelaufen, die **Wirkung** ist
-unbestätigt. Der Preismodell-Umbau (P3, 2026-08-06/07) ist dagegen weiterhin
-**vollständig unausgeführt** — er entstand nach diesen Läufen.
+#### ✅ Ursache geklärt (2026-08-08) — die CI-Datenbank hatte keine Historie
+
+Kein stiller Ausfall. Der Grund stand wörtlich in `skipped_tickers` der CI-DB, in allen
+drei Läufen identisch: **`insufficient bars: 19 < 20`** für exakt 18 Ticker
+(`MIN_BARS_RSI = 20`).
+
+`db-latest` wurde **nie mit `historical_loader` bestückt**. Es sammelte nur die Bars ein,
+die die Läufe selbst schrieben — herunterladen, laufen, hochladen. Die Leere erhielt sich
+selbst:
+
+| Gruppe | Bars in `db-latest` (2026-08-04) |
+|---|---|
+| 18 MVP-Aktien | **19** (2026-05-21 → 08-04) |
+| PG, HD | 217 |
+| Rohstoffe / Krypto | 23 / 26 |
+| Sektor-ETFs | 5 |
+
+Die Kette daraus:
+
+1. Phase 1: 18 von 20 raus. Übrig blieben PG und HD — die zwei defensivsten Werte, und
+   nur, weil sie zufällig Historie hatten.
+2. Sektor-Momentum: „0 mit beiden Signalen". Nicht wegen der ETFs (deren Signal kommt
+   **live vom Provider**, nicht aus der DB), sondern weil `db_momentum` mangels Tickern
+   überall NULL blieb.
+3. Phase 4: von 9 Kandidaten hatten **8 `direction='none'`** (bewusste Enthaltung),
+   CL=F fiel an R/R 1.47 < 1.5. Also 0 persistiert.
+4. `trade_proposals` fand folgerichtig „0 offene pre_market-Signale"; `close` wertete die
+   3 Altlasten aus.
+
+Die Pipeline hat sich also **korrekt verhalten**. Gegen eine Datenbank ohne Historie ist
+„grün und leer" das richtige Ergebnis. Was fehlte, war die Sichtbarkeit — dazu die vier
+Fixes in **P2.9**.
 
 ⚠️ **Achtung bei `db-latest`:** das Release-Asset stammt vom 2026-08-04 und enthält den
 Stand *dieser* Läufe — 46 Ticker, aber sehr ungleich befüllt (HD 217 Bars, CARZ 5). Die
-lokale `data/tracking.db` auf Korbinians Rechner ist ein anderer Stand: 27 Ticker mit je
-1000 Bars aus `historical_loader`. Für Indikatoren ist die lokale die brauchbarere
-(SMA200 braucht 200 Bars). Wer neu aufsetzt, sollte sie mitnehmen oder
-`setup/historical_loader.py --all` laufen lassen, statt sich auf `db-latest` zu verlassen.
+lokale `data/tracking.db` auf Korbinians Rechner ist ein anderer Stand. Für Indikatoren
+ist die lokale die brauchbarere (SMA200 braucht 200 Bars). Wer neu aufsetzt, nimmt sie mit
+oder lässt den Bootstrap laufen, statt sich auf `db-latest` zu verlassen.
 Praktisch heisst das: Die Verifikation unten ist weiterhin eine **Abnahme vor der ersten
 Ausführung**, kein Nachziehen hinter einem laufenden System. Ein Befund hier kostet nichts
 ausser Nacharbeit.
 
-**Vor dem Wiedereinschalten von `analyze.yml` zu klären:** In `predictions` liegen **12
-offene Zeilen** — 3 vom 2026-07-13 (eine davon mit `run_type='midday'`, den es nicht mehr
-gibt) und 9 vom 2026-07-29. Bei `MAX_HOLD_DAYS = 5` sind alle weit überfällig. Sobald die
-Pipeline wieder läuft, wertet der Evaluator sie gegen Kurse von Wochen später aus und
-schreibt das als Lerndaten weg. Für eine Intraday-These ist das Rauschen. Entweder vorher
-schliessen/verwerfen oder bewusst als `learnable=0` markieren.
+✅ **Die 12 überfälligen Predictions sind erledigt** (Stand 2026-08-08): alle 12 — 3 vom
+2026-07-13 (eine mit `run_type='midday'`) und 9 vom 2026-07-29 — stehen auf
+`status='closed_stale_pre_rollout'`. In `data/tracking.db` sind **null** Zeilen offen. Der
+Evaluator kann hier nichts mehr gegen Wochen alte Kurse auswerten.
 
 ✅ **Schritt 1 ist erledigt** (2026-08-04): `init_schema()` gegen eine Kopie der
 produktiven DB ergänzt `superseded_by` und `revision_verdict` sauber. Reines SQLite,
@@ -846,6 +870,36 @@ bleibt offen. Im Docstring von `load_trend_context()` dokumentiert.
 
 ---
 
+### P2.9 — Bootstrap, Sichtbarkeit und zwei Historien-Defekte (2026-08-08)
+
+Aus der Ursachenanalyse zu den leeren 04.08.-Läufen (s. P2.4) sind sechs Commits
+entstanden. Zwei davon beheben echte Datenfehler, vier machen Stilles sichtbar.
+
+| Commit | Was |
+|---|---|
+| `8003e2e` | **CI-Bootstrap.** `src/universe.py` wird die eine Quelle, welche Ticker das System anfasst; `historical_loader --universe` und `--report-coverage`; `.github/workflows/bootstrap-db.yml` (nur `workflow_dispatch`, teilt die concurrency-Gruppe mit `analyze.yml`). `run_final_close` nutzt dieselbe Funktion, ein Test hält beide zusammen. |
+| `a5b5548` | **D1** — übersprungene Ticker begründen sich im Log. `_skip()` vereint Log- und DB-Zeile, `db.skip_reason_counts()` bündelt die Gründe eines Laufs. |
+| `ab6b5d2` | **D2** — Enthaltungen (`direction='none'`) sind zählbar, bleiben aber bewusst **kein** Reject: in `guardrail_rejects` gebucht, verzerrten sie die Weekly-Auswertung. |
+| `ccdf5a6` | **D3** — ein Lauf ohne persistierte Prediction warnt von sich aus, unabhängig von der Ursache. |
+| `9394e8f` | **Guard** — mehr als die halbe Tickerliste ohne Historie bricht den Lauf ab, bevor er Geld kostet. Am CLI-Einstieg, nicht in `run_pipeline`: das ist eine Betriebs-Vorbedingung, keine Pipeline-Logik. Ausgenommen `final_close` (schreibt die Historie selbst), `close`, `weekly`. |
+| `fe756bd` | **Lücken-Defekt.** `_fill_price_gaps` fragte allein `MAX(date)`. Nach einem Ausfall schreibt `final_close` um 00:15 die Bar von gestern — der Zeiger ist wieder aktuell und das Loch dahinter war **für immer unsichtbar**. Geprüft wird jetzt der gesamte jüngste Abschnitt (`GAP_SCAN_BARS = 200`). |
+| `0b025a8` | **Loader schrieb den laufenden Tag.** `--universe` gab den vier Krypto-Tickern am Samstag eine Bar von genau diesem Tag — Krypto handelt durchgehend, die UTC-Bar schliesst erst um 00:00 UTC. Dieselbe Vermischung provisorisch/final, die der Preismodell-Umbau beseitigt hat, nur über den Loader-Pfad. |
+
+⚠️ **Feiertage sind keine Lücken.** Innenliegende Lücken zählen bewusst erst ab **zwei
+aufeinanderfolgenden** Handelstagen. Ohne Börsenkalender sind einzelne fehlende Wochentage
+US-Feiertage — in `data/tracking.db` sind **35 der 1000 AAPL-Bars** genau das. Wer sie als
+Lücke behandelt, lädt bei jedem Lauf für jeden Ticker ins Leere nach. Die hintere Kante
+behält die alte Schwelle.
+
+⚠️ **Das ETF-Momentum hängt nicht an der DB.** `_fetch_etf_momentum` holt die Bars **live
+vom Provider** (`sector_momentum.py:55`). „0 mit beiden Signalen" kam am 04.08. vom
+DB-Bein. Dessen Grenze ist strukturell: bei 20 Tickern erreichen nur **2 von 21**
+Sub-Sektoren `SECTOR_DB_MOMENTUM_MIN_TICKERS = 3` (Retail: AMZN/WMT/HD, Financials Rest:
+BRK-B/V/MA). Ein Smoke-Test kann den harten Sektor-Guardrail also nur dort auslösen —
+das löst erst 3F, nicht mehr Historie.
+
+---
+
 ## Preismodell-Umbau — drei Entscheidungs-Snapshots + finale Tages-OHLC (P3) ✅ CODE FERTIG
 
 **Spec:** `docs/superpowers/specs/2026-08-06-preismodell-snapshots-design.md`
@@ -924,14 +978,34 @@ Das ist der eigentliche Ertrag des Umbaus — alle vier waren vorher unsichtbar.
    **grün** — aufgefallen ist es nur bei einer Live-Prüfung gegen die echte API.
    Behoben in `75aef35`, jetzt mit eigenem Test.
 
-### P3.5 — ⏳ Nie live ausgeführt
+### P3.5 — ✅ `final_close` erstmals ausgeführt und verifiziert (2026-08-08)
 
-⚠️ Dieser Umbau ist **nie in einem echten Pipelinelauf gelaufen**. `analyze.yml` steht
-unverändert auf `disabled_manually`. (Plan 2 lief dagegen am 2026-08-04 dreimal — aber
-ohne Predictions zu erzeugen, s. die Korrektur in P2.4.)
-Verifiziert wurde gegen die echte Capital.com-API, aber **ausschliesslich lesend** und
-in Wegwerf-Datenbanken; `data/tracking.db` wurde nie angefasst. **P2.4 bleibt offen
-und gehört Korbinian.**
+`analyze.yml` steht unverändert auf `disabled_manually`; ausgeführt wurde **lokal gegen
+Wegwerf-Kopien** von `data/tracking.db`, mit echten (lesenden) Capital.com-Calls, ohne
+Claude-Call und ohne Mailversand.
+
+**`final_close`:** 46 finale Bars für den Handelstag 2026-08-07 geschrieben (`upsert`,
+ersetzt also eine provisorische durch die finale Bar). Läuft sauber durch.
+
+**Der Evaluator auf finalen Bars** — der eigentliche Kern des Umbaus — mit drei
+synthetischen offenen Predictions vom 2026-08-04 auf AAPL:
+
+| Aufbau | Erwartung | Ergebnis |
+|---|---|---|
+| TP 313,00 | Treffer (Hoch 08-05: 313,19) | `closed_tp` @ 313,00 ✅ |
+| SL 306,00 | Treffer (Tief 08-05: 305,05) | `closed_sl` @ 306,00 ✅ |
+| TP 400 / SL 200 | kein Treffer, Fenster läuft | bleibt `open` ✅ |
+
+Der dritte Fall bestätigt die Invariante aus `efea2bd`: eine Prediction bleibt offen,
+solange ihr Fenster läuft. `closed_date` ist bei beiden geschlossenen der **Handelstag**
+2026-08-07, nicht das Laufdatum — E7 greift.
+
+**`close`** lief gegen dieselbe DB mit `Phase 1 done: 20 ok, 0 skipped` (gegen `2 ok,
+18 skipped` am 04.08.).
+
+⏳ **Offen bleibt `pre_market`** — der einzige Run-Type, der die Kette bis zu neuen
+Predictions durchspielt. Er kostet ~3,30 EUR und verschickt eine echte Mail; die Freigabe
+gehört Korbinian. Ebenso offen: der Docker-Smoke-Test (s. P2.4).
 
 ---
 
