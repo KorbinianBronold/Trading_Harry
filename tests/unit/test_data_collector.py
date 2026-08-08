@@ -906,3 +906,69 @@ def test_gap_fill_never_writes_the_current_day(in_memory_db, mocker):
     assert "2026-08-05" not in dates, (
         "der laufende Tag ist noch nicht final und gehoert final_close")
     assert {"2026-08-03", "2026-08-04"} <= dates, "die Luecke davor wird gefuellt"
+
+
+# ---------- Innenliegende Luecken (Befund aus dem Smoke-Test 2026-08-08) ----------
+
+def test_fill_price_gaps_closes_a_hole_behind_a_newer_bar(in_memory_db, mocker):
+    """Der reale Ausfall-Fall: nach einer Unterbrechung schreibt final_close um
+    00:15 die Bar von gestern. MAX(date) ist damit wieder aktuell, und die alte
+    Luecke dahinter wurde nie wieder gesehen -- die Erkennung fragte nur, ob der
+    LETZTE Bar zu alt ist.
+
+    Nachgestellt aus dem Smoke-Test vom 2026-08-08: AAPL hatte 2026-07-29 und
+    2026-08-07, dazwischen sieben Handelstage nichts. Ein kompletter close-Lauf
+    danach hat die Luecke nicht angefasst."""
+    from src import db
+    from src.data_collector import _fill_price_gaps
+    db.init_schema(in_memory_db)
+    for d in ("2026-07-29", "2026-08-07"):
+        db.insert_price_bar_if_missing(
+            in_memory_db, ticker="AAPL", date=d,
+            open_=100, high=101, low=99, close=100.5, volume=1000,
+            source="capital.com")
+    in_memory_db.commit()
+
+    provider = mocker.MagicMock()
+    provider._source_name = "capital.com"
+    fill = ["2026-07-30", "2026-07-31", "2026-08-03",
+            "2026-08-04", "2026-08-05", "2026-08-06"]
+    provider.get_ohlc_after.return_value = pd.DataFrame(
+        {"Open": [1.0] * len(fill), "High": [2.0] * len(fill),
+         "Low": [0.5] * len(fill), "Close": [1.5] * len(fill),
+         "Volume": [1] * len(fill)},
+        index=pd.to_datetime(fill),
+    )
+
+    n = _fill_price_gaps("AAPL", provider, in_memory_db, date="2026-08-08")
+
+    assert n == len(fill), "Die innenliegende Luecke muss geschlossen werden"
+    dates = [r["date"] for r in in_memory_db.execute(
+        "SELECT date FROM price_history WHERE ticker='AAPL' ORDER BY date").fetchall()]
+    assert "2026-08-03" in dates and "2026-07-30" in dates
+
+
+def test_fill_price_gaps_does_not_chase_single_holidays(in_memory_db, mocker):
+    """35 der 1000 AAPL-Bars in der echten DB fehlen als einzelne Wochentage --
+    das sind US-Feiertage, keine Luecken. Ohne Boersenkalender ist der einzige
+    belastbare Unterschied die Laenge: ein Ausfall dauert mehrere Tage.
+
+    Ohne diese Regel liefe jeder Lauf fuer jeden Ticker ins Leere nachladen."""
+    from src import db
+    from src.data_collector import _fill_price_gaps
+    db.init_schema(in_memory_db)
+    # 2026-07-24 fehlt als einzelner Tag (Feiertag), sonst luckenlos.
+    for d in ("2026-07-22", "2026-07-23", "2026-07-27", "2026-07-28"):
+        db.insert_price_bar_if_missing(
+            in_memory_db, ticker="AAPL", date=d,
+            open_=100, high=101, low=99, close=100.5, volume=1000,
+            source="capital.com")
+    in_memory_db.commit()
+
+    provider = mocker.MagicMock()
+    provider._source_name = "capital.com"
+
+    n = _fill_price_gaps("AAPL", provider, in_memory_db, date="2026-07-29")
+
+    assert n == 0
+    provider.get_ohlc_after.assert_not_called()

@@ -17,6 +17,12 @@ import pandas_ta as ta
 log = logging.getLogger("shares_future.data_collector")
 
 MIN_BARS_RSI = 20
+
+# Wie weit die Lueckenpruefung zurueckschaut. 200 Bars, weil genau so viele fuer
+# die Indikatoren geladen werden (SMA200 ist der laengste) — ein Loch davor kann
+# keine Kennzahl mehr verfaelschen und muss nicht bei jedem Lauf neu geprueft
+# werden.
+GAP_SCAN_BARS = 200
 MIN_BARS_ATR = 20
 MIN_BARS_BB = 25
 MIN_BARS_VOL = 25
@@ -212,38 +218,84 @@ def _expected_trading_days(from_date: str, to_date: str) -> list[str]:
     return out
 
 
+def _consecutive_runs(days: list[str]) -> list[list[str]]:
+    """Gruppiert aufsteigend sortierte Handelstage in zusammenhaengende Laeufe.
+
+    Zusammenhaengend heisst: hoechstens ein Wochenende dazwischen (<= 3
+    Kalendertage), damit Freitag und Montag als ein Lauf gelten."""
+    runs: list[list[str]] = []
+    for d in days:
+        if runs and (_date_cls.fromisoformat(d)
+                     - _date_cls.fromisoformat(runs[-1][-1])).days <= 3:
+            runs[-1].append(d)
+        else:
+            runs.append([d])
+    return runs
+
+
+def _first_gap_day(have: set[str], oldest: str, newest: str, date: str) -> str | None:
+    """Erster Handelstag, ab dem nachgeladen werden muss — oder None.
+
+    Zwei Faelle, bewusst mit verschiedenen Schwellen:
+
+    * INNENLIEGEND (zwischen `oldest` und `newest`): erst ein Lauf von zwei
+      aufeinanderfolgenden Handelstagen zaehlt. Ohne Boersenkalender sind
+      einzelne fehlende Wochentage US-Feiertage — in der echten Datenbank sind
+      35 der 1000 AAPL-Bars genau das. Wer sie als Luecke behandelt, laedt bei
+      jedem Lauf fuer jeden Ticker ins Leere nach.
+    * HINTEN (nach `newest`): unveraendert die alte Regel. Der laufende Tag
+      zaehlt mit, greift also ab einem echten fehlenden Handelstag."""
+    interior = [d for d in _expected_trading_days(oldest, newest) if d not in have]
+    for run in _consecutive_runs(interior):
+        if len(run) >= 2:
+            return run[0]
+
+    trailing = _expected_trading_days(newest, date)
+    # Nur der heutige Bar fehlt -> der ist noch nicht final, den holt final_close.
+    return trailing[0] if len(trailing) > 1 else None
+
+
 def _fill_price_gaps(
     ticker: str, price_provider: DataProvider, conn, date: str,
 ) -> int:
-    """Laedt fehlende Bars zwischen dem letzten DB-Datum und `date` nach und gibt
-    die Anzahl neu eingefuegter Zeilen zurueck.
+    """Laedt fehlende Bars bis `date` nach und gibt die Anzahl neu eingefuegter
+    Zeilen zurueck.
 
     Kein Nachladen, wenn der Ticker noch gar keine Historie hat (das uebernimmt
     setup/historical_loader.py) oder wenn nur der heutige Bar fehlt — der ist zur
-    Laufzeit noch nicht final und wird erst vom final_close-Lauf geschrieben."""
-    # Seit dem Preismodell-Umbau (2026-08-06) fuellt final_close die Historie
-    # taeglich auf; echte Luecken entstehen nur noch bei laengeren Ausfaellen und
-    # werden sonst mit setup/historical_loader.py --all nachgeladen. Die Funktion
-    # bleibt als Sicherheitsnetz stehen, greift im Normalbetrieb aber nicht mehr.
-    row = conn.execute(
-        "SELECT MAX(date) AS last_date FROM price_history WHERE ticker = ?",
-        (ticker,),
-    ).fetchone()
-    last_date = row["last_date"] if row else None
-    if not last_date or last_date >= date:
+    Laufzeit noch nicht final und wird erst vom final_close-Lauf geschrieben.
+
+    Geprueft wird der GESAMTE juengste Abschnitt, nicht nur der letzte Bar.
+    Vorher fragte die Erkennung allein `MAX(date)`: sobald final_close nach einem
+    Ausfall die Bar von gestern schrieb, war der Zeiger wieder aktuell und das
+    Loch dahinter fuer immer unsichtbar. Gemessen am 2026-08-08 — AAPL hatte
+    2026-07-29 und 2026-08-07, dazwischen sieben Handelstage nichts, und ein
+    vollstaendiger close-Lauf ruehrte sie nicht an."""
+    rows = conn.execute(
+        "SELECT date FROM price_history WHERE ticker = ? AND date <= ? "
+        "ORDER BY date DESC LIMIT ?",
+        (ticker, date, GAP_SCAN_BARS),
+    ).fetchall()
+    if not rows:
         return 0
 
-    missing = _expected_trading_days(last_date, date)
-    # Nur der heutige Bar fehlt -> der ist noch nicht final, den holt final_close.
-    if len(missing) <= 1:
+    have = {r["date"] for r in rows}
+    newest, oldest = max(have), min(have)
+    if newest >= date and len(have) == 1:
         return 0
 
+    start = _first_gap_day(have, oldest=oldest, newest=newest, date=date)
+    if start is None:
+        return 0
+
+    # get_ohlc_after ist exklusiv im Startdatum — einen Tag davor ansetzen.
+    anchor = (_date_cls.fromisoformat(start) - timedelta(days=1)).isoformat()
     log.info(
-        f"{ticker}: Luecke erkannt — letzter Bar {last_date}, "
-        f"{len(missing)} Handelstage bis {date} fehlen. Lade nach."
+        f"{ticker}: Luecke erkannt — ab {start} fehlen Handelstage "
+        f"(letzter Bar {newest}). Lade nach."
     )
     try:
-        df = price_provider.get_ohlc_after(ticker, last_date, date)
+        df = price_provider.get_ohlc_after(ticker, anchor, date)
     except Exception as e:
         log.warning(f"{ticker}: Gap-Nachladen fehlgeschlagen: {e}")
         return 0
@@ -259,7 +311,7 @@ def _fill_price_gaps(
         # `>= date` statt `> date`: der laufende Tag ist noch nicht final und
         # gehoert final_close. Ihn hier nachzuladen brachte die provisorische
         # Teilbar zurueck, deren Beseitigung der ganze Umbau ist.
-        if d <= last_date or d >= date:
+        if d < start or d >= date or d in have:
             continue
         db.insert_price_bar_if_missing(
             conn, ticker=ticker, date=d,
