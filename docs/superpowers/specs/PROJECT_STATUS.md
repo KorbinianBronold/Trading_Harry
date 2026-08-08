@@ -3,7 +3,9 @@
 **Zuletzt aktualisiert:** 2026-08-07 — **Preismodell-Umbau abgeschlossen** (Abschnitt P3):
 drei Entscheidungs-Snapshots in `predictions`, neuer Run-Type `final_close`, Evaluator auf
 finalen Bars, `price_history` mit genau einem Schreiber. 570 Tests grün, Coverage 93,29 %.
-⚠️ Ebenfalls **nie live ausgeführt** — P2.4 bleibt offen.
+⚠️ Der Preismodell-Umbau ist **nie live ausgeführt**. Plan 2 dagegen schon: drei
+erfolgreiche Läufe am 2026-08-04, die aber **keine Predictions erzeugten** — s. die
+Korrektur in P2.4.
 Davor, 2026-08-06 — Task-20-Review abgeschlossen: **acht Defekte behoben**
 (3 Criticals, eingefrorene Tagesbar, beide Weekly-Blöcke, Winter-Cron, Netzsperre), Details
 in **P2.8**. Kosten- und `MAX_DEEP_ANALYSIS`-Aussagen sind in B.1, B.13, C.4 und F.1
@@ -582,10 +584,11 @@ Spec: `docs/superpowers/specs/2026-07-30-sprint3b-plan2-pipeline-umbau-design.md
 Plan-Datei: `docs/superpowers/plans/2026-07-30-sprint3b-plan2-pipeline-umbau.md`.
 **Vollständiger Stand, Entscheidungen und Befunde: eigener Abschnitt weiter unten.**
 
-⚠️ **Umgesetzt heisst hier: der Code ist geschrieben, getestet und auf `main`.** Er wurde
-**noch nie ausgeführt** — `analyze.yml` steht auf `disabled_manually`, der letzte
-Pipeline-Lauf war am 2026-07-13. Die Live-Verifikation (P2.4) steht damit weiterhin aus
-und ist ein echtes Gate, kein Nachziehen hinter einem laufenden System.
+⚠️ **Umgesetzt heisst hier: der Code ist geschrieben, getestet und auf `main`.** Er lief
+am **2026-08-04 dreimal erfolgreich** (`pre_market`, `trade_proposals`, `close`), erzeugte
+dabei aber **keine Predictions**; `analyze.yml` ist seither wieder `disabled_manually`.
+Die Live-Verifikation (P2.4) bleibt damit ein echtes Gate — die Mechanik hat einmal
+getragen, die Wirkung ist unbestätigt.
 
 Eingangsvoraussetzungen für Plan 2 — **alle erfüllt**:
 - ✅ verifizierte ETF-Epics (D8: 20/20 bestätigt, `setup/verify_epics.py`)
@@ -671,19 +674,38 @@ Ereignis-Log (`skipped_tickers`) und dem kumulativen `ticker_status` fehleranfä
 Live-Verifikation (s. P2.4). Beides prüft Code, der **auf `main` liegt, aber noch nie
 gelaufen ist** — die Verifikation bleibt damit ein echtes Gate vor der ersten Ausführung.
 
-### P2.4 — ⏳ Live-Verifikation steht noch aus (Korbinian)
+### P2.4 — ⏳ Live-Verifikation teilweise erfolgt (Korbinian)
 
-⚠️ **Der Plan-2-Code wurde bis heute kein einziges Mal ausgeführt.** Belegt am 2026-08-04
-über die GitHub-API:
+⚠️ **KORREKTUR 2026-08-08.** Dieser Abschnitt behauptete, der Plan-2-Code sei „kein
+einziges Mal ausgeführt" worden. Das stimmt nicht mehr. Über die GitHub-API belegt:
 
-| Prüfung | Befund |
-|---|---|
-| `GET /actions/workflows` | `analyze.yml` → **`state=disabled_manually`** |
-| Letzter `analyze`-Lauf | **2026-07-13** — seither nur noch `tests` auf Push |
-| Release-Asset `db-latest` | zuletzt **2026-07-13T18:47Z** hochgeladen |
+| Zeitpunkt (UTC) | Run-Type | Ergebnis |
+|---|---|---|
+| 2026-08-04 15:16 | `pre_market` | `success` |
+| 2026-08-04 16:21 | `trade_proposals` | `success` |
+| 2026-08-04 21:44 | `close` | `success` |
 
-Der Umbau ist also **gemerged, aber nicht scharf**. Eine frühere Fassung dieses Abschnitts
-behauptete das Gegenteil („läuft produktiv") — das war falsch und ist hiermit korrigiert.
+Alle drei auf Commit `92773c8`, also **mit vollständigem Plan-2-Code**, ausgelöst per
+`schedule`. Danach wurde `analyze.yml` wieder deaktiviert (`state=disabled_manually`),
+weshalb der Irrtum entstand.
+
+**Aber: die Läufe erzeugten keine Predictions.** In der `db-latest`-DB gibt es für den
+2026-08-04 zwar `cost_tracking`-Zeilen für `pre_market` und `trade_proposals`, aber
+**keine einzige `predictions`-Zeile** — die jüngsten stammen vom 2026-07-13. Technisch
+erfolgreich (Exit 0, Mail raus, DB hochgeladen), inhaltlich ohne Ergebnis. **Warum, ist
+ungeklärt** und die erste Frage der weiteren Verifikation: keine Kandidaten aus dem
+Quick-Filter, alles von Guardrails verworfen, oder ein stiller Ausfall?
+
+Damit gilt: die **Mechanik** von Plan 2 ist einmal durchgelaufen, die **Wirkung** ist
+unbestätigt. Der Preismodell-Umbau (P3, 2026-08-06/07) ist dagegen weiterhin
+**vollständig unausgeführt** — er entstand nach diesen Läufen.
+
+⚠️ **Achtung bei `db-latest`:** das Release-Asset stammt vom 2026-08-04 und enthält den
+Stand *dieser* Läufe — 46 Ticker, aber sehr ungleich befüllt (HD 217 Bars, CARZ 5). Die
+lokale `data/tracking.db` auf Korbinians Rechner ist ein anderer Stand: 27 Ticker mit je
+1000 Bars aus `historical_loader`. Für Indikatoren ist die lokale die brauchbarere
+(SMA200 braucht 200 Bars). Wer neu aufsetzt, sollte sie mitnehmen oder
+`setup/historical_loader.py --all` laufen lassen, statt sich auf `db-latest` zu verlassen.
 Praktisch heisst das: Die Verifikation unten ist weiterhin eine **Abnahme vor der ersten
 Ausführung**, kein Nachziehen hinter einem laufenden System. Ein Befund hier kostet nichts
 ausser Nacharbeit.
@@ -904,8 +926,9 @@ Das ist der eigentliche Ertrag des Umbaus — alle vier waren vorher unsichtbar.
 
 ### P3.5 — ⏳ Nie live ausgeführt
 
-⚠️ Wie schon Sprint 3B / Plan 2 ist auch dieser Umbau **nie in einem echten
-Pipelinelauf gelaufen**. `analyze.yml` steht unverändert auf `disabled_manually`.
+⚠️ Dieser Umbau ist **nie in einem echten Pipelinelauf gelaufen**. `analyze.yml` steht
+unverändert auf `disabled_manually`. (Plan 2 lief dagegen am 2026-08-04 dreimal — aber
+ohne Predictions zu erzeugen, s. die Korrektur in P2.4.)
 Verifiziert wurde gegen die echte Capital.com-API, aber **ausschliesslich lesend** und
 in Wegwerf-Datenbanken; `data/tracking.db` wurde nie angefasst. **P2.4 bleibt offen
 und gehört Korbinian.**

@@ -149,15 +149,18 @@ und der getroffenen Entscheidungen. Kurzfassung:
   auf `main` und sind gepusht**. Einen Branch `sprint3b/plan2-pipeline-umbau` gibt es
   weder lokal noch remote (`git ls-remote --heads origin` kennt nur `refs/heads/main`,
   geprüft 2026-08-03). Offen: Task 20, ein Gesamt-Review über die Plan-2-Commits
-  und die Live-Verifikation. ⚠️ Der Code ist **gemerged, aber nie ausgeführt**:
-  `analyze.yml` steht auf `disabled_manually`, letzter Pipeline-Lauf 2026-07-13.
+  und die Live-Verifikation. ⚠️ `analyze.yml` steht auf `disabled_manually`. Der
+  Plan-2-Code **ist am 2026-08-04 dreimal gelaufen** (pre_market, trade_proposals,
+  close, alle erfolgreich), hat dabei aber **keine Predictions erzeugt** — warum, ist
+  ungeklärt und die erste Frage der Verifikation (PROJECT_STATUS, P2.4).
   Run-Types sind seither
   `pre_market` / `trade_proposals` / `close` / `final_close` / `weekly`.
 - **Preismodell-Umbau** (2026-08-06/07) abgeschlossen: drei Entscheidungs-Snapshots
   in `predictions`, neuer Run-Type `final_close`, Evaluator auf finale Bars.
   Spec: `docs/superpowers/specs/2026-08-06-preismodell-snapshots-design.md`,
-  Stand und Befunde in PROJECT_STATUS, Abschnitt P3. ⚠️ Ebenfalls **nie in einem
-  echten Pipelinelauf ausgeführt** — verifiziert wurde nur lesend gegen die API.
+  Stand und Befunde in PROJECT_STATUS, Abschnitt P3. ⚠️ **Nie in einem echten
+  Pipelinelauf ausgeführt** — verifiziert wurde nur lesend gegen die API, in
+  Wegwerf-Datenbanken. Er entstand nach den Läufen vom 2026-08-04.
 - **3C** offen (Ranking-Überarbeitung)
 - **3D / 3E / 3F** sind ⚠️ **Platzhalter** — bei Erreichen aktiv nachfragen und den
   Sprint gemeinsam ausarbeiten, **bevor** Code entsteht. Die Stichpunkte dort sind
