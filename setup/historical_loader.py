@@ -2,6 +2,7 @@
 
 Usage:
     python setup/historical_loader.py --all          # loads SP500_MVP_TICKERS
+    python setup/historical_loader.py --universe     # stocks + commodities + crypto + ETFs
     python setup/historical_loader.py --full-sp500   # loads SP500_FULL_TICKERS (~500)
     python setup/historical_loader.py --tickers AAPL MSFT NVDA
 
@@ -26,6 +27,7 @@ from src import db  # noqa: E402
 from src.providers.capital_provider import (  # noqa: E402
     CapitalComProvider, MAX_BARS_PER_REQUEST,
 )
+from src.universe import full_universe  # noqa: E402
 
 log = logging.getLogger("shares_future.historical_loader")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -126,6 +128,43 @@ def _run_list_inactive(db_path: str) -> None:
     conn.close()
 
 
+def _run_report_coverage(db_path: str) -> None:
+    """Gibt je Universums-Ticker die Zahl der Bars aus und markiert alles, was
+    unter MIN_BARS_RSI liegt.
+
+    Reine DB-Operation, kein einziger Capital.com-Call. Genau dieser Report
+    haette die drei leeren Laeufe vom 2026-08-04 in Sekunden erklaert: dort
+    standen 19 Bars je Aktie, eine unter der Grenze."""
+    from src.data_collector import MIN_BARS_RSI
+
+    conn = db.connect(db_path)
+    db.init_schema(conn)
+    counts = {
+        r["ticker"]: (r["n"], r["last_date"])
+        for r in conn.execute(
+            "SELECT ticker, COUNT(*) AS n, MAX(date) AS last_date "
+            "FROM price_history GROUP BY ticker"
+        ).fetchall()
+    }
+    conn.close()
+
+    universe = full_universe()
+    thin = [t for t in universe if counts.get(t, (0, None))[0] < MIN_BARS_RSI]
+
+    print(f"Historien-Abdeckung: {len(universe)} Ticker im Universum, "
+          f"Mindestbedarf {MIN_BARS_RSI} Bars\n")
+    for t in universe:
+        n, last = counts.get(t, (0, None))
+        mark = "  " if n >= MIN_BARS_RSI else "!!"
+        print(f"{mark} {t:<10} {n:>5} Bars   letzter {last or '—'}")
+
+    if thin:
+        print(f"\n{len(thin)} Ticker unter der Grenze: {', '.join(thin)}")
+        print("Beheben mit:  python setup/historical_loader.py --universe")
+    else:
+        print("\nAlle Ticker haben genug Historie.")
+
+
 def _run_reactivate(db_path: str, tickers: list[str]) -> None:
     """Setzt skip_count und inactive-Flag der genannten Ticker zurueck."""
     conn = db.connect(db_path)
@@ -146,10 +185,14 @@ def main(argv: list[str] | None = None) -> None:
     group.add_argument("--tickers",    nargs="+", help="Specific tickers to load")
     group.add_argument("--all",        action="store_true", help="Load SP500_MVP_TICKERS")
     group.add_argument("--full-sp500", action="store_true", help="Load SP500_FULL_TICKERS (~500)")
+    group.add_argument("--universe",   action="store_true",
+                       help="Load the full universe: stocks + commodities + crypto + sector ETFs")
     group.add_argument("--reactivate", nargs="+", metavar="TICKER",
                        help="Reset skip_count/inactive for these tickers (no data load)")
     group.add_argument("--list-inactive", action="store_true",
                        help="List deactivated tickers with their retry date (no data load)")
+    group.add_argument("--report-coverage", action="store_true",
+                       help="Report bars per universe ticker, flag thin history (no data load)")
     parser.add_argument("--db-path", default=str(config.DB_PATH))
     parser.add_argument("--days",    type=int, default=DAYS_3_YEARS)
     args = parser.parse_args(argv)
@@ -158,12 +201,17 @@ def main(argv: list[str] | None = None) -> None:
     if args.list_inactive:
         _run_list_inactive(args.db_path)
         return
+    if args.report_coverage:
+        _run_report_coverage(args.db_path)
+        return
     if args.reactivate:
         _run_reactivate(args.db_path, args.reactivate)
         return
 
     if args.tickers:
         tickers = args.tickers
+    elif args.universe:
+        tickers = full_universe()
     elif getattr(args, "full_sp500", False):
         tickers = config.SP500_FULL_TICKERS
     else:

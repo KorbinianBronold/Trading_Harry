@@ -27,6 +27,7 @@ from src.market_context import fetch_market_context, MarketContextError
 from src.portfolio_check import check_open_positions
 from src.ranking import rank_and_persist
 from src.evaluator import evaluate_open_predictions
+from src.universe import full_universe
 from src import signal_checks
 from src.revalidation import revalidate_one, RevalidationError
 from src.email_sender import (
@@ -869,13 +870,11 @@ def run_final_close(date: str, db_path: str) -> None:
     target = (date_cls.fromisoformat(date) - timedelta(days=1)).isoformat()
     log.info(f"final_close: finalisiere Handelstag {target}")
 
-    _tickers = (config.SP500_FULL_TICKERS if config.USE_FULL_SP500
-                else config.SP500_MVP_TICKERS)
-    cc_tickers = [d["ticker"] for d in build_commodity_crypto_inputs()]
-    etfs = sorted(set(config.SUB_SECTOR_ETFS.values()))
-
+    # Dieselbe Liste, die `historical_loader --universe` backfillt — siehe
+    # src/universe.py. Getrennt gepflegt liefen beide auseinander, und ein
+    # Ticker haette Backfill ohne Fortschreibung (oder umgekehrt).
     written = 0
-    for ticker in list(_tickers) + cc_tickers + etfs:
+    for ticker in full_universe():
         if _write_final_bar(conn, price_provider, ticker, target):
             written += 1
     conn.commit()

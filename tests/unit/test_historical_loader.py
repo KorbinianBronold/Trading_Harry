@@ -191,6 +191,81 @@ def test_a_mode_flag_is_required(capsys):
         main([])
 
 
+# ---------- --universe: Bootstrap einer leeren DB ----------
+
+def test_universe_flag_loads_the_full_universe(tmp_db_path, mocker):
+    """`--all` laedt nur die 20 Aktien. Fuer den CI-Bootstrap braucht es auch
+    Rohstoffe, Krypto und die Sub-Sektor-ETFs — sonst laufen die Sektor- und
+    Commodity-Phasen weiter gegen eine leere Historie."""
+    from src.universe import full_universe
+    load_all = mocker.patch("setup.historical_loader.load_all", return_value={})
+
+    from setup.historical_loader import main
+    main(["--universe", "--db-path", str(tmp_db_path)])
+
+    load_all.assert_called_once()
+    assert load_all.call_args.args[0] == full_universe()
+
+
+def test_universe_flag_is_a_mode_flag(tmp_db_path):
+    """--universe gehoert in dieselbe exklusive Gruppe wie --all: zwei Modi
+    gleichzeitig sind ein Bedienfehler, kein zusammengesetzter Lauf."""
+    from setup.historical_loader import main
+    with pytest.raises(SystemExit):
+        main(["--universe", "--all", "--db-path", str(tmp_db_path)])
+
+
+# ---------- --report-coverage: sieht die DB gesund aus? ----------
+
+def test_report_coverage_flags_tickers_below_the_minimum(tmp_db_path, capsys):
+    """Der Kern des 04.08.-Befunds: 19 Bars sind eine unter MIN_BARS_RSI=20 und
+    fuehren zu einem gruenen, leeren Lauf. Der Report muss so einen Ticker
+    benennen, nicht nur eine Gesamtzahl."""
+    from src import db
+    from src.data_collector import MIN_BARS_RSI
+    conn = db.connect(str(tmp_db_path)); db.init_schema(conn)
+    for i in range(MIN_BARS_RSI - 1):
+        db.insert_price_bar_if_missing(
+            conn, ticker="AAPL", date=f"2026-01-{i + 1:02d}",
+            open_=1.0, high=2.0, low=0.5, close=1.5, volume=10, source="test")
+    conn.commit(); conn.close()
+
+    from setup.historical_loader import main
+    main(["--report-coverage", "--db-path", str(tmp_db_path)])
+
+    out = capsys.readouterr().out
+    assert "AAPL" in out
+    assert "19" in out
+
+
+def test_report_coverage_makes_no_api_calls(tmp_db_path, mocker):
+    """Reine DB-Operation wie --list-inactive. Ein Report, der Capital.com
+    anfasst, waere in einem Fehlerfall genau das Falsche."""
+    from src import db
+    conn = db.connect(str(tmp_db_path)); db.init_schema(conn); conn.close()
+    cap = mocker.patch("setup.historical_loader.CapitalComProvider")
+    load_all = mocker.patch("setup.historical_loader.load_all")
+
+    from setup.historical_loader import main
+    main(["--report-coverage", "--db-path", str(tmp_db_path)])
+
+    cap.assert_not_called()
+    load_all.assert_not_called()
+
+
+def test_report_coverage_reports_missing_tickers(tmp_db_path, capsys):
+    """Ein Ticker ganz ohne Bars ist der schlimmere Fall — er wird nie
+    nachgeladen, weil _fill_price_gaps bei leerer Historie bewusst nichts tut."""
+    from src import db
+    conn = db.connect(str(tmp_db_path)); db.init_schema(conn); conn.close()
+
+    from setup.historical_loader import main
+    main(["--report-coverage", "--db-path", str(tmp_db_path)])
+
+    out = capsys.readouterr().out
+    assert "AAPL" in out and "0" in out
+
+
 # ---------- Direktaufruf (Sprint 3B / Plan 1, Schnitt 1) ----------
 
 def test_script_runs_when_invoked_directly():

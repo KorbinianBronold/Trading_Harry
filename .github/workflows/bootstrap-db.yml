@@ -1,0 +1,87 @@
+name: bootstrap-db
+
+# Einmaliger Backfill der CI-Datenbank (Release-Asset `db-latest`).
+#
+# Anlass: db-latest wurde nie bestueckt — es sammelte nur die Bars ein, die die
+# Laeufe selbst schrieben. Am 2026-08-04 standen dort 19 Bars je Aktie, eine
+# unter MIN_BARS_RSI=20. Die Folge waren drei technisch gruene Laeufe, die 18
+# von 20 Tickern uebersprangen und keine einzige Prediction erzeugten.
+#
+# Bewusst NUR workflow_dispatch: der Lauf zieht 46 Ticker x 1000 Bars gegen
+# Capital.com. Als Cron wuerde er dieselbe Historie taeglich sinnlos neu holen.
+# Kosten entstehen keine — kein Claude-Call, keine Mail.
+#
+# Danach haelt `final_close` (00:15 UTC, taeglich) die Historie fort; ein
+# zweiter Bootstrap ist nur noetig, wenn neue Ticker in die Config kommen.
+
+on:
+  workflow_dispatch:
+    inputs:
+      days:
+        description: "Bars je Ticker (Capital.com liefert Bars, nicht Kalendertage; max 1000)"
+        type: string
+        default: "1000"
+
+permissions:
+  contents: write
+
+concurrency:
+  # Dieselbe Gruppe wie analyze.yml: beide schreiben dasselbe Release-Asset.
+  # Ohne gemeinsame Gruppe koennte ein Bootstrap mitten in einen Pipelinelauf
+  # laufen und dessen hochgeladene DB ueberschreiben.
+  group: analyze-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  bootstrap:
+    runs-on: ubuntu-latest
+    env:
+      CAPITAL_COM_API_KEY:    ${{ secrets.CAPITAL_COM_API_KEY }}
+      CAPITAL_COM_IDENTIFIER: ${{ secrets.CAPITAL_COM_IDENTIFIER }}
+      CAPITAL_COM_PASSWORD:   ${{ secrets.CAPITAL_COM_PASSWORD }}
+      GH_TOKEN:               ${{ secrets.GITHUB_TOKEN }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Ensure data dir
+        run: mkdir -p data
+
+      - name: Download tracking.db from Release db-latest (best effort)
+        # Die CI-Linie bleibt erhalten: skipped_tickers, cost_tracking und
+        # bestehende Predictions ueberleben den Bootstrap. Der Loader ergaenzt
+        # nur Bars (INSERT OR IGNORE), er ersetzt keine Datenbank.
+        run: |
+          gh release download db-latest --pattern "tracking.db" \
+            --dir data/ || echo "Kein db-latest vorhanden — Bootstrap auf leerer DB."
+
+      - name: Coverage vorher
+        run: python setup/historical_loader.py --report-coverage
+
+      - name: Backfill full universe
+        # --universe statt --all: Rohstoffe, Krypto und die Sub-Sektor-ETFs
+        # brauchen genauso Historie. final_close schreibt sie ohnehin alle fort.
+        run: python setup/historical_loader.py --universe --days "${{ inputs.days }}"
+
+      - name: Coverage nachher
+        run: python setup/historical_loader.py --report-coverage
+
+      - name: Upload tracking.db to Release db-latest
+        # always(): der Loader kann bei einzelnen Tickern scheitern (fehlendes
+        # Epic, Rate-Limit). Die bis dahin geholten Bars sind trotzdem echt und
+        # besser als der vorherige Stand. Der Job bleibt rot, das Signal bleibt.
+        if: always()
+        run: |
+          gh release view db-latest >/dev/null 2>&1 \
+            || gh release create db-latest --title "DB latest" \
+                 --notes "Auto-uploaded by analyze.yml"
+          gh release upload db-latest data/tracking.db --clobber

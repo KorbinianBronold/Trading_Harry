@@ -1151,8 +1151,8 @@ def test_final_close_writes_final_bars_for_tickers_and_etfs(tmp_db_path, mocker)
     mocker.patch("main.config.SP500_MVP_TICKERS", ["AAPL"])
     mocker.patch("main.config.USE_FULL_SP500", False)
     mocker.patch("main.config.SUB_SECTOR_ETFS", {"Semis": "SOXX"})
-    mocker.patch("main.build_commodity_crypto_inputs",
-                 return_value=[{"ticker": "BTC-USD"}])
+    mocker.patch("main.config.COMMODITY_TICKERS", {})
+    mocker.patch("main.config.CRYPTO_TICKERS", {"Bitcoin": "BTC-USD"})
 
     from main import run_final_close
     run_final_close(date="2026-08-06", db_path=str(tmp_db_path))
@@ -1162,6 +1162,37 @@ def test_final_close_writes_final_bars_for_tickers_and_etfs(tmp_db_path, mocker)
         "SELECT DISTINCT ticker FROM price_history").fetchall()}
     conn.close()
     assert tickers == {"AAPL", "BTC-USD", "SOXX"}
+
+
+def test_final_close_covers_exactly_the_bootstrap_universe(tmp_db_path, mocker):
+    """final_close und `historical_loader --universe` muessen dieselbe Liste
+    anfassen. Laufen sie auseinander, backfillt der Bootstrap einen Ticker, den
+    final_close nie fortschreibt (oder umgekehrt) — und die Luecke faellt erst
+    auf, wenn die Pipeline ihn mangels Bars ueberspringt."""
+    import pandas as pd
+    from src import db
+    from src.universe import full_universe
+    conn = db.connect(str(tmp_db_path)); db.init_schema(conn); conn.close()
+
+    bar = pd.DataFrame(
+        {"Open": [99.0], "High": [102.0], "Low": [98.0],
+         "Close": [100.0], "Volume": [1000]},
+        index=pd.DatetimeIndex([pd.Timestamp("2026-08-05")]))
+
+    prov = MagicMock()
+    prov._source_name = "capital.com"
+    prov.get_ohlc_after.side_effect = lambda t, *a, **k: bar
+    mocker.patch("main.CapitalComProvider", return_value=prov)
+    mocker.patch("main.evaluate_open_predictions", return_value=0)
+
+    from main import run_final_close
+    run_final_close(date="2026-08-06", db_path=str(tmp_db_path))
+
+    conn = db.connect(str(tmp_db_path))
+    written = {r["ticker"] for r in conn.execute(
+        "SELECT DISTINCT ticker FROM price_history").fetchall()}
+    conn.close()
+    assert written == set(full_universe())
 
 
 def test_final_close_treats_a_missing_bar_as_normal(tmp_db_path, mocker):
