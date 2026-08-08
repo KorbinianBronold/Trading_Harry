@@ -305,6 +305,21 @@ def _live_price(price_provider, ticker: str, df) -> float:
     return float(df["Close"].iloc[-1])
 
 
+def _skip(conn, ticker: str, date: str, run_type: str, reason: str) -> None:
+    """Vermerkt einen uebersprungenen Ticker in skipped_tickers UND im Log.
+
+    Beides ist noetig: die Zeile traegt die Auswertung (Weekly, Deaktivierung),
+    die Logzeile macht einen Lauf ohne DB-Zugriff nachvollziehbar. Am 2026-08-04
+    fehlte Letzteres — 18 Ticker verschwanden ohne Begruendung aus dem
+    Actions-Log, und die Ursache war erst nach dem Download der CI-Datenbank
+    sichtbar."""
+    log.warning(f"{ticker}: uebersprungen — {reason}")
+    db.log_skipped_ticker(
+        conn, ticker=ticker, date=date, run_type=run_type,
+        reason=reason, learnable=False,
+    )
+
+
 def _process_ticker(
     ticker: str,
     price_provider: DataProvider,
@@ -325,10 +340,9 @@ def _process_ticker(
 
     if df is None or len(df) < MIN_BARS_RSI:
         rows = 0 if df is None else len(df)
-        db.log_skipped_ticker(
+        _skip(
             conn, ticker=ticker, date=date, run_type=run_type,
             reason=f"insufficient bars: {rows} < {MIN_BARS_RSI}",
-            learnable=False,
         )
         return None
 
@@ -397,10 +411,9 @@ def _process_ticker(
 
     td["data_quality"] = _classify_data_quality(td)
     if td["data_quality"] == "low":
-        db.log_skipped_ticker(
+        _skip(
             conn, ticker=ticker, date=date, run_type=run_type,
             reason="data_quality=low: critical indicators missing",
-            learnable=False,
         )
         return None
 
@@ -457,6 +470,16 @@ def collect(
                 f"sleeping {config.CAPITAL_COM_BATCH_PAUSE}s"
             )
             time.sleep(config.CAPITAL_COM_BATCH_PAUSE)
+
+    if skipped:
+        # Gebuendelt statt 500 Einzelzeilen: die Verteilung der Gruende sagt,
+        # ob eine Handvoll Ticker zickt oder die halbe Datenbank leer ist.
+        reasons = db.skip_reason_counts(conn, date=date, run_type=run_type)
+        breakdown = ", ".join(f"{n}x {r}" for r, n in reasons)
+        log.warning(
+            f"Phase 1: {skipped} von {len(tickers)} Tickern uebersprungen"
+            + (f" — {breakdown}" if breakdown else "")
+        )
 
     log.info(f"Phase 1 done: {len(results)} ok, {skipped} skipped")
     return results, skipped

@@ -279,6 +279,59 @@ def test_process_ticker_skips_on_too_few_bars(in_memory_db):
     assert "bars" in row["reason"].lower() or "indicator" in row["reason"].lower()
 
 
+# ---------- D1: Skip-Gruende gehoeren ins Log, nicht nur in die DB ----------
+
+def test_skip_reason_is_logged_not_only_persisted(in_memory_db, caplog):
+    """Am 2026-08-04 verschwanden 18 Ticker spurlos aus dem Actions-Log; die
+    Begruendung stand ausschliesslich in skipped_tickers. Wer nur die Logs hat,
+    sah `2 ok, 18 skipped` und keinen Grund — die Ursache war erst nach dem
+    Download der CI-Datenbank sichtbar."""
+    import logging
+    init_schema(in_memory_db)
+    short_df = _df_monotonic_up(10)
+    _seed_price_history(in_memory_db, "NEW", short_df)
+
+    with caplog.at_level(logging.WARNING, logger="shares_future.data_collector"):
+        _process_ticker(
+            ticker="NEW",
+            price_provider=_good_provider(short_df),
+            earnings_provider=_earnings_provider(),
+            conn=in_memory_db,
+            date="2026-05-19",
+            run_type="pre_market",
+        )
+
+    # Bewusst gegen den exakten Grund, nicht gegen "bars": das Wort steht auch
+    # in der Gap-Warnung, ein loser Test bestuende ohne die Aenderung.
+    skip_lines = [r.message for r in caplog.records
+                  if "insufficient bars" in r.message]
+    assert skip_lines, f"Kein Skip-Grund geloggt. Log war: {caplog.text}"
+    assert "NEW" in skip_lines[0]
+
+
+def test_collect_summarises_skip_reasons(in_memory_db, caplog):
+    """Bei 500 Tickern ist eine Einzelzeile je Skip unlesbar. Die Schlusszeile
+    muss die Gruende buendeln, damit `18 skipped` sofort erklaert ist."""
+    import logging
+    init_schema(in_memory_db)
+    short_df = _df_monotonic_up(10)
+    for t in ("AAA", "BBB"):
+        _seed_price_history(in_memory_db, t, short_df)
+
+    with caplog.at_level(logging.WARNING, logger="shares_future.data_collector"):
+        collect(
+            tickers=["AAA", "BBB"],
+            price_provider=_good_provider(short_df),
+            earnings_provider=_earnings_provider(),
+            conn=in_memory_db,
+            date="2026-05-19",
+            run_type="pre_market",
+        )
+
+    assert "insufficient bars" in caplog.text
+    assert "2" in caplog.text
+
+
 def test_process_ticker_tolerates_missing_earnings(in_memory_db):
     init_schema(in_memory_db)
     df = _df_monotonic_up(80)

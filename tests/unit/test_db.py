@@ -1578,3 +1578,56 @@ def test_save_prediction_persists_the_snapshots(in_memory_db):
     assert row["price_open"] == 309.09
     assert row["price_1610"] == 310.0
     assert row["is_premarket"] == 0
+
+
+# ---------- skip_reason_counts (D1): Gruende buendeln ----------
+
+def test_skip_reason_counts_groups_by_reason_kind(in_memory_db):
+    """Die Gruende tragen variable Zahlen ("insufficient bars: 19 < 20").
+    Ungruppiert waere jede Zeile ein eigener Eintrag und die Verteilung
+    unlesbar — gerade im Fall, den das Ganze sichtbar machen soll."""
+    from src.db import skip_reason_counts
+    init_schema(in_memory_db)
+    for t, n in (("AAA", 19), ("BBB", 17), ("CCC", 3)):
+        log_skipped_ticker(
+            in_memory_db, ticker=t, date="2026-08-04", run_type="pre_market",
+            reason=f"insufficient bars: {n} < 20", learnable=False)
+    log_skipped_ticker(
+        in_memory_db, ticker="DDD", date="2026-08-04", run_type="pre_market",
+        reason="data_quality=low: critical indicators missing", learnable=False)
+
+    counts = dict(skip_reason_counts(in_memory_db, date="2026-08-04",
+                                     run_type="pre_market"))
+    assert counts == {"insufficient bars": 3, "data_quality=low": 1}
+
+
+def test_skip_reason_counts_is_scoped_to_the_run(in_memory_db):
+    """Sonst zaehlt die Zusammenfassung eines Laufs die Skips aller Vortage mit."""
+    from src.db import skip_reason_counts
+    init_schema(in_memory_db)
+    log_skipped_ticker(
+        in_memory_db, ticker="OLD", date="2026-07-13", run_type="pre_market",
+        reason="insufficient bars: 5 < 20", learnable=False)
+    log_skipped_ticker(
+        in_memory_db, ticker="NEW", date="2026-08-04", run_type="pre_market",
+        reason="insufficient bars: 19 < 20", learnable=False)
+
+    counts = dict(skip_reason_counts(in_memory_db, date="2026-08-04",
+                                     run_type="pre_market"))
+    assert counts == {"insufficient bars": 1}
+
+
+def test_skip_reason_counts_orders_by_frequency(in_memory_db):
+    """Der haeufigste Grund steht vorn — er ist der, der den Lauf erklaert."""
+    from src.db import skip_reason_counts
+    init_schema(in_memory_db)
+    log_skipped_ticker(
+        in_memory_db, ticker="ONE", date="2026-08-04", run_type="close",
+        reason="data_quality=low: whatever", learnable=False)
+    for t in ("AAA", "BBB"):
+        log_skipped_ticker(
+            in_memory_db, ticker=t, date="2026-08-04", run_type="close",
+            reason="insufficient bars: 19 < 20", learnable=False)
+
+    counts = skip_reason_counts(in_memory_db, date="2026-08-04", run_type="close")
+    assert counts[0][0] == "insufficient bars"

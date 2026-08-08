@@ -760,6 +760,30 @@ def save_market_context(conn: sqlite3.Connection, row: dict) -> None:
     conn.commit()
 
 
+def skip_reason_counts(
+    conn: sqlite3.Connection, date: str, run_type: str,
+) -> list[tuple[str, int]]:
+    """Zaehlt die Skip-Gruende EINES Laufs, haeufigster zuerst.
+
+    Gruppiert wird auf der Art des Grundes, nicht auf dem vollen Text: der
+    traegt variable Zahlen ("insufficient bars: 19 < 20"), womit jede Zeile ihre
+    eigene Gruppe bekaeme und die Verteilung unlesbar waere."""
+    rows = conn.execute(
+        """SELECT CASE
+                    WHEN instr(reason, ':') > 0
+                    THEN substr(reason, 1, instr(reason, ':') - 1)
+                    ELSE reason
+                  END AS kind,
+                  COUNT(*) AS n
+           FROM skipped_tickers
+           WHERE date = ? AND run_type = ?
+           GROUP BY kind
+           ORDER BY n DESC, kind""",
+        (date, run_type),
+    ).fetchall()
+    return [(r["kind"], r["n"]) for r in rows]
+
+
 def log_skipped_ticker(
     conn: sqlite3.Connection,
     ticker: str, date: str, run_type: str,
