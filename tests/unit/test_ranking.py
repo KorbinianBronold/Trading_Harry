@@ -400,3 +400,43 @@ def test_rule_name_maps_every_guardrail_message(message, expected):
     stabilen Regelnamen fallen — 'other' ist der Auffangfall, nicht der Normalfall."""
     from src.ranking import _rule_name
     assert _rule_name(message) == expected
+
+
+# ---------- D3: ein Lauf ohne Predictions warnt von sich aus ----------
+
+def test_zero_persisted_predictions_raises_a_warning(in_memory_db, caplog):
+    """Unabhaengig von der Ursache: "nichts persistiert" darf nie unbemerkt in
+    einem gruenen Job verschwinden. Am 2026-08-04 endeten drei Laeufe genau so
+    -- technisch erfolgreich, inhaltlich leer, ohne ein einziges WARNING."""
+    import logging
+    db.init_schema(in_memory_db)
+    a = _analysis("NEUTRAL", momentum=8.0)
+    a["direction"] = "none"
+
+    with caplog.at_level(logging.WARNING, logger="shares_future.ranking"):
+        rank_and_persist(
+            conn=in_memory_db, date="2026-07-27", run_type="pre_market",
+            stock_analyses=[a], commodity_crypto_analyses=[],
+            market_context=_market_ctx(),
+        )
+
+    warnings = [r for r in caplog.records if r.levelno >= logging.WARNING]
+    assert warnings, "Ein Lauf ohne Predictions muss warnen"
+    assert "keine" in caplog.text.lower() or "0" in caplog.text
+
+
+def test_no_warning_when_predictions_were_persisted(in_memory_db, caplog):
+    """Die Warnung muss den Normalfall in Ruhe lassen, sonst stumpft sie ab."""
+    import logging
+    db.init_schema(in_memory_db)
+
+    with caplog.at_level(logging.WARNING, logger="shares_future.ranking"):
+        result = rank_and_persist(
+            conn=in_memory_db, date="2026-07-27", run_type="pre_market",
+            stock_analyses=[_analysis("AAPL", momentum=8.0)],
+            commodity_crypto_analyses=[],
+            market_context=_market_ctx(),
+        )
+
+    assert result["top_long"] or result["top_short"], "Testaufbau: es muss etwas durchkommen"
+    assert [r for r in caplog.records if r.levelno >= logging.WARNING] == []

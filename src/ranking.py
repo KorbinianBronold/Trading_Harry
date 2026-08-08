@@ -228,9 +228,22 @@ def rank_and_persist(
     # weggefiltert wurden. Genau diese Luecke machte den 2026-08-04-Lauf
     # unerklaerbar.
     n_in = len(list(stock_analyses)) + len(list(commodity_crypto_analyses))
+    n_out = len(longs) + len(shorts) + len(kept_cc)
     log.info(
         f"Phase 4 done: {len(longs)} long, {len(shorts)} short, "
         f"{len(kept_cc)} commodity/crypto persisted "
         f"(aus {n_in} Analysen, davon {abstained} enthalten)"
     )
+
+    # Unabhaengig von der Ursache: ein Lauf, der nichts persistiert, hat sein
+    # Ziel verfehlt und darf nicht als gruener Job durchrutschen. Am 2026-08-04
+    # endeten drei Laeufe genau so -- technisch erfolgreich, inhaltlich leer,
+    # ohne ein einziges WARNING. Die Diagnose kostete den Umweg ueber die
+    # heruntergeladene CI-Datenbank.
+    if n_out == 0:
+        log.warning(
+            f"Phase 4: KEINE Prediction persistiert (aus {n_in} Analysen, "
+            f"{abstained} Enthaltungen). Der Lauf bleibt ohne Ergebnis — "
+            f"Ursache pruefen: zu wenig Historie, Guardrails oder Enthaltungen."
+        )
     return {"top_long": longs, "top_short": shorts, "commodities_crypto": kept_cc}
