@@ -196,6 +196,50 @@ def test_direction_none_is_not_logged_as_guardrail_reject(in_memory_db):
     assert db.load_guardrail_rejects_since(in_memory_db, since="2026-07-27") == []
 
 
+# ---------- D2: Enthaltungen sind sichtbar, aber keine Rejects ----------
+
+def test_abstentions_are_counted_in_the_phase_4_summary(in_memory_db, caplog):
+    """Am 2026-08-04 verschwanden 8 von 9 Kandidaten lautlos: sie hatten
+    direction='none' und wurden ohne Logzeile uebersprungen. Im Log stand genau
+    eine Drop-Begruendung (CL=F) und darunter "0 long, 0 short, 0 persisted" --
+    die Luecke zwischen 9 Analysen und 1 Begruendung war nicht erklaerbar."""
+    import logging
+    db.init_schema(in_memory_db)
+    abstain = _analysis("NEUTRAL", momentum=8.0)
+    abstain["direction"] = "none"
+    cc_abstain = _analysis("GC=F", asset_class="commodity", momentum=8.0)
+    cc_abstain["direction"] = "none"
+
+    with caplog.at_level(logging.INFO, logger="shares_future.ranking"):
+        rank_and_persist(
+            conn=in_memory_db, date="2026-07-27", run_type="pre_market",
+            stock_analyses=[abstain], commodity_crypto_analyses=[cc_abstain],
+            market_context=_market_ctx(),
+        )
+
+    assert "2" in caplog.text and "enthalten" in caplog.text.lower()
+
+
+def test_abstentions_stay_out_of_guardrail_rejects(in_memory_db, caplog):
+    """Sichtbar heisst nicht "als Regelverstoss gezaehlt": eine Enthaltung ist
+    ein legitimes Analyseergebnis. Wuerde sie in guardrail_rejects landen,
+    verzerrte sie die Weekly-Auswertung, welche Regel wie oft greift."""
+    import logging
+    db.init_schema(in_memory_db)
+    a = _analysis("NEUTRAL", momentum=8.0)
+    a["direction"] = "none"
+
+    with caplog.at_level(logging.INFO, logger="shares_future.ranking"):
+        rank_and_persist(
+            conn=in_memory_db, date="2026-07-27", run_type="pre_market",
+            stock_analyses=[a], commodity_crypto_analyses=[],
+            market_context=_market_ctx(),
+        )
+
+    assert db.load_guardrail_rejects_since(in_memory_db, since="2026-07-27") == []
+    assert "enthalten" in caplog.text.lower()
+
+
 def test_commodity_crypto_rejects_are_persisted_too(in_memory_db):
     db.init_schema(in_memory_db)
     rank_and_persist(

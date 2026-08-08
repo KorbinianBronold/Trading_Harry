@@ -55,16 +55,21 @@ def _rule_name(error_message: str) -> str:
 
 def _guardrail_filter(
     analyses: Iterable[dict], conn, date: str, run_type: str,
-) -> list[dict]:
+) -> tuple[list[dict], int]:
     """Drops analyses with direction='none' or that fail GuardrailsChecker.
+    Gibt (behaltene Analysen, Zahl der Enthaltungen) zurueck.
 
     Jede Ablehnung wird zusaetzlich als guardrail_rejects-Zeile persistiert, damit
     die Weekly-Mail auswerten kann, welche Regeln wie oft greifen (Sprint 3B / B.9).
-    direction='none' ist dabei kein Reject, sondern eine bewusste Enthaltung."""
+    direction='none' ist dabei kein Reject, sondern eine bewusste Enthaltung —
+    sie wird gezaehlt und geloggt, aber nicht als Regelverstoss gebucht. Sonst
+    verzerrte sie die Auswertung, welche Regel wie oft greift."""
     checker = GuardrailsChecker()
     kept: list[dict] = []
+    abstained = 0
     for a in analyses:
         if a.get("direction") == "none":
+            abstained += 1
             continue
         ok, errs = checker.check_analysis(a)
         if not ok:
@@ -79,7 +84,7 @@ def _guardrail_filter(
             })
             continue
         kept.append(a)
-    return kept
+    return kept, abstained
 
 
 def _to_prediction_row(
@@ -183,8 +188,11 @@ def rank_and_persist(
     `enforce_checks` steuert Entscheidung E4: run_pipeline() uebergibt False
     (erheben und warnen), run_trade_proposals() uebergibt True (durchsetzen)."""
     sector_momentum = sector_momentum or {}
-    kept_stocks = _guardrail_filter(stock_analyses, conn, date, run_type)
-    kept_cc     = _guardrail_filter(commodity_crypto_analyses, conn, date, run_type)
+    kept_stocks, abstained_stocks = _guardrail_filter(
+        stock_analyses, conn, date, run_type)
+    kept_cc, abstained_cc = _guardrail_filter(
+        commodity_crypto_analyses, conn, date, run_type)
+    abstained = abstained_stocks + abstained_cc
 
     counts = cluster_counts(conn, [a["ticker"] for a in kept_stocks])
     surviving: list[dict] = []
@@ -215,8 +223,14 @@ def rank_and_persist(
             conn=conn, etf_momentum=etf_mom, db_momentum=db_mom,
         ))
 
+    # Die Zahl der Eingaben gehoert dazu: ohne sie ist nicht zu sehen, ob "0
+    # persistiert" aus null Kandidaten entstand oder aus neun, die alle
+    # weggefiltert wurden. Genau diese Luecke machte den 2026-08-04-Lauf
+    # unerklaerbar.
+    n_in = len(list(stock_analyses)) + len(list(commodity_crypto_analyses))
     log.info(
         f"Phase 4 done: {len(longs)} long, {len(shorts)} short, "
-        f"{len(kept_cc)} commodity/crypto persisted"
+        f"{len(kept_cc)} commodity/crypto persisted "
+        f"(aus {n_in} Analysen, davon {abstained} enthalten)"
     )
     return {"top_long": longs, "top_short": shorts, "commodities_crypto": kept_cc}
