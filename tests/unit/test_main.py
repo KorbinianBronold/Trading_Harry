@@ -248,12 +248,14 @@ def test_main_date_uses_berlin_timezone(tmp_db_path, mocker):
     import importlib
     import main as m
     importlib.reload(m)
-    # Vehikel ist seit Plan 2 trade_proposals statt evaluate — geprueft wird
-    # weiterhin die Timezone-Ableitung, nicht der Run-Type.
-    mocker.patch.object(m, "run_trade_proposals")
+    # Vehikel ist seit Plan 2 trade_proposals statt evaluate, seit dem
+    # Historien-Guard `close` — geprueft wird weiterhin die Timezone-Ableitung,
+    # nicht der Run-Type. `close` braucht keine Historie und laeuft deshalb auch
+    # gegen die leere Test-DB bis zum Dispatch durch.
+    mocker.patch.object(m, "run_close")
     with freeze_time("2026-05-21T23:30:00+00:00"):
-        m.main(["--run-type", "trade_proposals", "--db-path", str(tmp_db_path)])
-        call_date = m.run_trade_proposals.call_args[1]["date"]
+        m.main(["--run-type", "close", "--db-path", str(tmp_db_path)])
+        call_date = m.run_close.call_args[1]["date"]
     assert call_date == "2026-05-22", f"Expected Berlin date 2026-05-22, got {call_date}"
 
 
@@ -1352,3 +1354,87 @@ def test_pre_market_warns_when_the_final_bar_is_missing(in_memory_db):
     db.upsert_price_history(in_memory_db, "AAPL", "2026-08-05",
                             100, 101, 99, 100, 10)
     assert _final_bar_warning(in_memory_db, date="2026-08-06") is None
+
+
+# ---------- Guard: zu duenne Historie bricht ab, statt leer zu laufen ----------
+
+def _seed_full_universe(conn, bars: int):
+    """Gibt jedem Universums-Ticker `bars` Tagesbars."""
+    from src import db
+    from src.universe import full_universe
+    for t in full_universe():
+        for i in range(bars):
+            db.insert_price_bar_if_missing(
+                conn, ticker=t, date=f"2026-01-{i + 1:02d}",
+                open_=1.0, high=2.0, low=0.5, close=1.5, volume=1, source="t")
+    conn.commit()
+
+
+def test_run_aborts_before_spending_anything_on_thin_history(tmp_db_path, mocker):
+    """Option-1-Bootstrap behebt das Problem einmalig; dieser Guard verhindert,
+    dass es unbemerkt wiederkehrt (B-12: neuer Ticker ohne Backfill).
+
+    Der Abbruch liegt vor jeder Phase -- ein Lauf, der ohnehin nichts
+    persistieren kann, soll keine ~3,30 EUR fuer Trend- und Tiefenanalysen
+    ausgeben."""
+    from src import db
+    conn = db.connect(str(tmp_db_path)); db.init_schema(conn); conn.close()
+    pipeline = mocker.patch("main.run_pipeline")
+    mocker.patch("main.send_error_email")
+
+    from main import main as cli
+    with pytest.raises(SystemExit):
+        cli(["--run-type", "pre_market", "--db-path", str(tmp_db_path)])
+
+    pipeline.assert_not_called()
+
+
+def test_thin_history_abort_names_the_fix(tmp_db_path, mocker):
+    """Die Meldung muss den Ausweg nennen — sonst steht man vor demselben
+    Raetsel wie am 2026-08-04."""
+    from src import db
+    from main import _abort_on_thin_history, HistoryTooThinError
+    conn = db.connect(str(tmp_db_path)); db.init_schema(conn); conn.close()
+
+    with pytest.raises(HistoryTooThinError) as exc:
+        _abort_on_thin_history(str(tmp_db_path))
+
+    assert "historical_loader" in str(exc.value)
+    assert "--universe" in str(exc.value)
+
+
+def test_guard_lets_a_healthy_database_through(tmp_db_path):
+    """Der Guard darf den Normalfall nicht anfassen."""
+    from src import db
+    from src.data_collector import MIN_BARS_RSI
+    from main import _abort_on_thin_history
+    conn = db.connect(str(tmp_db_path)); db.init_schema(conn)
+    _seed_full_universe(conn, MIN_BARS_RSI + 1)
+    conn.close()
+
+    _abort_on_thin_history(str(tmp_db_path))  # darf nicht werfen
+
+
+def test_guard_tolerates_a_minority_of_thin_tickers(tmp_db_path):
+    """Einzelne zickende Ticker sind Normalbetrieb — dafuer gibt es
+    skipped_tickers und die Deaktivierung, keinen Laufabbruch."""
+    from src import db
+    from src.data_collector import MIN_BARS_RSI
+    from src.universe import full_universe
+    from main import _abort_on_thin_history
+    conn = db.connect(str(tmp_db_path)); db.init_schema(conn)
+    _seed_full_universe(conn, MIN_BARS_RSI + 1)
+    conn.execute("DELETE FROM price_history WHERE ticker = ?",
+                 (full_universe()[0],))
+    conn.commit(); conn.close()
+
+    _abort_on_thin_history(str(tmp_db_path))  # darf nicht werfen
+
+
+@pytest.mark.parametrize("run_type", ["final_close", "close", "weekly"])
+def test_guard_exempts_run_types_that_do_not_need_history(run_type):
+    """final_close schreibt die Historie selbst -- ein Guard dort verhinderte
+    die Selbstheilung. close wertet offene Predictions aus, weekly berichtet
+    nur; beide sollen auch bei duenner Historie laufen."""
+    from main import _RUN_TYPES_NEEDING_HISTORY
+    assert run_type not in _RUN_TYPES_NEEDING_HISTORY

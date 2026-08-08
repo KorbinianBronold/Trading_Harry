@@ -27,7 +27,7 @@ from src.market_context import fetch_market_context, MarketContextError
 from src.portfolio_check import check_open_positions
 from src.ranking import rank_and_persist
 from src.evaluator import evaluate_open_predictions
-from src.universe import full_universe
+from src.universe import full_universe, thin_history_tickers
 from src import signal_checks
 from src.revalidation import revalidate_one, RevalidationError
 from src.email_sender import (
@@ -221,6 +221,49 @@ def _final_bar_warning(conn, date: str) -> str | None:
         return None
     return (f"⚠️ Keine finale Tagesbar für {d.isoformat()} "
             f"(neueste: {newest or 'keine'}) — lief final_close?")
+
+
+class HistoryTooThinError(RuntimeError):
+    """Zu viele Universums-Ticker haben zu wenig Bars fuer die Indikatoren."""
+
+
+# Nur diese Run-Types brauchen brauchbare Historie, um ueberhaupt etwas
+# produzieren zu koennen. Ausgenommen sind bewusst:
+#   final_close — schreibt die Historie selbst, er ist die Loesung, nicht das
+#                 Opfer; ein Guard hier verhinderte die Selbstheilung
+#   close       — wertet offene Predictions aus; das soll auch dann laufen,
+#                 wenn die Historie fuer neue Signale zu duenn ist
+#   weekly      — reine Auswertung bestehender Daten, kein Datenbedarf
+_RUN_TYPES_NEEDING_HISTORY = ("pre_market", "trade_proposals")
+
+
+def _abort_on_thin_history(db_path: str) -> None:
+    """Bricht ab, wenn mehr als die Haelfte des Universums zu wenig Historie hat.
+
+    Der Guard steht am CLI-Einstieg, vor jeder Phase: ein Lauf ohne brauchbare
+    Historie kann ohnehin nichts persistieren und soll dafuer keine ~3,30 EUR an
+    Trend- und Tiefenanalysen ausgeben. Am 2026-08-04 lief genau das dreimal
+    durch: 19 Bars je Aktie, eine unter MIN_BARS_RSI, drei gruene, leere Laeufe.
+
+    Bewusst eine Mehrheitsregel, kein Alles-oder-Nichts: einzelne zickende
+    Ticker sind Normalbetrieb (dafuer gibt es skipped_tickers und die
+    Deaktivierung), eine halb leere Datenbank ist ein Betriebsfehler."""
+    conn = db.connect(db_path)
+    db.init_schema(conn)
+    try:
+        thin = thin_history_tickers(conn)
+    finally:
+        conn.close()
+    universe_size = len(full_universe())
+    if universe_size and len(thin) * 2 > universe_size:
+        raise HistoryTooThinError(
+            f"{len(thin)} von {universe_size} Tickern haben zu wenig Historie "
+            f"({', '.join(thin[:10])}{' …' if len(thin) > 10 else ''}). "
+            f"Der Lauf wuerde fast alles ueberspringen und nichts persistieren. "
+            f"Beheben mit: python setup/historical_loader.py --universe "
+            f"(in CI: Workflow 'bootstrap-db'). "
+            f"Bestandsaufnahme: python setup/historical_loader.py --report-coverage"
+        )
 
 
 def run_pipeline(run_type: str, date: str, db_path: str) -> None:
@@ -916,6 +959,8 @@ def main(argv: list[str] | None = None) -> None:
     ns = parse_args(argv)
     date = ns.date or datetime.now(BERLIN).date().isoformat()
     try:
+        if ns.run_type in _RUN_TYPES_NEEDING_HISTORY:
+            _abort_on_thin_history(ns.db_path)
         if ns.run_type == "pre_market":
             run_pipeline(run_type=ns.run_type, date=date, db_path=ns.db_path)
         elif ns.run_type == "trade_proposals":

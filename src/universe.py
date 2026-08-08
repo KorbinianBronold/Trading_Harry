@@ -32,3 +32,20 @@ def full_universe() -> list[str]:
 
     seen: set[str] = set()
     return [t for t in ordered if not (t in seen or seen.add(t))]
+
+
+def thin_history_tickers(conn) -> list[str]:
+    """Universums-Ticker mit zu wenig Bars fuer die Indikatorberechnung.
+
+    Reine DB-Abfrage, keine API-Calls. Ein Ticker ganz ohne Historie zaehlt mit
+    und ist der schwerere Fall: `_fill_price_gaps` laedt bei leerer Historie
+    bewusst nichts nach, er bliebe also dauerhaft uebersprungen."""
+    from src.data_collector import MIN_BARS_RSI
+
+    counts = {
+        r["ticker"]: r["n"]
+        for r in conn.execute(
+            "SELECT ticker, COUNT(*) AS n FROM price_history GROUP BY ticker"
+        ).fetchall()
+    }
+    return [t for t in full_universe() if counts.get(t, 0) < MIN_BARS_RSI]
