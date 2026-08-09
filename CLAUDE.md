@@ -25,7 +25,11 @@ Die Pipeline-Phasen lassen sich an `main.py:run_pipeline()` ablesen.
 - ATR-Mindest: SP500_MIN_ATR_PCT = 2.0
 - MAX_HOLD_DAYS = 5, HOLD_TARGET = "intraday"
 - Timezone: TZ="Europe/Berlin" in Bash, ZoneInfo("Europe/Berlin") in Python
-- Prompts versioniert mit A/B-Testing
+- ⚠️ Prompts sind **nur über den Dateinamen** versioniert (`deep_analysis_v1.txt`), und die
+  Version steht fest im Modul-Import. **A/B-Testing gibt es nicht** — die Tabelle
+  `prompt_versions` wird von `init_schema()` angelegt und nirgends gelesen oder
+  geschrieben (verifiziert 2026-08-09). Ein Wechsel ist eine Code-Änderung, kein
+  Datenbank-Eintrag. Gehört zu Sprint 3D.
 - `SECTOR_ALIASES` normalisiert Finnhubs `finnhubIndustry` auf 21 **Sub-Sektoren**
   (feiner als GICS: Halbleiter gegen SOXX statt gegen den breiten XLK). Unbekannte
   Rohwerte werden mit WARN geloggt und bleiben ungemappt — nie stillschweigend
@@ -61,13 +65,16 @@ Die Pipeline-Phasen lassen sich an `main.py:run_pipeline()` ablesen.
   nicht: finnhub nutzt `requests.Session`, das Anthropic-SDK httpx. Anlass waren
   zwei reale Vorfälle: echte Mails aus einem Testlauf und eine echte
   Capital.com-Session aus einem Unit-Test, die still geschluckt wurde.
-- `price_history` enthält **ausschliesslich finale Tagesbars** und hat **genau einen
-  Schreiber**: `final_close` (00:15 UTC, täglich). Entscheidungskurse gehören nicht
-  dorthin, sondern in `predictions.price_premarket` / `price_open` / `price_1610`.
-  Die Vermischung beider war der Frozen-Bar-Bug. `setup/historical_loader.py` bleibt
-  als manueller Backfill der einzige weitere Schreiber — und hält sich seit `0b025a8`
-  an dieselbe Regel: der **laufende Tag** wird nie geschrieben. Bei Krypto fiel das auf
-  (durchgehender Handel, UTC-Bar schliesst erst 00:00), bei Aktien nicht.
+- `price_history` enthält **ausschliesslich finale Tagesbars**. Entscheidungskurse gehören
+  nicht dorthin, sondern in `predictions.price_premarket` / `price_open` / `price_1610` —
+  die Vermischung beider war der Frozen-Bar-Bug. Es gibt **drei** Schreiber, alle an
+  dieselbe Regel gebunden (**nie der laufende Tag**):
+  1. `final_close` (00:15 UTC, täglich) — der einzige im Normalbetrieb, `upsert`
+  2. `setup/historical_loader.py` — manueller Backfill, seit `0b025a8` ebenfalls ohne
+     den laufenden Tag (fiel bei Krypto auf: durchgehender Handel, UTC-Bar schliesst
+     erst 00:00; bei Aktien fehlt die Wochenendbar ohnehin)
+  3. `data_collector._fill_price_gaps()` — Sicherheitsnetz nach Ausfällen, greift im
+     Normalbetrieb nicht
 - `src/universe.py:full_universe()` ist die **eine Quelle**, welche Ticker das System
   anfasst (Aktien + Rohstoffe + Krypto + Sub-Sektor-ETFs). `run_final_close`, der
   Bootstrap und der Historien-Guard lesen alle dort — getrennt gepflegt liefen sie

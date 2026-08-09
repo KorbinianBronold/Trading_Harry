@@ -971,6 +971,31 @@ Der in `[[feedback_doc_maintenance_order]]` aufgeschobene Schlussdurchgang. Bear
    Ältere Dokumente nannten als Repo `Shares_Future` — alle `gh --repo`-Befehle darin
    liefen ins Leere. In WORKFLOW.md korrigiert und erklärt.
 
+**Aus dem maschinellen Gegencheck (Doku gegen Code, 2026-08-09)** — vier Befunde, die
+beim blossen Lesen nicht aufgefallen wären:
+
+3. ⚠️ **`price_history` hat DREI Schreiber, nicht einen.** CLAUDE.md und ARCHITECTURE.md
+   behaupteten „genau EINEN Schreiber: `final_close`" und nannten `historical_loader` als
+   „einzigen weiteren". `data_collector._fill_price_gaps()` schreibt aber ebenfalls
+   (Sicherheitsnetz nach Ausfällen). Einheitlich ist die **Regel** — nie der laufende Tag —,
+   nicht die Zahl der Schreibstellen. In beiden Dokumenten korrigiert.
+4. ⚠️ **A/B-Testing für Prompts existiert nicht.** CLAUDE.md führte „Prompts versioniert
+   mit A/B-Testing" als Designentscheidung. Tatsächlich ist die Version nur der Dateiname
+   und im Modul-Import fest verdrahtet; ein Wechsel ist eine Code-Änderung. Gehört zu 3D.
+   Nebenbefund: `prompts/portfolio_check_v1.txt` ist verwaist (genutzt wird v2), und
+   Prompts werden auf Modulebene gelesen — eine Änderung wirkt erst nach Neustart.
+5. ⚠️ **Zwei tote Tabellen:** `fundamentals` und `prompt_versions` werden von
+   `init_schema()` angelegt und haben **null** Lese- oder Schreibzugriffe im gesamten
+   Code. Dieselbe Klasse Altlast wie `MAX_DEEP_ANALYSIS` und `BATCH_SIZE_QUICK`.
+6. ⚠️ **Drei Module fehlten in ARCHITECTURE.md:** `src/utils.py`, `src/providers/base.py`
+   und `src/providers/finnhub_provider.py` — ergänzt als 11b–11d.
+
+**Geprüft und in Ordnung:** alle sechs Crons stimmen mit `analyze.yml` überein · alle
+dokumentierten CLI-Flags existieren · alle Dateiverweise lösen auf · Konstanten
+(`MAX_HOLD_DAYS`, ATR, Cost-Cap, VIX 25/35 kumulativ, `TOP_N`) decken sich mit `config.py` ·
+Docker `ENTRYPOINT`/`CMD` entsprechen der Beschreibung · kein yfinance- oder
+`midday`/`evaluate`/`position_check`-Rest ausserhalb von Historien-Kontext.
+
 ---
 
 ## Preismodell-Umbau — drei Entscheidungs-Snapshots + finale Tages-OHLC (P3) ✅ CODE FERTIG
@@ -978,7 +1003,8 @@ Der in `[[feedback_doc_maintenance_order]]` aufgeschobene Schlussdurchgang. Bear
 **Spec:** `docs/superpowers/specs/2026-08-06-preismodell-snapshots-design.md`
 **Plan:** `docs/superpowers/plans/2026-08-06-preismodell-snapshots.md`
 **Umgesetzt:** 2026-08-06/07, 11 Tasks, 13 Commits.
-**Stand danach:** 570 Tests grün, 7 skipped, Coverage 93,29 %.
+**Stand unmittelbar nach diesem Umbau (2026-08-07):** 570 Tests grün, 7 skipped,
+Coverage 93,29 %. *(Aktuell sind es 608 — s. Kopfzeile.)*
 
 ### P3.1 — Worum es ging
 

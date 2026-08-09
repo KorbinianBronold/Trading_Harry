@@ -34,11 +34,21 @@ getrennt, die vorher dieselbe Quelle hatten:
 | **Indikator-Historie** | RSI, ATR, SMA, MACD — braucht abgeschlossene Tage | `price_history` — **ausschliesslich finale Tagesbars** |
 | **Entscheidungs-Snapshot** | Der Kurs, zu dem eine Aussage getroffen wurde | `predictions.price_premarket` / `price_open` / `price_1610` |
 
-**`price_history` hat genau EINEN Schreiber:** `final_close` (00:15 UTC, täglich).
-`setup/historical_loader.py` bleibt als manueller Backfill der einzige weitere.
-Die Vermischung beider Begriffe war der Frozen-Bar-Bug: der 15:00-Lauf schrieb eine
-Pre-Market-Quote als „Tagesbar" fest, und alles Spätere las sie als Tatsache. Mit einem
-einzigen Schreiber, der nur finale Bars kennt, kann das strukturell nicht wiederkehren.
+**`price_history` nimmt ausschliesslich finale Tagesbars auf.** Die Vermischung beider
+Begriffe war der Frozen-Bar-Bug: der 15:00-Lauf schrieb eine Pre-Market-Quote als
+„Tagesbar" fest, und alles Spätere las sie als Tatsache.
+
+Es gibt **drei** Schreiber, alle an dieselbe Regel gebunden — **nie der laufende Tag**:
+
+| Schreiber | Rolle |
+|---|---|
+| `main.run_final_close()` | der einzige im Normalbetrieb, 00:15 UTC täglich, `upsert` |
+| `setup/historical_loader.py` | manueller Backfill (`--universe`, `--tickers`, …) |
+| `data_collector._fill_price_gaps()` | Sicherheitsnetz nach Ausfällen; greift im Normalbetrieb nicht |
+
+⚠️ Ältere Fassungen dieses Dokuments sprachen von „genau EINEM Schreiber" und nannten den
+Gap-Filler nicht. Sachlich falsch — die **Regel** ist einheitlich, die Zahl der
+Schreibstellen ist es nicht (korrigiert 2026-08-09).
 
 Konsequenz: `price_history` endet zur Laufzeit der Analyse-Läufe bei **D-1**. Der
 Entscheidungskurs kommt deshalb live über `get_premarket_price()`, nicht aus dem letzten
@@ -709,8 +719,17 @@ SQLite-Schema + Persistence.
 - `position_recommendations` – Phase 4a Output (HALTEN/SCHLIESSEN/ANPASSEN)
 - `cost_tracking` – Claude-API Kosten pro Run
 - `fundamentals_cache` – Finnhub-Fundamentals mit 7-Tage TTL (UNIQUE per ticker)
-- `price_history` – OHLCV inkl. premarket_price (nullable)
+- `price_history` – ausschliesslich finale Tages-OHLCV (s. „Die zentrale Trennung" oben)
 - `market_context` – ein Marktzustand je Run (UNIQUE date+run_type), seit 3B echt befüllt
+- `skipped_tickers` – Ereignis-Log je übersprungenem Ticker mit Grund; trägt die
+  Weekly-Auswertung und die Deaktivierung
+- `trend_analyses`, `news_summaries` – Phase-0-Ausgaben
+
+⚠️ **Zwei tote Tabellen** (verifiziert 2026-08-09): `fundamentals` und `prompt_versions`
+werden von `init_schema()` angelegt, aber **nirgends gelesen oder geschrieben** — null
+Zugriffe im gesamten Code. Die Fundamentaldaten liegen in `fundamentals_cache`;
+`prompt_versions` gehört zum noch nicht gebauten A/B-Testing (Sprint 3D). Dieselbe Klasse
+Altlast wie die toten Konstanten `MAX_DEEP_ANALYSIS` und `BATCH_SIZE_QUICK`.
 
 **Neu in Sprint 3B / Plan 1** (angelegt 2026-07-27/29):
 - `ticker_status` – kumulativer `skip_count` + `inactive`-Flag + `retry_after` pro Ticker
@@ -748,6 +767,76 @@ SQLite-Schema + Persistence.
 `trend_analyses` 180 Tage, `skipped_tickers`-Events 90 Tage. `ticker_status`
 wird **nie** automatisch gelöscht — der kumulative Zähler muss die Event-Retention
 überleben.
+
+---
+
+### 11b. **`src/utils.py`**
+
+Querschnitts-Helfer, die jedes Claude-aufrufende Modul benutzt.
+
+| Baustein | Zweck |
+|---|---|
+| `retry_with_backoff(...)` | Dekorator für transiente API-Fehler |
+| `ClaudeResult` | Ergebnis-Objekt inkl. Token-Zahlen — Grundlage der Kostenerfassung |
+| `call_claude(...)` | Anthropic-Wrapper mit Prompt-Caching |
+| `extract_json_blob(text, error_cls)` | toleranter JSON-Auszug aus Claudes Antwort |
+
+⚠️ `extract_json_blob` nutzt `raw_decode`, weil Claude gelegentlich Fliesstext hinter das
+JSON hängt. Ein striktes `json.loads` scheiterte daran.
+
+⚠️ **Reihenfolge-Invariante:** `cost_tracker.add_from_result()` läuft **vor** der
+JSON-Extraktion. Sonst kostet eine unparsebare Antwort Geld, das nie erfasst wird.
+
+---
+
+### 11c. **`src/providers/base.py`**
+
+`DataProvider` (ABC) — das Interface, das die Pipeline von der Datenquelle entkoppelt:
+`get_price_history`, `get_fundamentals`, `get_earnings_calendar`,
+`get_last_available_date`, `get_ohlc_after`.
+
+Kein Provider implementiert alle Methoden sinnvoll — siehe unten.
+
+---
+
+### 11d. **`src/providers/finnhub_provider.py`**
+
+Fundamentaldaten und Earnings-Kalender über den Finnhub-Free-Tier.
+
+⚠️ **Liefert bewusst keine Kursdaten.** `get_price_history` und `get_ohlc_after` sind
+Stubs; OHLC kommt ausschliesslich von `CapitalComProvider`. Der Provider erfüllt also nur
+die Fundamentals-Hälfte des Interfaces.
+
+Ergebnisse werden über `fundamentals_cache` mit 7-Tage-TTL zwischengespeichert — der
+Free-Tier ist ratenbegrenzt.
+
+⚠️ `price_target` wurde entfernt: der Free-Tier antwortet dort mit HTTP 403.
+
+---
+
+### 11e. **`prompts/` — Versionierung, aber kein A/B-Test**
+
+Jedes Claude-aufrufende Modul lädt seinen System-Prompt beim Import aus einer Datei mit
+Versionssuffix:
+
+| Modul | Prompt |
+|---|---|
+| `trend_analyzer` | `trend_analyzer_v1.txt` |
+| `market_context` | `market_context_v1.txt` |
+| `quick_filter` | `quick_filter_v1.txt` |
+| `deep_analysis` | `deep_analysis_v1.txt`, `policy_monitor_v1.txt` |
+| `commodities_crypto` | `commodities_crypto_v1.txt` |
+| `portfolio_check` | **`portfolio_check_v2.txt`** |
+| `revalidation` | `trade_proposals_v1.txt` |
+
+⚠️ **A/B-Testing ist nicht implementiert** (verifiziert 2026-08-09). Die Version ist im
+Modul fest verdrahtet; ein Wechsel ist eine Code-Änderung. Die Tabelle `prompt_versions`
+wird angelegt und **nie benutzt** — sie gehört zu Sprint 3D.
+
+⚠️ `prompts/portfolio_check_v1.txt` ist verwaist: genutzt wird v2.
+
+⚠️ Die Prompts werden **auf Modulebene** gelesen, nicht je Aufruf. Eine geänderte
+Prompt-Datei wirkt erst nach einem Neustart des Prozesses.
 
 ---
 

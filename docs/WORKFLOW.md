@@ -26,7 +26,7 @@ Mail-Renderer, Tests).
 | Run-Type | Cron (UTC) | Berlin (CEST) | Zweck | Mail? | Kosten |
 |---|---|---|---|---|---|
 | `pre_market` | `0 13 * * 1-5` | 15:00 | volle Pipeline Phase 0–5 | ja | **3,13 EUR** gemessen |
-| `trade_proposals` | `10 14` / `10 15 * * 1-5`¹ | 16:10 | Re-Validierung der Morgensignale | ja | ~0,5–0,7 EUR |
+| `trade_proposals` | `10 14 * * 1-5` **und** `10 15 * * 1-5`¹ | 16:10 | Re-Validierung der Morgensignale | ja | ~0,5–0,7 EUR |
 | `close` | `30 20 * * 1-5` | 22:30 | Auswertung offener Predictions | nein | ~0 EUR |
 | `final_close` | `15 0 * * *` | 02:15 | **schreibt die finalen Tagesbars**, bewertet | nein | ~0 EUR |
 | `weekly` | `0 18 * * 0` | So 20:00 | Wochenauswertung | ja | ~0 EUR |
