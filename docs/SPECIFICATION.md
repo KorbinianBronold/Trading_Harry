@@ -2,16 +2,33 @@
 ## SP500 CFD Research Tool | Claude Code Buildanweisung
 ## Stand: 2026-05-22 | Version 5.0
 
-**Zuletzt aktualisiert:** 2026-08-03 — nur dieser Warnblock ergänzt; Inhalt unverändert
-auf Stand 2026-05-22
+**Zuletzt aktualisiert:** 2026-08-09 — als historisch eingefroren; Inhalt unverändert auf
+Stand 2026-05-22.
 
-> 🛑 **Achtung: Sprint-2-Stand (2026-05-22), in Teilen überholt.**
-> Insbesondere der Actions-Workflow weiter unten zeigt noch die alten Crons mit
-> `midday`, `evaluate` und `position_check` — diese Run-Types wurden in Sprint 3B /
-> Plan 2 restlos entfernt und laufen produktiv nicht mehr. Datenbankschema und
-> Prompt-Templates sind weitgehend gültig, aber um die Sprint-3-Tabellen erweitert.
-> **Verbindlich für den Ist-Stand: `docs/superpowers/specs/PROJECT_STATUS.md`.**
-> Task 20 zieht dieses Dokument nach.
+> ⚠️ **HISTORISCH — Sprint-2-Stand (2026-05-22, Version 5.0). Nicht als Ist-Zustand lesen.**
+>
+> Dieses Dokument wird **nicht mehr nachgezogen**. Ein früherer Vermerk kündigte an,
+> Task 20 werde das erledigen; das ist bewusst verworfen. Der Inhalt würde sonst
+> `docs/ARCHITECTURE.md` und `PROJECT_STATUS.md` duplizieren — und drei Quellen für
+> denselben Sachverhalt sind schlechter als eine.
+>
+> **Verbindlich statt dessen:**
+> | Frage | Dokument |
+> |---|---|
+> | Wo steht das Projekt? | `docs/superpowers/specs/PROJECT_STATUS.md` |
+> | Wie ist der Code aufgebaut? | `docs/ARCHITECTURE.md` |
+> | Was läuft wann, was kostet es? | `docs/WORKFLOW.md` |
+> | Welche Fallen sind nicht ableitbar? | `CLAUDE.md` |
+>
+> **Nachweislich überholt in diesem Dokument** (nicht abschliessend):
+> Run-Types `midday`, `evaluate`, `position_check` (in Sprint 3B / Plan 2 restlos
+> entfernt) · yfinance als Provider (2026-07-09 entfernt, Capital.com ist alleiniger
+> OHLC-Provider) · die Cron-Zeiten · die Kostenschätzungen · die Testzahlen.
+>
+> **Weitgehend gültig geblieben:** die Grundzüge des Datenbankschemas und die
+> Prompt-Templates — beide seither um die Sprint-3-Tabellen und -Felder erweitert.
+> `learning_module.py` und `prompt_optimizer.py` sind weiterhin *unerledigte*
+> Bauziele (Sprint 3D).
 
 ---
 

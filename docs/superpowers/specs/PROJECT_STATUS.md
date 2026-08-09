@@ -1,37 +1,38 @@
 # PROJECT_STATUS.md — Shares_Future (Trading_Harry)
 
-**Zuletzt aktualisiert:** 2026-08-07 — **Preismodell-Umbau abgeschlossen** (Abschnitt P3):
-drei Entscheidungs-Snapshots in `predictions`, neuer Run-Type `final_close`, Evaluator auf
-finalen Bars, `price_history` mit genau einem Schreiber. 570 Tests grün, Coverage 93,29 %.
-⚠️ Der Preismodell-Umbau ist **nie live ausgeführt**. Plan 2 dagegen schon: drei
-erfolgreiche Läufe am 2026-08-04, die aber **keine Predictions erzeugten** — s. die
-Korrektur in P2.4.
+**Zuletzt aktualisiert:** 2026-08-09 — **Live-Verifikation weitgehend erledigt.**
+`pre_market`, `close` und `final_close` sind ausgeführt und geprüft (P3.5, P2.10); die
+Ursache der leeren 04.08.-Läufe ist geklärt (P2.4) und in sechs Commits behoben (P2.9).
+Sämtliche `.md`-Dokumente sind auf diesen Stand gezogen (P2.11).
+**608 Tests grün, Coverage 93,47 %.**
+
+⏳ **Offen:** `trade_proposals` und `weekly` (nie ausgeführt), der einmalige
+`bootstrap-db`-Lauf, danach die Reaktivierung von `analyze.yml`.
+⚠️ `analyze.yml` steht weiterhin auf `disabled_manually` — das ist eine bewusste
+Entscheidung, keine Nachlässigkeit.
+
 Davor, 2026-08-06 — Task-20-Review abgeschlossen: **acht Defekte behoben**
 (3 Criticals, eingefrorene Tagesbar, beide Weekly-Blöcke, Winter-Cron, Netzsperre), Details
 in **P2.8**. Kosten- und `MAX_DEEP_ANALYSIS`-Aussagen sind in B.1, B.13, C.4 und F.1
 vereinheitlicht — die Widersprüche gegen die eigene Korrekturbox sind raus.
-⚠️ **Weiterhin ungeprüft live:** `analyze.yml` steht auf `disabled_manually`, P2.4 offen.
-**Aktueller Branch:** `main` — die 25 Plan-2-Commits (`fd7e20a`…`58782e4`) liegen
-**direkt auf `main` und sind gepusht**. `git ls-remote --heads origin` kennt nur
-`refs/heads/main` (Stand 2026-08-03: `feee447`); einen Branch
-`sprint3b/plan2-pipeline-umbau` gibt es weder lokal noch remote.
+
+**Aktueller Branch:** `main`, alles gepusht (Stand 2026-08-09: `origin/main` = lokal).
+Einen Branch `sprint3b/plan2-pipeline-umbau` gibt es weder lokal noch remote.
 **Letzter Merge:** Sprint 2 / Plan 1 (2026-05-22) — Sprint 3 in Arbeit, Roadmap s. Abschnitt 2
 
-> **Stand 2026-08-04:** Sprint 3B / Plan 2 ist zu **20 von 20 Tasks** umgesetzt.
-> Tasks 18 (`0fec73b`), 19 (`ae0a79c`) und 20 (Doku) kamen am 2026-08-04 dazu.
-> **Damit ist der Code fertig — aber nicht der Sprint:** Gesamt-Review und
-> Live-Verifikation (P2.4) stehen aus, und die Pipeline lief bis heute kein
-> einziges Mal (`analyze.yml` = `disabled_manually`, letzter Lauf 2026-07-13).
-> Details, Entscheidungen und Befunde: Abschnitt „Sprint 3B / Plan 2" weiter unten.
-> 513 Tests, 93,00 % Coverage.
+> **Historie dieser Kopfzeile** — zwei Aussagen, die hier lange falsch standen und
+> jeweils Arbeit gekostet haben. Beide bleiben als Warnung stehen:
 >
-> **Korrektur 2026-08-03:** Dieses Dokument und `CLAUDE.md` behaupteten bis hierher,
-> der Plan-2-Code liege auf einem eigenen, ungepushten Feature-Branch. Das war falsch —
-> gegen das echte Repo gegengeprüft existiert remote ausschliesslich `main`, und alle
-> Plan-2-Commits sind dessen Vorfahren. Der Code ist also **gemerged** — aber **nicht
-> ausgeführt**: `analyze.yml` steht auf `disabled_manually`, der letzte `analyze`-Lauf
-> war am 2026-07-13 (s. P2.4). Review und Live-Verifikation bleiben damit ein echtes
-> Gate vor der ersten Ausführung.
+> **Korrektur 2026-08-03:** Dieses Dokument und `CLAUDE.md` behaupteten, der Plan-2-Code
+> liege auf einem eigenen, ungepushten Feature-Branch. Falsch — remote existiert
+> ausschliesslich `main`, alle Plan-2-Commits sind dessen Vorfahren.
+>
+> **Korrektur 2026-08-08:** Es hiess, die Pipeline sei „kein einziges Mal" gelaufen.
+> Ebenfalls falsch — am 2026-08-04 liefen drei Läufe erfolgreich durch, nur eben ohne
+> Predictions. Ursache inzwischen geklärt (P2.4).
+>
+> **Lehre daraus:** Aussagen über Branch- und Ausführungsstand gegen das echte Repo
+> prüfen (`git ls-remote`, `gh run list`), nicht aus dem Gedächtnis fortschreiben.
 
 ---
 
@@ -112,7 +113,7 @@ vereinheitlicht — die Widersprüche gegen die eigene Korrekturbox sind raus.
 | Sprint | Inhalt | Status |
 |---|---|---|
 | 3A | Roadmap + Doku aktualisieren | ✅ erledigt (dieses Dokument) |
-| 3B | Cron-Struktur + Pipeline-Umbau | 🟢 **Code vollständig** — Plan 1 (2026-07-29) und Plan 2 (20/20 Tasks, 2026-08-04), alles auf `main`. ⚠️ **Noch nicht abgeschlossen:** der Code lief nie, `analyze.yml` steht auf `disabled_manually`. Offen sind Gesamt-Review und Live-Verifikation (P2.4) |
+| 3B | Cron-Struktur + Pipeline-Umbau | 🟢 **Code vollständig** — Plan 1 (2026-07-29) und Plan 2 (20/20 Tasks, 2026-08-04), alles auf `main`. Verifiziert: `pre_market`, `close`, `final_close` (P2.10, P3.5). ⏳ Offen: `trade_proposals`, `weekly`, `bootstrap-db`-Lauf, dann Reaktivierung von `analyze.yml` |
 | **3B-M** | **Mail-Provider-Wechsel (Zwischensprint)** | ✅ **ABGESCHLOSSEN 2026-07-30** — Mailversand läuft über **Resend**, eigene Domain verifiziert, Zustellung live bestätigt. Details s. unten |
 | 3C | Ranking-Überarbeitung | 📋 spezifiziert, Implementierung offen |
 | 3D | Learning Modul | ⚠️ **Platzhalter — Planungssession ausstehend** |
@@ -900,6 +901,78 @@ das löst erst 3F, nicht mehr Historie.
 
 ---
 
+### P2.10 — ✅ Erster vollständiger `pre_market`-Lauf (2026-08-09)
+
+Freigegeben von Korbinian, ausgeführt **lokal gegen eine Wegwerf-Kopie** von
+`data/tracking.db` (46 Ticker, 46.200 Bars, 0 offene Predictions). Echte API-Calls, echte
+Mail. Protokoll: `pre_market-2026-08-09.log` (gitignored).
+
+⚠️ **Es war ein Sonntag.** Phase 1 arbeitete auf Freitagsbars, der Opening-Gap-Check hatte
+keinen Live-Kurs. Der Lauf belegt die **Mechanik**, nicht die inhaltliche Qualität.
+
+| Phase | Ergebnis |
+|---|---|
+| Phase 0 | 7 Trends, 0,13 EUR |
+| Phase 1 | **20 ok, 0 skipped** (+ 7 Rohstoffe/Krypto) — gegen `2 ok, 18 skipped` am 04.08. |
+| Phase 1c | 1 Pflicht-Kandidat aus offener Capital.com-Position: XOM |
+| Phase 1d | **2 von 21** Sub-Sektoren mit beiden Signalen |
+| Phase 2 | 20 bewertet, 0 ausgeschlossen |
+| Phase 3 | **alle 20** in Tiefenanalyse, kumuliert 2,53 EUR |
+| Phase 3b | 7 Analysen, kumuliert 3,13 EUR |
+| Phase 4 | **4 long, 3 short, 3 commodity/crypto** aus 27 Analysen, davon **16 enthalten** |
+| Phase 5 | Mail `delivered` (per `GET /emails/{id}` geprüft, nicht nur `2xx`) |
+
+**Kosten: 3,1318 EUR** (101.648 Input-, 62.976 Output-Tokens) — deckt sich mit den
+3,3143 EUR vom 2026-07-29.
+
+**Die D2-Zeile trägt.** `4 long, 3 short, 3 commodity/crypto persisted (aus 27 Analysen,
+davon 16 enthalten)` — 27 − 16 − 1 Guardrail-Drop (ETH-USD, R/R 1,41) = 10. Die Rechnung
+geht ohne DB-Zugriff auf. Genau das fehlte am 04.08.
+
+Nur **zwei WARNINGs** im ganzen Lauf, beide `unknown sector value from provider: 'Media'`
+(GOOGL/META, dokumentiert als bewusst ungemappt). D1 und D3 schwiegen korrekt.
+
+**Zwei Beobachtungen ohne Handlungsbedarf:**
+
+1. „Offene Position" heisst an zwei Stellen Verschiedenes: Phase 1c meint Positionen bei
+   **Capital.com**, Phase 4a offene **Predictions in der DB**. Beide Zahlen waren korrekt
+   (1 bzw. 0), im Log liest es sich wie ein Widerspruch. Formulierungssache.
+2. `web_search_calls = 0` bei 31 Anthropic-Requests, obwohl Phase 0 als „Claude +
+   Web-Search" dokumentiert ist. Betrifft nur die Kostenaufschlüsselung. Nicht verfolgt.
+
+⚠️ Die 10 Predictions liegen **nur in der Wegwerf-Kopie**. `data/tracking.db` ist
+unberührt (12 Predictions, 0 offen). Für eine `trade_proposals`-Verifikation müsste die
+Kopie übernommen werden — bei Signalen aus einem Sonntagslauf nicht empfohlen.
+
+---
+
+### P2.11 — ✅ Doku-Durchgang über alle `.md` (2026-08-09)
+
+Der in `[[feedback_doc_maintenance_order]]` aufgeschobene Schlussdurchgang. Bearbeitet:
+
+| Datei | Was |
+|---|---|
+| `README.md` | vollständig neu — yfinance, „Max 3 Handelstage", 159 Tests, Fear&Greed als Rohstoff, 500 Ticker und die Sprint-Historie waren alle falsch |
+| `docs/WORKFLOW.md` | vollständig neu — dokumentierte noch `midday`, `evaluate`, `position_check` und das alte Doppel-Cron-Modell |
+| `docs/ARCHITECTURE.md` | `universe.py` (10d), erweiterte Invarianten, Testzahlen, Änderungen 08-08/09 |
+| `docs/SPECIFICATION.md` | als **historisch eingefroren**. Der frühere Vermerk „Task 20 zieht dieses Dokument nach" ist bewusst verworfen — der Inhalt würde ARCHITECTURE und PROJECT_STATUS duplizieren |
+| `…/2026-05-19-shares-future-mvp-design.md` | Banner geschärft, Status-Zeile korrigiert |
+| `CLAUDE.md` | am 2026-08-08 nachgezogen |
+
+**Nicht angefasst** (bewusst, Regel 9): `docs/superpowers/plans/*` und
+`.superpowers/sdd/*` — historische Artefakte mit `⚠️ HISTORISCH`-Banner.
+
+**Zwei Befunde aus dem Durchgang:**
+
+1. ✅ **B-06 ist erledigt.** `guardrails.py`, `evaluator.py` und `portfolio_check.py` lesen
+   inzwischen alle `config.MAX_HOLD_DAYS`. Die Doku sagt durchgehend **5**; der alte
+   Vorbehalt „Doku soll den hardcodierten Wert 3 spiegeln" ist gegenstandslos.
+2. ⚠️ **Das Repo heisst `KorbinianBronold/Trading_Harry`, das Produkt `Shares_Future`.**
+   Ältere Dokumente nannten als Repo `Shares_Future` — alle `gh --repo`-Befehle darin
+   liefen ins Leere. In WORKFLOW.md korrigiert und erklärt.
+
+---
+
 ## Preismodell-Umbau — drei Entscheidungs-Snapshots + finale Tages-OHLC (P3) ✅ CODE FERTIG
 
 **Spec:** `docs/superpowers/specs/2026-08-06-preismodell-snapshots-design.md`
@@ -1003,9 +1076,16 @@ solange ihr Fenster läuft. `closed_date` ist bei beiden geschlossenen der **Han
 **`close`** lief gegen dieselbe DB mit `Phase 1 done: 20 ok, 0 skipped` (gegen `2 ok,
 18 skipped` am 04.08.).
 
-⏳ **Offen bleibt `pre_market`** — der einzige Run-Type, der die Kette bis zu neuen
-Predictions durchspielt. Er kostet ~3,30 EUR und verschickt eine echte Mail; die Freigabe
-gehört Korbinian. Ebenso offen: der Docker-Smoke-Test (s. P2.4).
+✅ **`pre_market` ist am 2026-08-09 gelaufen** — Ergebnisse in **P2.10**.
+✅ **Docker-Smoke-Test erledigt** (2026-08-09): Image baut, ohne Argument gibt es die Hilfe
+aus statt eine Pipeline zu starten, `final_close` und `close` laufen im Container gegen
+einen Wegwerf-Mount, `data/tracking.db` bleibt unberührt.
+
+⏳ **Offen bleiben `trade_proposals` und `weekly`** — beide nie ausgeführt.
+`trade_proposals` re-validiert die `pre_market`-Signale **desselben Tages**; dafür braucht
+es eine DB mit frischen Signalen. Dahinter steckt die verwickeltste Mechanik von Plan 2
+(`superseded_by`, `revision_verdict`, „genau EINE offene Prediction je Trade-Idee"), die
+bis heute nie eine einzige Zeile zu bearbeiten hatte.
 
 ---
 

@@ -1,7 +1,7 @@
 # Shares_Future – Architektur & Design
 
-**Zuletzt aktualisiert:** 2026-08-04 — Task 20: Phasen 1c/1d ergänzt, Phase 4 vor 4a,
-signal_checks und revalidation als Module, position_check als Historie markiert
+**Zuletzt aktualisiert:** 2026-08-09 — `src/universe.py` als eine Quelle des Ticker-
+Universums, Historien-Guard, erweiterte Invariantenliste, Testzahlen auf 608.
 
 > **Dieses Dokument beschreibt den IST-Zustand des Codes.**
 >
@@ -673,6 +673,31 @@ Uhr.
 
 ---
 
+### 10d. **`src/universe.py`** (neu 2026-08-08)
+
+Die **eine Quelle** dafür, welche Ticker das System überhaupt anfasst. Reine Funktionen,
+keine DB-Abhängigkeit ausser einer Leseabfrage.
+
+| Funktion | Zweck |
+|---|---|
+| `full_universe()` | Aktien (MVP oder voll) + Rohstoffe + Krypto + Sub-Sektor-ETFs, dedupliziert, stabile Reihenfolge |
+| `thin_history_tickers(conn)` | Universums-Ticker mit weniger als `MIN_BARS_RSI` Bars |
+
+**Warum ein eigenes Modul.** Drei Stellen brauchen exakt dieselbe Liste:
+`main.run_final_close()` (der einzige Schreiber von `price_history`),
+`historical_loader --universe` (der Backfill) und `main._abort_on_thin_history()` (der
+Guard). Vorher baute jede Stelle sie selbst zusammen — genau die Naht, an der ein neu
+aufgenommener Ticker durchfällt: er kommt in die Config, aber nicht in den Backfill, wird
+mangels Bars übersprungen und zählt Richtung Deaktivierung.
+
+Die Deduplizierung ist nötig, weil sich mehrere Sub-Sektoren einen ETF teilen
+(MedTech/Pharma/Healthcare Rest zeigen alle auf XLV).
+
+⚠️ Die ETFs stehen zwar in `price_history` (`final_close` schreibt sie mit), aber **nicht**
+in `ticker_sectors` — sie verfälschen `db_momentum` also nicht.
+
+---
+
 ### 11. **`src/db.py`**
 
 SQLite-Schema + Persistence.
@@ -830,16 +855,28 @@ TOTAL: ~3.50 EUR
 5. **Guardrail-Pflicht** – Vor Phase 4 Ranking MÜSSEN alle Analysen durch Checks
 6. **Atomare DB-Writes** – `evaluator.update_outcome_close` ACID-transactional
 7. **Portfolio-Sektion zuerst** – Email-Rendering: Portfolio → Stocks → Trends → Commodities
-8. **Timezone** – Alle datetime-Berechnungen in `ZoneInfo("Europe/Berlin")`; Bash: `TZ="Europe/Berlin" date`
+8. **Timezone** – Alle datetime-Berechnungen in `ZoneInfo("Europe/Berlin")`; Bash: `TZ="Europe/Berlin" date`.
+   **Ausnahme:** alles, was an der US-Sitzung hängt (`signal_window.py`, der
+   `trade_proposals`-Slot), rechnet in `America/New_York` — s. dort
+9. **`price_history` enthält nur FINALE Tagesbars** – ein Schreiber im Betrieb
+   (`final_close`), `historical_loader` als manueller Backfill. Beide schreiben nie den
+   laufenden Tag. Die Vermischung von provisorisch und final war der Frozen-Bar-Bug
+10. **Eine offene Prediction je Trade-Idee** – `trade_proposals` löst die `pre_market`-Zeile
+    über `status='superseded'` + `superseded_by` ab, statt eine zweite daneben zu legen.
+    Das Urteil steht auf der **alten** Zeile (`revision_verdict`)
+11. **Ein Lauf ohne brauchbare Historie startet nicht** – der Guard in `main` bricht
+    `pre_market` und `trade_proposals` ab, bevor Kosten entstehen (seit 2026-08-08)
+12. **Tests telefonieren nicht nach draussen** – ausserhalb `tests/live/` sperrt ein
+    Autouse-Fixture auf Transport-Ebene
 
 ---
 
 ## Testing-Strategie
 
-- **Unit Tests** (155): Isolierte Module, Mock-Claude, Fixtures
-- **Integration Tests** (3): Volle Pipeline mit 5 Aktien + E2E HTML-Render
-- **Coverage Gate**: 80% Minimum (aktuell 93.29%)
-- **Baseline**: `pytest tests/ -q` → 570 passed, 7 skipped, 0 failures (Stand 2026-08-07).
+- **Unit Tests**: isolierte Module, Mock-Claude, Fixtures
+- **Integration Tests** (4): volle Pipeline + E2E-HTML-Render + trade_proposals-Flow
+- **Coverage Gate**: 80 % Minimum (aktuell 93,47 %)
+- **Baseline**: `pytest tests/ -q` → **608 passed, 7 skipped**, 0 failures (Stand 2026-08-09).
   Die 7 übersprungenen sind die Live-Tests unter `tests/live/`; sie laufen nur mit
   `--run-live` und sprechen dann echte APIs an (inkl. echtem Mailversand).
 
@@ -862,6 +899,8 @@ Plan: `docs/superpowers/plans/2026-05-21-sprint2-plan1-capital-provider-db-incre
 - **historical_loader.py** – 3-Jahres-Pull via Capital.com (`--all`, `--full-sp500`, `--tickers`).
   Seit Sprint 3B zusätzlich die reinen Status-Modi `--reactivate` / `--list-inactive`;
   die Modus-Gruppe ist `required=True` (Aufruf ohne Flag ist ein Fehler, kein Default-Pull).
+  Seit 2026-08-08 ausserdem `--universe` (voller Backfill über `universe.full_universe()`)
+  und `--report-coverage` (Bars je Ticker, markiert alles unter `MIN_BARS_RSI`).
 - **500-Ticker Scaling** – `USE_FULL_SP500`-Flag (Ticker-Liste noch Stub, s. Bug B-03)
 
 ---
@@ -885,9 +924,10 @@ Kurzüberblick, was sich an der oben beschriebenen Architektur ändern wird:
 
 ### Sprint 3B / Plan 2 — umgesetzt (2026-07-30 bis 2026-08-04)
 
-Code vollständig, 20/20 Tasks, alles auf `main`. ⚠️ **Noch nie ausgeführt** —
-`analyze.yml` steht auf `disabled_manually`; die Live-Verifikation steht aus
-(PROJECT_STATUS, P2.4).
+Code vollständig, 20/20 Tasks, alles auf `main`. ⚠️ `analyze.yml` steht weiterhin auf
+`disabled_manually`. Ausgeführt und verifiziert sind inzwischen `pre_market`, `close` und
+`final_close` (lokal, gegen Wegwerf-Kopien); offen bleiben `trade_proposals` und `weekly`
+(PROJECT_STATUS, P2.4 und P3.5).
 
 | Bereich | Änderung |
 |---|---|
@@ -909,6 +949,29 @@ Code vollständig, 20/20 Tasks, alles auf `main`. ⚠️ **Noch nie ausgeführt*
 | Schema | Neue Spalte `predictions.ranking_score` | 3C |
 | `ranking` | `atr_pct`/`rsi_at_entry`/`volume_ratio` korrekt befüllen; kombinierter `ranking_score` **zusätzlich** zu `total_score` | 3C |
 | Phase 2 | Technischer Python-Pre-Filter (ATR/RSI/Volume/Market-Cap) vor dem Haiku-Batching | 3C |
+
+⚠️ **Der Pre-Filter ist keine Optimierung, sondern die einzige Mengenbegrenzung.**
+`MAX_DEEP_ANALYSIS = 80` und `BATCH_SIZE_QUICK = 30` sind tote Konstanten — nirgends im
+Code gelesen. Gemessen am 2026-08-09: alle 20 Ticker gingen in Phase 3, 2,53 der
+3,13 EUR entfielen darauf. Bei `MAX_COST_PER_RUN_EUR = 4.00` sind das 78 % des Caps bei
+4 % der Zielgröße.
+
+---
+
+## Änderungen 2026-08-08/09 — Sichtbarkeit und Datenintegrität
+
+Aus der Ursachenanalyse der leeren Läufe vom 2026-08-04 (PROJECT_STATUS P2.4/P2.9):
+
+| Bereich | Änderung |
+|---|---|
+| **neu** `src/universe.py` | eine Quelle des Ticker-Universums (s. 10d) |
+| **neu** `.github/workflows/bootstrap-db.yml` | einmaliger Backfill der CI-DB, nur `workflow_dispatch`, teilt die `concurrency`-Gruppe mit `analyze.yml` |
+| `main` | Historien-Guard am CLI-Einstieg — Abbruch bei zu dünner Datenlage, bevor Kosten entstehen. Ausgenommen `final_close`, `close`, `weekly` |
+| `data_collector` | `_skip()` loggt jeden Skip mit Grund; `collect()` gibt die Verteilung gebündelt aus (D1) |
+| `data_collector` | Lückenerkennung prüft den gesamten jüngsten Abschnitt (`GAP_SCAN_BARS = 200`) statt nur `MAX(date)`. ⚠️ Innenliegende Lücken erst ab **zwei** aufeinanderfolgenden Handelstagen — einzelne fehlende Wochentage sind US-Feiertage |
+| `ranking` | Enthaltungen (`direction='none'`) werden gezählt und in der Phase-4-Zeile mitgeführt, bleiben aber **kein** Reject (D2); ein Lauf ohne Prediction warnt von sich aus (D3) |
+| `db` | `skip_reason_counts()` — Skip-Gründe eines Laufs, gruppiert auf der Art des Grundes |
+| `historical_loader` | schreibt den laufenden Tag nicht mehr (fiel bei Krypto auf, das durchgehend handelt) |
 
 ---
 

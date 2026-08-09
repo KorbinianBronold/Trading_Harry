@@ -1,456 +1,165 @@
 # Shares_Future – Live Workflow & Operationen
 
-**Zuletzt aktualisiert:** 2026-08-04 — Overview auf den Ist-Stand gezogen; der Rest des
-Dokuments ist als überholt markiert und wartet auf Task 20
+**Zuletzt aktualisiert:** 2026-08-09 — vollständig auf den Ist-Stand gezogen.
 
-> 🛑 **Achtung: Dieses Dokument ist ab „Cron-Jobs" grossflächig überholt.**
-> Es beschreibt die Pipeline vor Sprint 3B / Plan 2. Die Run-Types `midday`,
-> `evaluate` und `position_check` **existieren nicht mehr** (in `02ab4ba`/`59f5e2c`
-> restlos entfernt, gemerged auf `main`). Jeder Befehl unten, der sie aufruft,
-> schlägt heute mit einem argparse-Fehler fehl. Auch die Kostenzahlen sind widerlegt
-> — s. CLAUDE.md, Abschnitt „Cron-Jobs — die zwei Fallen".
-> **Verbindlich sind `.github/workflows/analyze.yml` und
-> `docs/superpowers/specs/PROJECT_STATUS.md`.** Task 20 zieht dieses Dokument nach.
+> ℹ️ Das Produkt heisst **Shares_Future**, das GitHub-Repo **`KorbinianBronold/Trading_Harry`**.
+> Ältere Dokumente nannten als Repo fälschlich `Shares_Future` — `gh`-Befehle mit
+> `--repo KorbinianBronold/Shares_Future` liefen daher ins Leere.
+
+> Dieses Dokument beschreibt den **Betrieb**: was wann läuft, was es kostet, was zu tun
+> ist, wenn etwas klemmt. Der verbindliche Projektstand steht in
+> `docs/superpowers/specs/PROJECT_STATUS.md`, die Architektur in `docs/ARCHITECTURE.md`.
+>
+> **Quelle der Wahrheit für Zeitpläne ist `.github/workflows/analyze.yml`.** Wo dieses
+> Dokument davon abweicht, gilt der Workflow.
+
+⚠️ **`analyze.yml` steht derzeit auf `disabled_manually`.** Nichts läuft automatisch.
+
+---
 
 ## Overview
 
-Shares_Future läuft auf GitHub Actions mit **4 Run-Types** und produziert
-**E-Mails, DB-Backups und Cost-Reports**.
+Fünf Run-Types. `midday`, `evaluate` und `position_check` gibt es **nicht mehr** — sie
+wurden in Sprint 3B / Plan 2 restlos entfernt (Run-Type, Cron, Funktionen, Prompts,
+Mail-Renderer, Tests).
 
-```
-┌──────────────────────────────────────────────────────────────────────┐
-│              DAILY WORKFLOW (Montag–Freitag)                         │
-│                                                                       │
-│  15:00 Berlin  →  pre_market       →  E-Mail 1 (Research-Briefing)   │
-│  16:10 Berlin  →  trade_proposals  →  E-Mail 2 (Vorher/Nachher)      │
-│  22:30 Berlin  →  close            →  kein Mail (Datenpflege)        │
-│                                                                       │
-│              WEEKLY (Sonntag 20:00 Berlin)                           │
-│  20:00 Berlin  →  weekly           →  E-Mail 3                       │
-│                                                                       │
-│  RELEASE ASSET DB PERSISTENCE                                        │
-│  Nach jedem Run: tracking.db → GitHub Release Asset "db-latest"     │
-└──────────────────────────────────────────────────────────────────────┘
-```
+| Run-Type | Cron (UTC) | Berlin (CEST) | Zweck | Mail? | Kosten |
+|---|---|---|---|---|---|
+| `pre_market` | `0 13 * * 1-5` | 15:00 | volle Pipeline Phase 0–5 | ja | **3,13 EUR** gemessen |
+| `trade_proposals` | `10 14` / `10 15 * * 1-5`¹ | 16:10 | Re-Validierung der Morgensignale | ja | ~0,5–0,7 EUR |
+| `close` | `30 20 * * 1-5` | 22:30 | Auswertung offener Predictions | nein | ~0 EUR |
+| `final_close` | `15 0 * * *` | 02:15 | **schreibt die finalen Tagesbars**, bewertet | nein | ~0 EUR |
+| `weekly` | `0 18 * * 0` | So 20:00 | Wochenauswertung | ja | ~0 EUR |
 
-⚠️ Berliner Zeiten gelten für **CEST**. Cron ist UTC-fix, GitHub Actions passt nicht
-an die Sommerzeit an — im Winter (CET) läuft alles 1 h früher.
-
-**Kosten:** Die früher hier genannten ~6,60 EUR/Tag sind überholt. Gemessen (2026-07-29):
-ein `pre_market` mit 20 MVP-Tickern kostete **3,3143 EUR**. `trade_proposals` prüft nach
-E1 billig ohne Websuche (~0,5–0,7 EUR/Lauf), `close` und `weekly` sind ~0,00 EUR.
+¹ Zwei Slots, siehe „Die zwei Cron-Fallen".
 
 ---
 
-## Cron-Jobs (in `.github/workflows/analyze.yml`)
+## Die zwei Cron-Fallen
 
-Jeder Run-Type hat **zwei Cron-Einträge** (Sommer UTC+2 / Winter UTC+1), damit die Berliner Zeit das ganze Jahr stimmt.
+**DST.** Cron ist UTC-fix, GitHub Actions rechnet keine Sommerzeit. Die Berlin-Zeiten oben
+gelten für CEST; im Winter (CET) läuft alles 1 h früher.
 
-```yaml
-schedule:
-  # pre_market 14:00 Berlin
-  - cron: '0 12 * * 1-5'   # Sommer (MESZ, UTC+2)
-  - cron: '0 13 * * 1-5'   # Winter (MEZ,  UTC+1)
+**`trade_proposals` hängt an der US-Eröffnung, nicht an Berlin.** Er soll 40 min nach
+Handelsbeginn liegen, also 10:10 America/New_York — das sind 14:10 UTC unter EDT und
+15:10 UTC unter EST. Deshalb existieren **beide** Slots ganzjährig; der Schritt
+„Determine run_type" verwirft den falschen anhand von `TZ=America/New_York date +%z`.
 
-  # evaluate 15:00 Berlin
-  - cron: '0 13 * * 1-5'   # Sommer
-  - cron: '0 14 * * 1-5'   # Winter
+Maßgeblich ist bewusst die US-Zeitzone: EU und USA schalten an verschiedenen Wochenenden
+um. Mit nur dem Sommer-Slot lief der Lauf von November bis März **vor** der Eröffnung —
+der Opening-Gap-Check verglich dort zwei Pre-Open-Kurse und feuerte nie.
 
-  # midday 16:15 Berlin
-  - cron: '15 14 * * 1-5'  # Sommer
-  - cron: '15 15 * * 1-5'  # Winter
+**`final_close` hat keine DST-Kopplung.** Er hängt an der Bar-Grenze (00:00 UTC laut
+`openingHours`), nicht an einer Börsensitzung. Er läuft **täglich**, nicht Mo–Fr: freitags
+schliesst der Handel um 21:00 UTC, die Bar wird erst danach final — erst der Samstagslauf
+holt sie.
 
-  # position_check 17:30 Berlin
-  - cron: '30 15 * * 1-5'  # Sommer
-  - cron: '30 16 * * 1-5'  # Winter
+---
 
-  # close 22:30 Berlin
-  - cron: '30 20 * * 1-5'  # Sommer
-  - cron: '30 21 * * 1-5'  # Winter
+## Voraussetzung: die Datenbank braucht Historie
 
-  # weekly Sonntag 20:00 Berlin
-  - cron: '0 18 * * 0'     # Sommer
-  - cron: '0 19 * * 0'     # Winter
-```
+⚠️ **Das ist der Betriebsfehler, der dieses Projekt zwei Tage gekostet hat.**
 
-**Bash-Logik zur Run-Type-Bestimmung** (IMMER `TZ="Europe/Berlin"`):
+Am 2026-08-04 liefen drei Läufe technisch erfolgreich durch und erzeugten **keine einzige
+Prediction**. Grund: die CI-Datenbank hatte 19 Bars je Aktie — eine unter
+`MIN_BARS_RSI = 20`. `db-latest` war nie mit `historical_loader` bestückt worden und
+sammelte nur die Bars ein, die die Läufe selbst schrieben.
+
+**Vor dem ersten Lauf:**
 
 ```bash
-HOUR=$(TZ="Europe/Berlin" date +%H)
-MIN=$(TZ="Europe/Berlin" date +%M)
-DOW=$(TZ="Europe/Berlin" date +%u)
+# In CI: Workflow "bootstrap-db" auslösen (nur workflow_dispatch, kein Cron).
+gh workflow run bootstrap-db.yml
 
-if [ "$DOW" = "7" ] && [ "$HOUR" = "20" ]; then T="weekly"
-elif [ "$HOUR" = "15" ] && [ "$MIN" -ge "0" ] && [ "$MIN" -lt "30" ]; then T="evaluate"
-elif [ "$HOUR" = "14" ] && [ "$MIN" -lt "30" ]; then T="pre_market"
-elif [ "$HOUR" = "16" ] && [ "$MIN" -ge "10" ]; then T="midday"
-elif [ "$HOUR" = "17" ] && [ "$MIN" -ge "30" ]; then T="position_check"
-elif [ "$HOUR" = "22" ] || [ "$HOUR" = "21" ]; then T="close"
-else T="close"; fi
+# Lokal:
+python setup/historical_loader.py --universe
+
+# Prüfen — reine DB-Abfrage, keine API-Calls:
+python setup/historical_loader.py --report-coverage
 ```
 
-**Python-Code:** IMMER `zoneinfo.ZoneInfo("Europe/Berlin")` verwenden:
+Seit `9394e8f` bricht ein `pre_market`- oder `trade_proposals`-Lauf **laut ab**, wenn mehr
+als die Hälfte des Universums zu wenig Historie hat. `close`, `final_close` und `weekly`
+sind ausgenommen — `final_close` schreibt die Historie selbst und wäre sonst blockiert.
 
-```python
-from zoneinfo import ZoneInfo
-from datetime import datetime
-BERLIN = ZoneInfo("Europe/Berlin")
-now = datetime.now(BERLIN)
-```
+Danach hält `final_close` die Historie täglich fort.
 
 ---
 
-## Pre-Market (14:00 Berlin, ~3,20 EUR)
+## GitHub Secrets (einmalig)
+
+Repo Settings → Secrets and variables → Actions:
+
+| Secret | Quelle |
+|---|---|
+| `ANTHROPIC_API_KEY` | https://console.anthropic.com |
+| `RESEND_API_KEY` | https://resend.com/api-keys |
+| `EMAIL_TO` | Zieladresse |
+| `EMAIL_FROM` | Adresse auf der bei Resend verifizierten Domain |
+| `CAPITAL_COM_API_KEY` | Capital.com Demo-Account |
+| `CAPITAL_COM_IDENTIFIER` | Capital.com Demo-Account |
+| `CAPITAL_COM_PASSWORD` | Capital.com Demo-Account |
+| `FINNHUB_API_KEY` | https://finnhub.io |
+
+`GH_TOKEN` kommt aus `secrets.GITHUB_TOKEN` und muss nicht angelegt werden.
+
+---
+
+## DB-Persistenz über Release-Assets
+
+Der Actions-Runner hat ein ephemeres Dateisystem. `tracking.db` überlebt zwischen Läufen
+nur als Release-Asset `db-latest`:
+
+```
+Download (best effort) → Lauf → Upload --clobber
+```
+
+⚠️ **Der Upload läuft unter `always()`, nicht `success()`** (B-10). Die Analyse committet
+phasenweise; bricht ein späterer Schritt ab — etwa der Mailversand —, wäre bei `success()`
+die gesamte Arbeit verloren. Der hochgeladene Stand ist schlimmstenfalls unvollständig,
+aber nie schlechter als der vorherige. Der Job bleibt trotzdem rot.
+
+⚠️ **`bootstrap-db` teilt die `concurrency`-Gruppe mit `analyze`.** Beide schreiben
+dasselbe Asset; ohne gemeinsame Gruppe könnte ein Bootstrap mitten in einen Pipelinelauf
+laufen und dessen DB überschreiben.
 
 ```bash
-python main.py --run-type pre_market --date $(TZ="Europe/Berlin" date +%Y-%m-%d)
+gh release download db-latest --pattern "tracking.db"   # lokal holen
 ```
 
-**Zweck:** Erste vollständige Analyse des Tages vor US-Markt-Open (15:30 Berlin).
-
-**Pipeline:**
-- Phase 0: Trend-Analyse (Overnight-News, 1× Sonnet + web_search)
-- Phase 1: Capital.com OHLCV (1 Bar täglich) + Indikatoren aus DB
-- Phase 1: Vorbörslicher Kurs via Capital.com `get_premarket_price()` falls verfügbar
-- Phase 2–4: Vollständiges Ranking (Quick-Filter → Deep-Analysis → Portfolio-Check → Ranking)
-- Phase 5: HTML-Mail (Portfolio → Stocks → Trends → Commodities)
-
-**Output:**
-- E-Mail an `EMAIL_TO`
-- DB: predictions-Rows für heute
-- DB: price_history + technical_indicators Update
-
-**Kosten:** ~3,20 EUR
+⚠️ **`db-latest` ist nicht automatisch ein guter Datenstand.** Vor Verwendung immer
+`--report-coverage` laufen lassen.
 
 ---
 
-## Evaluate (15:00 Berlin, ~0,00 EUR)
+## Kosten
+
+**Hard Cap: `MAX_COST_PER_RUN_EUR = 4.00`.** Bei Überschreitung wirft der CostTracker
+`CostCapExceeded`; der Lauf bricht ab, `aborted_at_phase` wird gesetzt und die Mail geht
+mit Warnbanner raus.
+
+**Gemessen am 2026-08-09, `pre_market` mit 20 Tickern: 3,1318 EUR**
+(101.648 Input-, 62.976 Output-Tokens).
+
+| Phase | kumuliert |
+|---|---|
+| Phase 0 (Trends) | 0,13 EUR |
+| Phase 2 (Quick-Filter) | 0,24 EUR |
+| **Phase 3 (Tiefenanalyse)** | **2,53 EUR** |
+| Phase 3b (Rohstoffe/Krypto) | 3,13 EUR |
+
+⚠️ **Bei 20 Tickern sind 78 % des Caps verbraucht.** Der Puffer ist dünn.
+
+⚠️ **Es gibt keinen Deckel auf die Zahl der Tiefenanalysen.** `MAX_DEEP_ANALYSIS = 80` und
+`BATCH_SIZE_QUICK = 30` sind **tote Konstanten** — nirgends im Code gelesen. Alle 20 Ticker
+gingen in Phase 3, je ~0,11 EUR. Hochgerechnet auf 500 Ticker wären das ~55 EUR pro Lauf.
+Der technische Pre-Filter (Sprint 3C / C.4) ist damit keine Optimierung, sondern die
+Voraussetzung für jede Skalierung.
 
 ```bash
-python main.py --run-type evaluate --date $(TZ="Europe/Berlin" date +%Y-%m-%d)
+sqlite3 data/tracking.db \
+  "SELECT date, run_type, total_eur, aborted_at_phase FROM cost_tracking ORDER BY date DESC LIMIT 10;"
 ```
-
-**Zweck:** Walk-Forward OHLC-Hit-Check für gestrige und ältere offene Setups.
-
-**Logik:**
-1. Lade `db.predictions` where `date < today` AND `status='open'`
-2. Hole Tages-High/Low via Capital.com (1 Candle)
-3. Walk-Forward Bar für Bar (max 5 Bars):
-   - Long: Low ≤ SL → sl_hit; High ≥ TP → tp_hit
-   - Short: High ≥ SL → sl_hit; Low ≤ TP → tp_hit
-   - Beide an einem Tag → pessimistic_overlap → SL gewertet
-   - Tag 5 ohne Hit → timeout_forced (Zwangsschluss zum Close)
-4. Atomisch: `db.outcomes` schreiben + `db.predictions.status` update
-5. Berechne P/L (CFD Simulation @ 5:1 Hebel, 500 EUR Margin)
-
-**Output:**
-- `db.outcomes`: exit_reason, exit_price, days_to_close, hold_day, extended_hold, p&l_eur
-- Kein E-Mail (Background-Job)
-
-**Kosten:** ~0,00 EUR
-
----
-
-## Midday (16:15 Berlin, ~3,20 EUR)
-
-```bash
-python main.py --run-type midday --date $(TZ="Europe/Berlin" date +%Y-%m-%d)
-```
-
-**Zweck:** 45 Min nach US-Eröffnung (15:30 Berlin). Eröffnungsvolatilität abgeklungen, frische OHLC-Daten.
-
-**Pipeline:** Identisch zu pre_market — vollständige Phase 0–4 Pipeline.
-
-**Output:**
-- E-Mail an `EMAIL_TO` (Midday-Update)
-- DB: aktualisierte predictions + Indikatoren
-
-**Kosten:** ~3,20 EUR
-
----
-
-## Position Check (17:30 Berlin, ~0,20 EUR) — NEU
-
-```bash
-python main.py --run-type position_check --date $(TZ="Europe/Berlin" date +%Y-%m-%d)
-```
-
-**Zweck:** Abgleich eigener Capital.com-Positionen mit heutigen Vorhersagen.
-
-**Logik:**
-1. Capital.com `GET /api/v1/positions` → offene Trades abrufen (nur lesend)
-2. Abgleich: Vorhersage ↔ echter Trade
-   - Vorhersage + echter Trade → echten Exit-Grund verwenden
-   - Vorhersage ohne Trade → simuliert weiterführen
-   - Trade ohne Vorhersage → ignorieren
-3. Kurzer Claude-Call (1× Sonnet): hat sich etwas wesentlich verändert?
-4. Status-Mail: ✅ auf Kurs / ⚠ nahe SL / ❌ Signal gefallen
-
-**Invariante:** `SIMULATION_ONLY = True` — niemals Orders platzieren, nur GET-Aufrufe.
-
-**Output:**
-- Kurze Status-Mail
-- DB: `position_recommendations` Update
-
-**Kosten:** ~0,20 EUR
-
----
-
-## Close (22:30 Berlin, ~0,00 EUR) — vereinfacht
-
-```bash
-python main.py --run-type close --date $(TZ="Europe/Berlin" date +%Y-%m-%d)
-```
-
-**Zweck:** NUR Datenpflege nach US-Close. Kein Claude-Call, kein Mail.
-
-**Logik:**
-1. Capital.com Schlusskurs + Tages-High + Tages-Low abrufen (1 Candle pro Ticker)
-2. In `price_history` speichern (INSERT OR IGNORE)
-3. Finaler TP/SL-Check für noch offene Positionen (`evaluate_open_predictions`)
-4. `cleanup_old_data()` (90-Tage news_summaries, 180-Tage trend_analyses, etc.)
-
-**Output:**
-- Keine E-Mail
-- DB: aktualisierte price_history + outcomes
-- DB Release Asset: tracking.db hochladen
-
-**Kosten:** ~0,00 EUR
-
----
-
-## Weekly (Sonntag 20:00 Berlin, ~0,00 EUR)
-
-```bash
-python main.py --run-type weekly --date $(TZ="Europe/Berlin" date +%Y-%m-%d)
-```
-
-**Zweck:** 7-Tage-Summary + Long/Short Statistik.
-
-**Logik:**
-1. Lade `db.outcomes` der letzten 7 Tage
-2. Aggregiere nach direction: long_correct/long_total, short_correct/short_total
-3. Summiere profit_loss_eur (alle Positionen)
-4. Win-Rate, Sharpe-like Metric
-
-**Output:**
-- E-Mail: Weekly Summary
-  - 7-Tage Win-Rate (Long & Short getrennt)
-  - Top 3 Winners / Top 3 Losers (letzte Woche)
-  - Kumulatives P&L (EUR)
-  - Cost Summary (API + Email)
-  - Trends für nächste Woche
-
-**Kosten:** ~0,00 EUR (nur DB-Queries)
-
----
-
-## GitHub Secrets Setup (Einmalig)
-
-In GitHub Repo Settings → Secrets and variables → Actions:
-
-| Secret | Value | Quelle |
-|--------|-------|--------|
-| `ANTHROPIC_API_KEY` | sk-ant-... | https://console.anthropic.com |
-| `RESEND_API_KEY` | re_xxx... | https://resend.com/api-keys |
-| `EMAIL_TO` | korbinian.bronold@gmail.com | Deine E-Mail |
-| `EMAIL_FROM` | noreply@tradingharry.com | Adresse auf der bei Resend verifizierten Domain |
-| `CAPITAL_COM_API_KEY` | ... | Capital.com Demo Account |
-| `CAPITAL_COM_PASSWORD` | ... | Capital.com Demo Account |
-| `FINNHUB_API_KEY` | ... | https://finnhub.io |
-
----
-
-## Release-Asset DB-Persistenz
-
-Nach jedem erfolgreichen Run wird `tracking.db` automatisch als Release-Asset gespeichert:
-
-```bash
-# In analyze.yml (Step: Upload DB to Release)
-gh release upload db-latest tracking.db \
-  --clobber \
-  --repo ${{ github.repository }}
-```
-
-**Warum?**
-- GitHub Actions-Runner hat ephemeres Filesystem (nur 1 Run)
-- Nach Run → Cleanup
-- DB muss zwischen Runs persistent sein
-- Release-Asset = permanente Speicherung
-
-**Backup-Logik:**
-1. First run: `gh release create db-latest`
-2. Subsequent runs: `gh release upload db-latest --clobber`
-
-**Zugriff:**
-```bash
-# Lokal die neueste DB pullen
-gh release download db-latest --pattern "tracking.db"
-```
-
----
-
-## Cost Tracking & Cap
-
-Jeder Analyse-Run hat ein **Hard Cap: 4 EUR**.
-
-**Kostenverteilung pro Analyse-Run (pre_market / midday):**
-- Phase 0 (Trend): ~0,20 EUR
-- Phase 1 (Daten): ~0,00 EUR
-- Phase 2 (Quick-Filter): ~0,15 EUR
-- Phase 3 (Policy + Deep): ~2,50–3,00 EUR ← **Größter Posten**
-- Phase 3b (Commodities): ~0,35 EUR
-- Phase 4a (Portfolio): ~0,20 EUR
-- Phase 4 (Ranking): ~0,00 EUR
-- Phase 5 (Email): ~0,00 EUR
-
-**Total pro Analyse-Run:** ~3,20 EUR (typisch)
-
-**Tageskosten gesamt:** ~6,60 EUR (2 Analyse-Runs + position_check + stille Runs)
-
-**Wenn Cap überschritten:**
-```python
-try:
-    run_pipeline(cost_tracker)
-except CostCapExceeded as e:
-    cost_tracker.aborted_at_phase = "policy_monitor"  # placeholder
-    cost_summary["aborted_at_phase"] = "policy_monitor"
-    send_partial_email(cost_summary)  # Still send, with warning bar
-    log.error("Cost cap exceeded, partial email sent")
-```
-
-**E-Mail Warning:** Wenn `aborted_at_phase` gesetzt, HTML zeigt rotes Banner:
-```
-⚠️  RUN ABORTED: Cost cap hit at policy_monitor phase.
-    Check cost_tracking table for details.
-    Next run continues tomorrow.
-```
-
----
-
-## Tagesablauf (Beispiel: Montag 2026-05-25, Berliner Zeit)
-
-```
-14:00 Berlin
-  ↓
-[GitHub Actions trigger: analyze.yml → pre_market]
-  ↓
-main.py --run-type pre_market --date 2026-05-25
-  Phase 0: Trend-Analyse (Overnight-News)
-  Phase 1: Capital.com OHLCV für 500 Tickers + premarket_price
-  Phase 2: Quick-Filter Top 80
-  Phase 3: Policy-Monitor + Deep-Analysis
-  Phase 3b: Commodities/Crypto
-  Phase 4a: Portfolio-Check (offene von Fr/Do)
-  Phase 4: Ranking Top-10
-  Phase 5: HTML-Render + Resend
-  ↓
-  tracking.db: predictions-Rows schreiben
-  GitHub Release: db-latest aktualisieren
-  E-Mail: Ausgang ~14:10 Berlin
-  Cost: ~3,20 EUR
-
----
-
-15:00 Berlin
-  ↓
-[GitHub Actions trigger: analyze.yml → evaluate]
-  ↓
-main.py --run-type evaluate --date 2026-05-25
-  Lade db.predictions[date < 2026-05-25 & status='open']
-  For each: Hole OHLC, Walk-Forward Hit-Check (max 5 Bars)
-  Update db.outcomes (exit_reason, exit_price, hold_day, p&l_eur)
-  ↓
-  Cost: 0,00 EUR
-  Kein Mail (Background Job)
-
----
-
-16:15 Berlin
-  ↓
-[GitHub Actions trigger: analyze.yml → midday]
-  ↓
-main.py --run-type midday --date 2026-05-25
-  Phase 0–4: Full Analysis (45 Min nach US-Open)
-  ↓
-  Cost: ~3,20 EUR
-  E-Mail: Ausgang ~16:25 Berlin
-
----
-
-17:30 Berlin
-  ↓
-[GitHub Actions trigger: analyze.yml → position_check]
-  ↓
-main.py --run-type position_check --date 2026-05-25
-  Capital.com GET /positions → offene Trades
-  Abgleich Vorhersage ↔ echter Trade
-  Claude: Signal noch gültig?
-  Status-Mail senden
-  ↓
-  Cost: ~0,20 EUR
-  Status-Mail: Ausgang ~17:35 Berlin
-
----
-
-22:30 Berlin
-  ↓
-[GitHub Actions trigger: analyze.yml → close]
-  ↓
-main.py --run-type close --date 2026-05-25
-  Capital.com Schlusskurs + High + Low für alle Ticker
-  price_history Update (INSERT OR IGNORE)
-  evaluate_open_predictions (finaler TP/SL-Check)
-  cleanup_old_data()
-  ↓
-  Cost: 0,00 EUR
-  Kein Mail
-  tracking.db: Updated (DB Release Asset)
-
----
-
-Sonntag 20:00 Berlin
-  ↓
-[GitHub Actions trigger: analyze.yml → weekly]
-  ↓
-main.py --run-type weekly --date 2026-05-31
-  Lade db.outcomes[last 7 days]
-  Aggregiere: Win-Rate, P&L, Cost
-  ↓
-  Cost: 0,00 EUR
-  E-Mail: Weekly Summary (1 E-Mail pro Woche)
-```
-
----
-
-## Sprint 1 Definition of Done (Checklist)
-
-Das MVP ist erst **production-ready**, wenn folgende Kriterien erfüllt sind:
-
-**Code-Seite (✅ abgehakt):**
-- [x] 159 Unit+Integration Tests grün
-- [x] 89.62% Code Coverage
-- [x] Alle 13 Plan-3-Tasks implementiert + reviewed
-- [x] Guardrails für CFD-Kurzfristfokus (hold_days ≤ 5, intraday_range ≥ 1%)
-- [x] Cost-Tracker mit Hard-Cap (4 EUR)
-- [x] Walk-Forward Evaluator (4 exit reasons)
-- [x] E-Mail mit 4 Sektionen
-- [x] GitHub Actions Workflows (test.yml + analyze.yml)
-
-**Live-Seite (ausstehend):**
-- [ ] GitHub Secrets konfiguriert (alle 7 Secrets)
-- [ ] Erste `workflow_dispatch` Auslösung auf analyze.yml erfolgreich
-- [ ] 3 aufeinanderfolgende Werktage à 5 Runs laufen fehlerfrei
-- [ ] 1 Weekly-Mail generiert + versendet (Sonntag 20:00 Berlin)
-- [ ] Tracking DB (`db-latest` Release Asset) überlebt alle Runs
-- [ ] E-Mails ankommen in EMAIL_TO (täglich + wöchentlich)
-- [ ] Kosten pro Analyse-Run ≤ 4 EUR (Cost-Tracker in DB verifizieren)
-- [ ] Keine unerwarteten Fehler in GitHub Actions Logs
-
-**Akzeptanzkriterien:**
-- Mindestens 1 Woche durchgehend fehlerfreier Betrieb
-- Evaluator: ≥ 3 Walk-Forward Outcomes (tp_hit, sl_hit, oder timeout)
-- Learning Module ready für Sprint 3 (aber noch nicht aktiv)
 
 ---
 
@@ -458,130 +167,90 @@ Das MVP ist erst **production-ready**, wenn folgende Kriterien erfüllt sind:
 
 ### E-Mail kommt nicht an
 
-1. **GitHub Secret `EMAIL_TO` korrekt?**
-   ```bash
-   gh secret list --repo KorbinianBronold/Shares_Future | grep EMAIL
-   ```
+⚠️ **Ein `2xx` von Resend heisst nur „angenommen".** Die Zustellung läuft asynchron und
+kann später scheitern. Erfolg nie am Statuscode festmachen:
 
-2. **GitHub Secret `RESEND_API_KEY` gültig?**
-   - Login resend.com → API Keys
-   - Test ohne Kontingentverbrauch: `pytest tests/live -m live_api --run-live`
-   - Test mit echtem Versand: `pytest tests/live -m live_email --run-live`
+```bash
+curl -s -H "Authorization: Bearer $RESEND_API_KEY" \
+  https://api.resend.com/emails/<ID> | python3 -m json.tool
+# last_event: "delivered" = wirklich zugestellt; "failed" = nicht
+```
 
-3. **Spam-Ordner?** Mails von `noreply@tradingharry.com` können im Spam landen – whitelisten.
+Die Message-ID steht im Log (`Resend accepted message (status=200, id=…)`).
 
-4. **Logs in GitHub Actions:**
-   ```bash
-   gh run view <RUN_ID> --log
-   ```
+Weiter: Secrets prüfen (`gh secret list`), Spam-Ordner, und
 
----
+```bash
+pytest tests/live -m live_api --run-live   # nur lesend, verschickt nichts
+pytest tests/live --run-live               # inkl. echtem Versand
+```
 
-### Cost Cap überschritten (Hard Cap 4 EUR)
+### Ein Lauf ist grün, aber leer
 
-1. **Phase 3 (Deep-Analysis) ist der Culprit.**
-   - Sonnet + web_search × 80 Calls = 2,50–3,00 EUR allein
-   - Wenn auch Policy-Monitor + Commodities + Portfolio-Check: Kann 4 EUR überschreiten
+Genau der Fall vom 2026-08-04. Seit `a5b5548`/`ab6b5d2`/`ccdf5a6` erklärt sich das Log
+selbst — im Log nachsehen:
 
-2. **Lösungen:**
-   - Reduce Top-N (statt 80, nur 50)
-   - Web-Search Limit auf 3 pro Call (statt 5)
+- `Phase 1: N von M Tickern uebersprungen — …` nennt die Gründe gebündelt (D1)
+- `Phase 4 done: … (aus N Analysen, davon M enthalten)` schliesst die Lücke zwischen
+  Eingang und Ergebnis (D2)
+- `Phase 4: KEINE Prediction persistiert …` feuert unabhängig von der Ursache (D3)
 
-3. **Current Behavior:**
-   - Run continues, truncates Phase 3
-   - Partial email sent with warning bar
-   - Check cost_tracking table: `SELECT * FROM cost_tracking WHERE aborted_at_phase IS NOT NULL`
+Häufigste Ursache: zu wenig Historie → `--report-coverage`.
 
----
+### Cron feuert nicht
 
-### DB-Persistierung fehlgeschlagen
+```bash
+gh workflow list --all       # steht analyze auf disabled_manually?
+gh workflow enable analyze.yml
+gh workflow run analyze.yml --ref main -f run_type=close
+```
 
-1. **Release Asset nicht angelegt?**
-   ```bash
-   gh release list --repo KorbinianBronold/Shares_Future
-   ```
+⚠️ Das alte Doppel-Cron-Modell mit Sommer-/Winter-Einträgen je Run-Type ist **weg**
+(`d17c2f5`). Die Run-Type-Erkennung matcht den `github.event.schedule`-String direkt per
+`case`. Nur `trade_proposals` hat weiterhin zwei Slots — aus dem oben genannten Grund.
 
-2. **Erste Release muss manuell angelegt werden:**
-   ```bash
-   gh release create db-latest tracking.db \
-     --title "Database Latest" \
-     --notes "Automated backup of tracking.db"
-   ```
+### DB-Persistenz fehlgeschlagen
 
-3. **Danach:** `--clobber` Flag überschreibt automatisch.
+```bash
+gh release list
+gh release create db-latest data/tracking.db --title "DB latest" --notes "manuell"
+```
 
----
-
-### Cron-Job feuert nicht
-
-1. **GitHub Actions aktiviert?**
-   ```bash
-   gh workflow list --repo KorbinianBronold/Shares_Future
-   ```
-
-2. **Timezone Check:** Doppelte Cron-Einträge in `.github/workflows/analyze.yml`
-   - Sommer (MESZ, UTC+2): z.B. `0 12 * * 1-5` = 14:00 Berlin
-   - Winter (MEZ, UTC+1): z.B. `0 13 * * 1-5` = 14:00 Berlin
-   - Bash-Logik verwendet `TZ="Europe/Berlin"` zur Run-Type-Bestimmung
-
-3. **Force Test (manuell):**
-   ```bash
-   gh workflow run analyze.yml --ref main
-   ```
+Danach übernimmt `--clobber` automatisch.
 
 ---
 
 ## Logs & Debugging
 
-**GitHub Actions Logs:**
 ```bash
-# Neuester Run
-gh run view --repo KorbinianBronold/Shares_Future -L 100
-
-# Spezifischer Job
+gh run list --limit 10
+gh run view <RUN_ID> --log
 gh run view <RUN_ID> --log-failed
 ```
 
-**Lokale Logs (wenn du tracking.db hast):**
+Lokale Läufe protokollieren nach `*.log` im Wurzelverzeichnis (gitignored):
+
 ```bash
-sqlite3 tracking.db "SELECT * FROM cost_tracking WHERE date='2026-05-25' ORDER BY phase DESC;"
+python main.py --run-type pre_market --db-path /tmp/wegwerf.db > pre_market.log 2>&1
 ```
 
-**Claude API Logs:**
-- Token usage: `cost_tracker.summary()`
-- Web-search Calls: `result.web_search_calls`
+⚠️ Auf **INFO** loggen, nicht DEBUG. INFO protokolliert jeden HTTP-Request mit URL und
+Status; DEBUG schreibt zusätzlich die Header — und damit API-Keys in die Datei.
 
 ---
 
-## Next Steps (Sprint 2)
+## Sicherheitsnetze im Code
 
-1. **Capital.com Provider** (`capital_provider.py`)
-   - CapitalComProvider: `get_price_history`, `get_premarket_price`, `get_open_positions`
-   - Ticker-Mapping für Rohstoffe + Crypto
-
-2. **DB Incremental Update**
-   - Täglich nur 1 Bar fetchen (statt 90 Tage)
-   - Indikatoren aus DB berechnen (letzte 200 Tage)
-   - `historical_loader.py` für 3-Jahres-Pull via Capital.com (`--all`, `--full-sp500`, `--tickers`)
-
-3. **position_check Run-Type**
-   - `main.py`: neuer `run_type = "position_check"`
-   - Capital.com GET /positions + Claude 1× + Status-Mail
-
-4. **Timezone-Fix**
-   - Doppelte Crons in `analyze.yml`
-   - `ZoneInfo("Europe/Berlin")` in allen Python datetime-Berechnungen
-
-5. **500-Ticker Scaling**
-   - `USE_FULL_SP500` Flag in config.py
-   - `fundamentals_cache` mit 7-Tage TTL
-
-Plan: `docs/superpowers/plans/2026-05-21-sprint2-plan1-capital-provider-db-incremental.md`
+| Netz | Wirkung |
+|---|---|
+| `SIMULATION_ONLY=True` | niemals echte Orders |
+| Historien-Guard | Abbruch vor Phase 0 bei zu dünner Datenlage |
+| `CostCapExceeded` | Abbruch bei 4 EUR, Teilmail mit Banner |
+| Netzsperre in Tests | Tests ausserhalb `tests/live/` können nicht nach draussen telefonieren (Transport-Ebene) |
+| Docker ohne Argument | gibt die Hilfe aus, startet **keine** Pipeline |
+| `concurrency`-Gruppe | zwei Läufe können sich die DB nicht gegenseitig überschreiben |
 
 ---
 
-Siehe auch:
-- **`docs/SPECIFICATION.md`** – Technische Details
-- **`docs/ARCHITECTURE.md`** – Module & Design
-- **`CLAUDE.md`** – Developer Guidelines
-- **`.github/workflows/`** – YAML-Quelle der Wahrheit
+Siehe auch: `CLAUDE.md` (Direktiven und Fallen) · `docs/ARCHITECTURE.md` (Module) ·
+`docs/superpowers/specs/PROJECT_STATUS.md` (Ist-Stand) · `.github/workflows/` (Quelle der Wahrheit)

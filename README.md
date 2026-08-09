@@ -1,146 +1,155 @@
 # Shares_Future – S&P 500 CFD Research Tool
 
-> Automatisiertes Research-Tool für tägliche Analyse von S&P 500 Aktien, Rohstoffen und Kryptowährungen mit mehrdimensionalem Scoring, Web-Search-Integration und kontinuierlichem Lernen.
+> Automatisiertes Research-Tool für die tägliche Analyse von S&P-500-Aktien, Rohstoffen
+> und Kryptowährungen mit mehrdimensionalem Scoring und Web-Search-Integration.
 
-**Zuletzt aktualisiert:** 2026-08-03 — Quick Start auf den Ist-Stand gezogen
-(Testzahlen, Run-Types, Crons); Rest wartet auf Task 20
+**Zuletzt aktualisiert:** 2026-08-09 — vollständig auf den Ist-Stand gezogen.
 
-> ⚠️ **Stand 2026-08-03:** Die Abschnitte unterhalb von „Quick Start" sind noch auf
-> Sprint-1-Stand und werden erst in Sprint 3B / Task 20 vollständig nachgezogen.
-> Verbindlich ist `docs/superpowers/specs/PROJECT_STATUS.md`.
+**Kein automatisches Trading.** Nur Research und Paper-Trading-Simulation.
+`SIMULATION_ONLY=True` ist eine harte Invariante.
+
+> Verbindlich für den Projektstand ist `docs/superpowers/specs/PROJECT_STATUS.md`.
+> Dieses README beschreibt, *was* das Tool ist; PROJECT_STATUS beschreibt, *wo* es steht.
 
 ## Quick Start
 
 ```bash
 # 1. Setup (einmalig)
 python -m pip install -r requirements.txt
-pytest tests/ --cov=src --cov-fail-under=80  # Stand 2026-08-06: 539 passed, 7 skipped, 93% Coverage
+pytest tests/ --cov=src --cov-fail-under=80   # Stand 2026-08-09: 608 passed, 7 skipped, 93 %
 
-# 2. Lokal ausführen — ACHTUNG: kein Mock-Modus. Ein Lauf ruft echte APIs auf,
-#    kostet Geld und verschickt echte Mail. Gefahrlos nur über Docker gegen eine
-#    Wegwerf-DB (s. CLAUDE.md, Abschnitt „Lokales Docker-Setup").
-python main.py --run-type pre_market
+# 2. Historie laden — PFLICHT vor dem ersten Lauf.
+#    Ohne Bars wird jeder Ticker als "insufficient bars" uebersprungen.
+python setup/historical_loader.py --universe
 
-# 3. Live auf GitHub Actions
-# → Secrets konfigurieren (ANTHROPIC_API_KEY, RESEND_API_KEY, EMAIL_TO, EMAIL_FROM)
-# → workflow_dispatch auf analyze.yml auslösen
-# → Cron (UTC): pre_market 13:00, trade_proposals 14:10, close 20:30 (Mo–Fr),
-#   weekly So 18:00. Berlin-Zeiten in analyze.yml gelten für CEST — im Winter 1 h früher.
+# 3. Sieht die Datenbank gesund aus? (reine DB-Abfrage, keine API-Calls)
+python setup/historical_loader.py --report-coverage
+
+# 4. Lokal ausfuehren — ACHTUNG: kein Mock-Modus. Ein pre_market-Lauf ruft echte
+#    APIs auf, kostet ~3,13 EUR (gemessen, 20 Ticker) und verschickt echte Mail.
+#    Gefahrlos sind close und final_close: keine Claude-Calls, keine Mail.
+python main.py --run-type final_close --db-path /tmp/wegwerf.db
 ```
+
+Für gefahrlose Experimente siehe „Lokales Docker-Setup" in `CLAUDE.md` — dort wird der
+DB-Mount überschrieben, sodass nichts in `data/tracking.db` landet.
 
 ## Was macht Shares_Future?
 
-Das Tool analysiert täglich:
-- **500 S&P 500 Aktien** (Phase 1: Datensammlung, Phase 2: Quick-Filter)
-- **4 Rohstoffe** (Gold, Silber, Öl, Fear&Greed Index)
-- **4 Kryptowährungen** (BTC, ETH, SOL, XRP)
+Analysiert je Lauf **46 Instrumente**:
 
-Jedes Asset wird durch 8 Dimensionen bewertet:
-1. **Market Environment** (10%) – Makro, VIX, Fed-Moves
-2. **Company Quality** (18%) – Earnings, Guidance, Moat
-3. **Valuation** (12%) – P/E, Relative Value
-4. **Momentum** (22%) – RSI, MACD, Price Action
-5. **Risk** (10%) – Volatility, Technical Support/Resistance
-6. **Sector Trend** (10%) – Rotation, Leadership
-7. **Catalyst** (10%) – Events, Earnings Calendar
-8. **Policy Risk** (8%) – Tariffs, Regulations, Geopolitics
+| Gruppe | Umfang |
+|---|---|
+| Aktien | **20** (MVP-Liste). `USE_FULL_SP500` existiert, `SP500_FULL_TICKERS` ist aber noch ein Stub — die volle Liste kommt mit Sprint 3F |
+| Rohstoffe | 3 — Gold, Silber, Öl |
+| Krypto | 4 — BTC, ETH, SOL, XRP |
+| Sub-Sektor-ETFs | 19 — nur als Momentum-Referenz, nie selbst analysiert |
 
-**Output:** Top 10 Long + Top 10 Short Kandidaten pro Handelstag + Commodities/Crypto (alle behalten).
+Jedes Asset wird über 8 Dimensionen bewertet (Gewichte in `config.DIMENSION_WEIGHTS`):
+Market Environment, Company Quality, Valuation, Momentum, Risk, Sector Trend, Catalyst,
+Policy Risk.
 
-## Core Workflow (Phase 0–5)
+**Output:** bis zu 10 Long + 10 Short (`ranking.TOP_N`) plus Rohstoffe/Krypto, die die
+Guardrails passieren.
+
+## Ablauf eines `pre_market`-Laufs
+
+Die verbindliche Reihenfolge steht in `main.py:run_pipeline()`; hier die Kurzform:
 
 ```
-Phase 0: Trend-Analyse
-  ↓ (1 Sonnet + web_search)
-Phase 1: Datenabruf (500 Aktien + Commodities/Crypto)
-  ↓ (yfinance, 90 Tage, Rate-Limiting: 0.8s/Ticker + 12s/30er-Batch)
-Phase 2: Quick-Filter (Batch-Score ohne Web-Search)
-  ↓ (Haiku, 30er-Batches, Top 80 lange/kurz behalten)
-Phase 3: Tiefenanalyse (Web-Search, 8-Dim Score)
-  ↓ + Policy-Monitor (1× pro Run)
-Phase 3b: Feste Assets (Commodities/Crypto, Fear&Greed, 8-Dim Score)
-  ↓
-Phase 4a: Portfolio-Check (offene Positionen: HALTEN/SCHLIESSEN/ANPASSEN)
-  ↓
-Phase 4: Ranking (Top-10-Filter via Guardrails, DB-Persistierung)
-  ↓
-Phase 5: E-Mail (4 Sektionen: Portfolio → Aktien → Trends → Commodities)
+Phase 0   Trend-Analyse (Sonnet + Web-Search)
+Phase 0b  Markt-Kontext (VIX, Regime)
+Phase 1   Datenabruf Aktien, dann Rohstoffe/Krypto (Capital.com)
+Phase 1c  Pflicht-Kandidaten aus offenen Capital.com-Positionen
+Phase 1d  Sektor-Momentum (zwei getrennte Signale: ETF + DB-Durchschnitt)
+Phase 2   Quick-Filter (Haiku, EIN Call ueber alle Ticker)
+Phase 2b  Policy-Monitor (1x je Lauf)
+Phase 3   Tiefenanalyse je Kandidat (Web-Search, 8 Dimensionen)
+Phase 3b  Rohstoffe/Krypto (immer analysiert)
+Phase 4   Ranking + Guardrails -> predictions
+Phase 4a  Portfolio-Check auf offenen Predictions
+Phase 5   E-Mail
 ```
 
-## Der CFD-Kurzfristfokus (Hart codiert)
+⚠️ **Phase 4 laeuft vor Phase 4a.** In der Mail steht die Portfolio-Sektion trotzdem
+zuerst — das ist eine dokumentierte Invariante und kein Widerspruch.
 
-Alle Setups MÜSSEN erfüllen:
-- **Max 3 Handelstage Haltedauer** – Guardrail reject `hold_days_recommended > 3`
-- **Min 1.0% Intraday-Range** – Guardrail reject `intraday_range_pct < 1.0`
-- **Phase 4a zuerst in der E-Mail** – Portfolio-Empfehlungen VOR Aktien-Rankings
-- **`close`-Run (21:30 UTC) ist der wichtigste** – Setups für den nächsten Handelstag
+## Run-Types
+
+| Run-Type | Zeit | Zweck | Kosten |
+|---|---|---|---|
+| `pre_market` | 13:00 UTC, Mo–Fr | volle Pipeline | **3,13 EUR** (gemessen, 20 Ticker) |
+| `trade_proposals` | 10:10 New York¹ | Re-Validierung der Morgensignale | ~0,5–0,7 EUR |
+| `close` | 20:30 UTC, Mo–Fr | Auswertung offener Predictions | ~0 EUR |
+| `final_close` | 00:15 UTC, **täglich** | schreibt die finalen Tagesbars, bewertet | ~0 EUR |
+| `weekly` | So 18:00 UTC | Wochenauswertung | ~0 EUR |
+
+¹ Hängt an der US-Eröffnung, nicht an Berlin — deshalb zwei Cron-Slots (14:10 und 15:10
+UTC), von denen der Workflow den falschen verwirft. Details in `CLAUDE.md`.
+
+⚠️ Die Berlin-Zeiten in `analyze.yml` gelten für CEST; im Winter läuft alles 1 h früher.
+
+## Der CFD-Kurzfristfokus
+
+Alle Setups müssen erfüllen (`src/guardrails.py`, Werte aus `config.py`):
+
+- **Max. `MAX_HOLD_DAYS = 5` Handelstage** Haltedauer, `HOLD_TARGET = "intraday"`
+- **Min. `SP500_MIN_ATR_PCT = 2.0` ATR** — Mindestbewegung
+- **R/R ≥ 1.5** — hartes Minimum
+- **Mindestens 2 Belege je Score-Dimension**
 
 ## Tech Stack
 
 | Komponente | Wahl | Grund |
 |---|---|---|
-| **Sprache** | Python 3.12 | Modern, viele Markt-Libraries |
-| **KI** | Claude Sonnet 4.6 (Phase 3+) + Haiku 4.5 (Phase 2) | Beste Kosten/Qualität, Web-Search built-in |
-| **Marktdaten** | yfinance (primär) + Paid API (Setup) | Kostenlos, zuverlässig, Rate-Limiting-aware |
-| **Persistenz** | SQLite (`tracking.db`) | Lokal, ACID, Release-Asset-Backup via GitHub |
-| **Scheduler** | GitHub Actions Cron | Free Tier 2000 Min/Monat, UTC-basiert |
-| **E-Mail** | Resend | 3 000 Mails/Monat + 100/Tag kostenlos, API-basiert |
-| **Tests** | pytest | 80% Coverage-Gate, 159 Tests (unit + integration) |
+| Sprache | Python 3.12 | |
+| KI | Sonnet 4.6 (Phase 0/3), Haiku 4.5 (Phase 2) | Web-Search eingebaut |
+| Marktdaten (OHLC) | **Capital.com** — alleiniger Provider, kein Fallback | yfinance seit 2026-07-09 entfernt |
+| Fundamentaldaten | Finnhub (7-Tage-Cache) | |
+| Persistenz | SQLite (`data/tracking.db`) | Backup als GitHub-Release-Asset `db-latest` |
+| Scheduler | GitHub Actions Cron | UTC-basiert |
+| E-Mail | Resend | eigene Domain verifiziert |
+| Tests | pytest | 80 % Coverage-Gate, **608 Tests** |
 
-## Projekt-Status
+## Projekt-Status (Kurzfassung)
 
-**Sprint 1 (MVP-Pipeline):**
-- ✅ Plan 1 (Foundation): 39 Tests
-- ✅ Plan 2 (Collector/Trend/QuickFilter): 82 Tests
-- ✅ Plan 3 (Deep/Phase4a/Email/Orchestrator): 159 Tests (77 neu)
-- ⏳ Live-Validierung: 3 Werktage Cron, 1 Weekly-Mail, DB-Persistenz (siehe WORKFLOW.md)
+| Sprint | Stand |
+|---|---|
+| 1 — Foundation | ✅ abgeschlossen |
+| 2 — Capital-Provider, DB, Position-Check | ✅ abgeschlossen |
+| 3B — Cron-Struktur + Pipeline-Umbau | ✅ Code fertig (20/20 Tasks) |
+| 3B-M — Mail-Provider Resend | ✅ abgeschlossen |
+| Preismodell-Umbau | ✅ Code fertig, `final_close` + Evaluator live verifiziert |
+| 3C — Ranking-Überarbeitung | 📋 spezifiziert, offen |
+| 3D / 3E / 3F | ⚠️ **Platzhalter** — Sprint wird erst gemeinsam ausgearbeitet |
 
-**Sprint 2 (Skalierung):**
-- Paid API (Polygon/FMP) für 500 SP500 Tickers
-- Historischer 3-Jahres-Pull
-- Auto-Update SP500-List monatlich
-
-**Sprint 3 (Lernen):**
-- Learning Module (Long/Short getrennt)
-- Prompt-Optimizer A/B-Testing
-- Erweiterte Weekly-Mail
+⚠️ **`analyze.yml` steht auf `disabled_manually`.** Die Reaktivierung ist eine bewusste
+Entscheidung und setzt voraus, dass `db-latest` echte Historie hat (Workflow
+`bootstrap-db`, nur `workflow_dispatch`). Sonst bricht jeder Lauf am Historien-Guard ab.
 
 ## Wichtige Dateien
 
-- **`CLAUDE.md`** – Projekt-Direktiven für AI-Entwickler
-- **`config.py`** – Alle Konstanten (Gewichtungen, Limits, API-Keys)
-- **`main.py`** – Orchestrator: `--run-type {pre_market|trade_proposals|close|weekly}` (Pflichtargument)
-- **`docs/superpowers/specs/PROJECT_STATUS.md`** – **verbindlicher Ist-Stand**, vor jeder Implementierung lesen
-- **`docs/SPECIFICATION.md`** – Vollständige technische Spezifikation (Sprint-2-Stand, teils überholt)
-- **`docs/ARCHITECTURE.md`** – Data Flow, Module, Interfaces (mit Abweichungsliste)
-- **`docs/WORKFLOW.md`** – Live-Execution, Cron-Timing, DoD-Checklist (grossflächig überholt)
-
-## Bekannte Carry-Overs
-
-Code-Quality-Items für künftige Sprints stehen in
-`docs/superpowers/specs/PROJECT_STATUS.md` (Abschnitt P2.6 „Aufräumliste" sowie die
-Carry-Over-Tabellen). Kein kritischer Bug aktiv.
-
-> Hinweis (2026-08-03): Hier stand bis zuletzt ein Verweis auf
-> `memory/project_carryover_issues.md` und `[[feedback_plan_authority]]`. Beides
-> existiert im Repo nicht — das Verzeichnis `memory/` gibt es nicht.
+- **`CLAUDE.md`** — Direktiven und die nicht-ableitbaren Fallen. Vor dem Arbeiten lesen.
+- **`docs/superpowers/specs/PROJECT_STATUS.md`** — **verbindlicher Ist-Stand**
+- **`docs/ARCHITECTURE.md`** — Datenfluss, Module, Interfaces
+- **`docs/WORKFLOW.md`** — Live-Betrieb, Cron-Timing, Betriebsfehler
+- **`docs/SPECIFICATION.md`** — ⚠️ historisch (Version 5.0, 2026-05-22), überholt
+- **`config.py`** — alle Konstanten
+- **`main.py`** — Orchestrator, `--run-type` ist Pflichtargument
 
 ## First Run Checklist
 
-- [ ] `requirements.txt` installiert + Python 3.12+ aktiv
-- [ ] `pytest tests/ -q` → 539 passed, 7 skipped (✅ lokal grün, Stand 2026-08-06)
-- [ ] GitHub Secrets: ANTHROPIC_API_KEY, RESEND_API_KEY, EMAIL_TO, EMAIL_FROM
-- [ ] `.github/workflows/analyze.yml` aktiviert (nicht FINNHUB_API_KEY!)
-- [ ] `workflow_dispatch` auf `analyze.yml` testen
-- [ ] Erste Runs beobachten (UTC: 13:00 pre_market, 14:10 trade_proposals, 20:30 close)
-- [ ] Release-Asset `db-latest` erscheint nach erstem erfolgreichen Run
-- [ ] E-Mails in EMAIL_TO ankommen (täglich + wöchentlich)
-- [ ] Kosten < 4 EUR pro Run (Cost Tracker in `tracking.db`)
+- [ ] `requirements.txt` installiert, Python 3.12+
+- [ ] `pytest tests/ -q` → 608 passed, 7 skipped
+- [ ] Secrets: `ANTHROPIC_API_KEY`, `RESEND_API_KEY`, `EMAIL_TO`, `EMAIL_FROM`,
+      `FINNHUB_API_KEY`, `CAPITAL_COM_API_KEY`, `CAPITAL_COM_IDENTIFIER`,
+      `CAPITAL_COM_PASSWORD`
+- [ ] **Workflow `bootstrap-db` einmal auslösen** — sonst hat die CI-DB keine Historie
+- [ ] `analyze.yml` aktivieren (bewusste Entscheidung)
+- [ ] Erste Läufe beobachten, Release-Asset `db-latest` prüfen
+- [ ] Mailzustellung prüfen — ein `2xx` von Resend heisst nur „angenommen"
 
 ## Lizenz & Disclaimer
 
-Dieses Tool ist ein **Research-Tool, kein Trading-System**. Es gibt keine automatischen Order-Ausführungen, nur Paper-Trading Simulationen. SIMULATION_ONLY=True ist eine harte Invariante – die Code-Basis executes niemals echte Trades.
-
----
-
-**Fragen?** Siehe `docs/SPECIFICATION.md` für die technische Tiefe oder `docs/WORKFLOW.md` für Live-Operationen.
+Research-Tool, **kein Trading-System**. Keine automatischen Order-Ausführungen, nur
+Paper-Trading-Simulation. `SIMULATION_ONLY=True` ist eine harte Invariante.

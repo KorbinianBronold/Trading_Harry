@@ -1,12 +1,22 @@
-> ⚠️ HISTORISCH — docs/superpowers/specs/PROJECT_STATUS.md lesen stattdessen
+> ⚠️ **HISTORISCH — Stand 2026-05-22. Nicht als Ist-Zustand lesen.**
+> Verbindlich ist `docs/superpowers/specs/PROJECT_STATUS.md`.
 
 # Shares_Future — MVP Design
 
-**Datum:** 2026-05-19 | **Zuletzt aktualisiert:** 2026-05-22
-**Status:** Sprint 1 ERLEDIGT — Sprint 2 Plan geschrieben
+**Datum:** 2026-05-19 | **Inhaltlich eingefroren:** 2026-05-22
+**Status zum Zeitpunkt des Einfrierens:** Sprint 1 erledigt, Sprint 2 geplant
 **Vorgängerdokument:** `docs/SPECIFICATION.md` (Version 5.0, 2026-05-22)
 
-Dieses Dokument ergänzt und ersetzt selektiv die ursprüngliche Spec. Wo dieses Dokument von der Spec abweicht, gilt dieses Dokument.
+Dieses Dokument ergänzte und ersetzte selektiv die ursprüngliche Spec. Der Satz „wo dieses
+Dokument von der Spec abweicht, gilt dieses Dokument" bezog sich auf den Sprint-2-Stand
+und gilt **nicht mehr gegenüber den heutigen Dokumenten**.
+
+> **Was seither geschah** (Kurzfassung, Stand 2026-08-09): Sprint 2 ist seit 2026-05-22
+> gemerged, Sprint 3B mit Plan 1 und Plan 2 vollständig umgesetzt, der Mail-Provider auf
+> Resend gewechselt, der Preismodell-Umbau abgeschlossen. yfinance ist entfernt
+> (Capital.com ist alleiniger OHLC-Provider), die Run-Types heissen
+> `pre_market` / `trade_proposals` / `close` / `final_close` / `weekly`.
+> Aktueller Aufbau: `docs/ARCHITECTURE.md`. Betrieb: `docs/WORKFLOW.md`.
 
 ---
 

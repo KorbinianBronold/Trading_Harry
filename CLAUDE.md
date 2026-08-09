@@ -1,10 +1,10 @@
 # Shares_Future – SP500 CFD Research Tool
 
-**Zuletzt aktualisiert:** 2026-08-08 — Ursache der leeren 04.08.-Läufe geklärt (CI-DB ohne
-Historie), CI-Bootstrap gebaut, vier Sichtbarkeits-Fixes und zwei Historien-Defekte
-behoben; `final_close` und der Evaluator erstmals real verifiziert (PROJECT_STATUS P2.4,
-P2.9, P3.5). Code liegt auf `main`, Pipeline weiterhin deaktiviert.
-⏳ Offen: `pre_market`-Lauf (kostet Geld, verschickt Mail) und der Docker-Smoke-Test.
+**Zuletzt aktualisiert:** 2026-08-09 — `pre_market` erstmals vollständig gelaufen
+(3,13 EUR, 10 Predictions, Mail zugestellt), Docker-Smoke-Test bestanden, alle `.md`-Dateien
+auf diesen Stand gezogen. Details: PROJECT_STATUS P2.10 / P2.11.
+⏳ Offen: `trade_proposals` und `weekly` (nie ausgeführt), der einmalige `bootstrap-db`-Lauf,
+danach die Reaktivierung von `analyze.yml`.
 
 ## Projektübersicht
 Automatisiertes Research-Tool zur täglichen Analyse von S&P 500 Aktien,
