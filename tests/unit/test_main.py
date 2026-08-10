@@ -23,6 +23,7 @@ def test_parse_args_rejects_removed_run_types(removed):
 
 
 def test_main_dispatches_trade_proposals(mocker):
+    mocker.patch("main._abort_on_thin_history")
     fn = mocker.patch("main.run_trade_proposals")
     from main import main as main_fn
     main_fn(["--run-type", "trade_proposals", "--date", "2026-07-30"])
