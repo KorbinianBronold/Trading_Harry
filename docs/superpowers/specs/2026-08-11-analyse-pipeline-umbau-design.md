@@ -609,8 +609,9 @@ keinen Sub-Sektor.
 
 ### 7.1 `technical_indicators`
 
-26 neue Spalten aus § 4.4, alle `REAL` ausser `psar_dir` (`TEXT`). Bestehende Spalten
-unverändert.
+**29 neue Spalten** aus § 4.4, alle `REAL` ausser `psar_dir` (`TEXT`). Bestehende Spalten
+unverändert. (Die Zahl ergibt sich aus den mehrwertigen Indikatoren: MACD und ADX je drei
+Spalten, Ichimoku fünf, Bollinger und Donchian je drei, PSAR, Stochastik und TRIX je zwei.)
 
 ### 7.2 `predictions`
 
@@ -650,7 +651,7 @@ wurde. Unterliegt derselben Retention wie die übrigen Ereignis-Tabellen.
 Alle Spalten sind additiv und `NULL`-fähig; Altzeilen bleiben lesbar, `candidate_class`
 erhält per `DEFAULT` rückwirkend `'core'`.
 
-### 7.5 Warum 26 Spalten jetzt
+### 7.5 Warum 29 Spalten jetzt
 
 Nur vier der Indikatoren speisen das Technik-Signal. Die übrigen liegen zunächst ungenutzt
 — und genau das ist der Punkt: **ihr Wert entsteht dadurch, dass sie ab heute mitlaufen.**
@@ -824,6 +825,25 @@ Kommentar in `config.py`.
 **Warum ein Test und keine Formel:** eine Kopplung `cap = Grundlast + Betrag × Analysen`
 verlangt genau die Zahl, die der Testlauf erst ermitteln soll. Läge sie daneben, bräche
 der Deckel echte Läufe ab. Ein fehlschlagender Test kostet eine Minute.
+
+**Wie ernst der Test zu nehmen ist — verbindlich:**
+
+- **Harter Test, kein Warnhinweis.** Kein `xfail`, kein `skip`, kein `pytest.warns`. Genau
+  diese Mechanismen haben den `SP500_FULL_TICKERS`-Stub still falsch stehen lassen.
+- **Er scheitert nur in einer Richtung.** Die Zusicherung lautet
+  `MAX_COST_PER_RUN_EUR >= erwartete Kosten`. `MAX_DEEP_ANALYSIS` zu **senken** bricht ihn
+  nie; er feuert ausschliesslich, wenn die Konfiguration Läufe am Deckel abbrechen liesse.
+  Das ist ein Betriebsdefekt, kein Stilbefund.
+- **Er blockiert keinen Commit.** Es gibt weder lokale Git-Hooks noch eine
+  `pre-commit`-Konfiguration (geprüft 2026-08-11); `test.yml` läuft auf `push`, PRs nach
+  `main` und `workflow_dispatch`. Ein roter Test heisst: **CI rot beim Pushen.**
+- **Der Ausweg ist sichtbar, nicht still.** Übergehen heisst, `MAX_COST_PER_RUN_EUR` in
+  `config.py` anzuheben — eine Zeile Diff, die in der Historie steht.
+- **Die Fehlermeldung nennt die Rechnung**: erwartete Kosten, aktueller Deckel, Zahl der
+  analysierten Assets und den Satz „entweder `MAX_COST_PER_RUN_EUR` auf X anheben oder
+  `MAX_DEEP_ANALYSIS` senken". Ein Test, der nur `assert False` sagt, wird übergangen.
+- **Der Betrag je Analyse steht in genau einer benannten Konstante mit Kommentar**, nicht
+  verstreut im Test. Nach dem Testlauf ist die Anpassung eine bewusste Einzeiländerung.
 
 `MODEL_PRICING` kennt `claude-sonnet-5` nicht: ein Modellwechsel scheiterte sauber mit
 `ValueError`, statt still falsch zu rechnen. Als Sicherheitsnetz beabsichtigt.
