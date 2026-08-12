@@ -3,8 +3,11 @@
 **Zuletzt aktualisiert:** 2026-08-12 — **Plan 1 (Fundament) des Analyse-Pipeline-Umbaus ist
 code-fertig**, Tasks 2–8 committed (Task 9 zieht diese Dokumente nach). 17 Indikatoren
 laufen mit und füllen 29 neue Spalten in `technical_indicators`; das Technik-Signal ist
-berechenbar, steuert aber nichts. **Keine Verhaltensänderung.** 646 Tests grün, Coverage
-93,31 %. Details: Abschnitt **C.6**. Einstieg ist jetzt Plan 2 (Trichter).
+berechenbar, steuert aber nichts. **Keine Verhaltensänderung.** 647 Tests grün, Coverage
+93,32 %. Details: Abschnitt **C.6**. Einstieg ist jetzt Plan 2 (Trichter).
+⚠️ Der abschliessende Ganz-Branch-Review fand die Verhaltensänderungs-Garantie zunächst
+gebrochen vor (29 neue Werte liefen in vier Claude-Prompts mit) plus einen strukturellen
+`ichi_chikou`-Bug — Fix-Wave-Details unten in C.6.
 
 ⚠️ **Befund aus der Design-Phase, seit `f8f6684` behoben:** `cost_tracker` zog
 Cache-Treffer zweimal ab (`fresh_input`, Zeile 52). **Alle vor 2026-08-12 gemessenen
@@ -1417,7 +1420,8 @@ Plan: `docs/superpowers/plans/2026-08-11-analyse-pipeline-plan1-fundament.md`
 
 **Keine Verhaltensänderung.** 17 Indikatoren laufen mit und füllen 29 neue Spalten
 in `technical_indicators`; das Technik-Signal ist berechenbar, steuert aber nichts.
-646 Tests, 93,31 % Coverage (`pytest tests/ --cov=src --cov-fail-under=80 -q`).
+647 Tests, 93,32 % Coverage (`pytest tests/ --cov=src --cov-fail-under=80 -q`), nach dem
+abschliessenden Fix-Wave (s. Befund-Absätze unten).
 
 | Task | Commit | Was landete |
 |---|---|---|
@@ -1445,6 +1449,28 @@ SMA200. Eine Anhebung von `GAP_SCAN_BARS` würde ändern, welche Ticker wegen Da
 
 Nach Task 9 gilt: der Stand ist gefahrlos einspielbar, kein einziges Pipeline-Verhalten
 hat sich geändert. Plan 2 (Trichter) setzt darauf auf.
+
+⚠️ **Befund aus dem abschliessenden Ganz-Branch-Review (2026-08-12): Der Satz oben stimmte
+nicht.** `_process_ticker` mischte die 29 neuen Werte in dasselbe `td`-Dict, das
+unveraendert in vier Claude-Prompts `json.dumps`'t wird (`quick_filter.py`,
+`deep_analysis.py`, `commodities_crypto.py`, und ueber `main.py`s `snapshots` in
+`run_trade_proposals` auch `portfolio_check.py`) — rund 250 zusaetzliche Tokens je
+Ticker, die Phase 2 bei der Ticker-Auswahl gesehen hat. **Gefixt:** die 29 Spalten werden
+jetzt in einem separaten `extra_indicators`-Dict berechnet und erst unmittelbar vor
+`_persist_indicators()` mit `td` zusammengefuehrt; die Rueckgabe von `_process_ticker()`
+ist wieder byte-fuer-byte die Form von vor Plan 1 (verifiziert per Diff gegen den Stand vor
+Task 5). Ein neuer Test (`test_process_ticker_return_shape_excludes_the_29_new_indicator_columns`)
+pinnt die exakte Schluesselmenge.
+
+Zweiter Befund derselben Review: `ichi_chikou` war **strukturell immer `None`** —
+pandas_tas `ICS_26` traegt den heutigen Schlusskurs 26 Bars in die Zukunft projiziert und
+ist fuer die juengsten 26 Zeilen deshalb grundsaetzlich NaN, bei 220 wie bei 500 Bars.
+**Gefixt:** die Spalte speichert jetzt den Schlusskurs von vor 26 Bars — den Wert, gegen
+den der Chikou-Span den heutigen Kurs tatsaechlich vergleicht. Der bisherige Test verglich
+`None == None` und haette den Bug nie gefangen; er pinnt jetzt einen echten Zahlenwert.
+
+Nach diesem Fix-Wave: 647 Tests (+1), 93,32 % Coverage — beide Befunde behoben, ohne dass
+Plan 1 seine Nichtangriffsgarantie fuer das Pipeline-Verhalten verliert.
 
 ---
 

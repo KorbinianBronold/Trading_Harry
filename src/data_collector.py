@@ -313,9 +313,16 @@ def _process_ticker(
         "above_sma200":       compute_sma_distance_pct(df, 200),
         "volume_ratio":       compute_volume_ratio(df),
         "intraday_range_pct": compute_intraday_range_pct(df),
-        # Sprint 3C / Analyse-Pipeline-Umbau (Plan 1, Task 5/6): 29 weitere
-        # Spalten. Kein Konsument liest sie noch -- der Wert liegt darin, dass
-        # die Historie jetzt zu laufen beginnt statt erst mit Sprint 3D.
+    }
+
+    # Sprint 3C / Analyse-Pipeline-Umbau (Plan 1, Task 5/6): 29 weitere Spalten
+    # fuer technical_indicators. Bewusst NICHT in td -- td wird unveraendert in
+    # vier Claude-Prompts json.dumps't (quick_filter.py, deep_analysis.py,
+    # commodities_crypto.py, portfolio_check.py ueber main.py's `snapshots`).
+    # Ein zusaetzlicher Key hier wuerde also Ticker-Auswahl und Scoring
+    # beeinflussen, obwohl kein Konsument die neuen Werte lesen soll (das ist
+    # erst Sprint 3D). Nur fuer die Persistierung weiter unten zusammengefuehrt.
+    extra_indicators: dict[str, Any] = {
         **compute_macd_raw(df),
         **compute_adx(df),
         **compute_psar(df),
@@ -381,7 +388,7 @@ def _process_ticker(
         )
         return None
 
-    _persist_indicators(conn, ticker, date, td)
+    _persist_indicators(conn, ticker, date, {**td, **extra_indicators})
     return td
 
 

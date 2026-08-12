@@ -1,5 +1,3 @@
-import pytest
-
 from src.technical_signal import TechnicalSignal, compute
 
 

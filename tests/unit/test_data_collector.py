@@ -98,6 +98,46 @@ def test_process_ticker_returns_full_ticker_data(in_memory_db):
     assert out["intraday_range_pct"] is not None
 
 
+def test_process_ticker_return_shape_excludes_the_29_new_indicator_columns(in_memory_db):
+    """Pins the EXACT key set _process_ticker() returns.
+
+    This dict is json.dumps'd verbatim into four Claude prompts (quick_filter.py,
+    deep_analysis.py, commodities_crypto.py, and -- via main.py's `snapshots` in
+    run_trade_proposals -- portfolio_check.py). Plan 1's explicit promise was "no
+    pipeline behaviour changes"; a stray key here changes what the model sees and
+    therefore which tickers get selected and how they're scored. The 29 new
+    technical_indicators columns are computed in _process_ticker() but must be
+    persisted to the DB only, never merged into this dict.
+
+    Deliberately an exact expected-key-set equality, not a count and not a
+    "these specific new names are absent" check -- either of those would miss a
+    *different*, newly-added key that leaks the same way.
+    """
+    init_schema(in_memory_db)
+    df = _df_monotonic_up(250)
+    _seed_price_history(in_memory_db, "AAPL", df)
+    out = _process_ticker(
+        ticker="AAPL",
+        price_provider=_good_provider(df),
+        earnings_provider=_earnings_provider(),
+        conn=in_memory_db,
+        date="2026-05-19",
+        run_type="pre_market",
+    )
+    assert out is not None
+    expected_keys = {
+        "ticker", "price",
+        "price_change_1d", "price_change_5d", "price_change_1m", "price_change_3m",
+        "rsi_14", "rsi_trend", "macd_signal", "atr_pct", "bb_position",
+        "above_sma20", "above_sma50", "above_sma200",
+        "volume_ratio", "intraday_range_pct",
+        "pe_ratio", "forward_pe", "market_cap_b", "debt_equity", "sector",
+        "analyst_target_upside", "analyst_consensus",
+        "earnings_in_days", "earnings_beat_pct", "data_quality",
+    }
+    assert set(out.keys()) == expected_keys
+
+
 def test_process_ticker_writes_indicators(in_memory_db):
     """_process_ticker schreibt eine technical_indicators-Zeile.
 
@@ -125,7 +165,12 @@ def test_process_ticker_writes_indicators(in_memory_db):
 
 def test_process_ticker_persists_the_new_indicators(in_memory_db):
     """Ein Durchlauf muss die neuen Spalten tatsaechlich fuellen -- nicht nur
-    die Tabelle anlegen."""
+    die Tabelle anlegen. Prueft alle 29 neuen Spalten, nicht nur eine Auswahl:
+    das haette den ichi_chikou-Immer-None-Bug (Fix 2) sofort gefangen.
+
+    Liest bewusst aus der DB, nicht aus dem _process_ticker()-Rueckgabewert --
+    seit Fix 1 sind die 29 Spalten dort NICHT mehr enthalten (sie gehen nur
+    noch in die Persistierung, nicht in den Claude-Prompt-Payload)."""
     conn = in_memory_db
     init_schema(conn)
     df = _df_monotonic_up(rows=250)
@@ -146,10 +191,23 @@ def test_process_ticker_persists_the_new_indicators(in_memory_db):
         "SELECT * FROM technical_indicators WHERE ticker=? AND date=?",
         ("AAPL", as_of),
     ).fetchone()
-    assert row["macd_line"] is not None
-    assert row["adx_14"] is not None
-    assert row["obv"] is not None
-    assert row["ichi_kijun"] is not None
+    new_columns = [
+        "ema_50_dist_pct",
+        "macd_line", "macd_signal_line", "macd_hist",
+        "adx_14", "di_plus", "di_minus",
+        "psar_value", "psar_dir",
+        "ichi_tenkan", "ichi_kijun", "ichi_senkou_a", "ichi_senkou_b", "ichi_chikou",
+        "stoch_k", "stoch_d",
+        "willr_14", "cci_20", "mom_12",
+        "trix", "trix_signal",
+        "bb_upper", "bb_lower", "bb_width",
+        "atr_abs",
+        "donch_upper", "donch_mid", "donch_lower",
+        "obv",
+    ]
+    assert len(new_columns) == 29
+    for col in new_columns:
+        assert row[col] is not None, f"{col} is NULL"
 
 
 def test_process_ticker_skips_on_none_price_history(in_memory_db):

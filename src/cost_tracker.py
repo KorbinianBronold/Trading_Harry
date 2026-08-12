@@ -49,10 +49,13 @@ class CostTracker:
         if pricing is None:
             raise ValueError(f"Unknown model pricing: {model}")
 
-        # Die API liefert input_tokens bereits als ungecachten Rest; die
-        # Gesamtgroesse des Prompts ist input_tokens + cache_read + cache_creation.
-        # Ein zweiter Abzug von cache_read rechnete die Kosten systematisch zu
-        # niedrig -- der Fehler wuchs mit der Cache-Trefferquote.
+        # Die API liefert input_tokens bereits als ungecachten Rest -- ein
+        # zweiter Abzug von cache_read rechnete die Kosten systematisch zu
+        # niedrig, der Fehler wuchs mit der Cache-Trefferquote. Bepreist werden
+        # hier alle drei Anteile (input, cache_read, cache_creation); summary()
+        # akkumuliert cache_creation_tokens bislang aber nicht auf der Instanz,
+        # cache_hit_rate dort zaehlt also nur cache_read gegen input -- offene
+        # Frage fuer Plan 2, ob das dazugehoert.
         usd_input  = input_tokens              / 1_000_000 * pricing["input"]
         usd_output = output_tokens             / 1_000_000 * pricing["output"]
         usd_cache_read   = cache_read_tokens     / 1_000_000 * pricing["cache_read"]

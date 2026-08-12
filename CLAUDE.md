@@ -4,6 +4,9 @@
 (Analyse-Pipeline-Umbau: Trichter, zwei zählbare Signale, neues Ranking). 17 Indikatoren
 laufen mit und füllen 29 neue Spalten, das Technik-Signal ist berechenbar — **keine
 Verhaltensänderung.** Details: PROJECT_STATUS C.6. Einstieg ist jetzt Plan 2 (Trichter).
+⚠️ Der abschliessende Ganz-Branch-Review fand die Garantie tatsächlich gebrochen vor (die
+29 neuen Werte liefen in vier Claude-Prompts mit) und einen zweiten Bug (`ichi_chikou` war
+strukturell immer `None`) — beide im selben Fix-Wave behoben, s. PROJECT_STATUS C.6.
 ⏳ Offen und **unabhängig vom Umbau**: `trade_proposals` und `weekly` (nie ausgeführt), der
 einmalige `bootstrap-db`-Lauf, danach die Reaktivierung von `analyze.yml`.
 
@@ -48,8 +51,8 @@ Die Pipeline-Phasen lassen sich an `main.py:run_pipeline()` ablesen.
 - Das technische Signal ist **deterministisch im Code** (`src/technical_signal.py`),
   kein Claude-Call: drei Teilindikatoren stimmen ab, ADX moduliert die Stärke,
   filtert aber nie die Richtung. Die drei Ablesungen (RSI als Momentum, MACD über
-  das Histogramm, SMA200-Degradation) sind bewusste Entscheidungen — welche besser
-  predictet, misst 3D.
+  das Histogramm, Kurs über SMA50 **und** über SMA200 — keine SMA50-vs-SMA200-
+  Kreuzung) sind bewusste Entscheidungen — welche besser predictet, misst 3D.
 - `technical_indicators` trägt 17 Indikatoren, von denen zunächst nur vier etwas
   steuern. Der Rest läuft mit, damit 3D später Historie hat statt bei null zu beginnen.
 - Mailversand über Resend. Ein `2xx` heisst nur "angenommen"; die Zustellung läuft

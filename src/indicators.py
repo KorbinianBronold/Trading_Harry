@@ -18,13 +18,13 @@ MIN_BARS_BB = 25
 MIN_BARS_VOL = 25
 MIN_BARS_INTRADAY = 5
 MIN_BARS_MACD = 35
-MIN_BARS_EMA50 = 50
 MIN_BARS_ADX = 28
 MIN_BARS_ICHIMOKU = 78
 MIN_BARS_PSAR = 10
 MIN_BARS_STOCH = 20
 MIN_BARS_TRIX = 50
 MIN_BARS_DONCHIAN = 20
+MIN_BARS_WILLR = 20
 
 _CCI_LENGTH, _MOM_LENGTH = 20, 12
 _TRIX_LENGTH, _TRIX_SIGNAL = 15, 9
@@ -263,6 +263,12 @@ def compute_ichimoku(df: pd.DataFrame) -> dict[str, float | None]:
 
     ta.ichimoku() gibt ein TUPEL zurueck: (historische Linien, in die Zukunft
     projizierte Spans). Nur der erste Teil ist hier gemeint.
+
+    ichi_chikou ist NICHT pandas_tas Spalte ICS_26: die traegt den heutigen
+    Schlusskurs, 26 Bars in die Zukunft projiziert (zur Chart-Darstellung des
+    Chikou-Spans) -- fuer die juengsten 26 Zeilen also strukturell NaN, nie
+    nur zufaellig leer. Stattdessen der Schlusskurs von vor 26 Bars: der Wert,
+    gegen den der Chikou-Span den heutigen Kurs tatsaechlich vergleicht.
     """
     keys = ("ichi_tenkan", "ichi_kijun", "ichi_senkou_a",
             "ichi_senkou_b", "ichi_chikou")
@@ -273,12 +279,17 @@ def compute_ichimoku(df: pd.DataFrame) -> dict[str, float | None]:
     hist = result[0] if isinstance(result, tuple) else result
     if hist is None or hist.empty:
         return empty
+    chikou_lag = 26
+    ichi_chikou = (
+        _last_finite(df["Close"].iloc[:-chikou_lag])
+        if len(df) > chikou_lag else None
+    )
     return {
         "ichi_tenkan":   _last_finite(hist["ITS_9"]),
         "ichi_kijun":    _last_finite(hist["IKS_26"]),
         "ichi_senkou_a": _last_finite(hist["ISA_9"]),
         "ichi_senkou_b": _last_finite(hist["ISB_26"]),
-        "ichi_chikou":   _last_finite(hist["ICS_26"]),
+        "ichi_chikou":   ichi_chikou,
     }
 
 
@@ -298,7 +309,7 @@ def compute_stochastic(df: pd.DataFrame) -> dict[str, float | None]:
 
 def compute_willr(df: pd.DataFrame) -> float | None:
     """Williams %R(14). Laeuft definitionsgemaess von -100 bis 0."""
-    if len(df) < 20:
+    if len(df) < MIN_BARS_WILLR:
         return None
     return _last_finite(ta.willr(df["High"], df["Low"], df["Close"]))
 

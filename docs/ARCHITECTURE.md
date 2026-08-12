@@ -2,8 +2,10 @@
 
 **Zuletzt aktualisiert:** 2026-08-12 — Sprint 3C / Plan 1 (Fundament) nachgezogen: zwei
 neue Module (`src/indicators.py`, `src/technical_signal.py`), 29 neue Spalten in
-`technical_indicators`, Ladefenster-Invariante, Testzahlen auf 646. **Keine
-Verhaltensänderung** — Details PROJECT_STATUS C.6.
+`technical_indicators`, Ladefenster-Invariante, Testzahlen auf 647. **Keine
+Verhaltensänderung** — Details PROJECT_STATUS C.6. ⚠️ Diese Garantie war zwischenzeitlich
+gebrochen (die 29 neuen Werte liefen in vier Claude-Prompts mit) und ist erst mit dem
+abschliessenden Review-Fix-Wave wieder wahr — s. PROJECT_STATUS C.6 für den Befund.
 
 Davor, 2026-08-09 — `src/universe.py` als eine Quelle des Ticker-
 Universums, Historien-Guard, erweiterte Invariantenliste, Testzahlen auf 608.
@@ -269,10 +271,12 @@ Spalten in `technical_indicators` (s. Modul 11).
 
 Richtung (`long`/`short`/`neutral`) und zählbare Stärke (0–4) aus drei abstimmenden
 Teilindikatoren — RSI als Momentum (nicht Mean-Reversion), MACD über das
-Histogramm-Vorzeichen (nicht die Kreuzung), SMA-Trend (Kurs > SMA50 > SMA200). ADX
-moduliert die Stärke (`weak` → 1, `strong` → Bonus +1), **filtert aber nie die
-Richtung**. Deterministisch, kein Claude-Call, keine DB, kein Netz — eine reine Funktion
-über das Phase-1-Snapshot-Dict, deshalb tabellengetrieben ohne Mocking testbar.
+Histogramm-Vorzeichen (nicht die Kreuzung), SMA-Trend (Kurs > SMA50 **und** Kurs >
+SMA200 — zwei unabhängige Kurs-zu-SMA-Distanzen, **kein** Vergleich von SMA50 gegen
+SMA200, also kein Golden-/Death-Cross-Signal). ADX moduliert die Stärke (`weak` → 1,
+`strong` → Bonus +1), **filtert aber nie die Richtung**. Deterministisch, kein
+Claude-Call, keine DB, kein Netz — eine reine Funktion über das Phase-1-Snapshot-Dict,
+deshalb tabellengetrieben ohne Mocking testbar.
 
 ```python
 @dataclass(frozen=True)
@@ -1046,9 +1050,10 @@ TOTAL: ~3.50 EUR
 
 - **Unit Tests**: isolierte Module, Mock-Claude, Fixtures
 - **Integration Tests** (4): volle Pipeline + E2E-HTML-Render + trade_proposals-Flow
-- **Coverage Gate**: 80 % Minimum (aktuell 93,31 %)
-- **Baseline**: `pytest tests/ --cov=src --cov-fail-under=80 -q` → **646 passed, 7 skipped**,
-  0 failures (Stand 2026-08-12, nach Plan 1 / Fundament). Die 7 übersprungenen sind die
+- **Coverage Gate**: 80 % Minimum (aktuell 93,32 %)
+- **Baseline**: `pytest tests/ --cov=src --cov-fail-under=80 -q` → **647 passed, 7 skipped**,
+  0 failures (Stand 2026-08-12, nach Plan 1 / Fundament inkl. abschliessendem Fix-Wave —
+  s. PROJECT_STATUS C.6). Die 7 übersprungenen sind die
   Live-Tests unter `tests/live/`; sie laufen nur mit `--run-live` und sprechen dann echte
   APIs an (inkl. echtem Mailversand).
 

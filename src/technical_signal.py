@@ -59,7 +59,9 @@ def _vote_macd(td: dict) -> str:
 
 
 def _vote_sma(td: dict) -> str:
-    """Kurs ueber SMA50 und SMA50 ueber SMA200 (beides als Distanz in Prozent).
+    """Kurs ueber SMA50 UND Kurs ueber SMA200 (beides als eigene Distanz in
+    Prozent) -- kein Vergleich von SMA50 gegen SMA200, also kein Golden-/
+    Death-Cross-Signal.
 
     Fehlt SMA200 -- unter 200 Bars Historie --, stimmt dieser Teilindikator
     neutral. Die Richtung entsteht dann aus den beiden anderen, und die

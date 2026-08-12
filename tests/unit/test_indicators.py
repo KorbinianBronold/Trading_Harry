@@ -223,16 +223,15 @@ def test_ichimoku_values_match_pandas_ta_columns(ohlcv):
     assert out["ichi_kijun"]    == pytest.approx(raw["IKS_26"].iloc[-1])
     assert out["ichi_senkou_a"] == pytest.approx(raw["ISA_9"].iloc[-1])
     assert out["ichi_senkou_b"] == pytest.approx(raw["ISB_26"].iloc[-1])
-    # ICS_26 (Chikou) is shifted 26 bars into the past, so its very last
-    # value is NaN for this fixture even though the other four lines are
-    # finite (verified empirically, not fixture-seed-specific in principle --
-    # any trailing window can land on the shifted gap). Hard-coding a numeric
-    # expectation here would be coincidental, not a real mapping check.
-    # Instead, apply the same "last value or None" rule the function itself
-    # uses (ind._last_finite) to the raw column and compare -- this still
-    # catches a swap: if ichi_chikou were wired to any of the other (finite)
-    # columns instead, this equality would fail because that value isn't None.
-    assert out["ichi_chikou"] == ind._last_finite(raw["ICS_26"])
+    # ichi_chikou is deliberately NOT pandas_ta's ICS_26: that column carries
+    # today's close projected 26 bars into the future for chart display, so
+    # it is structurally NaN for the most recent 26 rows (confirmed empty at
+    # both 220 and 500 bars during the review -- never just this fixture's
+    # seed). Storing that would make the column permanently None. Instead the
+    # function stores the close from 26 bars ago -- the value the Chikou
+    # reading actually compares today's price against. Pin it against the raw
+    # Close series directly, a real numeric value, not None == None.
+    assert out["ichi_chikou"] == pytest.approx(ohlcv["Close"].iloc[-27])
 
 
 def test_ichimoku_returns_nones_on_short_history(ohlcv):
