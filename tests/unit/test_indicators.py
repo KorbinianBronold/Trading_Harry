@@ -1,3 +1,9 @@
+"""Tests fuer die reinen Indikator-Funktionen in src/indicators.py.
+
+Deckt die neun bestehenden Indikatoren ab (RSI, RSI-Trend, MACD-Signal, ATR,
+Bollinger-Position, SMA-Abstand, Volumen-Ratio, Intraday-Range,
+Preisaenderungen), die in Task 3 aus src/data_collector.py hierher verschoben
+wurden."""
 import math
 import pandas as pd
 import pytest
