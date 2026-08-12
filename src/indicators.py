@@ -22,6 +22,12 @@ MIN_BARS_EMA50 = 50
 MIN_BARS_ADX = 28
 MIN_BARS_ICHIMOKU = 78
 MIN_BARS_PSAR = 10
+MIN_BARS_STOCH = 20
+MIN_BARS_TRIX = 50
+MIN_BARS_DONCHIAN = 20
+
+_CCI_LENGTH, _MOM_LENGTH = 20, 12
+_TRIX_LENGTH, _TRIX_SIGNAL = 15, 9
 
 # Spaltennamen von pandas_ta 0.4.71b0, am 2026-08-11 gegen die installierte
 # Version verifiziert. Sie enthalten die Parameter im Namen -- aendert sich eine
@@ -274,3 +280,114 @@ def compute_ichimoku(df: pd.DataFrame) -> dict[str, float | None]:
         "ichi_senkou_b": _last_finite(hist["ISB_26"]),
         "ichi_chikou":   _last_finite(hist["ICS_26"]),
     }
+
+
+def compute_stochastic(df: pd.DataFrame) -> dict[str, float | None]:
+    """Stochastik-Oszillator: %K und %D."""
+    empty = {"stoch_k": None, "stoch_d": None}
+    if len(df) < MIN_BARS_STOCH:
+        return empty
+    st = ta.stoch(df["High"], df["Low"], df["Close"])
+    if st is None or st.empty:
+        return empty
+    return {
+        "stoch_k": _last_finite(st["STOCHk_14_3_3"]),
+        "stoch_d": _last_finite(st["STOCHd_14_3_3"]),
+    }
+
+
+def compute_willr(df: pd.DataFrame) -> float | None:
+    """Williams %R(14). Laeuft definitionsgemaess von -100 bis 0."""
+    if len(df) < 20:
+        return None
+    return _last_finite(ta.willr(df["High"], df["Low"], df["Close"]))
+
+
+def compute_cci(df: pd.DataFrame) -> float | None:
+    """CCI mit Laenge 20. pandas_ta defaultet auf 14 -- die Laenge wird
+    ausdruecklich uebergeben, weil die Spec 20 verlangt."""
+    if len(df) < _CCI_LENGTH:
+        return None
+    return _last_finite(
+        ta.cci(df["High"], df["Low"], df["Close"], length=_CCI_LENGTH)
+    )
+
+
+def compute_momentum(df: pd.DataFrame) -> float | None:
+    """Momentum(12): absolute Kursdifferenz zu vor 12 Bars. pandas_ta
+    defaultet auf 10."""
+    if len(df) <= _MOM_LENGTH:
+        return None
+    return _last_finite(ta.mom(df["Close"], length=_MOM_LENGTH))
+
+
+def compute_trix(df: pd.DataFrame) -> dict[str, float | None]:
+    """TRIX(15) mit Signallinie(9). pandas_ta defaultet auf 30."""
+    empty = {"trix": None, "trix_signal": None}
+    if len(df) < MIN_BARS_TRIX:
+        return empty
+    tr = ta.trix(df["Close"], length=_TRIX_LENGTH, signal=_TRIX_SIGNAL)
+    if tr is None or tr.empty:
+        return empty
+    return {
+        "trix":        _last_finite(tr[f"TRIX_{_TRIX_LENGTH}_{_TRIX_SIGNAL}"]),
+        "trix_signal": _last_finite(tr[f"TRIXs_{_TRIX_LENGTH}_{_TRIX_SIGNAL}"]),
+    }
+
+
+def compute_bollinger_raw(df: pd.DataFrame) -> dict[str, float | None]:
+    """Oberes und unteres Bollinger-Band als Kursniveaus plus deren Abstand.
+
+    Ergaenzt compute_bb_position(), das nur die relative Lage im Band meldet
+    und die Bandbreite -- also das Volatilitaetsniveau -- wegwirft.
+    """
+    empty = {"bb_upper": None, "bb_lower": None, "bb_width": None}
+    if len(df) < MIN_BARS_BB:
+        return empty
+    bb = ta.bbands(df["Close"], length=20)
+    if bb is None or bb.empty:
+        return empty
+    lower, upper = bb.iloc[-1, 0], bb.iloc[-1, 2]
+    if pd.isna(lower) or pd.isna(upper):
+        return empty
+    return {
+        "bb_upper": round(float(upper), 4),
+        "bb_lower": round(float(lower), 4),
+        "bb_width": round(float(upper - lower), 4),
+    }
+
+
+def compute_atr_abs(df: pd.DataFrame) -> float | None:
+    """ATR(14) als absoluter Kursbetrag. compute_atr_pct() liefert denselben
+    Wert relativ zum Schlusskurs; fuer Abstandsrechnungen wird der absolute
+    gebraucht."""
+    if len(df) < MIN_BARS_ATR:
+        return None
+    return _last_finite(ta.atr(df["High"], df["Low"], df["Close"], length=14))
+
+
+def compute_donchian(df: pd.DataFrame) -> dict[str, float | None]:
+    """Donchian-Kanal(20): oberes, mittleres und unteres Band."""
+    empty = {"donch_upper": None, "donch_mid": None, "donch_lower": None}
+    if len(df) < MIN_BARS_DONCHIAN:
+        return empty
+    dc = ta.donchian(df["High"], df["Low"])
+    if dc is None or dc.empty:
+        return empty
+    return {
+        "donch_lower": _last_finite(dc["DCL_20_20"]),
+        "donch_mid":   _last_finite(dc["DCM_20_20"]),
+        "donch_upper": _last_finite(dc["DCU_20_20"]),
+    }
+
+
+def compute_obv(df: pd.DataFrame) -> float | None:
+    """On-Balance-Volume.
+
+    WARNUNG: beruht auf `lastTradedVolume` von Capital.com -- einem
+    CFD-Broker-Proxy, NICHT auf Boersenvolumen. Der Wert beschreibt Capital.coms
+    eigenen Handelsfluss. Als Richtungsmass brauchbar, als Niveauaussage nicht.
+    """
+    if len(df) < MIN_BARS_VOL:
+        return None
+    return _last_finite(ta.obv(df["Close"], df["Volume"]))

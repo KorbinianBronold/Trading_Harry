@@ -244,3 +244,99 @@ def test_ema_distance_is_percentage_of_the_average(ohlcv):
     out = ind.compute_ema_distance_pct(ohlcv, 50)
     assert isinstance(out, float)
     assert -100.0 < out < 100.0
+
+
+def test_stochastic_returns_k_and_d_in_range(ohlcv):
+    out = ind.compute_stochastic(ohlcv)
+    assert set(out) == {"stoch_k", "stoch_d"}
+    assert 0.0 <= out["stoch_k"] <= 100.0
+    assert 0.0 <= out["stoch_d"] <= 100.0
+
+
+def test_stochastic_pins_k_and_d_to_their_own_columns(ohlcv):
+    # In-range-only checks above would not catch stoch_k/stoch_d swapped --
+    # both are bounded 0..100. Pin each key against its own pandas_ta column
+    # by value.
+    out = ind.compute_stochastic(ohlcv)
+    raw = ta.stoch(ohlcv["High"], ohlcv["Low"], ohlcv["Close"])
+    assert out["stoch_k"] == pytest.approx(raw["STOCHk_14_3_3"].iloc[-1])
+    assert out["stoch_d"] == pytest.approx(raw["STOCHd_14_3_3"].iloc[-1])
+    # Confirm the two pinned values are actually distinct in this fixture --
+    # otherwise the pin above couldn't detect a swap.
+    assert out["stoch_k"] != pytest.approx(out["stoch_d"])
+
+
+def test_willr_is_negative_by_definition(ohlcv):
+    """Williams %R laeuft definitionsgemaess von -100 bis 0."""
+    assert -100.0 <= ind.compute_willr(ohlcv) <= 0.0
+
+
+def test_cci_uses_length_20_not_the_library_default(ohlcv):
+    """Die Spec verlangt CCI(20); pandas_ta defaultet auf 14."""
+    out = ind.compute_cci(ohlcv)
+    assert isinstance(out, float)
+    # Gegenprobe: mit Laenge 14 kommt ein anderer Wert heraus.
+    other = ta.cci(ohlcv["High"], ohlcv["Low"], ohlcv["Close"], length=14)
+    assert out != pytest.approx(float(other.iloc[-1]))
+
+
+def test_momentum_uses_length_12(ohlcv):
+    out = ind.compute_momentum(ohlcv)
+    expected = ohlcv["Close"].iloc[-1] - ohlcv["Close"].iloc[-13]
+    assert out == pytest.approx(expected, abs=1e-6)
+
+
+def test_trix_returns_line_and_signal(ohlcv):
+    out = ind.compute_trix(ohlcv)
+    assert set(out) == {"trix", "trix_signal"}
+    assert all(isinstance(v, float) for v in out.values())
+
+
+def test_trix_pins_line_and_signal_to_their_own_columns(ohlcv):
+    # Shape-only above doesn't prove trix/trix_signal aren't swapped -- both
+    # are plain floats. Pin each key against its own pandas_ta column by value.
+    out = ind.compute_trix(ohlcv)
+    raw = ta.trix(ohlcv["Close"], length=15, signal=9)
+    assert out["trix"] == pytest.approx(raw["TRIX_15_9"].iloc[-1])
+    assert out["trix_signal"] == pytest.approx(raw["TRIXs_15_9"].iloc[-1])
+    assert out["trix"] != pytest.approx(out["trix_signal"])
+
+
+def test_bollinger_width_is_upper_minus_lower(ohlcv):
+    out = ind.compute_bollinger_raw(ohlcv)
+    assert out["bb_width"] == pytest.approx(out["bb_upper"] - out["bb_lower"], abs=1e-6)
+
+
+def test_bollinger_pins_upper_and_lower_to_their_own_columns(ohlcv):
+    # bb_width is derived from bb_upper/bb_lower in the function itself, so
+    # the test above stays internally consistent even if upper and lower were
+    # swapped. Pin both keys against their own pandas_ta column by value, and
+    # assert the real invariant (upper > lower) that a swap would violate.
+    out = ind.compute_bollinger_raw(ohlcv)
+    raw = ta.bbands(ohlcv["Close"], length=20)
+    assert out["bb_upper"] == pytest.approx(raw["BBU_20_2.0_2.0"].iloc[-1])
+    assert out["bb_lower"] == pytest.approx(raw["BBL_20_2.0_2.0"].iloc[-1])
+    assert out["bb_upper"] > out["bb_lower"]
+
+
+def test_donchian_mid_lies_between_the_channels(ohlcv):
+    out = ind.compute_donchian(ohlcv)
+    assert out["donch_lower"] <= out["donch_mid"] <= out["donch_upper"]
+
+
+def test_obv_is_computed_from_the_broker_volume_proxy(ohlcv):
+    """OBV beruht auf lastTradedVolume -- einem CFD-Broker-Proxy, nicht auf
+    Boersenvolumen. Der Test haelt nur fest, dass ein Wert entsteht."""
+    assert isinstance(ind.compute_obv(ohlcv), float)
+
+
+def test_all_new_indicators_return_none_on_empty_history():
+    empty_df = pd.DataFrame(
+        {c: [] for c in ("Open", "High", "Low", "Close", "Volume")}
+    )
+    assert ind.compute_willr(empty_df) is None
+    assert ind.compute_cci(empty_df) is None
+    assert ind.compute_momentum(empty_df) is None
+    assert ind.compute_atr_abs(empty_df) is None
+    assert ind.compute_obv(empty_df) is None
+    assert ind.compute_stochastic(empty_df) == {"stoch_k": None, "stoch_d": None}
