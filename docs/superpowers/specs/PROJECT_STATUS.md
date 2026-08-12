@@ -1,14 +1,16 @@
 # PROJECT_STATUS.md — Shares_Future (Trading_Harry)
 
-**Zuletzt aktualisiert:** 2026-08-12 — **Sprint 3C ist spezifiziert und geplant.** Der
-Analyse-Pipeline-Umbau (Trichter, zwei zählbare Signale, neues Ranking) hat eine Spec und
-mit Plan 1 den ersten von drei Implementierungsplänen; die Sammelabruf-Sonde ist gelaufen.
-**Code ist noch keiner entstanden.** Details: Abschnitt **C.5**.
+**Zuletzt aktualisiert:** 2026-08-12 — **Plan 1 (Fundament) des Analyse-Pipeline-Umbaus ist
+code-fertig**, Tasks 2–8 committed (Task 9 zieht diese Dokumente nach). 17 Indikatoren
+laufen mit und füllen 29 neue Spalten in `technical_indicators`; das Technik-Signal ist
+berechenbar, steuert aber nichts. **Keine Verhaltensänderung.** 646 Tests grün, Coverage
+93,31 %. Details: Abschnitt **C.6**. Einstieg ist jetzt Plan 2 (Trichter).
 
-⚠️ **Befund aus der Design-Phase:** `cost_tracker` zog Cache-Treffer zweimal ab
-(`fresh_input`, Zeile 52). **Alle bisher gemessenen Laufkosten sind damit zu niedrig
-ausgewiesen** — grob 5 % beim Lauf vom 2026-08-09, wachsend mit der Cache-Trefferquote.
-Der Fix ist Task 2 in Plan 1 und muss vor jeder weiteren Kostenmessung erledigt sein.
+⚠️ **Befund aus der Design-Phase, seit `f8f6684` behoben:** `cost_tracker` zog
+Cache-Treffer zweimal ab (`fresh_input`, Zeile 52). **Alle vor 2026-08-12 gemessenen
+Laufkosten sind damit zu niedrig ausgewiesen** — grob 5 % beim Lauf vom 2026-08-09,
+wachsend mit der Cache-Trefferquote. Dieselbe Fehlannahme steckte in `cache_hit_rate`,
+die dadurch über 1 gehen konnte.
 
 Davor, 2026-08-09 — **Live-Verifikation weitgehend erledigt.**
 `pre_market`, `close` und `final_close` sind ausgeführt und geprüft (P3.5, P2.10); die
@@ -125,7 +127,7 @@ Einen Branch `sprint3b/plan2-pipeline-umbau` gibt es weder lokal noch remote.
 | 3A | Roadmap + Doku aktualisieren | ✅ erledigt (dieses Dokument) |
 | 3B | Cron-Struktur + Pipeline-Umbau | 🟢 **Code vollständig** — Plan 1 (2026-07-29) und Plan 2 (20/20 Tasks, 2026-08-04), alles auf `main`. Verifiziert: `pre_market`, `close`, `final_close` (P2.10, P3.5). ⏳ Offen: `trade_proposals`, `weekly`, `bootstrap-db`-Lauf, dann Reaktivierung von `analyze.yml` |
 | **3B-M** | **Mail-Provider-Wechsel (Zwischensprint)** | ✅ **ABGESCHLOSSEN 2026-07-30** — Mailversand läuft über **Resend**, eigene Domain verifiziert, Zustellung live bestätigt. Details s. unten |
-| 3C | Ranking-Überarbeitung | 📋 **Spec + Plan 1 fertig, Code offen.** C.1–C.4 sind in den Analyse-Pipeline-Umbau aufgegangen — s. C.5 |
+| 3C | Ranking-Überarbeitung | 🟢 **Plan 1 (Fundament) code-fertig, keine Verhaltensänderung.** C.1–C.4 sind in den Analyse-Pipeline-Umbau aufgegangen; Plan 2 (Trichter) und Plan 3 (Analyse & Ranking) offen — s. C.6 |
 | 3D | Learning Modul | ⚠️ **Platzhalter — Planungssession ausstehend** |
 | 3E | Human-in-the-Loop | ⚠️ **Platzhalter — Planungssession ausstehend** |
 | 3F | Volle 500-Ticker-Skalierung | ⚠️ **Platzhalter — Planungssession ausstehend** |
@@ -1407,6 +1409,42 @@ uniform, kein Sonderweg nötig.
 ⏳ **Offen für Plan 2:** liefert `marketDetails` neben `bid` auch `offer`? Falls ja, fällt
 der Spread beim Sweep kostenlos mit ab und der 2b-Punkt „spread-bereinigtes R/R" wird
 deutlich billiger. Kostet bei der Implementierung einen Blick in die Rohantwort.
+
+### C.6 — Analyse-Pipeline-Umbau, Plan 1 (Fundament) ✅ abgeschlossen 2026-08-12
+
+Spec: `docs/superpowers/specs/2026-08-11-analyse-pipeline-umbau-design.md`
+Plan: `docs/superpowers/plans/2026-08-11-analyse-pipeline-plan1-fundament.md`
+
+**Keine Verhaltensänderung.** 17 Indikatoren laufen mit und füllen 29 neue Spalten
+in `technical_indicators`; das Technik-Signal ist berechenbar, steuert aber nichts.
+646 Tests, 93,31 % Coverage (`pytest tests/ --cov=src --cov-fail-under=80 -q`).
+
+| Task | Commit | Was landete |
+|---|---|---|
+| 2 | `f8f6684` | `cost_tracker`-Fix: `fresh_input` zog Cache-Treffer kein zweites Mal mehr ab |
+| 3 | `d9136c6`, `0e91225` | Indikator-Mathematik aus `data_collector.py` nach `src/indicators.py` ausgelagert (reine Verschiebung, Testzahl unverändert) |
+| 4 | `4445018` | Ladefenster `load_price_history_from_db()` 200 → 220 Bars |
+| 5 | `0607d33`, `f81b164` | EMA50, MACD-Rohwerte, ADX, Parabolic SAR, Ichimoku |
+| 6 | `c9760e4` | Stochastik, Williams %R, CCI(20), Momentum(12), TRIX(15,9), Bollinger-Rohwerte, ATR absolut, Donchian(20), OBV |
+| 7 | `5e9a9ec` | 29 neue Spalten in `technical_indicators`, migrationsgeschützt; die vierzehn Funktionen in `_process_ticker` verdrahtet |
+| 8 | `f65777a` | `src/technical_signal.py` — deterministisches Signal, noch kein Abnehmer |
+
+⚠️ **Befund: `cost_tracker` rechnete zu billig.** `fresh_input` zog die Cache-Treffer
+ein zweites Mal ab, obwohl `input_tokens` von der API bereits der ungecachte Rest ist.
+**Alle vor 2026-08-12 gemessenen Laufkosten sind damit zu niedrig ausgewiesen** — grob
+5 % beim Lauf vom 2026-08-09, wachsend mit der Cache-Trefferquote. Dieselbe
+Fehlannahme steckte in `cache_hit_rate`, die dadurch über 1 gehen konnte.
+
+⚠️ **Bewusst nicht geschlossen: `GAP_SCAN_BARS` bleibt bei 200, das Ladefenster ist jetzt
+220.** Die Lückenprüfung in `data_collector.py` scannt weiterhin nur die letzten 200 Bars,
+während `load_price_history_from_db()` seit Task 4 220 lädt. Eine Lücke, die genau auf
+Bar 201–220 liegt, ist für die Lückenprüfung damit unsichtbar, verzerrt aber weiterhin
+SMA200. Eine Anhebung von `GAP_SCAN_BARS` würde ändern, welche Ticker wegen Datenqualität
+übersprungen werden — eine Verhaltensänderung, die Plan 1 explizit nicht anfassen darf
+(s. Kommentar an der Konstanten, `src/data_collector.py`). Liegt bei Plan 2.
+
+Nach Task 9 gilt: der Stand ist gefahrlos einspielbar, kein einziges Pipeline-Verhalten
+hat sich geändert. Plan 2 (Trichter) setzt darauf auf.
 
 ---
 

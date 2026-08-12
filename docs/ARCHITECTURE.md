@@ -1,6 +1,11 @@
 # Shares_Future – Architektur & Design
 
-**Zuletzt aktualisiert:** 2026-08-09 — `src/universe.py` als eine Quelle des Ticker-
+**Zuletzt aktualisiert:** 2026-08-12 — Sprint 3C / Plan 1 (Fundament) nachgezogen: zwei
+neue Module (`src/indicators.py`, `src/technical_signal.py`), 29 neue Spalten in
+`technical_indicators`, Ladefenster-Invariante, Testzahlen auf 646. **Keine
+Verhaltensänderung** — Details PROJECT_STATUS C.6.
+
+Davor, 2026-08-09 — `src/universe.py` als eine Quelle des Ticker-
 Universums, Historien-Guard, erweiterte Invariantenliste, Testzahlen auf 608.
 
 > **Dieses Dokument beschreibt den IST-Zustand des Codes.**
@@ -223,6 +228,68 @@ def collect(
 - `intraday_range_pct` = (High - Low) / Close × 100 (letzte 5 Tage)
 - `above_sma200` = (Price - SMA200) / SMA200 × 100
 - RSI-14, MACD, ATR berechenbar (oder `data_quality=low`)
+
+---
+
+### 1b. **`src/indicators.py`** (neu, Sprint 3C / Plan 1 Fundament, 2026-08-12)
+
+Die 17 technischen Indikatoren aus der Spec als reine Funktionen über ein OHLCV-DataFrame
+(Spalten `Open/High/Low/Close/Volume`, gross geschrieben — wie
+`db.load_price_history_from_db()` liefert). **Kein Provider-, DB- oder Netzzugriff.** Aus
+`data_collector.py` herausgelöst (`d9136c6`, `0e91225`), weil dort Indikatormathematik mit
+Provider- und DB-Verdrahtung vermischt war — reine Verschiebung, Testzahl unverändert.
+
+```python
+def compute_rsi_14(df) -> float | None: ...
+def compute_macd_raw(df) -> dict[str, float | None]: ...      # {macd_line, macd_signal_line, macd_hist}
+def compute_adx(df) -> dict[str, float | None]: ...           # {adx_14, di_plus, di_minus}
+def compute_psar(df) -> dict[str, float | str | None]: ...    # {psar_value, psar_dir}
+def compute_ichimoku(df) -> dict[str, float | None]: ...      # 5 Linien
+def compute_stochastic(df) -> dict[str, float | None]: ...    # {stoch_k, stoch_d}
+def compute_bollinger_raw(df) -> dict[str, float | None]: ... # {bb_upper, bb_lower, bb_width}
+def compute_donchian(df) -> dict[str, float | None]: ...      # {donch_upper, donch_mid, donch_lower}
+def compute_trix(df) -> dict[str, float | None]: ...          # {trix, trix_signal}
+def compute_willr(df) / compute_cci(df) / compute_momentum(df) / compute_atr_abs(df) / compute_obv(df) -> float | None: ...
+def compute_ema_distance_pct(df, length) -> float | None: ...
+```
+
+Jede Funktion trägt ihre eigene `MIN_BARS_*`-Schwelle (10 für PSAR bis 78 für Ichimoku)
+und liefert unterhalb davon `None` statt eines unsicheren Werts.
+
+⚠️ `compute_obv` beruht auf `lastTradedVolume` — einem CFD-Broker-Proxy von Capital.com,
+nicht auf Börsenvolumen. Als Richtungsmaß brauchbar, als Niveauaussage nicht.
+⚠️ Fehlende Werte sind `None`, nie `0` — eine Null wäre eine erfundene Messung.
+
+Verdrahtet in `data_collector._process_ticker()` (`5e9a9ec`); die Ergebnisse füllen 29
+Spalten in `technical_indicators` (s. Modul 11).
+
+---
+
+### 1c. **`src/technical_signal.py`** (neu, Sprint 3C / Plan 1 Fundament, `f65777a`)
+
+Richtung (`long`/`short`/`neutral`) und zählbare Stärke (0–4) aus drei abstimmenden
+Teilindikatoren — RSI als Momentum (nicht Mean-Reversion), MACD über das
+Histogramm-Vorzeichen (nicht die Kreuzung), SMA-Trend (Kurs > SMA50 > SMA200). ADX
+moduliert die Stärke (`weak` → 1, `strong` → Bonus +1), **filtert aber nie die
+Richtung**. Deterministisch, kein Claude-Call, keine DB, kein Netz — eine reine Funktion
+über das Phase-1-Snapshot-Dict, deshalb tabellengetrieben ohne Mocking testbar.
+
+```python
+@dataclass(frozen=True)
+class TechnicalSignal:
+    direction: str  # "long" | "short" | "neutral"
+    agreement: int  # wie viele der drei Teilindikatoren übereinstimmen
+    adx_band: str   # "weak" | "normal" | "strong"
+    strength: int   # 0-4
+
+def compute(td: dict) -> TechnicalSignal: ...
+```
+
+Die drei Ablesungen sind bewusste Entscheidungen, keine zwingenden Herleitungen — welche
+davon besser predictet, misst Sprint 3D aus der Outcome-Historie.
+
+**Wird ab Plan 3 vom Ranking konsumiert — bis dahin ist das Signal berechenbar, aber
+steuert nichts.**
 
 ---
 
@@ -714,7 +781,8 @@ SQLite-Schema + Persistence.
 
 **Tabellen:**
 - `predictions` – Alle generierten Setups (id, date, ticker, direction, scores, hold_day, extended_hold, ...)
-- `technical_indicators` – Phase 1 Daten (rsi_14, macd, ...)
+- `technical_indicators` – Phase 1 Daten (rsi_14, macd, ..., seit Sprint 3C / Plan 1
+  zusätzlich 29 Spalten für die 17 Indikatoren aus `src/indicators.py`, s. unten)
 - `outcomes` – Walk-Forward Ergebnisse (tp_hit, sl_hit, days_to_close, hold_day, extended_hold, p&l, ...)
 - `position_recommendations` – Phase 4a Output (HALTEN/SCHLIESSEN/ANPASSEN)
 - `cost_tracking` – Claude-API Kosten pro Run
@@ -749,7 +817,15 @@ Altlast wie die toten Konstanten `MAX_DEEP_ANALYSIS` und `BATCH_SIZE_QUICK`.
 > Die vier Momentum-Spalten sind angelegt, werden aber noch von niemandem
 > **befüllt** — das macht Plan 2 zusammen mit der Guardrail-Auswertung.
 
-**Geplant in 3C** (noch nicht angelegt):
+**Neu in Sprint 3C / Plan 1 (Fundament), abgeschlossen 2026-08-12** (s. PROJECT_STATUS C.6):
+- `technical_indicators` um **29 Spalten** erweitert (`5e9a9ec`), migrationsgeschützt
+  (`_apply_migrations`, additiv, alle NULL-fähig) — MACD/ADX je drei, Ichimoku fünf,
+  Bollinger/Donchian je drei, PSAR/Stochastik/TRIX je zwei, plus `ema_50_dist_pct`,
+  `willr_14`, `cci_20`, `mom_12`, `atr_abs`, `obv`
+- Befüllt von `data_collector._process_ticker()`, aber **noch von niemandem konsumiert** —
+  keine Verhaltensänderung
+
+**Geplant in Plan 3** (noch nicht angelegt):
 - `predictions.ranking_score` – neue Spalte für den kombinierten Score
 
 **Wichtige Helpers:**
@@ -957,6 +1033,12 @@ TOTAL: ~3.50 EUR
     `pre_market` und `trade_proposals` ab, bevor Kosten entstehen (seit 2026-08-08)
 12. **Tests telefonieren nicht nach draussen** – ausserhalb `tests/live/` sperrt ein
     Autouse-Fixture auf Transport-Ebene
+13. **Ladefenster ≥ längster Indikator + Reserve** – `load_price_history_from_db()` muss
+    mindestens die Länge des längsten Indikators tragen, aktuell **220** Bars (SMA200
+    braucht 200; die 20 Bars Reserve verhindern, dass der Wert an einer einzigen
+    fehlenden Bar hängt). ⚠️ `GAP_SCAN_BARS` in `data_collector.py` bleibt bewusst bei
+    **200** — die Lückenprüfung und das Indikator-Ladefenster sind seit 2026-08-12 zwei
+    verschiedene Zahlen, s. PROJECT_STATUS C.6
 
 ---
 
@@ -964,10 +1046,11 @@ TOTAL: ~3.50 EUR
 
 - **Unit Tests**: isolierte Module, Mock-Claude, Fixtures
 - **Integration Tests** (4): volle Pipeline + E2E-HTML-Render + trade_proposals-Flow
-- **Coverage Gate**: 80 % Minimum (aktuell 93,47 %)
-- **Baseline**: `pytest tests/ -q` → **608 passed, 7 skipped**, 0 failures (Stand 2026-08-09).
-  Die 7 übersprungenen sind die Live-Tests unter `tests/live/`; sie laufen nur mit
-  `--run-live` und sprechen dann echte APIs an (inkl. echtem Mailversand).
+- **Coverage Gate**: 80 % Minimum (aktuell 93,31 %)
+- **Baseline**: `pytest tests/ --cov=src --cov-fail-under=80 -q` → **646 passed, 7 skipped**,
+  0 failures (Stand 2026-08-12, nach Plan 1 / Fundament). Die 7 übersprungenen sind die
+  Live-Tests unter `tests/live/`; sie laufen nur mit `--run-live` und sprechen dann echte
+  APIs an (inkl. echtem Mailversand).
 
 ---
 

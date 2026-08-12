@@ -1,8 +1,9 @@
 # Shares_Future – SP500 CFD Research Tool
 
-**Zuletzt aktualisiert:** 2026-08-12 — Sprint 3C ist **spezifiziert und geplant**
-(Analyse-Pipeline-Umbau: Trichter, zwei zählbare Signale, neues Ranking). Spec und Plan 1
-liegen, Code noch keiner. Details: PROJECT_STATUS C.5.
+**Zuletzt aktualisiert:** 2026-08-12 — Sprint 3C / **Plan 1 (Fundament) ist code-fertig**
+(Analyse-Pipeline-Umbau: Trichter, zwei zählbare Signale, neues Ranking). 17 Indikatoren
+laufen mit und füllen 29 neue Spalten, das Technik-Signal ist berechenbar — **keine
+Verhaltensänderung.** Details: PROJECT_STATUS C.6. Einstieg ist jetzt Plan 2 (Trichter).
 ⏳ Offen und **unabhängig vom Umbau**: `trade_proposals` und `weekly` (nie ausgeführt), der
 einmalige `bootstrap-db`-Lauf, danach die Reaktivierung von `analyze.yml`.
 
@@ -10,7 +11,7 @@ Davor, 2026-08-09 — `pre_market` erstmals vollständig gelaufen (3,13 EUR, 10 
 Mail zugestellt), Docker-Smoke-Test bestanden, alle `.md`-Dateien auf diesen Stand gezogen.
 Details: PROJECT_STATUS P2.10 / P2.11.
 ⚠️ Die dort genannten Kosten sind **zu niedrig** ausgewiesen: `cost_tracker` zog
-Cache-Treffer zweimal ab. Der Fix ist Task 2 in Plan 1.
+Cache-Treffer zweimal ab. Seit `f8f6684` (Plan 1, Task 2) behoben.
 
 ## Projektübersicht
 Automatisiertes Research-Tool zur täglichen Analyse von S&P 500 Aktien,
@@ -44,6 +45,13 @@ Die Pipeline-Phasen lassen sich an `main.py:run_pipeline()` ablesen.
   Auto-Retry nach `TICKER_RETRY_AFTER_DAYS = 30`, manueller Reset via `--reactivate`
 - Sektor-Momentum wird als **zwei getrennte Signale** erhoben (ETF + DB-Durchschnitt)
   und nie verrechnet — Sprint 3D soll messen, welches besser predictet
+- Das technische Signal ist **deterministisch im Code** (`src/technical_signal.py`),
+  kein Claude-Call: drei Teilindikatoren stimmen ab, ADX moduliert die Stärke,
+  filtert aber nie die Richtung. Die drei Ablesungen (RSI als Momentum, MACD über
+  das Histogramm, SMA200-Degradation) sind bewusste Entscheidungen — welche besser
+  predictet, misst 3D.
+- `technical_indicators` trägt 17 Indikatoren, von denen zunächst nur vier etwas
+  steuern. Der Rest läuft mit, damit 3D später Historie hat statt bei null zu beginnen.
 - Mailversand über Resend. Ein `2xx` heisst nur "angenommen"; die Zustellung läuft
   asynchron und scheitert ggf. später unter `GET /emails/{id}` mit
   `last_event="failed"`. Erfolg nie am Statuscode festmachen.
@@ -202,15 +210,16 @@ und der getroffenen Entscheidungen. Kurzfassung:
   Stand und Befunde in PROJECT_STATUS, Abschnitt P3. ⚠️ **Nie in einem echten
   Pipelinelauf ausgeführt** — verifiziert wurde nur lesend gegen die API, in
   Wegwerf-Datenbanken. Er entstand nach den Läufen vom 2026-08-04.
-- **3C** (Ranking-Überarbeitung) ist **spezifiziert und geplant, Umsetzung offen.** Die
-  Teilschritte C.1–C.4 sind in einer gemeinsamen Spec aufgegangen, die den Trichter, die
-  zwei Signale und das Ranking zusammen neu fasst:
+- **3C** (Ranking-Überarbeitung): **Plan 1 (Fundament) ist code-fertig**, Plan 2 und 3
+  offen. Die Teilschritte C.1–C.4 sind in einer gemeinsamen Spec aufgegangen, die den
+  Trichter, die zwei Signale und das Ranking zusammen neu fasst:
   `docs/superpowers/specs/2026-08-11-analyse-pipeline-umbau-design.md`.
   Die Umsetzung zerfällt in **drei unabhängig lieferbare Pläne**; Plan 1 (Fundament:
-  17 Indikatoren, Technik-Signal, Schema) liegt fertig unter
-  `docs/superpowers/plans/2026-08-11-analyse-pipeline-plan1-fundament.md` und ändert
-  **kein Pipeline-Verhalten**. Task 1 (Sammelabruf-Sonde) ist erledigt — Einstieg ist
-  Task 2. Stand und Messprotokoll: PROJECT_STATUS, Abschnitt C.5.
+  17 Indikatoren, Technik-Signal, Schema) ist unter
+  `docs/superpowers/plans/2026-08-11-analyse-pipeline-plan1-fundament.md` **abgeschlossen
+  und ändert kein Pipeline-Verhalten** — das Technik-Signal ist berechenbar, steuert aber
+  nichts. Einstieg ist jetzt **Plan 2 (Trichter)**. Stand und Messprotokoll:
+  PROJECT_STATUS, Abschnitt C.6.
 - **3D / 3E / 3F** sind ⚠️ **Platzhalter** — bei Erreichen aktiv nachfragen und den
   Sprint gemeinsam ausarbeiten, **bevor** Code entsteht. Die Stichpunkte dort sind
   keine Spezifikation.
