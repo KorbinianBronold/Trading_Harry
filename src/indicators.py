@@ -21,6 +21,7 @@ MIN_BARS_MACD = 35
 MIN_BARS_EMA50 = 50
 MIN_BARS_ADX = 28
 MIN_BARS_ICHIMOKU = 78
+MIN_BARS_PSAR = 10
 
 # Spaltennamen von pandas_ta 0.4.71b0, am 2026-08-11 gegen die installierte
 # Version verifiziert. Sie enthalten die Parameter im Namen -- aendert sich eine
@@ -237,7 +238,7 @@ def compute_psar(df: pd.DataFrame) -> dict[str, float | str | None]:
     Richtung ergibt sich daraus, welche der beiden belegt ist.
     """
     empty: dict[str, float | str | None] = {"psar_value": None, "psar_dir": None}
-    if len(df) < 10:
+    if len(df) < MIN_BARS_PSAR:
         return empty
     psar = ta.psar(df["High"], df["Low"], df["Close"])
     if psar is None or psar.empty:

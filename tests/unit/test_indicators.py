@@ -7,6 +7,7 @@ wurden."""
 import math
 import numpy as np
 import pandas as pd
+import pandas_ta as ta
 import pytest
 from src import indicators as ind
 from src.indicators import (
@@ -173,11 +174,35 @@ def test_adx_returns_index_and_both_directional_lines(ohlcv):
     assert 0.0 <= out["adx_14"] <= 100.0
 
 
+def test_adx_is_the_index_not_a_directional_line(ohlcv):
+    # adx_14, di_plus and di_minus are all in 0..100, so a swapped column
+    # (e.g. adx_14 wired to DMP_14) would still satisfy the shape-only test
+    # above. Pin each key against its own pandas_ta column by value.
+    out = ind.compute_adx(ohlcv)
+    raw = ta.adx(ohlcv["High"], ohlcv["Low"], ohlcv["Close"])
+    assert out["adx_14"]   == pytest.approx(raw["ADX_14"].iloc[-1])
+    assert out["di_plus"]  == pytest.approx(raw["DMP_14"].iloc[-1])
+    assert out["di_minus"] == pytest.approx(raw["DMN_14"].iloc[-1])
+
+
 def test_psar_direction_is_long_or_short_never_both(ohlcv):
     out = ind.compute_psar(ohlcv)
     assert out["psar_dir"] in ("long", "short", None)
     if out["psar_dir"] is not None:
         assert out["psar_value"] is not None
+
+
+def test_psar_long_means_price_above_the_stop(ohlcv):
+    # "long"/"short" alone doesn't prove psar_value came from the matching
+    # PSARl/PSARs column -- a swapped label would still pass the shape-only
+    # test above. A long stop sits below price, a short stop sits above it;
+    # check whichever direction this fixture actually produced.
+    out = ind.compute_psar(ohlcv)
+    close = float(ohlcv["Close"].iloc[-1])
+    if out["psar_dir"] == "long":
+        assert out["psar_value"] < close
+    elif out["psar_dir"] == "short":
+        assert out["psar_value"] > close
 
 
 def test_ichimoku_returns_five_lines(ohlcv):
@@ -186,6 +211,28 @@ def test_ichimoku_returns_five_lines(ohlcv):
         "ichi_tenkan", "ichi_kijun", "ichi_senkou_a",
         "ichi_senkou_b", "ichi_chikou",
     }
+
+
+def test_ichimoku_values_match_pandas_ta_columns(ohlcv):
+    # Existence-only checks above would not catch e.g. ichi_kijun wired to
+    # ISA_9 instead of IKS_26. Pin all five keys against their own raw
+    # pandas_ta column by value.
+    out = ind.compute_ichimoku(ohlcv)
+    raw = ta.ichimoku(ohlcv["High"], ohlcv["Low"], ohlcv["Close"])[0]
+    assert out["ichi_tenkan"]   == pytest.approx(raw["ITS_9"].iloc[-1])
+    assert out["ichi_kijun"]    == pytest.approx(raw["IKS_26"].iloc[-1])
+    assert out["ichi_senkou_a"] == pytest.approx(raw["ISA_9"].iloc[-1])
+    assert out["ichi_senkou_b"] == pytest.approx(raw["ISB_26"].iloc[-1])
+    # ICS_26 (Chikou) is shifted 26 bars into the past, so its very last
+    # value is NaN for this fixture even though the other four lines are
+    # finite (verified empirically, not fixture-seed-specific in principle --
+    # any trailing window can land on the shifted gap). Hard-coding a numeric
+    # expectation here would be coincidental, not a real mapping check.
+    # Instead, apply the same "last value or None" rule the function itself
+    # uses (ind._last_finite) to the raw column and compare -- this still
+    # catches a swap: if ichi_chikou were wired to any of the other (finite)
+    # columns instead, this equality would fail because that value isn't None.
+    assert out["ichi_chikou"] == ind._last_finite(raw["ICS_26"])
 
 
 def test_ichimoku_returns_nones_on_short_history(ohlcv):
