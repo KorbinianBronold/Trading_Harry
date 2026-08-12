@@ -17,6 +17,7 @@ def _df_monotonic_up(rows: int = 250) -> pd.DataFrame:
 from unittest.mock import MagicMock
 from src.db import init_schema
 from src.data_collector import _process_ticker, _classify_data_quality
+from src import data_collector
 
 
 def _seed_price_history(conn, ticker: str, df: pd.DataFrame) -> None:
@@ -120,6 +121,35 @@ def test_process_ticker_writes_indicators(in_memory_db):
         "SELECT COUNT(*) AS c FROM technical_indicators WHERE ticker=?", ("AAPL",)
     ).fetchone()["c"]
     assert ti == 1
+
+
+def test_process_ticker_persists_the_new_indicators(in_memory_db):
+    """Ein Durchlauf muss die neuen Spalten tatsaechlich fuellen -- nicht nur
+    die Tabelle anlegen."""
+    conn = in_memory_db
+    init_schema(conn)
+    df = _df_monotonic_up(rows=250)
+    _seed_price_history(conn, "AAPL", df)
+    # Datum aus dem Fixture ableiten statt hart zu setzen: so bleibt der Test
+    # unabhaengig davon, welche Kalendertage _df_monotonic_up erzeugt.
+    as_of = df.index[-1].strftime("%Y-%m-%d")
+
+    td = data_collector._process_ticker(
+        ticker="AAPL",
+        price_provider=_good_provider(df),
+        earnings_provider=_earnings_provider(),
+        conn=conn, date=as_of, run_type="pre_market",
+    )
+
+    assert td is not None
+    row = conn.execute(
+        "SELECT * FROM technical_indicators WHERE ticker=? AND date=?",
+        ("AAPL", as_of),
+    ).fetchone()
+    assert row["macd_line"] is not None
+    assert row["adx_14"] is not None
+    assert row["obv"] is not None
+    assert row["ichi_kijun"] is not None
 
 
 def test_process_ticker_skips_on_none_price_history(in_memory_db):

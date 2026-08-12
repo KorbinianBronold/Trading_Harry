@@ -29,6 +29,22 @@ CREATE TABLE IF NOT EXISTS technical_indicators (
     rsi_14 REAL, macd_signal TEXT, atr_pct REAL,
     bb_position REAL, above_sma20 REAL, above_sma50 REAL, above_sma200 REAL,
     volume_ratio REAL, intraday_range_pct REAL,
+    -- Sprint 3C / Analyse-Pipeline-Umbau: die 17 Indikatoren aus der Spec,
+    -- mehrwertig auf 29 Spalten (MACD/ADX je drei, Ichimoku fuenf, Bollinger/
+    -- Donchian je drei, PSAR/Stochastik/TRIX je zwei). Additiv, alle NULL-faehig.
+    ema_50_dist_pct REAL,
+    macd_line REAL, macd_signal_line REAL, macd_hist REAL,
+    adx_14 REAL, di_plus REAL, di_minus REAL,
+    psar_value REAL, psar_dir TEXT,
+    ichi_tenkan REAL, ichi_kijun REAL,
+    ichi_senkou_a REAL, ichi_senkou_b REAL, ichi_chikou REAL,
+    stoch_k REAL, stoch_d REAL,
+    willr_14 REAL, cci_20 REAL, mom_12 REAL,
+    trix REAL, trix_signal REAL,
+    bb_upper REAL, bb_lower REAL, bb_width REAL,
+    atr_abs REAL,
+    donch_upper REAL, donch_mid REAL, donch_lower REAL,
+    obv REAL,
     UNIQUE(ticker, date)
 );
 
@@ -215,6 +231,32 @@ def _apply_migrations(conn: sqlite3.Connection) -> None:
         conn.execute(
             "ALTER TABLE technical_indicators ADD COLUMN intraday_range_pct REAL"
         )
+
+    # Sprint 3C / Analyse-Pipeline-Umbau: die 17 Indikatoren aus der Spec.
+    # Additiv und NULL-faehig -- Altzeilen bleiben lesbar, sie tragen fuer die
+    # neuen Spalten schlicht NULL.
+    existing = {
+        r["name"] for r in conn.execute("PRAGMA table_info(technical_indicators)")
+    }
+    for column, sql_type in (
+        ("ema_50_dist_pct", "REAL"),
+        ("macd_line", "REAL"), ("macd_signal_line", "REAL"), ("macd_hist", "REAL"),
+        ("adx_14", "REAL"), ("di_plus", "REAL"), ("di_minus", "REAL"),
+        ("psar_value", "REAL"), ("psar_dir", "TEXT"),
+        ("ichi_tenkan", "REAL"), ("ichi_kijun", "REAL"),
+        ("ichi_senkou_a", "REAL"), ("ichi_senkou_b", "REAL"), ("ichi_chikou", "REAL"),
+        ("stoch_k", "REAL"), ("stoch_d", "REAL"),
+        ("willr_14", "REAL"), ("cci_20", "REAL"), ("mom_12", "REAL"),
+        ("trix", "REAL"), ("trix_signal", "REAL"),
+        ("bb_upper", "REAL"), ("bb_lower", "REAL"), ("bb_width", "REAL"),
+        ("atr_abs", "REAL"),
+        ("donch_upper", "REAL"), ("donch_mid", "REAL"), ("donch_lower", "REAL"),
+        ("obv", "REAL"),
+    ):
+        if column not in existing:
+            conn.execute(
+                f"ALTER TABLE technical_indicators ADD COLUMN {column} {sql_type}"
+            )
 
     pred_cols = {r["name"] for r in conn.execute(
         "PRAGMA table_info(predictions)"
@@ -666,6 +708,19 @@ def upsert_technical_indicators(conn: sqlite3.Connection, row: dict) -> None:
         "ticker", "date", "rsi_14", "macd_signal", "atr_pct",
         "bb_position", "above_sma20", "above_sma50", "above_sma200",
         "volume_ratio", "intraday_range_pct",
+        # Sprint 3C / Analyse-Pipeline-Umbau: die 29 neuen Indikator-Spalten.
+        "ema_50_dist_pct",
+        "macd_line", "macd_signal_line", "macd_hist",
+        "adx_14", "di_plus", "di_minus",
+        "psar_value", "psar_dir",
+        "ichi_tenkan", "ichi_kijun", "ichi_senkou_a", "ichi_senkou_b", "ichi_chikou",
+        "stoch_k", "stoch_d",
+        "willr_14", "cci_20", "mom_12",
+        "trix", "trix_signal",
+        "bb_upper", "bb_lower", "bb_width",
+        "atr_abs",
+        "donch_upper", "donch_mid", "donch_lower",
+        "obv",
     ]
     placeholders = ", ".join(["?"] * len(cols))
     values = [row.get(c) for c in cols]

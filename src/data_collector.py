@@ -12,15 +12,29 @@ from typing import Any
 
 from src.indicators import (
     MIN_BARS_RSI,
+    compute_adx,
+    compute_atr_abs,
     compute_atr_pct,
     compute_bb_position,
+    compute_bollinger_raw,
+    compute_cci,
+    compute_donchian,
+    compute_ema_distance_pct,
+    compute_ichimoku,
     compute_intraday_range_pct,
+    compute_macd_raw,
     compute_macd_signal,
+    compute_momentum,
+    compute_obv,
     compute_price_changes,
+    compute_psar,
     compute_rsi_14,
     compute_rsi_trend,
     compute_sma_distance_pct,
+    compute_stochastic,
+    compute_trix,
     compute_volume_ratio,
+    compute_willr,
 )
 
 log = logging.getLogger("shares_future.data_collector")
@@ -190,6 +204,36 @@ def _persist_indicators(conn, ticker: str, date: str, td: dict) -> None:
         "above_sma200": td.get("above_sma200"),
         "volume_ratio": td.get("volume_ratio"),
         "intraday_range_pct": td.get("intraday_range_pct"),
+        # Sprint 3C / Analyse-Pipeline-Umbau (Task 7): die 29 neuen Spalten.
+        "ema_50_dist_pct": td.get("ema_50_dist_pct"),
+        "macd_line": td.get("macd_line"),
+        "macd_signal_line": td.get("macd_signal_line"),
+        "macd_hist": td.get("macd_hist"),
+        "adx_14": td.get("adx_14"),
+        "di_plus": td.get("di_plus"),
+        "di_minus": td.get("di_minus"),
+        "psar_value": td.get("psar_value"),
+        "psar_dir": td.get("psar_dir"),
+        "ichi_tenkan": td.get("ichi_tenkan"),
+        "ichi_kijun": td.get("ichi_kijun"),
+        "ichi_senkou_a": td.get("ichi_senkou_a"),
+        "ichi_senkou_b": td.get("ichi_senkou_b"),
+        "ichi_chikou": td.get("ichi_chikou"),
+        "stoch_k": td.get("stoch_k"),
+        "stoch_d": td.get("stoch_d"),
+        "willr_14": td.get("willr_14"),
+        "cci_20": td.get("cci_20"),
+        "mom_12": td.get("mom_12"),
+        "trix": td.get("trix"),
+        "trix_signal": td.get("trix_signal"),
+        "bb_upper": td.get("bb_upper"),
+        "bb_lower": td.get("bb_lower"),
+        "bb_width": td.get("bb_width"),
+        "atr_abs": td.get("atr_abs"),
+        "donch_upper": td.get("donch_upper"),
+        "donch_mid": td.get("donch_mid"),
+        "donch_lower": td.get("donch_lower"),
+        "obv": td.get("obv"),
     })
 
 
@@ -232,7 +276,7 @@ def _process_ticker(
     run_type: str,
 ) -> dict | None:
     """Runs the full Phase-1 pipeline for one ticker: ensures today's bar exists,
-    computes indicators from the last 200 DB days, and fetches fundamentals/earnings
+    computes indicators from the last 220 DB days, and fetches fundamentals/earnings
     (cache-first). Returns the TickerData dict, or None (with a skipped_tickers row)
     if there's insufficient or low-quality data."""
     # Step 1: Luecken schliessen (Spec B.8)
@@ -269,6 +313,23 @@ def _process_ticker(
         "above_sma200":       compute_sma_distance_pct(df, 200),
         "volume_ratio":       compute_volume_ratio(df),
         "intraday_range_pct": compute_intraday_range_pct(df),
+        # Sprint 3C / Analyse-Pipeline-Umbau (Plan 1, Task 5/6): 29 weitere
+        # Spalten. Kein Konsument liest sie noch -- der Wert liegt darin, dass
+        # die Historie jetzt zu laufen beginnt statt erst mit Sprint 3D.
+        **compute_macd_raw(df),
+        **compute_adx(df),
+        **compute_psar(df),
+        **compute_ichimoku(df),
+        **compute_stochastic(df),
+        **compute_trix(df),
+        **compute_bollinger_raw(df),
+        **compute_donchian(df),
+        "ema_50_dist_pct": compute_ema_distance_pct(df, 50),
+        "willr_14":        compute_willr(df),
+        "cci_20":          compute_cci(df),
+        "mom_12":          compute_momentum(df),
+        "atr_abs":         compute_atr_abs(df),
+        "obv":             compute_obv(df),
     }
 
     # Fundamentals: cache-first

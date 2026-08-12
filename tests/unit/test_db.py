@@ -151,6 +151,57 @@ def test_upsert_technical_indicators_inserts_and_replaces(in_memory_db):
     assert row["intraday_range_pct"] == 1.5
 
 
+# Sprint 3C / Analyse-Pipeline-Umbau, Task 7: 29 neue Spalten fuer die
+# Indikatoren aus Task 5/6 (MACD, ADX, PSAR, Ichimoku, Stochastik, TRIX,
+# Bollinger-Rohwerte, Donchian, plus sechs Einzelwerte).
+NEW_INDICATOR_COLUMNS = [
+    "ema_50_dist_pct",
+    "macd_line", "macd_signal_line", "macd_hist",
+    "adx_14", "di_plus", "di_minus",
+    "psar_value", "psar_dir",
+    "ichi_tenkan", "ichi_kijun", "ichi_senkou_a", "ichi_senkou_b", "ichi_chikou",
+    "stoch_k", "stoch_d",
+    "willr_14", "cci_20", "mom_12",
+    "trix", "trix_signal",
+    "bb_upper", "bb_lower", "bb_width",
+    "atr_abs",
+    "donch_upper", "donch_mid", "donch_lower",
+    "obv",
+]
+
+
+def test_technical_indicators_carries_the_new_columns(tmp_path):
+    from src import db
+    conn = db.connect(str(tmp_path / "t.db"))
+    db.init_schema(conn)
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(technical_indicators)")}
+    missing = set(NEW_INDICATOR_COLUMNS) - cols
+    assert not missing, f"Fehlende Spalten: {sorted(missing)}"
+
+
+def test_migration_adds_columns_to_an_existing_table(tmp_path):
+    """Die Migration muss auf einer ALTEN Tabelle greifen, nicht nur auf einer
+    frisch angelegten -- sonst bleibt die Produktions-DB zurueck."""
+    from src import db
+    path = str(tmp_path / "old.db")
+    conn = db.connect(path)
+    conn.executescript("""
+        CREATE TABLE technical_indicators (
+            ticker TEXT NOT NULL, date TEXT NOT NULL,
+            rsi_14 REAL, macd_signal TEXT, atr_pct REAL,
+            bb_position REAL, above_sma20 REAL, above_sma50 REAL,
+            above_sma200 REAL, volume_ratio REAL,
+            UNIQUE(ticker, date)
+        );
+    """)
+    conn.commit()
+
+    db.init_schema(conn)
+
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(technical_indicators)")}
+    assert set(NEW_INDICATOR_COLUMNS) <= cols
+
+
 def test_save_trend_analysis_roundtrip(in_memory_db):
     init_schema(in_memory_db)
     save_trend_analysis(in_memory_db, {
