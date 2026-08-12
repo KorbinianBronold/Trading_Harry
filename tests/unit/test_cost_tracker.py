@@ -25,7 +25,7 @@ def test_cache_read_tokens_priced_lower_than_fresh_input():
     fresh = CostTracker()
     fresh.add_call(
         model="claude-sonnet-4-6",
-        input_tokens=10_000, output_tokens=0,
+        input_tokens=19_000, output_tokens=0,
         cache_read_tokens=0, web_search_calls=0,
     )
     cached = CostTracker()
@@ -93,3 +93,32 @@ def test_add_from_result_forwards_all_fields():
     assert tracker.cache_read_tokens == 200
     assert tracker.web_search_calls == 2
     assert tracker.total_eur > 0
+
+
+def test_input_tokens_are_already_the_uncached_remainder():
+    """Die API liefert input_tokens als ungecachten Rest -- cache_read darf nicht
+    ein zweites Mal abgezogen werden."""
+    t = CostTracker(hard_cap_eur=100.0)
+    t.add_call(
+        model="claude-sonnet-4-6",
+        input_tokens=3_000,        # bereits OHNE die gecachten Tokens
+        output_tokens=0,
+        cache_read_tokens=2_000,
+    )
+    # 3000 frische Input-Tokens zu 3 USD/Mio + 2000 Cache-Reads zu 0,30 USD/Mio
+    expected_usd = 3_000 / 1e6 * 3.00 + 2_000 / 1e6 * 0.30
+    assert t.total_eur == pytest.approx(expected_usd / 1.10)
+
+
+def test_cache_hit_rate_stays_within_zero_and_one():
+    """Trefferquote = Cache-Reads / Gesamt-Prompt, nicht / ungecachter Rest."""
+    t = CostTracker(hard_cap_eur=100.0)
+    t.add_call(
+        model="claude-sonnet-4-6",
+        input_tokens=1_000,
+        output_tokens=0,
+        cache_read_tokens=9_000,
+    )
+    rate = t.summary(run_type="pre_market", date="2026-08-11")["cache_hit_rate"]
+    assert 0.0 <= rate <= 1.0
+    assert rate == pytest.approx(9_000 / 10_000)

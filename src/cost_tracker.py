@@ -49,9 +49,12 @@ class CostTracker:
         if pricing is None:
             raise ValueError(f"Unknown model pricing: {model}")
 
-        fresh_input = max(0, input_tokens - cache_read_tokens)
-        usd_input  = fresh_input          / 1_000_000 * pricing["input"]
-        usd_output = output_tokens         / 1_000_000 * pricing["output"]
+        # Die API liefert input_tokens bereits als ungecachten Rest; die
+        # Gesamtgroesse des Prompts ist input_tokens + cache_read + cache_creation.
+        # Ein zweiter Abzug von cache_read rechnete die Kosten systematisch zu
+        # niedrig -- der Fehler wuchs mit der Cache-Trefferquote.
+        usd_input  = input_tokens              / 1_000_000 * pricing["input"]
+        usd_output = output_tokens             / 1_000_000 * pricing["output"]
         usd_cache_read   = cache_read_tokens     / 1_000_000 * pricing["cache_read"]
         usd_cache_write  = cache_creation_tokens / 1_000_000 * pricing["cache_write"]
         usd_web    = web_search_calls * WEB_SEARCH_USD_PER_CALL
@@ -91,8 +94,9 @@ class CostTracker:
         """Returns a flat dict of the run's cost totals, ready for db.save_cost_tracking()
         or the e-mail footer."""
         hit_rate = 0.0
-        if self.input_tokens > 0:
-            hit_rate = self.cache_read_tokens / self.input_tokens
+        total_prompt = self.input_tokens + self.cache_read_tokens
+        if total_prompt > 0:
+            hit_rate = self.cache_read_tokens / total_prompt
         return {
             "date": date, "run_type": run_type,
             "total_eur": round(self.total_eur, 4),
