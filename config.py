@@ -267,6 +267,15 @@ RR_RATIO_MIN_HARD = 1.5
 MOMENTUM_LONG_MIN = 6.0
 MOMENTUM_SHORT_MAX = 4.0
 
+# Analyse-Pipeline-Umbau: Schwellen des deterministischen Technik-Signals.
+# ADX misst Trendstaerke, nicht Richtung: unter 20 gilt der Markt als trendlos
+# und die Signalstaerke wird gedeckelt, ueber 25 als klar trendend und die
+# Staerke steigt. Bewusst Verstaerkungsfaktor, KEIN Filter -- ein Signal in
+# einem trendlosen Markt landet weit unten, wird aber nicht verworfen.
+ADX_WEAK_BELOW = 20.0
+ADX_STRONG_ABOVE = 25.0
+RSI_MIDLINE = 50.0
+
 CFD_MARGIN_EUR = 500
 CFD_LEVERAGE = 5
 
