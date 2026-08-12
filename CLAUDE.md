@@ -1,10 +1,16 @@
 # Shares_Future – SP500 CFD Research Tool
 
-**Zuletzt aktualisiert:** 2026-08-09 — `pre_market` erstmals vollständig gelaufen
-(3,13 EUR, 10 Predictions, Mail zugestellt), Docker-Smoke-Test bestanden, alle `.md`-Dateien
-auf diesen Stand gezogen. Details: PROJECT_STATUS P2.10 / P2.11.
-⏳ Offen: `trade_proposals` und `weekly` (nie ausgeführt), der einmalige `bootstrap-db`-Lauf,
-danach die Reaktivierung von `analyze.yml`.
+**Zuletzt aktualisiert:** 2026-08-12 — Sprint 3C ist **spezifiziert und geplant**
+(Analyse-Pipeline-Umbau: Trichter, zwei zählbare Signale, neues Ranking). Spec und Plan 1
+liegen, Code noch keiner. Details: PROJECT_STATUS C.5.
+⏳ Offen und **unabhängig vom Umbau**: `trade_proposals` und `weekly` (nie ausgeführt), der
+einmalige `bootstrap-db`-Lauf, danach die Reaktivierung von `analyze.yml`.
+
+Davor, 2026-08-09 — `pre_market` erstmals vollständig gelaufen (3,13 EUR, 10 Predictions,
+Mail zugestellt), Docker-Smoke-Test bestanden, alle `.md`-Dateien auf diesen Stand gezogen.
+Details: PROJECT_STATUS P2.10 / P2.11.
+⚠️ Die dort genannten Kosten sind **zu niedrig** ausgewiesen: `cost_tracker` zog
+Cache-Treffer zweimal ab. Der Fix ist Task 2 in Plan 1.
 
 ## Projektübersicht
 Automatisiertes Research-Tool zur täglichen Analyse von S&P 500 Aktien,
@@ -92,6 +98,10 @@ Die Pipeline-Phasen lassen sich an `main.py:run_pipeline()` ablesen.
   bevor er in die Config kommt. Ohne Historie wird er als `insufficient bars`
   übersprungen und zählt Richtung Deaktivierung — der stille Bootstrap-Pfad ist
   mit `_ensure_today_bar` weggefallen.
+- ⚠️ **`random/` ist Korbinians interner Ordner.** Nicht anfassen: keine Edits, keine
+  Löschungen, keine Aufräumvorschläge, kein „diese Datei ist tot"-Befund. Änderungen
+  darin sind akzeptiert und brauchen keine Begründung. Nur auf ausdrückliche Anweisung
+  bearbeiten — und aus jeder Aufräum-, Doku- und Toter-Code-Betrachtung heraushalten.
 
 ## Cron-Jobs — die zwei Fallen
 Zeitplan und Run-Types stehen in `.github/workflows/analyze.yml`. Zwei Dinge, die
@@ -192,7 +202,15 @@ und der getroffenen Entscheidungen. Kurzfassung:
   Stand und Befunde in PROJECT_STATUS, Abschnitt P3. ⚠️ **Nie in einem echten
   Pipelinelauf ausgeführt** — verifiziert wurde nur lesend gegen die API, in
   Wegwerf-Datenbanken. Er entstand nach den Läufen vom 2026-08-04.
-- **3C** offen (Ranking-Überarbeitung)
+- **3C** (Ranking-Überarbeitung) ist **spezifiziert und geplant, Umsetzung offen.** Die
+  Teilschritte C.1–C.4 sind in einer gemeinsamen Spec aufgegangen, die den Trichter, die
+  zwei Signale und das Ranking zusammen neu fasst:
+  `docs/superpowers/specs/2026-08-11-analyse-pipeline-umbau-design.md`.
+  Die Umsetzung zerfällt in **drei unabhängig lieferbare Pläne**; Plan 1 (Fundament:
+  17 Indikatoren, Technik-Signal, Schema) liegt fertig unter
+  `docs/superpowers/plans/2026-08-11-analyse-pipeline-plan1-fundament.md` und ändert
+  **kein Pipeline-Verhalten**. Task 1 (Sammelabruf-Sonde) ist erledigt — Einstieg ist
+  Task 2. Stand und Messprotokoll: PROJECT_STATUS, Abschnitt C.5.
 - **3D / 3E / 3F** sind ⚠️ **Platzhalter** — bei Erreichen aktiv nachfragen und den
   Sprint gemeinsam ausarbeiten, **bevor** Code entsteht. Die Stichpunkte dort sind
   keine Spezifikation.

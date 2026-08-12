@@ -1,6 +1,16 @@
 # PROJECT_STATUS.md — Shares_Future (Trading_Harry)
 
-**Zuletzt aktualisiert:** 2026-08-09 — **Live-Verifikation weitgehend erledigt.**
+**Zuletzt aktualisiert:** 2026-08-12 — **Sprint 3C ist spezifiziert und geplant.** Der
+Analyse-Pipeline-Umbau (Trichter, zwei zählbare Signale, neues Ranking) hat eine Spec und
+mit Plan 1 den ersten von drei Implementierungsplänen; die Sammelabruf-Sonde ist gelaufen.
+**Code ist noch keiner entstanden.** Details: Abschnitt **C.5**.
+
+⚠️ **Befund aus der Design-Phase:** `cost_tracker` zog Cache-Treffer zweimal ab
+(`fresh_input`, Zeile 52). **Alle bisher gemessenen Laufkosten sind damit zu niedrig
+ausgewiesen** — grob 5 % beim Lauf vom 2026-08-09, wachsend mit der Cache-Trefferquote.
+Der Fix ist Task 2 in Plan 1 und muss vor jeder weiteren Kostenmessung erledigt sein.
+
+Davor, 2026-08-09 — **Live-Verifikation weitgehend erledigt.**
 `pre_market`, `close` und `final_close` sind ausgeführt und geprüft (P3.5, P2.10); die
 Ursache der leeren 04.08.-Läufe ist geklärt (P2.4) und in sechs Commits behoben (P2.9).
 Sämtliche `.md`-Dokumente sind auf diesen Stand gezogen (P2.11).
@@ -115,7 +125,7 @@ Einen Branch `sprint3b/plan2-pipeline-umbau` gibt es weder lokal noch remote.
 | 3A | Roadmap + Doku aktualisieren | ✅ erledigt (dieses Dokument) |
 | 3B | Cron-Struktur + Pipeline-Umbau | 🟢 **Code vollständig** — Plan 1 (2026-07-29) und Plan 2 (20/20 Tasks, 2026-08-04), alles auf `main`. Verifiziert: `pre_market`, `close`, `final_close` (P2.10, P3.5). ⏳ Offen: `trade_proposals`, `weekly`, `bootstrap-db`-Lauf, dann Reaktivierung von `analyze.yml` |
 | **3B-M** | **Mail-Provider-Wechsel (Zwischensprint)** | ✅ **ABGESCHLOSSEN 2026-07-30** — Mailversand läuft über **Resend**, eigene Domain verifiziert, Zustellung live bestätigt. Details s. unten |
-| 3C | Ranking-Überarbeitung | 📋 spezifiziert, Implementierung offen |
+| 3C | Ranking-Überarbeitung | 📋 **Spec + Plan 1 fertig, Code offen.** C.1–C.4 sind in den Analyse-Pipeline-Umbau aufgegangen — s. C.5 |
 | 3D | Learning Modul | ⚠️ **Platzhalter — Planungssession ausstehend** |
 | 3E | Human-in-the-Loop | ⚠️ **Platzhalter — Planungssession ausstehend** |
 | 3F | Volle 500-Ticker-Skalierung | ⚠️ **Platzhalter — Planungssession ausstehend** |
@@ -653,11 +663,16 @@ hinzugefügt worden waren (Ignore-Regeln greifen bei bereits getrackten Dateien 
   `setup/probe_ticker_deactivation.py` (Realtest der B.7-Deaktivierung) und
   `setup/probe_sector_mapping.py` (Abdeckung der `finnhubIndustry`-Rohwerte). Beide laufen
   gegen eine **Kopie** der DB, `data/tracking.db` bleibt unberührt.
-- `claude_commands.md` gelöscht — dokumentierte einen Docker-**Cron-Container**, den es nie
-  gab (CLAUDE.md: „kein Scheduler/Cron im Container"), sonst nur Claude-CLI-Aufrufe.
-- `project_ideas.md` gelöscht — enthielt die **alte** Cron-Tabelle mit
-  `midday`/`evaluate`/`position_check` und eine von der realen Sprint-Struktur überholte
-  Sprint-Aufteilung. Die drei noch offenen Ideen daraus stehen jetzt in Abschnitt 2b.
+- ⚠️ **KORREKTUR 2026-08-12:** hier stand, `claude_commands.md` und `project_ideas.md`
+  seien **gelöscht** worden. Das ist falsch — beide Dateien liegen unverändert unter
+  `random/` und sind getrackt (`git ls-files random/`). Richtig ist nur, dass ihre
+  *Inhalte* überholt sind: `claude_commands.md` beschreibt einen Docker-Cron-Container,
+  den es nie gab, und `project_ideas.md` trägt die alte Cron-Tabelle mit
+  `midday`/`evaluate`/`position_check` sowie eine überholte Sprint-Aufteilung. Die drei
+  noch offenen Ideen daraus stehen in Abschnitt 2b.
+- ⚠️ **`random/` ist Korbinians interner Ordner und wird nicht angefasst** — auch nicht
+  aufgeräumt, umbenannt oder als tot bewertet. Die falsche Löschungs-Behauptung oben ist
+  genau daraus entstanden, dass eine frühere Session ihn als Altlast behandelt hat.
 
 ### P2.3 — Alle 20 Tasks umgesetzt
 
