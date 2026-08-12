@@ -25,10 +25,11 @@ from src.indicators import (
 
 log = logging.getLogger("shares_future.data_collector")
 
-# Wie weit die Lueckenpruefung zurueckschaut. 200 Bars, weil genau so viele fuer
-# die Indikatoren geladen werden (SMA200 ist der laengste) — ein Loch davor kann
-# keine Kennzahl mehr verfaelschen und muss nicht bei jedem Lauf neu geprueft
-# werden.
+# Wie weit die Lueckenpruefung zurueckschaut. 200 Bars, obgleich das Indikator-
+# Fenster seit dem Umbau (2026-08-12) 220 Bars laedt — die Anhebung des Scan-
+# Fensters waere ein separater Umbau und wuerde aendern, welche Ticker uebersprungen
+# werden (einen Riegel, den Plan 1 nicht beruehren darf). Die 20-Bar-Luecke
+# kann gelockert werden, wenn diese Aenderung explizit gefordert wird.
 GAP_SCAN_BARS = 200
 
 
@@ -237,8 +238,8 @@ def _process_ticker(
     # Step 1: Luecken schliessen (Spec B.8)
     _fill_price_gaps(ticker, price_provider, conn, date)
 
-    # Step 2: Load last 200 days from DB for indicator calculation
-    df = db.load_price_history_from_db(conn, ticker, as_of_date=date, limit=200)
+    # Step 2: Load last 220 days from DB for indicator calculation
+    df = db.load_price_history_from_db(conn, ticker, as_of_date=date, limit=220)
 
     if df is None or len(df) < MIN_BARS_RSI:
         rows = 0 if df is None else len(df)

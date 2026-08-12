@@ -1631,3 +1631,28 @@ def test_skip_reason_counts_orders_by_frequency(in_memory_db):
 
     counts = skip_reason_counts(in_memory_db, date="2026-08-04", run_type="close")
     assert counts[0][0] == "insufficient bars"
+
+
+def test_sma200_computable_with_default_load_window(tmp_path):
+    """Das Standard-Ladefenster muss SMA200 tragen, sonst faellt der
+    SMA-Teilindikator des Technik-Signals dauerhaft aus."""
+    from datetime import date, timedelta
+    from src.db import connect, load_price_history_from_db, insert_price_bar_if_missing
+    from src.indicators import compute_sma_distance_pct
+
+    conn = connect(str(tmp_path / "t.db"))
+    init_schema(conn)
+    base = date(2025, 1, 1)
+    for i in range(230):
+        d = (base + timedelta(days=i)).isoformat()
+        insert_price_bar_if_missing(
+            conn, ticker="AAPL", date=d, open_=100.0, high=101.0,
+            low=99.0, close=100.0 + i * 0.1, volume=1_000, source="test",
+        )
+    conn.commit()
+
+    df = load_price_history_from_db(conn, "AAPL", as_of_date="2025-12-31")
+    # Reserve ueber SMA200 hinaus: bei exakt 200 haengt der Wert
+    # an einer einzigen fehlenden Bar.
+    assert len(df) >= 220
+    assert compute_sma_distance_pct(df, 200) is not None

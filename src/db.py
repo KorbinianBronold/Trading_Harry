@@ -1100,11 +1100,13 @@ def load_price_history_from_db(
     conn: sqlite3.Connection,
     ticker: str,
     as_of_date: str,
-    limit: int = 200,
+    limit: int = 220,
 ) -> "pd.DataFrame | None":
-    """Loads up to `limit` most recent price_history rows for `ticker` on/before
-    as_of_date as an OHLCV DataFrame, for local indicator computation instead of
-    a fresh provider fetch. None if no rows exist."""
+    """Laedt die letzten `limit` finalen Tagesbars bis `as_of_date`.
+
+    220 statt 200: der laengste Indikator (SMA200) braucht 200 Bars, und bei
+    exakt 200 haengt sein Wert an einer einzigen fehlenden Bar. Die Reserve
+    haelt den SMA-Teilindikator des Technik-Signals verfuegbar."""
     import pandas as pd
     rows = conn.execute(
         """SELECT date, open, high, low, close, volume
