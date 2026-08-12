@@ -5,8 +5,10 @@ Bollinger-Position, SMA-Abstand, Volumen-Ratio, Intraday-Range,
 Preisaenderungen), die in Task 3 aus src/data_collector.py hierher verschoben
 wurden."""
 import math
+import numpy as np
 import pandas as pd
 import pytest
+from src import indicators as ind
 from src.indicators import (
     compute_rsi_14, compute_rsi_trend, compute_macd_signal,
     compute_atr_pct, compute_bb_position,
@@ -132,3 +134,66 @@ def test_compute_price_changes_returns_dict_with_expected_keys():
                                "price_change_1m", "price_change_3m"}
     # Monotonic up → all positive
     assert all(v is None or v > 0 for v in out.values())
+
+
+@pytest.fixture
+def ohlcv() -> pd.DataFrame:
+    """260 deterministische Tagesbars mit leichtem Aufwaertsdrift."""
+    n = 260
+    idx = pd.date_range("2025-01-01", periods=n, freq="D")
+    rng = np.random.default_rng(7)
+    close = pd.Series(100 + np.cumsum(rng.normal(0.05, 1.0, n)), index=idx)
+    return pd.DataFrame({
+        "Open": close.shift(1).fillna(close.iloc[0]),
+        "High": close + abs(rng.normal(0, 1, n)),
+        "Low": close - abs(rng.normal(0, 1, n)),
+        "Close": close,
+        "Volume": pd.Series(rng.integers(100_000, 500_000, n), index=idx),
+    })
+
+
+def test_macd_raw_returns_three_finite_values(ohlcv):
+    out = ind.compute_macd_raw(ohlcv)
+    assert set(out) == {"macd_line", "macd_signal_line", "macd_hist"}
+    assert all(isinstance(v, float) for v in out.values())
+    # Das Histogramm ist definitionsgemaess die Differenz der beiden Linien.
+    assert out["macd_hist"] == pytest.approx(
+        out["macd_line"] - out["macd_signal_line"], abs=1e-6
+    )
+
+
+def test_macd_raw_returns_nones_on_short_history(ohlcv):
+    out = ind.compute_macd_raw(ohlcv.iloc[:10])
+    assert out == {"macd_line": None, "macd_signal_line": None, "macd_hist": None}
+
+
+def test_adx_returns_index_and_both_directional_lines(ohlcv):
+    out = ind.compute_adx(ohlcv)
+    assert set(out) == {"adx_14", "di_plus", "di_minus"}
+    assert 0.0 <= out["adx_14"] <= 100.0
+
+
+def test_psar_direction_is_long_or_short_never_both(ohlcv):
+    out = ind.compute_psar(ohlcv)
+    assert out["psar_dir"] in ("long", "short", None)
+    if out["psar_dir"] is not None:
+        assert out["psar_value"] is not None
+
+
+def test_ichimoku_returns_five_lines(ohlcv):
+    out = ind.compute_ichimoku(ohlcv)
+    assert set(out) == {
+        "ichi_tenkan", "ichi_kijun", "ichi_senkou_a",
+        "ichi_senkou_b", "ichi_chikou",
+    }
+
+
+def test_ichimoku_returns_nones_on_short_history(ohlcv):
+    out = ind.compute_ichimoku(ohlcv.iloc[:30])
+    assert all(v is None for v in out.values())
+
+
+def test_ema_distance_is_percentage_of_the_average(ohlcv):
+    out = ind.compute_ema_distance_pct(ohlcv, 50)
+    assert isinstance(out, float)
+    assert -100.0 < out < 100.0
