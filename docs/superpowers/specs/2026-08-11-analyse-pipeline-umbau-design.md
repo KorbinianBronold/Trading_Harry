@@ -142,19 +142,27 @@ wie die eingefrorene Tagesbar (P2.8). `None` fällt im Cutoff hinter jeden gemes
 und erscheint im Prompt ausdrücklich als *unbekannt*. Übersteigt der Anteil ohne Kurs
 20 %, warnt der Lauf von sich aus (Muster D3).
 
-#### 4.3.1 Offene Frage: Sammelabruf
+#### 4.3.1 ✅ Sammelabruf — beantwortet am 2026-08-12
 
-**Vor der Implementierung zu klären, als Task 1 des Plans:** akzeptiert
-`GET /api/v1/markets` eine kommaseparierte `epics=`-Liste? Der Code spricht diesen
-Endpunkt bereits für `search_markets()` an. Read-only-Sonde gegen die Demo-API, Muster
-wie `setup/verify_epics.py`.
+`GET /api/v1/markets?epics=A,B,C` **funktioniert**: HTTP 200, Antwortfeld `marketDetails`,
+mit 3, 10 und 20 Epics je vollständig beantwortet. Gemessen mit
+`setup/probe_epics_batch.py` (read-only). Protokoll in PROJECT_STATUS, C.5.
 
-| Ergebnis | Folge |
-|---|---|
-| Listen werden akzeptiert | ~n/50 Calls statt ~n; Taktungsfrage erledigt sich |
-| Listen werden nicht akzeptiert | n Einzel-Calls **ohne Pause**, bewusst unter 600/min |
+**Der Kurs-Sweep nutzt Chunks zu 20.** Für 500 Ticker sind das **25 Calls statt ~500** —
+Sekunden statt Minuten, ohne Phase 1 zu parallelisieren.
 
-**Das Ergebnis steht in dieser Spec nicht als Annahme.** Beide Zweige sind gültig.
+⚠️ **20 ist eine bestätigte Untergrenze, kein gemessenes Maximum.** Die Sonde blieb bei 20
+stehen, weil das MVP-Universum genau 20 Ticker hat. Wo Capital.com wirklich abschneidet,
+ist unbekannt — und **gleichgültig**: bei 25 Calls bringt eine grössere Chunk-Grösse nichts
+mehr. Die echte Grenze wird nicht gesucht.
+
+**Folgen für den Rest dieses Abschnitts:** die Taktungsfrage aus § 4.3.2 ist gegenstandslos
+(25 Calls streifen das 600/min-Limit nicht); die 429-Notbremse aus § 4.3.3 bleibt als
+Sicherheitsnetz, wird aber realistisch nie feuern.
+
+⏳ **Bei der Umsetzung mitprüfen:** liefert `marketDetails` neben `bid` auch `offer`? Falls
+ja, fällt der Spread beim Sweep kostenlos mit ab und der Backlog-Punkt „spread-bereinigtes
+R/R" (§ 17) wird deutlich billiger.
 
 #### 4.3.2 `CAPITAL_COM_BATCH_PAUSE` — die Pause entfällt im Sweep
 
@@ -948,7 +956,8 @@ Wert ist neu gewählt, nicht übernommen.
 
 | # | Punkt | Wann |
 |---|---|---|
-| 1 | Akzeptiert `/api/v1/markets` eine `epics=`-Liste? | Task 1 des Plans, vor jeder Zeile Produktivcode |
-| 2 | Endgültige Batch-Grösse | nach dem Testlauf |
+| ~~1~~ | ~~Akzeptiert `/api/v1/markets` eine `epics=`-Liste?~~ | ✅ **beantwortet 2026-08-12** — ja, Chunks zu 20 (§ 4.3.1) |
+| 1a | Liefert `marketDetails` auch `offer` (Spread)? | bei der Umsetzung des Sweeps in Plan 2 |
+| 2 | Endgültige Batch-Grösse der **Tiefenanalyse** | nach dem Testlauf |
 | 3 | `TECH_MIN_FOR_DEEP` | nach dem Testlauf, gegen echte Verteilungen |
 | 4 | Plausibilität von `rank_score` | Testlauf |

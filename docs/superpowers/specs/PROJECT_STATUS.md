@@ -1345,6 +1345,54 @@ Phase-2-Kosten, Phase-3-Kosten und Laufzeit zugleich.
 Wer hier einen Deckel voraussetzt, unterschätzt die 500-Ticker-Kosten um ein Vielfaches —
 siehe die Korrekturbox in F.1.
 
+### C.5 — Analyse-Pipeline-Umbau: Spec und Pläne (2026-08-11)
+
+Die Teilschritte C.1–C.4 sind in einer eigenen Spezifikation aufgegangen, die den Trichter,
+die zwei Signale und das Ranking gemeinsam neu fasst:
+
+- **Spec:** `docs/superpowers/specs/2026-08-11-analyse-pipeline-umbau-design.md`
+- **Plan 1 (Fundament):** `docs/superpowers/plans/2026-08-11-analyse-pipeline-plan1-fundament.md`
+- Plan 2 (Trichter) und Plan 3 (Analyse & Ranking) folgen
+
+Die Spec ersetzt C.1 (fehlende Indikator-Werte — jetzt Teil des `predictions`-Umbaus),
+C.2 (kombinierter Score — jetzt `rank_score` aus zwei zählbaren Signalen), C.3
+(R/R-Ziel — in den Prompts v2) und C.4 (technischer Pre-Filter — jetzt Skip-Gate plus
+harter Cutoff). `MAX_DEEP_ANALYSIS` wird dabei erstmals wirksam und wechselt von **80
+(tot) auf 50**.
+
+#### ✅ Read-only-Sonde gegen Capital.com (2026-08-12) — Sammelabruf von Kursen
+
+Beantwortet die offene Frage aus Spec § 4.3.1. Skript: `setup/probe_epics_batch.py`
+(`b771c65`), reine GET-Abfragen.
+
+| Prüfung | Ergebnis |
+|---|---|
+| `GET /api/v1/markets/{epic}` (Einzelabruf, heutiger Pfad) | HTTP 200, AAPL bid 304,27 |
+| `GET /api/v1/markets?epics=AAPL,MSFT,NVDA` | **HTTP 200**, Antwortfeld `marketDetails`, 3 von 3 Instrumenten |
+| dieselbe Abfrage mit 10 Epics | HTTP 200, 10 von 10 |
+| dieselbe Abfrage mit 20 Epics | HTTP 200, 20 von 20 |
+
+**Der Sammelabruf funktioniert.** Für 500 Ticker bedeutet das **25 Calls statt ~500** —
+das Laufzeitproblem des Kurs-Sweeps ist damit gelöst, ohne Phase 1 zu parallelisieren
+(das bleibt 3F). Die Taktungsfrage aus Spec § 4.3.2 wird gegenstandslos: 25 Calls
+streifen das 600/min-Limit nicht. Die 429-Notbremse aus § 4.3.3 bleibt als Sicherheitsnetz,
+wird aber realistisch nie feuern.
+
+⚠️ **20 ist eine bestätigte Untergrenze, kein gemessenes Maximum.** Die Sonde blieb bei 20
+stehen, weil `SP500_MVP_TICKERS` genau 20 Einträge hat — sie hat die Liste erschöpft, nicht
+eine Grenze gefunden. Wo Capital.com abschneidet, ist unbekannt. **Das ist gleichgültig:**
+bei 25 Calls für das volle Universum bringt eine grössere Chunk-Grösse nichts mehr. Plan 2
+setzt konservativ **20** und sucht die echte Grenze nicht.
+
+Nebenbefund: `_map()` liess AAPL, MSFT und NVDA unverändert durch — `TICKER_MAP` enthält
+nur **acht Ausnahmen** (Gold, Silber, Öl, die vier Krypto-Paare, BRK-B). US-Large-Caps sind
+bei Capital.com 1:1 ihr Tickersymbol. Für die Chunk-Bildung heisst das: `_map()` gilt
+uniform, kein Sonderweg nötig.
+
+⏳ **Offen für Plan 2:** liefert `marketDetails` neben `bid` auch `offer`? Falls ja, fällt
+der Spread beim Sweep kostenlos mit ab und der 2b-Punkt „spread-bereinigtes R/R" wird
+deutlich billiger. Kostet bei der Implementierung einen Blick in die Rohantwort.
+
 ---
 
 ## Sprint 3D — Learning Modul

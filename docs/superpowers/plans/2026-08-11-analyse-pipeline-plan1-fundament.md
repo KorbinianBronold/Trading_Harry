@@ -72,6 +72,19 @@ testen — sie gehören in ein eigenes Modul.
 
 ## Task 1: Read-only-Sonde — akzeptiert `/api/v1/markets` eine `epics=`-Liste?
 
+> ## ✅ ERLEDIGT am 2026-08-12 — nicht erneut ausführen
+>
+> **Antwort: ja.** HTTP 200, Antwortfeld `marketDetails`, mit 3, 10 und 20 Epics je
+> vollständig beantwortet. Skript `setup/probe_epics_batch.py` (`b771c65`), Protokoll in
+> PROJECT_STATUS C.5, Spec § 4.3.1 nachgezogen.
+>
+> **Für Plan 2:** Kurs-Sweep in **Chunks zu 20** → 25 Calls für 500 Ticker statt ~500.
+> ⚠️ 20 ist eine bestätigte Untergrenze, kein gemessenes Maximum — die echte Grenze wird
+> nicht gesucht, weil 25 Calls bereits nichts kosten.
+>
+> Die Schritte unten bleiben als Protokoll stehen. **Task 2 ist der Einstiegspunkt für die
+> Umsetzung.**
+
 Diese Sonde produziert **keinen Produktivcode**. Ihr Ergebnis entscheidet in Plan 2 über
 die Implementierung des Kurs-Sweeps (Spec § 4.3.1) und wird in PROJECT_STATUS festgehalten.
 Sie steht hier an erster Stelle, weil ihr Ergebnis vor jeder Zeile Sweep-Code vorliegen muss.
