@@ -64,6 +64,31 @@ def _classify_data_quality(td: dict) -> str:
     return "medium" if missing_peripheral >= 1 else "high"
 
 
+def _earnings_in_days(next_date_str: str | None, today_str: str) -> int | None:
+    """Rechnet das gecachte earnings_next_date (ISO-Datum) in Kalendertage ab
+    `today_str` um (Sprint 3C / Analyse-Pipeline-Umbau, Task 7 -- Spec 18.1d).
+
+    None bei fehlendem oder unparsebarem Datum -- ein kaputter String darf den
+    Lauf nicht reissen. Liegt das Datum in der Vergangenheit (Termin bereits
+    gelaufen, der Cache-Eintrag aber noch innerhalb der 7-Tage-TTL warm), gibt
+    es ebenfalls None statt eines negativen Werts zurueck: das Feld heisst
+    "Tage bis zum NAECHSTEN Termin" und war das auch vor diesem Umbau so --
+    Finnhubs get_earnings_calendar() lieferte nur zukuenftige Termine, nie
+    einen negativen days_to_next. Ein negativer Wert waere hier ein stiller
+    Bedeutungswechsel auf "Tage seit dem letzten Termin", den kein Konsument
+    (die vier Claude-Prompts, die td json.dumps'en) erwartet."""
+    if not next_date_str:
+        return None
+    try:
+        delta = (
+            _date_cls.fromisoformat(next_date_str) - _date_cls.fromisoformat(today_str)
+        ).days
+    except ValueError:
+        log.warning(f"earnings_next_date unparsebar: {next_date_str!r}")
+        return None
+    return delta if delta >= 0 else None
+
+
 def _expected_trading_days(from_date: str, to_date: str) -> list[str]:
     """Listet alle Wochentage (Mo-Fr) NACH `from_date` bis einschliesslich `to_date`.
 
@@ -287,15 +312,23 @@ def _process_ticker(
     premarket_price: float | None = None,
 ) -> tuple[dict, dict] | None:
     """Runs the full Phase-1 pipeline for one ticker: ensures today's bar exists,
-    computes indicators from the last 220 DB days, and fetches fundamentals/earnings
-    (cache-first). Returns (TickerData dict, sidecar entry dict), or None (with a
-    skipped_tickers row) if there's insufficient or low-quality data.
+    computes indicators from the last 220 DB days, and reads fundamentals/earnings
+    from fundamentals_cache (cache-only, s.u.). Returns (TickerData dict, sidecar
+    entry dict), or None (with a skipped_tickers row) if there's insufficient or
+    low-quality data.
 
     `premarket_price` kommt seit Task 5 aus dem Batch-Sweep in collect()
     (Phase 1b), nicht mehr aus einem Einzelabruf hier drin (R3). Der zweite
     Rueckgabewert -- premarket_change_pct plus (seit Task 6) das Technik-Signal
     -- ist bewusst NICHT Teil des td-Dicts (R1/Spec 18.1e): collect() uebernimmt
-    ihn unveraendert als Sidecar-Eintrag."""
+    ihn unveraendert als Sidecar-Eintrag.
+
+    `earnings_provider` bleibt seit Task 7 (Sprint 3C / Analyse-Pipeline-Umbau)
+    Teil der Signatur, wird hier aber nicht mehr aufgerufen -- Phase 1 macht 0
+    Finnhub-Calls, das Nachladen sitzt in fetch_missing_fundamentals()
+    (Phase 2b, ab Task 10 verdrahtet). Der Parameter bleibt fuer eine stabile
+    Schnittstelle zu collect() stehen, statt den Aufrufer und alle bestehenden
+    Tests fuer eine Zwischen-Task umzubauen."""
     # Step 1: Luecken schliessen (Spec B.8)
     _fill_price_gaps(ticker, price_provider, conn, date)
 
@@ -360,19 +393,17 @@ def _process_ticker(
         "obv":             compute_obv(df),
     }
 
-    # Fundamentals: cache-first
-    cached_fund = db.get_cached_fundamentals(conn, ticker, today=date)
-    if cached_fund is not None:
-        fundamentals = cached_fund
-    else:
-        try:
-            _raw_fund = earnings_provider.get_fundamentals(ticker)
-            fundamentals = _raw_fund if isinstance(_raw_fund, dict) else {}
-        except Exception as e:
-            log.warning(f"{ticker}: fundamentals raised: {e}")
-            fundamentals = {}
-        if fundamentals:
-            db.save_fundamentals_cache(conn, ticker, fundamentals, fetched_date=date)
+    # Fundamentals: NUR Cache-Lesung (Sprint 3C / Analyse-Pipeline-Umbau, Task 7).
+    # Phase 1 ruft Finnhub nicht mehr auf -- 0 Calls, kein Geld. Das Nachladen
+    # bei einem Cache-Miss sitzt jetzt in fetch_missing_fundamentals()
+    # (Phase 2b), die diese Task baut, aber bewusst noch NICHT verdrahtet
+    # (das macht Task 10, R16).
+    #
+    # R14: bewusst akzeptierte Verhaltensaenderung bis dahin -- ein Cache-Miss
+    # kann keinen Skip ausloesen (_classify_data_quality stuft 'low' nur nach
+    # rsi_14/atr_pct ein), verschiebt aber 'high' auf 'medium', weil pe_ratio/
+    # market_cap_b/sector zu den peripheral-Feldern zaehlen.
+    fundamentals = db.get_cached_fundamentals(conn, ticker, today=date) or {}
 
     td.update({
         "pe_ratio":              fundamentals.get("pe_ratio"),
@@ -388,18 +419,20 @@ def _process_ticker(
     # wird normalisiert und in ticker_sectors geschrieben — kein statisches
     # Ticker->Sektor-Mapping im Code. Unbekannte Werte loggt db.resolve_sector_id();
     # der Ticker bleibt dann schlicht ungemappt und laeuft ohne Sektor-Guardrail.
+    # Bei einem Cache-Miss ist fundamentals.get("sector") None -- resolve_sector_id
+    # gibt dann fruehzeitig None zurueck und der Upsert entfaellt, eine bestehende
+    # Zuordnung bleibt also stehen statt auf 'Unknown' zurueckgesetzt zu werden.
     _sector_id = db.resolve_sector_id(conn, fundamentals.get("sector"))
     if _sector_id is not None:
         db.upsert_ticker_sector(conn, ticker, _sector_id, source="finnhub")
 
-    # Earnings
-    try:
-        earnings = earnings_provider.get_earnings_calendar(ticker) or {}
-    except Exception as e:
-        log.warning(f"{ticker}: earnings raised: {e}")
-        earnings = {}
-    td["earnings_in_days"]  = earnings.get("days_to_next")
-    td["earnings_beat_pct"] = earnings.get("last_beat_pct")
+    # Earnings (R15): get_earnings_calendar() verschwindet aus dem Tageslauf --
+    # gehoert in den Wochenjob (Spec 18.1c). earnings_beat_pct gibt es im
+    # Tageslauf deshalb nicht mehr. earnings_in_days wird stattdessen aus dem
+    # gecachten earnings_next_date (Datum, s.o. save_fundamentals_cache)
+    # gerechnet -- relativ zum HEUTIGEN Abrufdatum, nicht zum Fetch-Zeitpunkt.
+    td["earnings_in_days"]  = _earnings_in_days(fundamentals.get("earnings_next_date"), date)
+    td["earnings_beat_pct"] = None
 
     td["data_quality"] = _classify_data_quality(td)
     if td["data_quality"] == "low":
@@ -565,3 +598,46 @@ def collect(
 
     log.info(f"Phase 1 done: {len(results)} ok, {skipped} skipped")
     return results, skipped, sidecar
+
+
+def fetch_missing_fundamentals(
+    tickers: list[str],
+    earnings_provider: DataProvider,
+    conn,
+    date: str,
+) -> None:
+    """Phase 2b (Sprint 3C / Analyse-Pipeline-Umbau, Task 7): holt Fundamentals
+    bei Finnhub NACH fuer Ticker, die in Phase 1 einen Cache-Miss hatten, und
+    schreibt sie in fundamentals_cache. Prueft den Cache selbst -- statt eine
+    bereits als "miss" markierte Liste zu erwarten -- so bleibt die Funktion
+    unabhaengig vom Aufrufer testbar und ist ein no-op fuer bereits gecachte
+    Ticker, egal wie oft sie aufgerufen wird.
+
+    R16: wird in DIESER Task bewusst NICHT verdrahtet -- main.py ruft sie noch
+    nicht auf, das macht Task 10. Bis dahin bleibt jeder Cache-Miss aus Phase 1
+    unbeantwortet (R14).
+
+    Robust: ein API-Fehler bei einem Ticker ueberspringt NUR diesen (WARNING),
+    der Lauf laeuft fuer die uebrigen Ticker weiter.
+
+    R15: holt bewusst NUR get_fundamentals() -- get_earnings_calendar() gehoert
+    in den Wochenjob (Spec 18.1c), nicht in diesen taeglichen Nachlade-Pfad.
+    ACHTUNG: save_fundamentals_cache() ist ein INSERT OR REPLACE der GANZEN
+    Zeile -- ein hier gespeicherter Ticker bekommt earnings_next_date=NULL,
+    auch wenn eine vorherige (inzwischen abgelaufene) Zeile dort einen Wert
+    hatte. Heute folgenlos, weil der Wochenjob die Spalte noch nirgends
+    fuellt; wer ihn baut, muss diesen Ueberschreib-Pfad beruecksichtigen."""
+    for t in tickers:
+        if db.get_cached_fundamentals(conn, t, today=date) is not None:
+            continue
+        try:
+            raw = earnings_provider.get_fundamentals(t)
+        except Exception as e:
+            log.warning(f"{t}: fundamentals raised (Phase 2b): {e}")
+            continue
+        if not isinstance(raw, dict) or not raw:
+            continue
+        db.save_fundamentals_cache(conn, t, raw, fetched_date=date)
+        _sector_id = db.resolve_sector_id(conn, raw.get("sector"))
+        if _sector_id is not None:
+            db.upsert_ticker_sector(conn, t, _sector_id, source="finnhub")

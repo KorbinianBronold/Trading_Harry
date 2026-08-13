@@ -100,10 +100,37 @@ def _earnings_provider(days_to_next: int | None = 14, beat_pct: float | None = 4
     return p
 
 
+def _seed_fundamentals_cache(
+    conn, ticker: str, fetched_date: str, sector: str | None = "Technology",
+    earnings_next_date: str | None = None, **overrides,
+) -> None:
+    """Schreibt einen fundamentals_cache-Eintrag direkt in die DB (Sprint 3C /
+    Analyse-Pipeline-Umbau, Task 7: Phase 1 liest den Cache nur noch, ruft
+    Finnhub nicht mehr auf -- ein Provider-Mock-Rueckgabewert haette also keine
+    Wirkung mehr. Simuliert, was Phase 2b (fetch_missing_fundamentals(), ab
+    Task 10 verdrahtet) irgendwann selbst hineinschreibt."""
+    from src import db as _dbm
+    data = {
+        "pe_ratio": 28.4, "forward_pe": 26.2,
+        "market_cap_b": 2800.0, "debt_equity": 1.45,
+        "sector": sector, "analyst_upside": 8.5, "consensus": "buy",
+        "earnings_next_date": earnings_next_date,
+        **overrides,
+    }
+    _dbm.save_fundamentals_cache(conn, ticker, data, fetched_date=fetched_date)
+
+
 def test_process_ticker_returns_full_ticker_data(in_memory_db):
     init_schema(in_memory_db)
     df = _df_monotonic_up(250)
     _seed_price_history(in_memory_db, "AAPL", df)
+    # Sprint 3C / Analyse-Pipeline-Umbau (Task 7): Phase 1 liest Fundamentals
+    # nur noch aus dem Cache -- ohne diesen Eintrag blieben sector/earnings_in_days
+    # auf ihren Cache-Miss-Defaults.
+    _seed_fundamentals_cache(
+        in_memory_db, "AAPL", fetched_date="2026-05-19",
+        sector="Technology", earnings_next_date="2026-06-02",  # +14 Tage
+    )
     last_close = float(df["Close"].iloc[-1])
     out, sidecar_entry = _process_ticker(
         ticker="AAPL",
@@ -123,10 +150,75 @@ def test_process_ticker_returns_full_ticker_data(in_memory_db):
     assert out["atr_pct"] is not None
     assert out["sector"] == "Technology"
     assert out["earnings_in_days"] == 14
-    assert out["earnings_beat_pct"] == 4.2
+    # R15: get_earnings_calendar() verschwindet aus dem Tageslauf -- es gibt
+    # earnings_beat_pct dort nicht mehr, unabhaengig vom Cache-Inhalt.
+    assert out["earnings_beat_pct"] is None
     assert out["data_quality"] in {"high", "medium", "low"}
     assert out["intraday_range_pct"] is not None
     assert sidecar_entry["premarket_change_pct"] == pytest.approx(1.0)
+
+
+# ---------- Fundamentals ausschliesslich aus dem Cache (Sprint 3C / Task 7) ----------
+
+def test_process_ticker_reads_fundamentals_cache_only(in_memory_db):
+    """Die eigentliche Zusicherung dieser Task: Phase 1 macht 0 Finnhub-Calls.
+
+    Faellt, sobald _process_ticker() wieder get_fundamentals() oder
+    get_earnings_calendar() auf earnings_provider aufruft -- egal ob Cache-Hit
+    oder -Miss, der Provider darf in Phase 1 nie angefasst werden."""
+    init_schema(in_memory_db)
+    df = _df_monotonic_up(250)
+    _seed_price_history(in_memory_db, "AAPL", df)
+    _seed_fundamentals_cache(
+        in_memory_db, "AAPL", fetched_date="2026-05-19",
+        sector="Technology", earnings_next_date="2026-06-02",  # +14 Tage
+    )
+    ep = _earnings_provider()
+
+    out, _sidecar = _process_ticker(
+        ticker="AAPL",
+        price_provider=_good_provider(df),
+        earnings_provider=ep,
+        conn=in_memory_db,
+        date="2026-05-19",
+        run_type="pre_market",
+    )
+
+    assert out is not None
+    assert out["sector"] == "Technology"
+    assert out["pe_ratio"] == 28.4
+    assert out["earnings_in_days"] == 14
+    ep.get_fundamentals.assert_not_called()
+    ep.get_earnings_calendar.assert_not_called()
+
+
+def test_process_ticker_uses_defaults_on_cache_miss(in_memory_db):
+    """Kein Cache-Eintrag -> pe_ratio None, sector 'Unknown', earnings_in_days
+    None -- und explizit KEIN Skip (R14: _classify_data_quality stuft 'low'
+    nur nach rsi_14/atr_pct ein, ein fehlender Fundamentals-Cache verschiebt
+    hoechstens 'high' auf 'medium')."""
+    init_schema(in_memory_db)
+    df = _df_monotonic_up(250)
+    _seed_price_history(in_memory_db, "AAPL", df)
+    ep = _earnings_provider()
+
+    out, _sidecar = _process_ticker(
+        ticker="AAPL",
+        price_provider=_good_provider(df),
+        earnings_provider=ep,
+        conn=in_memory_db,
+        date="2026-05-19",
+        run_type="pre_market",
+    )
+
+    assert out is not None, "ein Cache-Miss darf keinen Skip ausloesen"
+    assert out["pe_ratio"] is None
+    assert out["sector"] == "Unknown"
+    assert out["earnings_in_days"] is None
+    assert out["earnings_beat_pct"] is None
+    assert out["data_quality"] != "low"
+    ep.get_fundamentals.assert_not_called()
+    ep.get_earnings_calendar.assert_not_called()
 
 
 def test_process_ticker_return_shape_excludes_the_29_new_indicator_columns(in_memory_db):
@@ -337,19 +429,28 @@ def test_collect_summarises_skip_reasons(in_memory_db, caplog):
     assert "2" in caplog.text
 
 
-def test_process_ticker_tolerates_missing_earnings(in_memory_db):
+def test_process_ticker_tolerates_missing_earnings_next_date_on_cache_hit(in_memory_db):
+    """Fundamentals sind gecacht (Cache-Hit, sector/pe_ratio also gefuellt),
+    aber earnings_next_date ist NULL -- z.B. weil der Wochenjob noch nie lief.
+    earnings_in_days bleibt None, der Rest der Fundamentals wird trotzdem
+    uebernommen -- ein fehlendes Einzelfeld darf die anderen nicht ausreissen."""
     init_schema(in_memory_db)
     df = _df_monotonic_up(80)
     _seed_price_history(in_memory_db, "AAPL", df)
+    _seed_fundamentals_cache(
+        in_memory_db, "AAPL", fetched_date="2026-05-19",
+        sector="Technology", earnings_next_date=None,
+    )
     out, _premarket_change_pct = _process_ticker(
         ticker="AAPL",
         price_provider=_good_provider(df),
-        earnings_provider=_earnings_provider(days_to_next=None, beat_pct=None),
+        earnings_provider=_earnings_provider(),
         conn=in_memory_db,
         date="2026-05-19",
         run_type="pre_market",
     )
     assert out is not None
+    assert out["sector"] == "Technology"
     assert out["earnings_in_days"] is None
     assert out["earnings_beat_pct"] is None
 
@@ -376,6 +477,38 @@ def test_classify_data_quality_low_when_indicator_missing():
         "pe_ratio": 25, "market_cap_b": 1000, "sector": "Technology",
     }
     assert _classify_data_quality(td) == "low"
+
+
+# ---------- _earnings_in_days (Sprint 3C / Analyse-Pipeline-Umbau, Task 7) ----------
+
+from src.data_collector import _earnings_in_days
+
+
+def test_earnings_in_days_computes_future_delta():
+    assert _earnings_in_days("2026-06-02", "2026-05-19") == 14
+
+
+def test_earnings_in_days_none_when_date_missing():
+    assert _earnings_in_days(None, "2026-05-19") is None
+
+
+def test_earnings_in_days_none_when_date_unparseable():
+    """Ein kaputter String darf den Lauf nicht reissen."""
+    assert _earnings_in_days("not-a-date", "2026-05-19") is None
+
+
+def test_earnings_in_days_none_when_date_is_in_the_past():
+    """Designentscheidung: ein gelaufener Termin (Cache noch warm) liefert
+    None, nicht einen negativen Wert -- das Feld heisst 'Tage bis zum
+    NAECHSTEN Termin' und war das schon vor diesem Umbau so (Finnhub lieferte
+    nur zukuenftige Termine, nie ein negatives days_to_next)."""
+    assert _earnings_in_days("2026-05-10", "2026-05-19") is None
+
+
+def test_earnings_in_days_zero_on_the_day_itself():
+    """Randfall: der Termin ist heute -- 0 ist ein gueltiger, nicht-negativer
+    Wert und bleibt erhalten (keine Off-by-one-Falle bei >= 0)."""
+    assert _earnings_in_days("2026-05-19", "2026-05-19") == 0
 
 
 from unittest.mock import patch
@@ -484,23 +617,30 @@ def _ohlcv_rows(n: int = 90, end: str = "2026-05-21") -> list[tuple]:
 # ---------- Sub-Sektor-Verknuepfung (Sprint 3B / Plan 1, Task 4) ----------
 
 def _run_ticker(conn, ticker: str, raw_sector: str | None, date: str = "2026-05-19"):
-    """Laesst _process_ticker fuer `ticker` mit dem gegebenen Finnhub-Rohsektor
-    laufen und gibt das TickerData-Dict zurueck.
+    """Laesst _process_ticker fuer `ticker` mit dem gegebenen Rohsektor laufen
+    und gibt das TickerData-Dict zurueck.
 
     Seedet vorher die Kurshistorie: ohne sie steigt _process_ticker vor dem
     Sektor-Mapping aus und die Sektor-Zusicherungen waeren gruen, ohne je
-    geprueft zu haben."""
+    geprueft zu haben. Seedet den Rohsektor seit Task 7 direkt in den
+    fundamentals_cache statt ueber einen Provider-Mock -- Phase 1 ruft Finnhub
+    fuer Fundamentals nicht mehr auf, ein get_fundamentals-Rueckgabewert haette
+    also keine Wirkung mehr. `date` ist zugleich das Fetch-Datum des Cache-
+    Eintrags (Cache-Hit garantiert, solange der Aufrufer nicht selbst > 7 Tage
+    dazwischen legt)."""
+    from src import db as _dbm
     df = _df_monotonic_up(250)
     _seed_price_history(conn, ticker, df)
-    ep = _earnings_provider()
-    ep.get_fundamentals.return_value = {
-        "pe_ratio": 28.4, "market_cap_b": 2800.0, "sector": raw_sector,
-        "analyst_upside": 8.5, "consensus": "buy",
-    }
+    _dbm.save_fundamentals_cache(
+        conn, ticker,
+        {"pe_ratio": 28.4, "market_cap_b": 2800.0, "sector": raw_sector,
+         "analyst_upside": 8.5, "consensus": "buy"},
+        fetched_date=date,
+    )
     out = _process_ticker(
         ticker=ticker,
         price_provider=_good_provider(df),
-        earnings_provider=ep,
+        earnings_provider=_earnings_provider(),
         conn=conn,
         date=date,
         run_type="pre_market",
@@ -551,13 +691,16 @@ def test_process_ticker_still_returns_ticker_data_when_sector_unknown(in_memory_
     assert td["ticker"] == "WEIRD"
 
 
-def test_process_ticker_updates_sector_mapping_on_change(in_memory_db):
-    """Wechselt Finnhub die Branche, zieht ticker_sectors nach.
+def test_process_ticker_updates_sector_mapping_when_cache_content_changes(in_memory_db):
+    """Aendert sich, was im Cache steht, zieht ticker_sectors beim naechsten
+    Phase-1-Lauf nach.
 
-    Der zweite Lauf liegt bewusst hinter der 7-Tage-TTL des Fundamentals-Cache —
-    innerhalb der TTL wuerde der Cache den alten Sektor liefern und die Zuordnung
-    bliebe unveraendert. Das Mapping folgt also der Cache-Frequenz, nicht dem Run.
-    """
+    Sprint 3C / Analyse-Pipeline-Umbau (Task 7): FRUEHER (bis HEAD 8351e31)
+    loeste das ein interner Finnhub-Refetch nach TTL-Ablauf aus. Phase 1 fetcht
+    seit dieser Task gar nicht mehr selbst -- die "neue" Branche kommt hier
+    stellvertretend fuer das, was Phase 2b (fetch_missing_fundamentals(), ab
+    Task 10 verdrahtet) irgendwann in den Cache schreiben wird. Die
+    _run_ticker()-Aufrufe seeden den Cache deshalb bei jedem Aufruf neu."""
     from src import db
     init_schema(in_memory_db)
     _run_ticker(in_memory_db, "AVGO", "Technology", date="2026-05-19")
@@ -569,14 +712,35 @@ def test_process_ticker_updates_sector_mapping_on_change(in_memory_db):
     ).fetchone()["n"] == 1
 
 
-def test_process_ticker_keeps_sector_stable_within_cache_ttl(in_memory_db):
-    """Innerhalb der Cache-TTL bleibt die Zuordnung stehen — dokumentiert, dass
-    das Sektor-Mapping an der Fundamentals-Cache-Frequenz haengt."""
+def test_process_ticker_leaves_sector_mapping_untouched_when_cache_goes_stale(in_memory_db):
+    """R14: ein Cache-Miss loescht eine bestehende Zuordnung nicht.
+
+    Sprint 3C / Analyse-Pipeline-Umbau (Task 7): ohne den internen Refetch
+    liefert ein abgelaufener Cache-Eintrag (> 7 Tage) schlicht nichts mehr --
+    fundamentals.get("sector") ist dann None, resolve_sector_id(None) gibt
+    fruehzeitig None zurueck und der Upsert entfaellt. Die VORHANDENE
+    Zuordnung aus dem ersten (frischen) Lauf bleibt also stehen, statt auf
+    'Unknown' zurueckgesetzt zu werden -- das Nachladen sitzt jetzt in
+    Phase 2b (Task 10), nicht mehr hier."""
     from src import db
     init_schema(in_memory_db)
-    _run_ticker(in_memory_db, "AVGO", "Technology", date="2026-05-19")
-    _run_ticker(in_memory_db, "AVGO", "Semiconductors", date="2026-05-20")
-    assert db.get_ticker_sector(in_memory_db, "AVGO")["name"] == "Technology Hardware"
+    _run_ticker(in_memory_db, "AVGO", "Semiconductors", date="2026-05-19")
+    assert db.get_ticker_sector(in_memory_db, "AVGO")["name"] == "Semiconductors"
+
+    # 11 Tage spaeter -- jenseits der 7-Tage-TTL, Cache-Miss. Kein erneutes
+    # _seed_fundamentals_cache/_run_ticker-Neuschreiben: _process_ticker direkt,
+    # damit der Cache wirklich unangetastet bleibt.
+    df = _df_monotonic_up(250)
+    _seed_price_history(in_memory_db, "AVGO", df)
+    out, _ = _process_ticker(
+        ticker="AVGO", price_provider=_good_provider(df),
+        earnings_provider=_earnings_provider(), conn=in_memory_db,
+        date="2026-05-30", run_type="pre_market",
+    )
+    assert out["sector"] == "Unknown", "Cache-Miss -> Default, nicht der alte Wert"
+    assert db.get_ticker_sector(in_memory_db, "AVGO")["name"] == "Semiconductors", (
+        "die Zuordnung bleibt stehen, auch wenn der Cache abgelaufen ist"
+    )
 
 
 # ---------- Inaktive Ticker in collect() (Sprint 3B / Plan 1, Task 6) ----------
@@ -1283,3 +1447,137 @@ def test_fill_price_gaps_does_not_chase_single_holidays(in_memory_db, mocker):
 
     assert n == 0
     provider.get_ohlc_after.assert_not_called()
+
+
+# ---------- fetch_missing_fundamentals() -- Phase 2b, gebaut, nicht verdrahtet
+# (Sprint 3C / Analyse-Pipeline-Umbau, Task 7, R16) ----------
+
+from src.data_collector import fetch_missing_fundamentals
+
+
+def test_fetch_missing_fundamentals_fetches_and_persists_cache_misses(in_memory_db):
+    """R13: aus der DB zurueckgelesen, nicht nur der Aufruf geprueft."""
+    from src import db
+    init_schema(in_memory_db)
+    ep = MagicMock()
+    ep.get_fundamentals.return_value = {
+        "pe_ratio": 30.0, "market_cap_b": 500.0, "sector": "Technology",
+    }
+
+    fetch_missing_fundamentals(["AAPL"], ep, in_memory_db, date="2026-05-19")
+
+    ep.get_fundamentals.assert_called_once_with("AAPL")
+    row = db.get_cached_fundamentals(in_memory_db, "AAPL", today="2026-05-19")
+    assert row is not None
+    assert row["pe_ratio"] == 30.0
+    assert row["sector"] == "Technology"
+
+
+def test_fetch_missing_fundamentals_skips_tickers_already_cached(in_memory_db):
+    """Ein Cache-Hit braucht keinen Finnhub-Call -- sonst waere die Funktion
+    selbst die Kostenquelle, die Task 7 aus Phase 1 herausloest."""
+    from src import db
+    init_schema(in_memory_db)
+    db.save_fundamentals_cache(
+        in_memory_db, "AAPL", {"pe_ratio": 20.0}, fetched_date="2026-05-19")
+    ep = MagicMock()
+
+    fetch_missing_fundamentals(["AAPL"], ep, in_memory_db, date="2026-05-19")
+
+    ep.get_fundamentals.assert_not_called()
+
+
+def test_fetch_missing_fundamentals_continues_after_one_ticker_errors(in_memory_db, caplog):
+    """R16: ein API-Fehler bei einem Ticker ueberspringt NUR diesen (WARNING),
+    der Lauf laeuft fuer die uebrigen weiter."""
+    import logging
+    from src import db
+    init_schema(in_memory_db)
+    ep = MagicMock()
+    ep.get_fundamentals.side_effect = [
+        RuntimeError("Finnhub 500"),
+        {"pe_ratio": 18.0, "sector": "Pharmaceuticals"},
+    ]
+
+    with caplog.at_level(logging.WARNING, logger="shares_future.data_collector"):
+        fetch_missing_fundamentals(["BAD", "JNJ"], ep, in_memory_db, date="2026-05-19")
+
+    assert "BAD" in caplog.text
+    assert db.get_cached_fundamentals(in_memory_db, "BAD", today="2026-05-19") is None
+    row = db.get_cached_fundamentals(in_memory_db, "JNJ", today="2026-05-19")
+    assert row is not None
+    assert row["pe_ratio"] == 18.0
+
+
+def test_fetch_missing_fundamentals_skips_empty_provider_response(in_memory_db):
+    """Ein leeres dict (Finnhub ohne API-Key/ohne Daten) darf keine leere
+    Cache-Zeile anlegen -- der naechste Lauf soll es erneut versuchen."""
+    from src import db
+    init_schema(in_memory_db)
+    ep = MagicMock()
+    ep.get_fundamentals.return_value = {}
+
+    fetch_missing_fundamentals(["AAPL"], ep, in_memory_db, date="2026-05-19")
+
+    assert db.get_cached_fundamentals(in_memory_db, "AAPL", today="2026-05-19") is None
+
+
+def test_fetch_missing_fundamentals_maps_sector(in_memory_db):
+    """Frisch nachgeladene Fundamentals pflegen ticker_sectors mit, genau wie
+    es _process_ticker frueher direkt nach einem Finnhub-Fetch getan hat."""
+    from src import db
+    init_schema(in_memory_db)
+    ep = MagicMock()
+    ep.get_fundamentals.return_value = {"sector": "Semiconductors"}
+
+    fetch_missing_fundamentals(["NVDA"], ep, in_memory_db, date="2026-05-19")
+
+    row = db.get_ticker_sector(in_memory_db, "NVDA")
+    assert row is not None
+    assert row["name"] == "Semiconductors"
+    assert row["etf"] == "SOXX"
+
+
+def test_fetch_missing_fundamentals_overwrites_stale_earnings_next_date_with_null(in_memory_db):
+    """Dokumentiert einen bekannten Nebeneffekt (kein Bug DIESER Task, siehe
+    Docstring von fetch_missing_fundamentals): save_fundamentals_cache() ist
+    ein INSERT OR REPLACE der GANZEN Zeile. get_fundamentals() liefert kein
+    earnings_next_date (das kommt vom -- noch ungebauten -- Wochenjob), also
+    faellt ein vorher gecachtes Datum auf NULL zurueck, sobald diese Zeile
+    (wegen einer abgelaufenen TTL) neu geschrieben wird. Heute folgenlos, weil
+    niemand die Spalte sonst befuellt -- aber fuer Task 10/den Wochenjob
+    dokumentiert, statt stillschweigend zu ueberraschen."""
+    from src import db
+    init_schema(in_memory_db)
+    db.save_fundamentals_cache(
+        in_memory_db, "AAPL",
+        {"pe_ratio": 20.0, "earnings_next_date": "2026-06-02"},
+        fetched_date="2026-05-01",  # laengst ausserhalb der 7-Tage-TTL
+    )
+    ep = MagicMock()
+    ep.get_fundamentals.return_value = {"pe_ratio": 25.0}
+
+    fetch_missing_fundamentals(["AAPL"], ep, in_memory_db, date="2026-05-21")
+
+    row = in_memory_db.execute(
+        "SELECT * FROM fundamentals_cache WHERE ticker='AAPL'").fetchone()
+    assert row["pe_ratio"] == 25.0
+    assert row["earnings_next_date"] is None
+
+
+def test_fetch_missing_fundamentals_not_wired_into_process_ticker(in_memory_db):
+    """R16: main.py/collect()/_process_ticker rufen fetch_missing_fundamentals
+    nicht auf -- Task 7 baut sie nur. Ein Cache-Miss bleibt in _process_ticker
+    unbeantwortet, auch wenn der Provider Daten liefern koennte."""
+    init_schema(in_memory_db)
+    df = _df_monotonic_up(250)
+    _seed_price_history(in_memory_db, "AAPL", df)
+    ep = _earnings_provider()
+
+    out, _ = _process_ticker(
+        ticker="AAPL", price_provider=_good_provider(df),
+        earnings_provider=ep, conn=in_memory_db,
+        date="2026-05-19", run_type="pre_market",
+    )
+    assert out["sector"] == "Unknown"
+    ep.get_fundamentals.assert_not_called()

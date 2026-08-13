@@ -486,6 +486,77 @@ def test_fundamentals_cache_upsert_overwrites_stale(in_memory_db):
     assert result["pe_ratio"] == 25.0
 
 
+# ---------- earnings_next_date (Sprint 3C / Analyse-Pipeline-Umbau, Task 7) ----------
+# R12/R13: save_fundamentals_cache() schreibt ein INSERT OR REPLACE mit fest
+# aufgezaehlter Spaltenliste -- ein zusaetzlicher dict-Key allein reicht nicht,
+# er muss auch dort eingetragen sein. Der Test liest deshalb aus der DB
+# zurueck statt nur den Funktionsaufruf zu pruefen.
+
+def test_save_fundamentals_cache_persists_earnings_next_date(in_memory_db):
+    """R13: earnings_next_date landet WIRKLICH in der DB, nicht nur im Aufruf."""
+    init_schema(in_memory_db)
+    save_fundamentals_cache(
+        in_memory_db, "AAPL",
+        {"pe_ratio": 25.0, "earnings_next_date": "2026-06-02"},
+        fetched_date="2026-05-21",
+    )
+    row = in_memory_db.execute(
+        "SELECT earnings_next_date FROM fundamentals_cache WHERE ticker=?", ("AAPL",)
+    ).fetchone()
+    assert row is not None
+    assert row["earnings_next_date"] == "2026-06-02"
+
+
+def test_save_fundamentals_cache_earnings_next_date_defaults_to_null(in_memory_db):
+    """Kein earnings_next_date im data-dict -> NULL, kein KeyError."""
+    init_schema(in_memory_db)
+    save_fundamentals_cache(in_memory_db, "AAPL", {"pe_ratio": 25.0}, fetched_date="2026-05-21")
+    row = in_memory_db.execute(
+        "SELECT earnings_next_date FROM fundamentals_cache WHERE ticker=?", ("AAPL",)
+    ).fetchone()
+    assert row["earnings_next_date"] is None
+
+
+def test_get_cached_fundamentals_returns_earnings_next_date(in_memory_db):
+    """get_cached_fundamentals() macht SELECT * -- die neue Spalte kommt
+    automatisch mit, ohne dass die Lesefunktion angefasst werden muss."""
+    init_schema(in_memory_db)
+    save_fundamentals_cache(
+        in_memory_db, "AAPL",
+        {"pe_ratio": 25.0, "earnings_next_date": "2026-06-02"},
+        fetched_date="2026-05-21",
+    )
+    result = get_cached_fundamentals(in_memory_db, "AAPL", today="2026-05-21")
+    assert result["earnings_next_date"] == "2026-06-02"
+
+
+def test_migration_adds_earnings_next_date_idempotently(in_memory_db):
+    """R12: zweimal init_schema() laeuft ohne Fehler, Spalte existiert danach."""
+    init_schema(in_memory_db)
+    init_schema(in_memory_db)
+    cols = {r["name"] for r in in_memory_db.execute(
+        "PRAGMA table_info(fundamentals_cache)").fetchall()}
+    assert "earnings_next_date" in cols
+
+
+def test_migration_adds_earnings_next_date_to_a_legacy_fundamentals_cache():
+    """R12: Migration gegen eine DB, deren fundamentals_cache die Spalte noch
+    nicht kennt (Muster wie test_migration_adds_supersede_columns_to_an_existing_db)."""
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.execute("""CREATE TABLE fundamentals_cache (
+        ticker TEXT NOT NULL, fetched_date TEXT NOT NULL,
+        pe_ratio REAL, forward_pe REAL, market_cap_b REAL,
+        debt_equity REAL, sector TEXT, analyst_upside REAL, consensus TEXT,
+        UNIQUE(ticker))""")
+    conn.commit()
+    init_schema(conn)
+    cols = {r["name"] for r in conn.execute(
+        "PRAGMA table_info(fundamentals_cache)").fetchall()}
+    assert "earnings_next_date" in cols
+    conn.close()
+
+
 # ---------- Sub-Sektor-Tabellen (Sprint 3B / Plan 1, Task 3) ----------
 
 from src.db import (

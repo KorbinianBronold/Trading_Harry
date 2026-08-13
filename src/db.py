@@ -167,6 +167,10 @@ CREATE TABLE IF NOT EXISTS fundamentals_cache (
     sector TEXT,
     analyst_upside REAL,
     consensus TEXT,
+    earnings_next_date TEXT,   -- Sprint 3C / Analyse-Pipeline-Umbau Task 7: ISO-Datum
+                               -- statt Tageszahl (Spec 18.1d) -- days_to_next waere
+                               -- relativ zum Abrufzeitpunkt und bei 7-Tage-TTL nach
+                               -- vier Tagen schlicht falsch.
     UNIQUE(ticker)
 );
 
@@ -314,9 +318,22 @@ def _apply_migrations(conn: sqlite3.Connection) -> None:
                 pe_ratio REAL, forward_pe REAL, market_cap_b REAL,
                 debt_equity REAL, sector TEXT,
                 analyst_upside REAL, consensus TEXT,
+                earnings_next_date TEXT,
                 UNIQUE(ticker)
             )
         """)
+
+    # Sprint 3C / Analyse-Pipeline-Umbau (Task 7): earnings_next_date als
+    # ISO-Datum statt Tageszahl (Spec 18.1d) -- days_to_next war relativ zum
+    # Abrufzeitpunkt und bei 7-Tage-TTL nach vier Tagen schlicht falsch.
+    # R12: introspektiv wie ueberall hier, kein migration_level-Zaehler.
+    fc_cols = {r["name"] for r in conn.execute(
+        "PRAGMA table_info(fundamentals_cache)"
+    ).fetchall()}
+    if "earnings_next_date" not in fc_cols:
+        conn.execute(
+            "ALTER TABLE fundamentals_cache ADD COLUMN earnings_next_date TEXT"
+        )
 
     ph_cols = {r["name"] for r in conn.execute(
         "PRAGMA table_info(price_history)"
@@ -1117,19 +1134,25 @@ def save_fundamentals_cache(
     fetched_date: str | None = None,
 ) -> None:
     """Inserts or overwrites `ticker`'s cached fundamentals with today's (or
-    the given) fetch date, resetting its 7-day TTL."""
+    the given) fetch date, resetting its 7-day TTL.
+
+    `data` darf 'earnings_next_date' enthalten (ISO-Datum, Sprint 3C /
+    Analyse-Pipeline-Umbau Task 7). R13: die INSERT-Spaltenliste ist fest
+    aufgezaehlt -- ein Key im dict allein reicht nicht, er muss hier auch
+    stehen, sonst wird der Wert lautlos verworfen."""
     from datetime import date as _d
     _fetched = fetched_date or _d.today().isoformat()
     conn.execute(
         """INSERT OR REPLACE INTO fundamentals_cache
            (ticker, fetched_date, pe_ratio, forward_pe, market_cap_b,
-            debt_equity, sector, analyst_upside, consensus)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            debt_equity, sector, analyst_upside, consensus, earnings_next_date)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             ticker, _fetched,
             data.get("pe_ratio"), data.get("forward_pe"), data.get("market_cap_b"),
             data.get("debt_equity"), data.get("sector"),
             data.get("analyst_upside"), data.get("consensus"),
+            data.get("earnings_next_date"),
         ),
     )
     conn.commit()
