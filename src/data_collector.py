@@ -39,12 +39,11 @@ from src.indicators import (
 
 log = logging.getLogger("shares_future.data_collector")
 
-# Wie weit die Lueckenpruefung zurueckschaut. 200 Bars, obgleich das Indikator-
-# Fenster seit dem Umbau (2026-08-12) 220 Bars laedt — die Anhebung des Scan-
-# Fensters waere ein separater Umbau und wuerde aendern, welche Ticker uebersprungen
-# werden (einen Riegel, den Plan 1 nicht beruehren darf). Die 20-Bar-Luecke
-# kann gelockert werden, wenn diese Aenderung explizit gefordert wird.
-GAP_SCAN_BARS = 200
+# Wie weit die Lueckenpruefung zurueckschaut. 220 Bars — deckungsgleich mit dem
+# Indikator-Ladefenster seit dem Umbau (2026-08-12). Eine dort versteckte Luecke
+# kann sonst SMA200 verfaelschen. Diese Anhebung aendert, welche Ticker uebersprungen
+# werden: mehr erkannte Luecken → mehr Nachladeversuche → ggf. mehr Skips.
+GAP_SCAN_BARS = 220
 
 
 from src.providers.base import DataProvider
