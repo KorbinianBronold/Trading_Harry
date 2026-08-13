@@ -196,6 +196,135 @@ def test_broad_scan_missing_news_strength_key_defaults_to_zero():
     assert out[0]["news_strength"] == 0
 
 
+def test_broad_scan_news_strength_above_range_zeroed(caplog):
+    """news_strength ausserhalb der dokumentierten Domaene (0-3, Prompt-Zeile
+    20) wird auf 0 gezogen statt an die Obergrenze geklemmt -- konsistent mit
+    jeder anderen Validierung in _apply_note_rule, die auf einen
+    unvertrauenswuerdigen Wert mit 0 statt mit einer Vermutung reagiert. Muss
+    zusaetzlich eine WARNING loggen, wie die benachbarte Note-Regel."""
+    payload = json.dumps({"results": [
+        {"ticker": "AAPL", "news_strength": 7, "news_note": "Huge rally."},
+    ]})
+    fake = _fake_sonnet_result(payload)
+    tracker = CostTracker(hard_cap_eur=10.0)
+
+    with patch("src.broad_scan.call_claude", return_value=fake):
+        with caplog.at_level("WARNING", logger="shares_future.broad_scan"):
+            out = broad_scan_batch(
+                ticker_datas=[_td("AAPL")],
+                sidecar=_sidecar(),
+                trend_context=_trend_context(),
+                market_context=_market_context(),
+                cost_tracker=tracker,
+            )
+
+    assert out[0]["news_strength"] == 0
+    assert any("7" in r.message and "Domaene" in r.message for r in caplog.records)
+
+
+def test_broad_scan_news_strength_below_range_zeroed(caplog):
+    """Symmetrisch zum Obergrenzen-Test: ein negativer Wert ist genauso
+    ausserhalb der Domaene 0-3 und wird auf 0 gezogen, nicht an die
+    Untergrenze geklemmt."""
+    payload = json.dumps({"results": [
+        {"ticker": "AAPL", "news_strength": -2, "news_note": "Odd value."},
+    ]})
+    fake = _fake_sonnet_result(payload)
+    tracker = CostTracker(hard_cap_eur=10.0)
+
+    with patch("src.broad_scan.call_claude", return_value=fake):
+        with caplog.at_level("WARNING", logger="shares_future.broad_scan"):
+            out = broad_scan_batch(
+                ticker_datas=[_td("AAPL")],
+                sidecar=_sidecar(),
+                trend_context=_trend_context(),
+                market_context=_market_context(),
+                cost_tracker=tracker,
+            )
+
+    assert out[0]["news_strength"] == 0
+    assert any("-2" in r.message and "Domaene" in r.message for r in caplog.records)
+
+
+def test_broad_scan_news_strength_non_integer_zeroed(caplog):
+    """news_strength=2.5 liegt zwar rechnerisch im Bereich 0-3, verletzt aber
+    die Ganzzahl-Vorgabe des Prompts ('integer 0-3') -- wird ebenfalls auf 0
+    gezogen statt stillschweigend gerundet, denn Runden waere ein Raten der
+    Modell-Absicht."""
+    payload = json.dumps({"results": [
+        {"ticker": "AAPL", "news_strength": 2.5, "news_note": "Fractional."},
+    ]})
+    fake = _fake_sonnet_result(payload)
+    tracker = CostTracker(hard_cap_eur=10.0)
+
+    with patch("src.broad_scan.call_claude", return_value=fake):
+        with caplog.at_level("WARNING", logger="shares_future.broad_scan"):
+            out = broad_scan_batch(
+                ticker_datas=[_td("AAPL")],
+                sidecar=_sidecar(),
+                trend_context=_trend_context(),
+                market_context=_market_context(),
+                cost_tracker=tracker,
+            )
+
+    assert out[0]["news_strength"] == 0
+    assert any("2.5" in r.message and "Domaene" in r.message for r in caplog.records)
+
+
+def test_broad_scan_news_strength_bool_treated_as_non_numeric():
+    """bool ist in Python eine int-Unterklasse (isinstance(True, int) ==
+    True) -- ohne expliziten Ausschluss wuerde ein boolescher Wert
+    stillschweigend als 0/1 durchrutschen. _apply_note_rule schliesst bool
+    bewusst aus und behandelt es wie jeden anderen nicht-numerischen Wert
+    (auf 0 gezogen, keine Domaenen-Warnung -- Typfehler, nicht Wertfehler)."""
+    payload = json.dumps({"results": [
+        {"ticker": "AAPL", "news_strength": True, "news_note": "Odd type."},
+    ]})
+    fake = _fake_sonnet_result(payload)
+    tracker = CostTracker(hard_cap_eur=10.0)
+
+    with patch("src.broad_scan.call_claude", return_value=fake):
+        out = broad_scan_batch(
+            ticker_datas=[_td("AAPL")],
+            sidecar=_sidecar(),
+            trend_context=_trend_context(),
+            market_context=_market_context(),
+            cost_tracker=tracker,
+        )
+
+    assert out[0]["news_strength"] == 0
+
+
+def test_broad_scan_news_strength_in_range_values_untouched():
+    """Gegenprobe zu den drei Domaenen-Tests: gueltige Ganzzahlen 0-3 laufen
+    unveraendert durch _apply_note_rule -- die neue Grenzpruefung darf am
+    dokumentierten Wertebereich selbst nichts aendern."""
+    payload = json.dumps({"results": [
+        {"ticker": "AAPL", "news_strength": 0, "news_note": ""},
+        {"ticker": "MSFT", "news_strength": 1, "news_note": "Minor update."},
+        {"ticker": "NVDA", "news_strength": 2, "news_note": "Notable move."},
+        {"ticker": "AMZN", "news_strength": 3, "news_note": "Major catalyst."},
+    ]})
+    fake = _fake_sonnet_result(payload)
+    tracker = CostTracker(hard_cap_eur=10.0)
+    batch = [_td("AAPL"), _td("MSFT"), _td("NVDA"), _td("AMZN")]
+
+    with patch("src.broad_scan.call_claude", return_value=fake):
+        out = broad_scan_batch(
+            ticker_datas=batch,
+            sidecar=_sidecar(),
+            trend_context=_trend_context(),
+            market_context=_market_context(),
+            cost_tracker=tracker,
+        )
+
+    by_ticker = {r["ticker"]: r for r in out}
+    assert by_ticker["AAPL"]["news_strength"] == 0
+    assert by_ticker["MSFT"]["news_strength"] == 1
+    assert by_ticker["NVDA"]["news_strength"] == 2
+    assert by_ticker["AMZN"]["news_strength"] == 3
+
+
 def test_broad_scan_valid_json_missing_results_key_degrades_to_zero():
     """R26: die Antwort ist gueltiges JSON, aber ohne 'results'-Liste --
     strukturell kaputt, nicht syntaktisch. Degradiert genauso wie

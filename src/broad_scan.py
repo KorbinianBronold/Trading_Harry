@@ -105,10 +105,31 @@ def _zero_result(ticker: str) -> dict:
 def _apply_note_rule(ticker: str, entry: dict) -> dict:
     """Code-Regel aus Spec 4.6: news_strength >= 1 ohne news_note wird auf 0
     gezogen -- muss auch greifen, wenn das Modell sich nicht an die
-    Prompt-Vorgabe haelt, deshalb hier statt nur im Prompt-Text."""
+    Prompt-Vorgabe haelt, deshalb hier statt nur im Prompt-Text.
+
+    Bindet news_strength zusaetzlich an seine dokumentierte Domaene (Ganzzahl
+    0-3, prompts/broad_scan_v1.txt Zeile 20): ein Wert ausserhalb des Bereichs
+    oder mit Nachkommaanteil (7, -2, 2.5) wird -- konsistent mit jeder anderen
+    Validierung hier -- auf 0 gezogen statt an die naechste Grenze geklemmt
+    oder gerundet. Ein Modell, das die eigene Ganzzahl-0-3-Vorgabe schon
+    verletzt, ist nicht vertrauenswuerdig genug, um den Ausreisser als
+    absichtliches 'sehr starkes Signal' zu deuten -- Klemmen/Runden waere
+    Raten statt Lesen, und ein zu Unrecht auf 3 geklemmter Wert wuerde das
+    fuer Task 9 geplante Ranking verzerren, nicht nur verrauschen. bool wird
+    bewusst vor der numerischen Pruefung ausgeschlossen: isinstance(True, int)
+    ist in Python wahr, ein boolescher Wert soll aber nicht stillschweigend
+    als 0/1 durchrutschen, sondern wie jeder andere Typfehler auf 0 fallen."""
     strength = entry.get("news_strength")
-    if not isinstance(strength, (int, float)):
+    if isinstance(strength, bool) or not isinstance(strength, (int, float)):
         strength = 0
+    elif strength != int(strength) or not (0 <= strength <= 3):
+        log.warning(
+            f"{ticker}: news_strength {strength!r} ausserhalb der "
+            f"dokumentierten Domaene (Ganzzahl 0-3), auf 0 gezogen"
+        )
+        strength = 0
+    else:
+        strength = int(strength)
     note = entry.get("news_note") or ""
     if strength >= 1 and not note:
         log.warning(f"{ticker}: news_strength {strength} ohne news_note, auf 0 gezogen")
