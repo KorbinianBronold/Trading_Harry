@@ -47,7 +47,7 @@ GAP_SCAN_BARS = 220
 
 
 from src.providers.base import DataProvider
-from src import db
+from src import db, technical_signal
 import config
 
 BATCH_PAUSE_EVERY = 30
@@ -285,16 +285,17 @@ def _process_ticker(
     date: str,
     run_type: str,
     premarket_price: float | None = None,
-) -> tuple[dict, float | None] | None:
+) -> tuple[dict, dict] | None:
     """Runs the full Phase-1 pipeline for one ticker: ensures today's bar exists,
     computes indicators from the last 220 DB days, and fetches fundamentals/earnings
-    (cache-first). Returns (TickerData dict, premarket_change_pct), or None (with a
+    (cache-first). Returns (TickerData dict, sidecar entry dict), or None (with a
     skipped_tickers row) if there's insufficient or low-quality data.
 
     `premarket_price` kommt seit Task 5 aus dem Batch-Sweep in collect()
     (Phase 1b), nicht mehr aus einem Einzelabruf hier drin (R3). Der zweite
-    Rueckgabewert ist bewusst NICHT Teil des td-Dicts (R1/Spec 18.1e) --
-    collect() traegt ihn separat in eine Sidecar-Struktur ein."""
+    Rueckgabewert -- premarket_change_pct plus (seit Task 6) das Technik-Signal
+    -- ist bewusst NICHT Teil des td-Dicts (R1/Spec 18.1e): collect() uebernimmt
+    ihn unveraendert als Sidecar-Eintrag."""
     # Step 1: Luecken schliessen (Spec B.8)
     _fill_price_gaps(ticker, price_provider, conn, date)
 
@@ -339,7 +340,9 @@ def _process_ticker(
     # commodities_crypto.py, portfolio_check.py ueber main.py's `snapshots`).
     # Ein zusaetzlicher Key hier wuerde also Ticker-Auswahl und Scoring
     # beeinflussen, obwohl kein Konsument die neuen Werte lesen soll (das ist
-    # erst Sprint 3D). Nur fuer die Persistierung weiter unten zusammengefuehrt.
+    # erst Sprint 3D). Weiter unten zusammengefuehrt: fuer die Persistierung UND
+    # (Task 6) als Eingabe fuer technical_signal.compute() -- macd_line/
+    # macd_signal_line/adx_14 sitzen nur hier, nicht in td.
     extra_indicators: dict[str, Any] = {
         **compute_macd_raw(df),
         **compute_adx(df),
@@ -406,8 +409,23 @@ def _process_ticker(
         )
         return None
 
-    _persist_indicators(conn, ticker, date, {**td, **extra_indicators})
-    return td, premarket_change_pct
+    merged_indicators = {**td, **extra_indicators}
+    _persist_indicators(conn, ticker, date, merged_indicators)
+
+    # Sprint 3C / Analyse-Pipeline-Umbau (Task 6): das deterministische
+    # Technik-Signal braucht Werte aus BEIDEN Dicts (RSI/SMA aus td, MACD/ADX
+    # aus extra_indicators) -- derselbe Merge wie fuer die Persistierung.
+    # Landet, wie premarket_change_pct, NUR im Sidecar-Eintrag (R1): td selbst
+    # bleibt unangetastet.
+    signal = technical_signal.compute(merged_indicators)
+    sidecar_entry = {
+        "premarket_change_pct": premarket_change_pct,
+        "tech_direction":       signal.direction,
+        "tech_agreement":       signal.agreement,
+        "tech_adx_band":        signal.adx_band,
+        "tech_strength":        signal.strength,
+    }
+    return td, sidecar_entry
 
 
 def _gate_phase(tickers: list[str], conn, date: str) -> list[str]:
@@ -491,10 +509,12 @@ def collect(
       1b Sweep (_sweep_phase):  EIN Batch-Kursabruf ueber alle Survivors
       1c Indikatoren:           _process_ticker() je Survivor, lokal
 
-    Gibt (ticker_data_list, skipped_count, sidecar) zurueck. `sidecar` traegt
-    premarket_change_pct je erfolgreich verarbeitetem Ticker -- NIEMALS als Key
-    in td (R1/Spec 18.1e): td wird unveraendert in vier Claude-Prompts
-    json.dumps't, ein zusaetzlicher Key dort aenderte Ticker-Auswahl und Scoring.
+    Gibt (ticker_data_list, skipped_count, sidecar) zurueck. `sidecar` traegt je
+    erfolgreich verarbeitetem Ticker premarket_change_pct und (seit Task 6) das
+    Technik-Signal (tech_direction/tech_agreement/tech_adx_band/tech_strength)
+    -- NIEMALS als Key in td (R1/Spec 18.1e): td wird unveraendert in vier
+    Claude-Prompts json.dumps't, ein zusaetzlicher Key dort aenderte
+    Ticker-Auswahl und Scoring.
 
     Die Batch-Pause (BATCH_PAUSE_EVERY) sitzt weiterhin um die 1c-Schleife --
     die ruft ueber _fill_price_gaps() weiter je Ticker bei Capital.com an. Der
@@ -515,12 +535,12 @@ def collect(
             premarket_price=premarket_prices.get(t),
         )
         if out is not None:
-            td, premarket_change_pct = out
+            td, sidecar_entry = out
             # Erfolgreicher Abruf heilt den Zaehler — sonst liefe ein Ticker durch
             # verstreute Einzelausfaelle ueber Monate in die Deaktivierung.
             db.reactivate_ticker(conn, t)
             results.append(td)
-            sidecar[t] = {"premarket_change_pct": premarket_change_pct}
+            sidecar[t] = sidecar_entry
 
         if (i + 1) % BATCH_PAUSE_EVERY == 0 and (i + 1) < len(survivors):
             log.info(

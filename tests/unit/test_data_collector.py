@@ -1,5 +1,28 @@
+import numpy as np
 import pandas as pd
 import pytest
+
+
+def _df_seeded_uptrend(seed: int, rows: int = 220) -> pd.DataFrame:
+    """Realistischer Aufwaertstrend mit Tagesrauschen (fixer Seed, deterministisch).
+
+    Im Unterschied zu _df_monotonic_up() saettigt hier weder RSI (kein reiner
+    Auftage-Lauf) noch MACD -- es gibt echte Auf- und Abtage. Dient dem Test,
+    der eine konkret vorhergesagte Signalrichtung ueber echte Indikator-
+    Berechnung erzwingt statt nur Wertebereiche zu pruefen (Sprint 3C /
+    Analyse-Pipeline-Umbau, Task 6)."""
+    rng = np.random.default_rng(seed)
+    rets = rng.normal(0.0025, 0.01, rows)
+    closes = 100 * np.cumprod(1 + rets)
+    idx = pd.date_range("2025-01-01", periods=rows, freq="B")
+    highs = closes * (1 + np.abs(rng.normal(0.003, 0.001, rows)))
+    lows = closes * (1 - np.abs(rng.normal(0.003, 0.001, rows)))
+    opens = closes * (1 + rng.normal(0, 0.001, rows))
+    vols = 1_000_000 + rng.integers(0, 500_000, rows)
+    return pd.DataFrame(
+        {"Open": opens, "High": highs, "Low": lows, "Close": closes, "Volume": vols},
+        index=idx,
+    )
 
 
 def _df_monotonic_up(rows: int = 250) -> pd.DataFrame:
@@ -82,7 +105,7 @@ def test_process_ticker_returns_full_ticker_data(in_memory_db):
     df = _df_monotonic_up(250)
     _seed_price_history(in_memory_db, "AAPL", df)
     last_close = float(df["Close"].iloc[-1])
-    out, premarket_change_pct = _process_ticker(
+    out, sidecar_entry = _process_ticker(
         ticker="AAPL",
         price_provider=_good_provider(df),
         earnings_provider=_earnings_provider(),
@@ -103,7 +126,7 @@ def test_process_ticker_returns_full_ticker_data(in_memory_db):
     assert out["earnings_beat_pct"] == 4.2
     assert out["data_quality"] in {"high", "medium", "low"}
     assert out["intraday_range_pct"] is not None
-    assert premarket_change_pct == pytest.approx(1.0)
+    assert sidecar_entry["premarket_change_pct"] == pytest.approx(1.0)
 
 
 def test_process_ticker_return_shape_excludes_the_29_new_indicator_columns(in_memory_db):
@@ -704,6 +727,80 @@ def test_collect_sweep_adds_premarket_change_pct(in_memory_db):
     assert sidecar["AAPL"]["premarket_change_pct"] == pytest.approx(5.0)
 
 
+# ---------- Technik-Signal im Sidecar (Sprint 3C / Analyse-Pipeline-Umbau, Task 6) ----------
+
+def test_collect_puts_technical_signal_in_sidecar(in_memory_db):
+    """Nach collect() traegt jeder Sidecar-Eintrag die vier Signalwerte."""
+    init_schema(in_memory_db)
+    df = _df_monotonic_up(250)
+    _seed_price_history(in_memory_db, "AAPL", df)
+
+    results, skipped, sidecar = collect(
+        tickers=["AAPL"], price_provider=_good_provider(df),
+        earnings_provider=_earnings_provider(), conn=in_memory_db,
+        date="2026-05-19", run_type="pre_market",
+    )
+
+    assert skipped == 0
+    entry = sidecar["AAPL"]
+    assert entry["tech_direction"] in ("long", "short", "neutral")
+    assert 0 <= entry["tech_agreement"] <= 3
+    assert entry["tech_adx_band"] in ("weak", "normal", "strong")
+    assert 0 <= entry["tech_strength"] <= 4
+
+
+def test_collect_keeps_technical_signal_out_of_td(in_memory_db):
+    """R1: die vier Signalwerte duerfen die Prompt-Nutzlast nicht erreichen --
+    td wird unveraendert in vier Claude-Prompts json.dumps't (quick_filter.py,
+    deep_analysis.py, commodities_crypto.py, portfolio_check.py ueber main.py's
+    `snapshots`); ein zusaetzlicher Key dort aenderte Ticker-Auswahl und Scoring."""
+    init_schema(in_memory_db)
+    df = _df_monotonic_up(250)
+    _seed_price_history(in_memory_db, "AAPL", df)
+
+    results, _skipped, _sidecar = collect(
+        tickers=["AAPL"], price_provider=_good_provider(df),
+        earnings_provider=_earnings_provider(), conn=in_memory_db,
+        date="2026-05-19", run_type="pre_market",
+    )
+
+    for key in ("tech_direction", "tech_agreement", "tech_adx_band", "tech_strength"):
+        assert key not in results[0]
+
+
+def test_process_ticker_computes_a_concretely_predicted_long_signal(in_memory_db):
+    """Konstruierter Aufwaertstrend (Seed 18, 220 Bars, siehe _df_seeded_uptrend)
+    mit echten Indikatorwerten: RSI liegt ueber 50 und steigt, die MACD-Linie
+    liegt ueber der Signallinie, der Kurs liegt ueber SMA50 UND SMA200 -- alle
+    drei Teilindikatoren stimmen long, macht agreement=3. ADX liegt bei rund 23,
+    zwischen den Schwellen 20 (weak) und 25 (strong) -- also adx_band='normal'
+    und strength bleibt bei agreement=3 (kein Bonus, kein Deckel).
+
+    Die exakten Zahlen wurden einmalig ausserhalb des Tests mit denselben
+    Indikatorfunktionen ermittelt (nicht geraten) und liegen bewusst mit
+    Sicherheitsabstand innerhalb ihrer jeweiligen Baender, damit kleine
+    Bibliotheks-Abweichungen die Zusicherung nicht kippen."""
+    init_schema(in_memory_db)
+    df = _df_seeded_uptrend(seed=18, rows=220)
+    _seed_price_history(in_memory_db, "AAPL", df)
+    as_of = df.index[-1].strftime("%Y-%m-%d")
+
+    td, sidecar_entry = _process_ticker(
+        ticker="AAPL",
+        price_provider=_good_provider(df),
+        earnings_provider=_earnings_provider(),
+        conn=in_memory_db,
+        date=as_of,
+        run_type="pre_market",
+    )
+
+    assert td is not None
+    assert sidecar_entry["tech_direction"] == "long"
+    assert sidecar_entry["tech_agreement"] == 3
+    assert sidecar_entry["tech_adx_band"] == "normal"
+    assert sidecar_entry["tech_strength"] == 3
+
+
 def test_collect_calls_sweep_exactly_once_regardless_of_ticker_count(in_memory_db):
     """Der Sweep ist EIN Aufruf ueber alle Survivors (Spec 4.3.1, '25 Calls
     statt ~500') -- Chunking passiert intern im Provider, nicht durch mehrere
@@ -834,7 +931,7 @@ def test_process_ticker_falls_back_to_close_with_none_pct_when_sweep_has_no_pric
     _seed_price_history(in_memory_db, "AAPL", df)
     last_close = float(df["Close"].iloc[-1])
 
-    out, premarket_change_pct = _process_ticker(
+    out, sidecar_entry = _process_ticker(
         ticker="AAPL",
         price_provider=_good_provider(df),
         earnings_provider=_earnings_provider(),
@@ -845,7 +942,7 @@ def test_process_ticker_falls_back_to_close_with_none_pct_when_sweep_has_no_pric
     )
     assert out is not None
     assert out["price"] == pytest.approx(last_close)
-    assert premarket_change_pct is None
+    assert sidecar_entry["premarket_change_pct"] is None
 
 
 def test_collect_survives_ticker_missing_entirely_from_sweep_dict(in_memory_db):
