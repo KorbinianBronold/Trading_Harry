@@ -8,13 +8,20 @@ von 5-10 Minuten ohne Parallelisierung erreichbar ist.
 Die Sonde SCHREIBT NICHTS: weder in die Datenbank noch bei Capital.com. Nur GETs.
 
 Aufruf:
-    python setup/probe_epics_batch.py
+    python setup/probe_epics_batch.py --run-live
+
+Ohne --run-live passiert NICHTS -- die Sonde bricht sofort ab, bevor sie auch
+nur eine Zeile Netzwerkcode erreicht. Gleiches Prinzip wie --run-live bei den
+pytest-Live-Tests (tests/conftest.py): ein Skript, das echte Fremdsysteme
+anspricht, darf nicht durch einen blossen Aufruf ohne Flag loslaufen.
 
 Exit-Codes:
     0  Sammelabruf funktioniert          -> Plan 2 nutzt Chunks
     1  Sammelabruf nicht verfuegbar      -> Plan 2 nutzt Einzel-Calls ohne Pause
     2  Teilantwort oder Laengengrenze    -> Ergebnis von Hand lesen
+    3  --run-live fehlt                  -> Sonde nicht ausgefuehrt
 """
+import argparse
 import sys
 from pathlib import Path
 
@@ -52,6 +59,16 @@ def _bid_of(market: dict) -> float | None:
     """Liest den Bid-Kurs aus einem Markt-Dict, egal wie tief er verschachtelt ist."""
     snapshot = market.get("snapshot") or {}
     return snapshot.get("bid")
+
+
+def _offer_of(market: dict) -> float | None:
+    """Liest den Offer-(Ask-)Kurs, falls vorhanden.
+
+    Beantwortet die offene Frage aus Spec 4.3.1: liefert der Sammelabruf den
+    Spread kostenlos mit, oder braucht 'spread-bereinigtes R/R' (Spec § 17)
+    einen zusaetzlichen Call?"""
+    snapshot = market.get("snapshot") or {}
+    return snapshot.get("offer")
 
 
 def _epic_of(market: dict) -> str | None:
@@ -122,7 +139,12 @@ def main() -> int:
     print(f"    Antwort-Schluessel: {list(payload.keys())}")
     print(f"    Instrumente: {len(markets)} (angefragt: {len(epics)})")
     for m in markets:
-        print(f"      {_epic_of(m)}: bid={_bid_of(m)}")
+        print(f"      {_epic_of(m)}: bid={_bid_of(m)} offer={_offer_of(m)}")
+
+    # --- offene Frage aus Spec 4.3.1: liefert der Sammelabruf ein offer-Feld? --
+    has_offer = bool(markets) and all(_offer_of(m) is not None for m in markets)
+    print(f"\n[B'] offer-Feld im Sammelabruf (Spec 4.3.1, letzter Absatz): "
+          f"{'JA, in allen Snapshots vorhanden' if has_offer else 'NEIN -- fehlt in mindestens einem Snapshot'}")
 
     if len(markets) != len(epics):
         print("\nERGEBNIS: Teilantwort -- Ursache von Hand klaeren, bevor Plan 2")
@@ -151,5 +173,25 @@ def main() -> int:
     return 0
 
 
+def _parse_args() -> argparse.Namespace:
+    """Parst --run-live. Das ist das einzige Argument -- ohne Flag macht die
+    Sonde keinen einzigen Netzwerk-Call (Sicherheitsnetz, s. Modul-Docstring)."""
+    parser = argparse.ArgumentParser(
+        description="Read-only-Sonde: akzeptiert Capital.coms /markets-Endpunkt "
+                     "eine Liste von Epics?",
+    )
+    parser.add_argument(
+        "--run-live", action="store_true",
+        help="Fuehrt die Sonde wirklich gegen die Capital.com-Demo-API aus "
+             "(nur lesende GETs). Ohne dieses Flag passiert nichts.",
+    )
+    return parser.parse_args()
+
+
 if __name__ == "__main__":
+    args = _parse_args()
+    if not args.run_live:
+        print("Sonde macht per Default keine echten API-Calls.")
+        print("Ausfuehren mit: python setup/probe_epics_batch.py --run-live")
+        raise SystemExit(3)
     raise SystemExit(main())
