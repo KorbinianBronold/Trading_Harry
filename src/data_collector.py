@@ -236,19 +236,30 @@ def _persist_indicators(conn, ticker: str, date: str, td: dict) -> None:
     })
 
 
-def _live_price(price_provider, ticker: str, df) -> float:
-    """Aktueller Kurs fuer die Entscheidung. Faellt auf den letzten finalen Close
-    zurueck, wenn der Live-Abruf nichts liefert -- ein alter Kurs ist besser als
-    gar keine Analyse, und der Ticker wird dadurch nicht uebersprungen."""
-    try:
-        live = price_provider.get_premarket_price(ticker)
-    except Exception as e:
-        log.warning(f"{ticker}: Live-Kurs nicht abrufbar: {e}")
-        live = None
-    if live is not None:
-        return float(live)
+def _live_price(
+    ticker: str, premarket_price: float | None, df,
+) -> tuple[float, float | None]:
+    """Entscheidungskurs + premarket_change_pct fuer die Sidecar (Sprint 3C /
+    Analyse-Pipeline-Umbau, Task 5, R1/R3/R7).
+
+    `premarket_price` kommt seit dem Sweep-Umbau NICHT mehr aus einem eigenen
+    Einzelabruf hier, sondern aus Phase 1b (_sweep_phase() in collect()) --
+    Spec 4.3.1: EIN Batch-Call ueber alle Ticker statt einem je Ticker. Fehlt
+    er (Chunk uebersprungen, Antwort ohne bid, oder ein Provider ganz ohne
+    Batch-Unterstuetzung), faellt der Kurs auf den letzten finalen Close
+    zurueck (WARNING, kein Skip -- ein alter Kurs ist besser als gar keine
+    Analyse). premarket_change_pct bleibt in diesem Fall None statt 0: eine 0
+    behauptete "eroeffnet unveraendert", eine Beobachtung, die niemand
+    gemessen hat (Spec 4.3)."""
+    last_close = float(df["Close"].iloc[-1])
+    if premarket_price is not None:
+        pct = (
+            (premarket_price - last_close) / last_close * 100
+            if last_close else None
+        )
+        return float(premarket_price), pct
     log.warning(f"{ticker}: kein Live-Kurs, nutze letzten finalen Close")
-    return float(df["Close"].iloc[-1])
+    return last_close, None
 
 
 def _skip(conn, ticker: str, date: str, run_type: str, reason: str) -> None:
@@ -273,11 +284,17 @@ def _process_ticker(
     conn,
     date: str,
     run_type: str,
-) -> dict | None:
+    premarket_price: float | None = None,
+) -> tuple[dict, float | None] | None:
     """Runs the full Phase-1 pipeline for one ticker: ensures today's bar exists,
     computes indicators from the last 220 DB days, and fetches fundamentals/earnings
-    (cache-first). Returns the TickerData dict, or None (with a skipped_tickers row)
-    if there's insufficient or low-quality data."""
+    (cache-first). Returns (TickerData dict, premarket_change_pct), or None (with a
+    skipped_tickers row) if there's insufficient or low-quality data.
+
+    `premarket_price` kommt seit Task 5 aus dem Batch-Sweep in collect()
+    (Phase 1b), nicht mehr aus einem Einzelabruf hier drin (R3). Der zweite
+    Rueckgabewert ist bewusst NICHT Teil des td-Dicts (R1/Spec 18.1e) --
+    collect() traegt ihn separat in eine Sidecar-Struktur ein."""
     # Step 1: Luecken schliessen (Spec B.8)
     _fill_price_gaps(ticker, price_provider, conn, date)
 
@@ -292,15 +309,17 @@ def _process_ticker(
         )
         return None
 
+    # Entscheidungskurs kommt LIVE (aus dem Sweep), nicht aus price_history: die
+    # Historie enthaelt seit dem Preismodell-Umbau nur noch finale Tagesbars und
+    # endet damit bei D-1. Ohne diesen Live-Kurs analysierte die Pipeline auf dem
+    # Schluss von gestern.
+    price, premarket_change_pct = _live_price(ticker, premarket_price, df)
+
     # Indicators (computed from DB data — df has capitalized column names)
     pc = compute_price_changes(df)
     td: dict[str, Any] = {
         "ticker": ticker,
-        # Entscheidungskurs kommt LIVE, nicht aus price_history: die Historie
-        # enthaelt seit dem Preismodell-Umbau nur noch finale Tagesbars und endet
-        # damit bei D-1. Ohne diesen Abruf analysierte die Pipeline auf dem
-        # Schluss von gestern.
-        "price": _live_price(price_provider, ticker, df),
+        "price": price,
         **pc,
         "rsi_14":             compute_rsi_14(df),
         "rsi_trend":          compute_rsi_trend(df),
@@ -388,7 +407,74 @@ def _process_ticker(
         return None
 
     _persist_indicators(conn, ticker, date, {**td, **extra_indicators})
-    return td
+    return td, premarket_change_pct
+
+
+def _gate_phase(tickers: list[str], conn, date: str) -> list[str]:
+    """Phase 1a: filtert dauerhaft deaktivierte Ticker heraus (Sprint 3B / B.7),
+    bevor Sweep oder Indikatoren auch nur einen weiteren API-Call ausloesen.
+
+    Die Bar-Zaehlung bleibt bewusst AUSSEN VOR (Spec 18.1a): sie sitzt weiter in
+    _process_ticker(), NACH dem Luecken-Nachladen dort. Wuerde sie hierher
+    vorgezogen, fielen Ticker raus, die nach dem Nachladen genug Bars haetten.
+
+    Rohstoffe und Krypto sind von der Deaktivierung ausgenommen (Spec 6.1):
+    sie bleiben trotz inaktivem Status Survivors, nur mit WARNING statt dem
+    harten Rauswurf -- das Universum ist hier so klein, dass ein dauerhaft
+    fehlender Rohstoff-/Krypto-Wert schwerer wiegt als bei 500 Aktien."""
+    exempt = set(config.COMMODITY_TICKERS.values()) | set(config.CRYPTO_TICKERS.values())
+    survivors: list[str] = []
+    for t in tickers:
+        if db.is_ticker_inactive(conn, t, today=date):
+            if t in exempt:
+                log.warning(
+                    f"{t}: inaktiv, aber Rohstoff/Krypto-Ausnahme (Spec 6.1) — "
+                    f"bleibt Survivor"
+                )
+                survivors.append(t)
+                continue
+            status = db.get_ticker_status(conn, t)
+            log.info(
+                f"{t}: inaktiv nach {status['skip_count']} Skips — uebersprungen, "
+                f"Retry ab {status['retry_after']}"
+            )
+            continue
+        survivors.append(t)
+    return survivors
+
+
+def _sweep_phase(
+    tickers: list[str], price_provider: DataProvider,
+) -> dict[str, float | None]:
+    """Phase 1b: EIN Batch-Call ueber alle Survivors fuer den Live-Kurs
+    (Spec 4.3.1) statt bis zu 500 Einzelabrufen. Der Rueckgabewert speist in
+    Phase 1c sowohl td["price"] als auch premarket_change_pct (R3) -- niemals
+    beides einzeln je Ticker abgerufen.
+
+    Provider ohne Batch-Unterstuetzung (nur Capital.com liefert ueberhaupt
+    Live-Kurse, s. src/providers/base.py) werfen NotImplementedError; der
+    Sweep faengt das ab und liefert ein leeres Dict -- jeder Ticker faellt dann
+    in Phase 1c auf seinen letzten finalen Close zurueck, keiner wird deswegen
+    uebersprungen. Uebersteigt der Anteil der Survivors ohne Live-Kurs 20 %,
+    warnt der Sweep von sich aus (Spec 4.3, Muster D3). Keine Batch-Pause hier
+    (Spec 4.3.2) -- die 429-Behandlung steckt bereits in
+    get_premarket_prices_batch(), die Pause um die Netz-lastige 1c-Schleife
+    bleibt in collect()."""
+    if not tickers:
+        return {}
+    try:
+        prices = price_provider.get_premarket_prices_batch(tickers)
+    except NotImplementedError as e:
+        log.warning(f"Sweep: {e}")
+        return {}
+
+    missing = sum(1 for t in tickers if prices.get(t) is None)
+    if missing / len(tickers) > 0.2:
+        log.warning(
+            f"Sweep: {missing} von {len(tickers)} Survivors ohne Live-Kurs "
+            f"({missing / len(tickers):.0%}) — Fallback auf letzten Close"
+        )
+    return prices
 
 
 def collect(
@@ -398,49 +484,55 @@ def collect(
     conn,
     date: str,
     run_type: str,
-) -> tuple[list[dict], int]:
-    """Run Phase 1 over the MVP universe. Returns (ticker_data_list, skipped_count).
+) -> tuple[list[dict], int, dict[str, dict]]:
+    """Run Phase 1 in drei Paessen (Sprint 3C / Analyse-Pipeline-Umbau, Task 5):
 
-    Tickers are processed sequentially. After every BATCH_PAUSE_EVERY tickers
-    we sleep config.CAPITAL_COM_BATCH_PAUSE seconds to respect Capital.com rate limits.
-    """
+      1a Gate (_gate_phase):    inaktive Ticker raus, Rohstoffe/Krypto ausgenommen
+      1b Sweep (_sweep_phase):  EIN Batch-Kursabruf ueber alle Survivors
+      1c Indikatoren:           _process_ticker() je Survivor, lokal
+
+    Gibt (ticker_data_list, skipped_count, sidecar) zurueck. `sidecar` traegt
+    premarket_change_pct je erfolgreich verarbeitetem Ticker -- NIEMALS als Key
+    in td (R1/Spec 18.1e): td wird unveraendert in vier Claude-Prompts
+    json.dumps't, ein zusaetzlicher Key dort aenderte Ticker-Auswahl und Scoring.
+
+    Die Batch-Pause (BATCH_PAUSE_EVERY) sitzt weiterhin um die 1c-Schleife --
+    die ruft ueber _fill_price_gaps() weiter je Ticker bei Capital.com an. Der
+    Sweep braucht keine eigene Pause (Spec 4.3.2)."""
+    survivors = _gate_phase(tickers, conn, date)
+    premarket_prices = _sweep_phase(survivors, price_provider)
+
     results: list[dict] = []
-    skipped = 0
-    for i, t in enumerate(tickers):
-        # Sprint 3B / B.7: dauerhaft datenlose Ticker kosten keine API-Calls mehr,
-        # bis ihr retry_after-Datum erreicht ist.
-        if db.is_ticker_inactive(conn, t, today=date):
-            status = db.get_ticker_status(conn, t)
-            log.info(
-                f"{t}: inaktiv nach {status['skip_count']} Skips — uebersprungen, "
-                f"Retry ab {status['retry_after']}"
-            )
-            skipped += 1
-            continue
-
-        td = _process_ticker(
+    sidecar: dict[str, dict] = {}
+    for i, t in enumerate(survivors):
+        out = _process_ticker(
             ticker=t,
             price_provider=price_provider,
             earnings_provider=earnings_provider,
             conn=conn,
             date=date,
             run_type=run_type,
+            premarket_price=premarket_prices.get(t),
         )
-        if td is None:
-            skipped += 1
-        else:
+        if out is not None:
+            td, premarket_change_pct = out
             # Erfolgreicher Abruf heilt den Zaehler — sonst liefe ein Ticker durch
             # verstreute Einzelausfaelle ueber Monate in die Deaktivierung.
             db.reactivate_ticker(conn, t)
             results.append(td)
+            sidecar[t] = {"premarket_change_pct": premarket_change_pct}
 
-        if (i + 1) % BATCH_PAUSE_EVERY == 0 and (i + 1) < len(tickers):
+        if (i + 1) % BATCH_PAUSE_EVERY == 0 and (i + 1) < len(survivors):
             log.info(
-                f"Batch pause: processed {i + 1}/{len(tickers)} tickers, "
+                f"Batch pause: processed {i + 1}/{len(survivors)} tickers, "
                 f"sleeping {config.CAPITAL_COM_BATCH_PAUSE}s"
             )
             time.sleep(config.CAPITAL_COM_BATCH_PAUSE)
 
+    # len(tickers) - len(results) statt eines eigenen Zaehlers: identisch mit
+    # der Summe aus Gate-Rauswuerfen und 1c-Skips, aber ohne zwei Zaehler
+    # synchron halten zu muessen.
+    skipped = len(tickers) - len(results)
     if skipped:
         # Gebuendelt statt 500 Einzelzeilen: die Verteilung der Gruende sagt,
         # ob eine Handvoll Ticker zickt oder die halbe Datenbank leer ist.
@@ -452,4 +544,4 @@ def collect(
         )
 
     log.info(f"Phase 1 done: {len(results)} ok, {skipped} skipped")
-    return results, skipped
+    return results, skipped, sidecar

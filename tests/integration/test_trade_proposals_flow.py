@@ -13,7 +13,7 @@ from src import db
 def _mock_16_10(mocker, price: float, verdict: dict):
     mocker.patch("main.CapitalComProvider", return_value=MagicMock())
     mocker.patch("main.FinnhubProvider", return_value=MagicMock())
-    mocker.patch("main.collect", return_value=([{"ticker": "AAPL", "price": price}], 0))
+    mocker.patch("main.collect", return_value=([{"ticker": "AAPL", "price": price}], 0, {}))
     mocker.patch("main.collect_sector_momentum", return_value={})
     mocker.patch("main.run_policy_monitor",
                  return_value={"policy_risk_level": "low", "events": []})

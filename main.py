@@ -321,7 +321,7 @@ def run_pipeline(run_type: str, date: str, db_path: str) -> None:
         current_phase = "data_collection"
         # Phase 1 — Stocks data
         _tickers = config.SP500_FULL_TICKERS if config.USE_FULL_SP500 else config.SP500_MVP_TICKERS
-        sp500_tds, skipped_sp = collect(
+        sp500_tds, skipped_sp, _sp500_sidecar = collect(
             tickers=_tickers,
             price_provider=price_provider,
             earnings_provider=earnings_provider,
@@ -331,7 +331,7 @@ def run_pipeline(run_type: str, date: str, db_path: str) -> None:
         # Phase 1b — Commodities + Crypto data (separate collect for asset_class tagging)
         cc_inputs = build_commodity_crypto_inputs()
         cc_tickers = [d["ticker"] for d in cc_inputs]
-        cc_tds_raw, skipped_cc = collect(
+        cc_tds_raw, skipped_cc, _cc_sidecar = collect(
             tickers=cc_tickers,
             price_provider=price_provider,
             earnings_provider=earnings_provider,
@@ -629,12 +629,12 @@ def run_trade_proposals(date: str, db_path: str) -> None:
         current_phase = "data_collection"
         _tickers = (config.SP500_FULL_TICKERS if config.USE_FULL_SP500
                     else config.SP500_MVP_TICKERS)
-        sp_tds, _ = collect(
+        sp_tds, _, _ = collect(
             tickers=_tickers, price_provider=price_provider,
             earnings_provider=earnings_provider,
             conn=conn, date=date, run_type="trade_proposals")
         cc_tickers = [d["ticker"] for d in build_commodity_crypto_inputs()]
-        cc_tds, _ = collect(
+        cc_tds, _, _ = collect(
             tickers=cc_tickers, price_provider=price_provider,
             earnings_provider=earnings_provider,
             conn=conn, date=date, run_type="trade_proposals")

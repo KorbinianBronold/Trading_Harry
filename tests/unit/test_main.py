@@ -61,7 +61,7 @@ def _mock_all_other_phases(mocker) -> list[str]:
 
     fake_trends = {"trends": [{"name": "x"}], "trend_summary": "ok"}
     fake_policy = {"policy_risk_level": "low", "events": []}
-    fake_collect = ([{"ticker": "AAPL", "intraday_range_pct": 1.5, "price": 178.0}], 0)
+    fake_collect = ([{"ticker": "AAPL", "intraday_range_pct": 1.5, "price": 178.0}], 0, {})
     fake_quick = [{"ticker": "AAPL", "exclude": False, "long_score": 7.0,
                    "short_score": 2.0, "confidence": "high", "evidence": []}]
     fake_deep = [{"ticker": "AAPL", "direction": "long", "current_price": 178.0,
@@ -153,7 +153,7 @@ def test_run_pipeline_partial_email_when_cost_cap_hit(tmp_db_path):
     from src.cost_tracker import CostCapExceeded
     with patch("main.analyze_trends", return_value={"trends": [{"name": "x"}],
                                                      "trend_summary": "ok"}), \
-         patch("main.collect", return_value=([], 0)), \
+         patch("main.collect", return_value=([], 0, {})), \
          patch("main.quick_filter_batch", return_value=[]), \
          patch("main.run_policy_monitor",
                side_effect=CostCapExceeded("cap hit")), \
@@ -188,7 +188,7 @@ def test_close_run_does_not_call_claude(tmp_db_path, mocker):
     der Test bliebe gruen, und ein Unit-Test telefonierte still nach draussen."""
     mocker.patch("main.CapitalComProvider", return_value=MagicMock())
     mocker.patch("main.FinnhubProvider", return_value=MagicMock())
-    mocker.patch("main.collect", return_value=([], 0))
+    mocker.patch("main.collect", return_value=([], 0, {}))
     mock_claude = mocker.patch("src.utils.call_claude")
     mocker.patch("src.email_sender._send")
     mock_evaluate = mocker.patch("main.evaluate_open_predictions", return_value=0)
@@ -205,7 +205,7 @@ def test_close_pulls_closing_prices_for_all_tickers(tmp_db_path, mocker):
     mocker.patch("main.CapitalComProvider", return_value=MagicMock())
     mocker.patch("main.FinnhubProvider", return_value=MagicMock())
     mocker.patch("main.evaluate_open_predictions", return_value=0)
-    collect_mock = mocker.patch("main.collect", return_value=([], 0))
+    collect_mock = mocker.patch("main.collect", return_value=([], 0, {}))
 
     from main import run_close
     run_close(date="2026-07-30", db_path=str(tmp_db_path))
@@ -222,7 +222,7 @@ def test_close_still_evaluates_open_predictions(tmp_db_path, mocker):
     Stelle, die outcomes-Zeilen schreibt."""
     mocker.patch("main.CapitalComProvider", return_value=MagicMock())
     mocker.patch("main.FinnhubProvider", return_value=MagicMock())
-    mocker.patch("main.collect", return_value=([], 0))
+    mocker.patch("main.collect", return_value=([], 0, {}))
     ev = mocker.patch("main.evaluate_open_predictions", return_value=3)
 
     from main import run_close
@@ -269,7 +269,7 @@ def _stub_pipeline(mocker) -> None:
     """Legt alle Phasen ausser dem Markt-Kontext still, damit die Tests unten
     nur dessen Verdrahtung pruefen."""
     mocker.patch("main.analyze_trends", return_value={"trends": []})
-    mocker.patch("main.collect", return_value=([], 0))
+    mocker.patch("main.collect", return_value=([], 0, {}))
     mocker.patch("main.quick_filter_batch", return_value=[])
     mocker.patch("main.run_policy_monitor", return_value={})
     mocker.patch("main.analyze_assets", return_value=[])
@@ -558,7 +558,7 @@ def test_run_trade_proposals_collects_all_tickers(tmp_db_path, mocker):
     nicht nur fuer die Top-Listen."""
     mocker.patch("main.CapitalComProvider", return_value=MagicMock())
     mocker.patch("main.FinnhubProvider", return_value=MagicMock())
-    collect_mock = mocker.patch("main.collect", return_value=([], 0))
+    collect_mock = mocker.patch("main.collect", return_value=([], 0, {}))
     _stub_trade_proposals_side_phases(mocker)
     mocker.patch("main.send_trade_proposals_email")  # Task 14: sonst echter Versand
 
@@ -578,7 +578,7 @@ def test_run_trade_proposals_sends_the_mail(tmp_db_path, mocker):
     Erwartung (kein Versand) galt nur fuer den damaligen Ausbaustand."""
     mocker.patch("main.CapitalComProvider", return_value=MagicMock())
     mocker.patch("main.FinnhubProvider", return_value=MagicMock())
-    mocker.patch("main.collect", return_value=([], 0))
+    mocker.patch("main.collect", return_value=([], 0, {}))
     _stub_trade_proposals_side_phases(mocker)
     send = mocker.patch("main.send_trade_proposals_email")
 
@@ -682,7 +682,7 @@ def test_sector_momentum_is_collected_after_data_collection(mocker):
     order: list[str] = []
     _mock_all_other_phases(mocker)
     mocker.patch("main.collect",
-                 side_effect=lambda **kw: order.append("collect") or ([], 0))
+                 side_effect=lambda **kw: order.append("collect") or ([], 0, {}))
     mocker.patch("main.collect_sector_momentum",
                  side_effect=lambda **kw: order.append("sector_momentum") or {})
     from main import run_pipeline
@@ -697,7 +697,7 @@ def test_sector_momentum_failure_does_not_abort_the_run(mocker):
     """Ein Sektor-ETF-Ausfall darf keinen 3-EUR-Lauf kosten."""
     mocker.patch("main.collect_sector_momentum", side_effect=RuntimeError("boom"))
     _mock_all_other_phases(mocker)
-    mocker.patch("main.collect", return_value=([], 0))
+    mocker.patch("main.collect", return_value=([], 0, {}))
     from main import run_pipeline
     run_pipeline(run_type="pre_market", date="2026-07-30", db_path=":memory:")
     # kein raise
@@ -808,7 +808,7 @@ def test_revalidation_failure_leaves_the_row_untouched(tmp_db_path, mocker):
 
     mocker.patch("main.CapitalComProvider", return_value=MagicMock())
     mocker.patch("main.FinnhubProvider", return_value=MagicMock())
-    mocker.patch("main.collect", return_value=([{"ticker": "AAPL", "price": 101.0}], 0))
+    mocker.patch("main.collect", return_value=([{"ticker": "AAPL", "price": 101.0}], 0, {}))
     mocker.patch("main.fetch_market_context", return_value={"vix_level": 18.0})
     mocker.patch("main.collect_sector_momentum", return_value={})
     mocker.patch("main.run_policy_monitor", return_value={"policy_risk_level": "low",
@@ -846,7 +846,7 @@ def test_skipped_ticker_is_never_superseded_on_a_stale_price(tmp_db_path, mocker
     mocker.patch("main.CapitalComProvider", return_value=MagicMock())
     mocker.patch("main.FinnhubProvider", return_value=MagicMock())
     # AAPL wurde uebersprungen -> taucht in der Ergebnisliste nicht auf.
-    mocker.patch("main.collect", return_value=([], 1))
+    mocker.patch("main.collect", return_value=([], 1, {}))
     mocker.patch("main.fetch_market_context", return_value={"vix_level": 18.0})
     mocker.patch("main.collect_sector_momentum", return_value={})
     mocker.patch("main.run_policy_monitor", return_value={"policy_risk_level": "low",
@@ -879,7 +879,7 @@ def _tp_run_mocks(mocker, prices):
     """Die immergleichen Mocks fuer einen run_trade_proposals-Lauf."""
     mocker.patch("main.CapitalComProvider", return_value=MagicMock())
     mocker.patch("main.FinnhubProvider", return_value=MagicMock())
-    mocker.patch("main.collect", return_value=(prices, 0))
+    mocker.patch("main.collect", return_value=(prices, 0, {}))
     mocker.patch("main.fetch_market_context", return_value={"vix_level": 18.0})
     mocker.patch("main.collect_sector_momentum", return_value={})
     mocker.patch("main.run_policy_monitor", return_value={"policy_risk_level": "low",
@@ -975,7 +975,7 @@ def test_cost_abort_reports_the_right_phase(tmp_db_path, mocker, phase, target):
     mocker.patch("main.CapitalComProvider", return_value=MagicMock())
     mocker.patch("main.FinnhubProvider", return_value=MagicMock())
     mocker.patch("main.fetch_market_context", return_value={"vix_level": 18.0})
-    mocker.patch("main.collect", return_value=([{"ticker": "AAPL", "price": 101.0}], 0))
+    mocker.patch("main.collect", return_value=([{"ticker": "AAPL", "price": 101.0}], 0, {}))
     mocker.patch("main.collect_sector_momentum", return_value={})
     mocker.patch("main.run_policy_monitor",
                  return_value={"policy_risk_level": "low", "events": []})
@@ -1010,7 +1010,7 @@ def test_portfolio_check_sees_sector_rotation_from_market_context(tmp_db_path, m
 
     mocker.patch("main.CapitalComProvider", return_value=MagicMock())
     mocker.patch("main.FinnhubProvider", return_value=MagicMock())
-    mocker.patch("main.collect", return_value=([], 0))
+    mocker.patch("main.collect", return_value=([], 0, {}))
     mocker.patch("main.fetch_market_context", return_value={
         "vix_level": 18.0, "sector_rotation_in": "Utilities",
         "sector_rotation_out": "Technology", "macro_summary": "nervoes",
@@ -1046,7 +1046,7 @@ def test_portfolio_check_still_works_with_a_real_morning_trend_context(tmp_db_pa
 
     mocker.patch("main.CapitalComProvider", return_value=MagicMock())
     mocker.patch("main.FinnhubProvider", return_value=MagicMock())
-    mocker.patch("main.collect", return_value=([], 0))
+    mocker.patch("main.collect", return_value=([], 0, {}))
     mocker.patch("main.fetch_market_context", return_value={
         "vix_level": 18.0, "sector_rotation_in": "Utilities",
         "sector_rotation_out": "Technology", "macro_summary": "nervoes",
@@ -1112,7 +1112,7 @@ def test_opening_gap_reaches_the_revalidation_prompt(tmp_db_path, mocker):
 
     mocker.patch("main.CapitalComProvider", return_value=MagicMock())
     mocker.patch("main.FinnhubProvider", return_value=MagicMock())
-    mocker.patch("main.collect", return_value=([{"ticker": "AAPL", "price": 104.0}], 0))
+    mocker.patch("main.collect", return_value=([{"ticker": "AAPL", "price": 104.0}], 0, {}))
     mocker.patch("main.fetch_market_context", return_value={"vix_level": 18.0})
     mocker.patch("main.collect_sector_momentum", return_value={})
     mocker.patch("main.run_policy_monitor", return_value={"policy_risk_level": "low",
@@ -1306,8 +1306,8 @@ def test_opening_price_stays_null_for_commodities_and_crypto(tmp_db_path, mocker
     # Erster collect()-Aufruf liefert die Aktien (sp_tds), der zweite Krypto/
     # Rohstoffe (cc_tds) -- dieselbe Reihenfolge wie in run_trade_proposals.
     mocker.patch("main.collect", side_effect=[
-        ([{"ticker": "AAPL", "price": 101.0}], 0),
-        ([{"ticker": "BTC-USD", "price": 65000.0}], 0),
+        ([{"ticker": "AAPL", "price": 101.0}], 0, {}),
+        ([{"ticker": "BTC-USD", "price": 65000.0}], 0, {}),
     ])
     mocker.patch("main.fetch_market_context", return_value={"vix_level": 18.0})
     mocker.patch("main.collect_sector_momentum", return_value={})

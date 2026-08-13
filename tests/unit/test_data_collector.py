@@ -43,10 +43,14 @@ def _seed_price_history(conn, ticker: str, df: pd.DataFrame) -> None:
 def _good_provider(df: pd.DataFrame, fundamentals: dict | None = None) -> MagicMock:
     p = MagicMock()
     p.get_price_history.return_value = df
-    # Der Entscheidungskurs kommt seit dem Preismodell-Umbau live statt aus der
-    # DB. Ohne festen Rueckgabewert lieferte der MagicMock hier einen
-    # Platzhalter, und "price" waere ein Zufallswert.
-    p.get_premarket_price.return_value = float(df["Close"].iloc[-1])
+    # Der Entscheidungskurs kommt seit Task 5 aus dem Batch-Sweep
+    # (get_premarket_prices_batch), nicht mehr aus einem Einzelabruf. Ohne
+    # festen Rueckgabewert lieferte der MagicMock hier einen Platzhalter, und
+    # "price" waere kein reales float -- der side_effect liefert fuer jeden
+    # angefragten Ticker denselben letzten Close wie frueher get_premarket_price.
+    p.get_premarket_prices_batch.side_effect = (
+        lambda tickers, chunk_size=20: {t: float(df["Close"].iloc[-1]) for t in tickers}
+    )
     # Kein Gap-Nachladen im Test: _fill_price_gaps soll nicht auf einem
     # MagicMock-DataFrame arbeiten.
     p.get_ohlc_after.return_value = None
@@ -77,13 +81,16 @@ def test_process_ticker_returns_full_ticker_data(in_memory_db):
     init_schema(in_memory_db)
     df = _df_monotonic_up(250)
     _seed_price_history(in_memory_db, "AAPL", df)
-    out = _process_ticker(
+    last_close = float(df["Close"].iloc[-1])
+    out, premarket_change_pct = _process_ticker(
         ticker="AAPL",
         price_provider=_good_provider(df),
         earnings_provider=_earnings_provider(),
         conn=in_memory_db,
         date="2026-05-19",
         run_type="pre_market",
+        # 1 % ueber dem letzten Close, wie ihn der Sweep (Phase 1b) liefern wuerde.
+        premarket_price=last_close * 1.01,
     )
     assert out is not None
     assert out["ticker"] == "AAPL"
@@ -96,6 +103,7 @@ def test_process_ticker_returns_full_ticker_data(in_memory_db):
     assert out["earnings_beat_pct"] == 4.2
     assert out["data_quality"] in {"high", "medium", "low"}
     assert out["intraday_range_pct"] is not None
+    assert premarket_change_pct == pytest.approx(1.0)
 
 
 def test_process_ticker_return_shape_excludes_the_29_new_indicator_columns(in_memory_db):
@@ -116,7 +124,7 @@ def test_process_ticker_return_shape_excludes_the_29_new_indicator_columns(in_me
     init_schema(in_memory_db)
     df = _df_monotonic_up(250)
     _seed_price_history(in_memory_db, "AAPL", df)
-    out = _process_ticker(
+    out, _premarket_change_pct = _process_ticker(
         ticker="AAPL",
         price_provider=_good_provider(df),
         earnings_provider=_earnings_provider(),
@@ -179,7 +187,7 @@ def test_process_ticker_persists_the_new_indicators(in_memory_db):
     # unabhaengig davon, welche Kalendertage _df_monotonic_up erzeugt.
     as_of = df.index[-1].strftime("%Y-%m-%d")
 
-    td = data_collector._process_ticker(
+    td, _premarket_change_pct = data_collector._process_ticker(
         ticker="AAPL",
         price_provider=_good_provider(df),
         earnings_provider=_earnings_provider(),
@@ -310,7 +318,7 @@ def test_process_ticker_tolerates_missing_earnings(in_memory_db):
     init_schema(in_memory_db)
     df = _df_monotonic_up(80)
     _seed_price_history(in_memory_db, "AAPL", df)
-    out = _process_ticker(
+    out, _premarket_change_pct = _process_ticker(
         ticker="AAPL",
         price_provider=_good_provider(df),
         earnings_provider=_earnings_provider(days_to_next=None, beat_pct=None),
@@ -360,7 +368,7 @@ def test_collect_returns_list_of_ticker_data(in_memory_db):
     ep = _earnings_provider()
 
     with patch("src.data_collector.time.sleep") as sleep_mock:
-        results, skipped = collect(
+        results, skipped, sidecar = collect(
             tickers=["AAPL", "MSFT", "NVDA"],
             price_provider=pp,
             earnings_provider=ep,
@@ -372,6 +380,7 @@ def test_collect_returns_list_of_ticker_data(in_memory_db):
     assert len(results) == 3
     assert skipped == 0
     assert {r["ticker"] for r in results} == {"AAPL", "MSFT", "NVDA"}
+    assert set(sidecar.keys()) == {"AAPL", "MSFT", "NVDA"}
 
 
 def test_collect_skips_failed_tickers_but_continues(in_memory_db):
@@ -384,7 +393,9 @@ def test_collect_skips_failed_tickers_but_continues(in_memory_db):
 
     pp = MagicMock()
     pp.get_ohlc_after.return_value = None
-    pp.get_premarket_price.return_value = float(df["Close"].iloc[-1])
+    pp.get_premarket_prices_batch.side_effect = (
+        lambda tickers, chunk_size=20: {t: float(df["Close"].iloc[-1]) for t in tickers}
+    )
     pp.get_fundamentals.return_value = {
         "pe_ratio": 25, "forward_pe": 24, "market_cap_b": 1000,
         "debt_equity": 1.0, "sector": "Technology",
@@ -393,7 +404,7 @@ def test_collect_skips_failed_tickers_but_continues(in_memory_db):
     ep = _earnings_provider()
 
     with patch("src.data_collector.time.sleep"):
-        results, skipped = collect(
+        results, skipped, sidecar = collect(
             tickers=["AAPL", "BAD", "MSFT"],
             price_provider=pp,
             earnings_provider=ep,
@@ -404,6 +415,7 @@ def test_collect_skips_failed_tickers_but_continues(in_memory_db):
 
     assert {r["ticker"] for r in results} == {"AAPL", "MSFT"}
     assert skipped == 1
+    assert set(sidecar.keys()) == {"AAPL", "MSFT"}, "BAD (uebersprungen) darf kein Sidecar-Eintrag haben"
 
 
 def test_collect_pauses_between_batches(in_memory_db):
@@ -462,7 +474,7 @@ def _run_ticker(conn, ticker: str, raw_sector: str | None, date: str = "2026-05-
         "pe_ratio": 28.4, "market_cap_b": 2800.0, "sector": raw_sector,
         "analyst_upside": 8.5, "consensus": "buy",
     }
-    return _process_ticker(
+    out = _process_ticker(
         ticker=ticker,
         price_provider=_good_provider(df),
         earnings_provider=ep,
@@ -470,6 +482,7 @@ def _run_ticker(conn, ticker: str, raw_sector: str | None, date: str = "2026-05-
         date=date,
         run_type="pre_market",
     )
+    return out[0] if out is not None else None
 
 
 def test_process_ticker_links_industry_level_sector(in_memory_db):
@@ -559,15 +572,17 @@ def test_collect_skips_inactive_tickers_without_any_api_call(in_memory_db):
     price_provider = MagicMock()
     price_provider._source_name = "capital.com"
 
-    results, skipped = collect(
+    results, skipped, sidecar = collect(
         tickers=["DEAD"], price_provider=price_provider,
         earnings_provider=_earnings_provider(), conn=in_memory_db,
         date="2026-07-27", run_type="pre_market",
     )
     assert results == []
     assert skipped == 1
+    assert sidecar == {}
     price_provider.get_ohlc_after.assert_not_called()
     price_provider.get_price_history.assert_not_called()
+    price_provider.get_premarket_prices_batch.assert_not_called()
 
 
 def test_collect_retries_inactive_ticker_after_retry_date(in_memory_db):
@@ -581,7 +596,7 @@ def test_collect_retries_inactive_ticker_after_retry_date(in_memory_db):
                               run_type="pre_market", reason="x")
     _seed_price_history(in_memory_db, "BACK", _df_monotonic_up(250))
 
-    results, _ = collect(
+    results, _, _ = collect(
         tickers=["BACK"], price_provider=_good_provider(_df_monotonic_up(250)),
         earnings_provider=_earnings_provider(), conn=in_memory_db,
         date="2026-08-01",   # retry_after = 2026-07-31
@@ -602,7 +617,7 @@ def test_collect_resets_skip_counter_after_successful_run(in_memory_db):
     assert db.get_ticker_status(in_memory_db, "AAPL")["skip_count"] == 1
     _seed_price_history(in_memory_db, "AAPL", _df_monotonic_up(250))
 
-    results, _ = collect(
+    results, _, _ = collect(
         tickers=["AAPL"], price_provider=_good_provider(_df_monotonic_up(250)),
         earnings_provider=_earnings_provider(), conn=in_memory_db,
         date="2026-07-27", run_type="pre_market",
@@ -626,13 +641,234 @@ def test_collect_counts_inactive_and_failing_tickers_together(in_memory_db):
     provider.get_ohlc_after.return_value = None
     provider.get_price_history.return_value = None
 
-    results, skipped = collect(
+    results, skipped, _sidecar = collect(
         tickers=["DEAD", "ALSOBAD"], price_provider=provider,
         earnings_provider=_earnings_provider(), conn=in_memory_db,
         date="2026-07-27", run_type="pre_market",
     )
     assert results == []
     assert skipped == 2
+
+
+# ---------- Phase 1a/1b: Gate, Sweep (Sprint 3C / Analyse-Pipeline-Umbau, Task 5) ----------
+
+
+def test_collect_gate_filters_inactive_and_short_history(in_memory_db):
+    """Zwei Filter, zwei verschiedene Paesse: Phase 1a (_gate_phase) wirft
+    dauerhaft deaktivierte Ticker raus, Phase 1c (_process_ticker) wirft Ticker
+    mit zu wenig Bars raus (Spec 18.1a -- die Bar-Zaehlung bleibt bewusst NACH
+    dem Luecken-Nachladen, nicht im Gate). collect() muss beide zaehlen, obwohl
+    sie an unterschiedlichen Stellen greifen (R5)."""
+    import config
+    from src import db
+    init_schema(in_memory_db)
+    for _ in range(config.TICKER_MAX_SKIPS + 1):
+        db.log_skipped_ticker(in_memory_db, ticker="DEAD", date="2026-07-01",
+                              run_type="pre_market", reason="x")
+    short_df = _df_monotonic_up(10)  # < MIN_BARS_RSI
+    _seed_price_history(in_memory_db, "THIN", short_df)
+
+    results, skipped, sidecar = collect(
+        tickers=["DEAD", "THIN"], price_provider=_good_provider(short_df),
+        earnings_provider=_earnings_provider(), conn=in_memory_db,
+        date="2026-07-27", run_type="pre_market",
+    )
+    assert results == []
+    assert skipped == 2
+    assert sidecar == {}, "kein Sidecar-Eintrag fuer Ticker, die es nie in results schaffen"
+
+
+def test_collect_sweep_adds_premarket_change_pct(in_memory_db):
+    """Sweep: der Batch-Kurs speist sowohl td["price"] (R3) als auch die
+    Sidecar-Berechnung von premarket_change_pct -- niemals als eigener Key in
+    td selbst (R1/Spec 18.1e), weil td unveraendert in vier Claude-Prompts
+    json.dumps't wird."""
+    init_schema(in_memory_db)
+    df = _df_monotonic_up(250)
+    _seed_price_history(in_memory_db, "AAPL", df)
+    last_close = float(df["Close"].iloc[-1])
+    live = last_close * 1.05
+
+    pp = MagicMock()
+    pp.get_ohlc_after.return_value = None
+    pp.get_premarket_prices_batch.return_value = {"AAPL": live}
+
+    results, skipped, sidecar = collect(
+        tickers=["AAPL"], price_provider=pp,
+        earnings_provider=_earnings_provider(), conn=in_memory_db,
+        date="2026-05-19", run_type="pre_market",
+    )
+    assert skipped == 0
+    assert results[0]["price"] == pytest.approx(live)
+    assert "premarket_change_pct" not in results[0], "R1: niemals als Key in td"
+    assert sidecar["AAPL"]["premarket_change_pct"] == pytest.approx(5.0)
+
+
+def test_collect_calls_sweep_exactly_once_regardless_of_ticker_count(in_memory_db):
+    """Der Sweep ist EIN Aufruf ueber alle Survivors (Spec 4.3.1, '25 Calls
+    statt ~500') -- Chunking passiert intern im Provider, nicht durch mehrere
+    Sweep-Aufrufe aus collect()."""
+    init_schema(in_memory_db)
+    df = _df_monotonic_up(80)
+    tickers = [f"T{i}" for i in range(5)]
+    for t in tickers:
+        _seed_price_history(in_memory_db, t, df)
+    pp = _good_provider(df)
+
+    with patch("src.data_collector.time.sleep"):
+        collect(
+            tickers=tickers, price_provider=pp,
+            earnings_provider=_earnings_provider(), conn=in_memory_db,
+            date="2026-05-19", run_type="pre_market",
+        )
+    assert pp.get_premarket_prices_batch.call_count == 1
+
+
+def test_gate_phase_exempts_commodities_and_crypto_from_deactivation(in_memory_db, caplog):
+    """Spec 6.1: ein deaktivierter Rohstoff/Krypto-Ticker bleibt Survivor -- nur
+    ein WARNING statt des harten Rauswurfs (R7). Das Universum ist hier so klein,
+    dass ein dauerhaft fehlender Wert schwerer wiegt als bei 500 Aktien."""
+    import logging
+    import config
+    from src import db
+    from src.data_collector import _gate_phase
+    init_schema(in_memory_db)
+    gold = next(iter(config.COMMODITY_TICKERS.values()))
+    for _ in range(config.TICKER_MAX_SKIPS + 1):
+        db.log_skipped_ticker(in_memory_db, ticker=gold, date="2026-07-01",
+                              run_type="pre_market", reason="x")
+    assert db.is_ticker_inactive(in_memory_db, gold, today="2026-07-27")
+
+    with caplog.at_level(logging.WARNING, logger="shares_future.data_collector"):
+        survivors = _gate_phase([gold, "AAPL"], in_memory_db, "2026-07-27")
+
+    assert survivors == [gold, "AAPL"]
+    assert "Ausnahme" in caplog.text
+
+
+def test_gate_phase_still_removes_non_exempt_inactive_tickers(in_memory_db):
+    """Die Rohstoff/Krypto-Ausnahme darf nicht auf normale Aktien ausstrahlen."""
+    import config
+    from src import db
+    from src.data_collector import _gate_phase
+    init_schema(in_memory_db)
+    for _ in range(config.TICKER_MAX_SKIPS + 1):
+        db.log_skipped_ticker(in_memory_db, ticker="DEAD", date="2026-07-01",
+                              run_type="pre_market", reason="x")
+    survivors = _gate_phase(["DEAD", "AAPL"], in_memory_db, "2026-07-27")
+    assert survivors == ["AAPL"]
+
+
+def test_sweep_phase_survives_provider_without_batch_support(caplog):
+    """base.py wirft NotImplementedError fuer Provider ohne Batch-Methode (heute
+    z.B. FinnhubProvider) -- der Sweep faengt das ab, loggt WARNING und liefert
+    ein leeres Dict, der Lauf laeuft weiter (R7)."""
+    import logging
+    from src.data_collector import _sweep_phase
+    from src.providers.base import DataProvider
+
+    class _NoBatchProvider(DataProvider):
+        def get_price_history(self, ticker, days=90): return None
+        def get_fundamentals(self, ticker): return {}
+        def get_earnings_calendar(self, ticker): return {}
+        def get_last_available_date(self, ticker): return None
+        def get_ohlc_after(self, ticker, start_date, end_date): return None
+
+    with caplog.at_level(logging.WARNING, logger="shares_future.data_collector"):
+        result = _sweep_phase(["AAPL"], _NoBatchProvider())
+
+    assert result == {}
+    assert "Sweep" in caplog.text, "R7 verlangt ein WARNING, kein stilles Schlucken"
+
+
+def test_sweep_phase_does_not_call_the_provider_when_there_are_no_survivors():
+    """Ein leerer Gate-Rest darf keinen Netzaufruf mehr ausloesen."""
+    from src.data_collector import _sweep_phase
+    pp = MagicMock()
+    assert _sweep_phase([], pp) == {}
+    pp.get_premarket_prices_batch.assert_not_called()
+
+
+def test_sweep_phase_warns_when_over_20_percent_of_survivors_have_no_price(caplog):
+    """Spec 4.3, Muster D3: uebersteigt der Anteil der Survivors ohne Live-Kurs
+    20 %, warnt der Sweep von sich aus (R7)."""
+    import logging
+    from src.data_collector import _sweep_phase
+    tickers = [f"T{i}" for i in range(10)]
+    pp = MagicMock()
+    # 3 von 10 (30 %) ohne Kurs -> ueber der 20 %-Schwelle.
+    pp.get_premarket_prices_batch.return_value = {
+        t: (None if i < 3 else 100.0) for i, t in enumerate(tickers)
+    }
+
+    with caplog.at_level(logging.WARNING, logger="shares_future.data_collector"):
+        _sweep_phase(tickers, pp)
+
+    assert "3" in caplog.text and "10" in caplog.text
+
+
+def test_sweep_phase_silent_when_missing_share_is_at_or_below_20_percent(caplog):
+    """Die Schwelle ist '> 20 %', nicht '>= 20 %' -- exakt 20 % warnt noch nicht."""
+    import logging
+    from src.data_collector import _sweep_phase
+    tickers = [f"T{i}" for i in range(10)]
+    pp = MagicMock()
+    # Genau 2 von 10 (20 %) ohne Kurs.
+    pp.get_premarket_prices_batch.return_value = {
+        t: (None if i < 2 else 100.0) for i, t in enumerate(tickers)
+    }
+
+    with caplog.at_level(logging.WARNING, logger="shares_future.data_collector"):
+        _sweep_phase(tickers, pp)
+
+    assert caplog.text == ""
+
+
+def test_process_ticker_falls_back_to_close_with_none_pct_when_sweep_has_no_price(in_memory_db):
+    """R7: ein fehlender Live-Kurs (Ticker fehlt im Sweep-Dict komplett, oder
+    der Wert ist None) faellt auf den letzten finalen Close zurueck --
+    premarket_change_pct bleibt dabei None, NIE 0 (eine 0 behauptete
+    'eroeffnet unveraendert', eine Beobachtung, die niemand gemessen hat)."""
+    init_schema(in_memory_db)
+    df = _df_monotonic_up(250)
+    _seed_price_history(in_memory_db, "AAPL", df)
+    last_close = float(df["Close"].iloc[-1])
+
+    out, premarket_change_pct = _process_ticker(
+        ticker="AAPL",
+        price_provider=_good_provider(df),
+        earnings_provider=_earnings_provider(),
+        conn=in_memory_db,
+        date="2026-05-19",
+        run_type="pre_market",
+        premarket_price=None,
+    )
+    assert out is not None
+    assert out["price"] == pytest.approx(last_close)
+    assert premarket_change_pct is None
+
+
+def test_collect_survives_ticker_missing_entirely_from_sweep_dict(in_memory_db):
+    """get_premarket_prices_batch() laesst Ticker aus uebersprungenen oder nie
+    erreichten Chunks komplett weg (siehe dessen Docstring) -- collect() muss
+    das per .get() statt [] abfangen, sonst reisst ein KeyError den ganzen
+    Lauf (R7)."""
+    init_schema(in_memory_db)
+    df = _df_monotonic_up(250)
+    _seed_price_history(in_memory_db, "AAPL", df)
+
+    pp = MagicMock()
+    pp.get_ohlc_after.return_value = None
+    pp.get_premarket_prices_batch.return_value = {}  # AAPL komplett abwesend
+
+    results, skipped, sidecar = collect(
+        tickers=["AAPL"], price_provider=pp,
+        earnings_provider=_earnings_provider(), conn=in_memory_db,
+        date="2026-05-19", run_type="pre_market",
+    )
+    assert skipped == 0
+    assert results[0]["price"] == pytest.approx(float(df["Close"].iloc[-1]))
+    assert sidecar["AAPL"]["premarket_change_pct"] is None
 
 
 def test_process_ticker_links_sector_from_fundamentals_cache(in_memory_db):
@@ -835,13 +1071,17 @@ def test_collect_does_not_write_price_history(in_memory_db, mocker):
         "SELECT COUNT(*) c FROM price_history").fetchone()["c"]
 
     mock_price = mocker.MagicMock()
-    mock_price.get_premarket_price.return_value = 321.5
     mock_earn = mocker.MagicMock()
     mock_earn.get_earnings_calendar.return_value = {}
     mock_earn.get_fundamentals.return_value = {}
 
-    td = _process_ticker("AAPL", mock_price, mock_earn, in_memory_db,
-                         "2026-08-06", "pre_market")
+    # Der Entscheidungskurs kommt seit Task 5 aus dem Sweep (collect()), nicht
+    # mehr aus einem Einzelabruf in _process_ticker() -- deshalb hier direkt
+    # als premarket_price uebergeben statt ueber den Provider gemockt (R3).
+    td, _premarket_change_pct = _process_ticker(
+        "AAPL", mock_price, mock_earn, in_memory_db,
+        "2026-08-06", "pre_market", premarket_price=321.5,
+    )
 
     after = in_memory_db.execute(
         "SELECT COUNT(*) c FROM price_history").fetchone()["c"]
