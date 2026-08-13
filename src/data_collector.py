@@ -622,11 +622,14 @@ def fetch_missing_fundamentals(
 
     R15: holt bewusst NUR get_fundamentals() -- get_earnings_calendar() gehoert
     in den Wochenjob (Spec 18.1c), nicht in diesen taeglichen Nachlade-Pfad.
-    ACHTUNG: save_fundamentals_cache() ist ein INSERT OR REPLACE der GANZEN
-    Zeile -- ein hier gespeicherter Ticker bekommt earnings_next_date=NULL,
-    auch wenn eine vorherige (inzwischen abgelaufene) Zeile dort einen Wert
-    hatte. Heute folgenlos, weil der Wochenjob die Spalte noch nirgends
-    fuellt; wer ihn baut, muss diesen Ueberschreib-Pfad beruecksichtigen."""
+    get_fundamentals() liefert deshalb nie ein earnings_next_date. Da
+    save_fundamentals_cache() ein INSERT OR REPLACE der GANZEN Zeile ist,
+    wuerde ein blindes Schreiben von `raw` ein dort bereits vom Wochenjob
+    eingetragenes Datum loeschen, sobald IRGENDEIN anderes Feld (z.B.
+    pe_ratio) seine eigene 7-Tage-TTL ueberschreitet -- zwei unabhaengige
+    Ablauf-Rhythmen teilen sich einen Voll-Zeilen-Schreibpfad. Deshalb wird
+    ein bereits vorhandenes earnings_next_date unten TTL-los nachgelesen und
+    in `raw` uebernommen, bevor geschrieben wird."""
     for t in tickers:
         if db.get_cached_fundamentals(conn, t, today=date) is not None:
             continue
@@ -637,6 +640,18 @@ def fetch_missing_fundamentals(
             continue
         if not isinstance(raw, dict) or not raw:
             continue
+        if not raw.get("earnings_next_date"):
+            # get_cached_fundamentals() ist TTL-gefiltert und wuerde hier genau
+            # in dem Fall None liefern, den wir auffangen muessen (die
+            # 7-Tage-Fundamentals-TTL ist abgelaufen, aber ein frueher vom
+            # Wochenjob gesetztes Datum soll trotzdem ueberleben) -- deshalb
+            # direkt gegen die Tabelle, ohne TTL-Cutoff.
+            existing = conn.execute(
+                "SELECT earnings_next_date FROM fundamentals_cache WHERE ticker = ?",
+                (t,),
+            ).fetchone()
+            if existing is not None and existing["earnings_next_date"]:
+                raw["earnings_next_date"] = existing["earnings_next_date"]
         db.save_fundamentals_cache(conn, t, raw, fetched_date=date)
         _sector_id = db.resolve_sector_id(conn, raw.get("sector"))
         if _sector_id is not None:

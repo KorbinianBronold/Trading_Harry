@@ -1538,21 +1538,43 @@ def test_fetch_missing_fundamentals_maps_sector(in_memory_db):
     assert row["etf"] == "SOXX"
 
 
-def test_fetch_missing_fundamentals_overwrites_stale_earnings_next_date_with_null(in_memory_db):
-    """Dokumentiert einen bekannten Nebeneffekt (kein Bug DIESER Task, siehe
-    Docstring von fetch_missing_fundamentals): save_fundamentals_cache() ist
-    ein INSERT OR REPLACE der GANZEN Zeile. get_fundamentals() liefert kein
-    earnings_next_date (das kommt vom -- noch ungebauten -- Wochenjob), also
-    faellt ein vorher gecachtes Datum auf NULL zurueck, sobald diese Zeile
-    (wegen einer abgelaufenen TTL) neu geschrieben wird. Heute folgenlos, weil
-    niemand die Spalte sonst befuellt -- aber fuer Task 10/den Wochenjob
-    dokumentiert, statt stillschweigend zu ueberraschen."""
+def test_fetch_missing_fundamentals_preserves_earnings_next_date_across_refresh(in_memory_db):
+    """Regressionstest fuer einen im Review gefundenen Datenverlust-Bug:
+    save_fundamentals_cache() ist ein INSERT OR REPLACE der GANZEN Zeile, und
+    get_fundamentals() liefert nie ein earnings_next_date (das kommt vom
+    Wochenjob, R15). Ohne Schutz wuerde ein bereits gesetztes Datum auf NULL
+    zurueckfallen, sobald irgendein ANDERES Feld (hier: pe_ratio) seine
+    7-Tage-TTL ueberschreitet und die Zeile neu geschrieben wird -- zwei
+    unabhaengige Ablauf-Rhythmen teilen sich einen Voll-Zeilen-Schreibpfad.
+    fetch_missing_fundamentals() muss das vorhandene Datum TTL-los nachlesen
+    und in die neue Zeile uebernehmen."""
     from src import db
     init_schema(in_memory_db)
     db.save_fundamentals_cache(
         in_memory_db, "AAPL",
         {"pe_ratio": 20.0, "earnings_next_date": "2026-06-02"},
         fetched_date="2026-05-01",  # laengst ausserhalb der 7-Tage-TTL
+    )
+    ep = MagicMock()
+    ep.get_fundamentals.return_value = {"pe_ratio": 25.0}  # kein earnings_next_date
+
+    fetch_missing_fundamentals(["AAPL"], ep, in_memory_db, date="2026-05-21")
+
+    row = in_memory_db.execute(
+        "SELECT * FROM fundamentals_cache WHERE ticker='AAPL'").fetchone()
+    assert row["pe_ratio"] == 25.0, "die frischen Fundamentals kommen trotzdem an"
+    assert row["earnings_next_date"] == "2026-06-02", (
+        "das alte Datum darf nicht verloren gehen, nur weil pe_ratio abgelaufen ist"
+    )
+
+
+def test_fetch_missing_fundamentals_leaves_earnings_next_date_null_when_never_set(in_memory_db):
+    """Kein vorheriger Wert -> auch nach dem Refresh bleibt es NULL, kein
+    Platzhalter wird erfunden."""
+    from src import db
+    init_schema(in_memory_db)
+    db.save_fundamentals_cache(
+        in_memory_db, "AAPL", {"pe_ratio": 20.0}, fetched_date="2026-05-01",
     )
     ep = MagicMock()
     ep.get_fundamentals.return_value = {"pe_ratio": 25.0}
@@ -1563,6 +1585,29 @@ def test_fetch_missing_fundamentals_overwrites_stale_earnings_next_date_with_nul
         "SELECT * FROM fundamentals_cache WHERE ticker='AAPL'").fetchone()
     assert row["pe_ratio"] == 25.0
     assert row["earnings_next_date"] is None
+
+
+def test_fetch_missing_fundamentals_does_not_override_a_freshly_fetched_earnings_next_date(in_memory_db):
+    """Liefert get_fundamentals() (in Zukunft, oder ein anderer Provider) doch
+    einmal ein eigenes earnings_next_date mit, hat das Vorrang vor dem alten
+    Cache-Wert -- die Nachlese darf frische Daten nie verdraengen."""
+    from src import db
+    init_schema(in_memory_db)
+    db.save_fundamentals_cache(
+        in_memory_db, "AAPL",
+        {"pe_ratio": 20.0, "earnings_next_date": "2026-06-02"},
+        fetched_date="2026-05-01",
+    )
+    ep = MagicMock()
+    ep.get_fundamentals.return_value = {
+        "pe_ratio": 25.0, "earnings_next_date": "2026-09-15",
+    }
+
+    fetch_missing_fundamentals(["AAPL"], ep, in_memory_db, date="2026-05-21")
+
+    row = in_memory_db.execute(
+        "SELECT * FROM fundamentals_cache WHERE ticker='AAPL'").fetchone()
+    assert row["earnings_next_date"] == "2026-09-15"
 
 
 def test_fetch_missing_fundamentals_not_wired_into_process_ticker(in_memory_db):
