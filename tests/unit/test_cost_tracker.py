@@ -111,14 +111,33 @@ def test_input_tokens_are_already_the_uncached_remainder():
 
 
 def test_cache_hit_rate_stays_within_zero_and_one():
-    """Trefferquote = Cache-Reads / Gesamt-Prompt, nicht / ungecachter Rest."""
+    """Trefferquote = Cache-Reads / (Cache-Reads + Cache-Creation), nicht / gesamt-Input."""
     t = CostTracker(hard_cap_eur=100.0)
     t.add_call(
         model="claude-sonnet-4-6",
         input_tokens=1_000,
         output_tokens=0,
         cache_read_tokens=9_000,
+        cache_creation_tokens=0,
     )
     rate = t.summary(run_type="pre_market", date="2026-08-11")["cache_hit_rate"]
     assert 0.0 <= rate <= 1.0
-    assert rate == pytest.approx(9_000 / 10_000)
+    # Mit cache_creation_tokens=0 ist hit_rate = 9_000 / (9_000 + 0) = 1.0
+    assert rate == pytest.approx(1.0)
+
+
+def test_cache_hit_rate_includes_creation():
+    """Beim ersten Lauf (Cache-Schreiben) sollte hit_rate < 1.0 sein."""
+    tracker = CostTracker(hard_cap_eur=100.0)
+    tracker.add_call(
+        model="claude-sonnet-4-6",
+        input_tokens=100,
+        output_tokens=20,
+        cache_read_tokens=10,
+        cache_creation_tokens=50,
+    )
+    # Nenner ist (10 + 50), nicht 100
+    # Also 10 / 60 ≈ 0.167, nicht 10 / 100
+    rate = tracker.summary(run_type="pre_market", date="2026-08-13")["cache_hit_rate"]
+    assert rate == pytest.approx(10 / 60, abs=0.01)
+    assert rate < 0.2

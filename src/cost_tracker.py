@@ -30,6 +30,7 @@ class CostTracker:
     input_tokens: int = 0
     output_tokens: int = 0
     cache_read_tokens: int = 0
+    cache_creation_tokens: int = 0
     web_search_calls: int = 0
     aborted_at_phase: str | None = None
     _warned: bool = field(default=False, repr=False)
@@ -72,6 +73,7 @@ class CostTracker:
         self.input_tokens      += input_tokens
         self.output_tokens     += output_tokens
         self.cache_read_tokens += cache_read_tokens
+        self.cache_creation_tokens += cache_creation_tokens
         self.web_search_calls  += web_search_calls
 
         if self.total_eur > self.hard_cap_eur:
@@ -97,9 +99,9 @@ class CostTracker:
         """Returns a flat dict of the run's cost totals, ready for db.save_cost_tracking()
         or the e-mail footer."""
         hit_rate = 0.0
-        total_prompt = self.input_tokens + self.cache_read_tokens
-        if total_prompt > 0:
-            hit_rate = self.cache_read_tokens / total_prompt
+        cached_tokens = self.cache_read_tokens + self.cache_creation_tokens
+        if cached_tokens > 0:
+            hit_rate = self.cache_read_tokens / cached_tokens
         return {
             "date": date, "run_type": run_type,
             "total_eur": round(self.total_eur, 4),
