@@ -5,7 +5,7 @@ import pytest
 
 import config
 from src.cost_tracker import CostTracker
-from src.broad_scan import broad_scan_batch, BroadScanError
+from src.broad_scan import broad_scan_batch, BroadScanError, MAX_TOKENS
 from src.utils import WEB_SEARCH_TOOL
 
 
@@ -296,6 +296,48 @@ def test_broad_scan_bills_cost_tracker():
     assert tracker.output_tokens == 3000
     assert tracker.web_search_calls == 4
     assert tracker.total_eur > 0
+
+
+def test_broad_scan_warns_when_output_near_max_tokens(caplog):
+    """R27-Fix: eine Antwort nahe MAX_TOKENS koennte abgeschnitten sein. Ohne
+    Warnung ist ein wegen Kappung auf news_strength=0 degradierter Batch im
+    Log nicht von einem echten ruhigen Nachrichtentag zu unterscheiden --
+    genau das Problem, das das Review-Finding benannt hat."""
+    fake = _fake_sonnet_result(FIXTURE_PATH.read_text())
+    fake.output_tokens = int(MAX_TOKENS * 0.95)
+    tracker = CostTracker(hard_cap_eur=10.0)
+
+    with patch("src.broad_scan.call_claude", return_value=fake):
+        with caplog.at_level("WARNING", logger="shares_future.broad_scan"):
+            broad_scan_batch(
+                ticker_datas=[_td("AAPL"), _td("MSFT")],
+                sidecar=_sidecar(),
+                trend_context=_trend_context(),
+                market_context=_market_context(),
+                cost_tracker=tracker,
+            )
+
+    assert any("MAX_TOKENS" in r.message and "abgeschnitten" in r.message
+               for r in caplog.records)
+
+
+def test_broad_scan_no_truncation_warning_for_normal_output(caplog):
+    """Gegenprobe: eine unauffaellige Antwort (weit unter MAX_TOKENS) loest
+    keine Kappungs-Warnung aus -- sonst waere das Log-Signal wertlos."""
+    fake = _fake_sonnet_result(FIXTURE_PATH.read_text())
+    tracker = CostTracker(hard_cap_eur=10.0)
+
+    with patch("src.broad_scan.call_claude", return_value=fake):
+        with caplog.at_level("WARNING", logger="shares_future.broad_scan"):
+            broad_scan_batch(
+                ticker_datas=[_td("AAPL"), _td("MSFT")],
+                sidecar=_sidecar(),
+                trend_context=_trend_context(),
+                market_context=_market_context(),
+                cost_tracker=tracker,
+            )
+
+    assert not any("abgeschnitten" in r.message for r in caplog.records)
 
 
 def test_broad_scan_empty_batch_returns_empty_list():
