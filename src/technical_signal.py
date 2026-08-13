@@ -83,9 +83,9 @@ def _adx_band(td: dict) -> str:
     adx = td.get("adx_14")
     if adx is None:
         return "normal"
-    if adx < config.ADX_WEAK_BELOW:
+    if adx <= config.ADX_WEAK_BELOW:
         return "weak"
-    if adx > config.ADX_STRONG_ABOVE:
+    if adx >= config.ADX_STRONG_ABOVE:
         return "strong"
     return "normal"
 

@@ -102,3 +102,31 @@ def test_rsi_above_midline_without_a_rising_trend_does_not_vote_long():
                       macd_line=1.0, macd_signal_line=0.5,
                       above_sma50=2.0, above_sma200=5.0))
     assert sig.agreement == 2   # MACD und SMA, nicht RSI
+
+
+def test_adx_exactly_20_is_weak():
+    """ADX=20.0 ist exakt die Grenze; alles <= 20 ist schwach."""
+    sig = compute(_bullish(adx_14=20.0))
+    assert sig.adx_band == "weak"
+    assert sig.strength == 1  # gedeckelt auf 1, nicht höher
+
+
+def test_adx_exactly_25_is_strong():
+    """ADX=25.0: drei Teilindikatoren stimmen ueberein; kein Bonus-Staerkungspunkt."""
+    sig = compute(_bullish(adx_14=25.0))
+    assert sig.adx_band == "strong"
+    assert sig.strength == 4  # agreement=3 + 1 Bonus durch strong Band
+
+
+def test_adx_below_20_is_weak():
+    """ADX < 20: Staerke gedeckelt auf 1."""
+    sig = compute(_bullish(adx_14=19.9))
+    assert sig.adx_band == "weak"
+    assert sig.strength == 1
+
+
+def test_adx_above_25_is_strong():
+    """ADX > 25: Staerke erhoet um 1."""
+    sig = compute(_bullish(adx_14=25.1))
+    assert sig.adx_band == "strong"
+    assert sig.strength == 4  # 3 + 1 Bonus

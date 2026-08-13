@@ -952,7 +952,63 @@ Wert ist neu gewählt, nicht übernommen.
 
 ---
 
-## 18. Offene Punkte
+## 18. Plan-2-Designentscheidungen (Ergänzung zu § 4.2–4.8)
+
+Die Spec beschreibt den Zielzustand; diese Entscheidungen konkretisieren Punkte,
+die die Spec offenlässt oder wo mehrere Umsetzungen möglich sind.
+
+### 18.1 Phase 1: Reihenfolge, Fundamentals, Earnings
+
+**a) Bar-Zählung nach Lückenfüllen.** Heute zählt `_process_ticker()` die Bars erst,
+nachdem `_fill_price_gaps()` gelaufen ist. Diese Reihenfolge bleibt erhalten —
+sonst würden Ticker übersprungen, die nach dem Nachladen genug Bars hätten. Das Gate
+wird vorgezogen, der Rest der Reihenfolge bleibt unverändert.
+
+**b) Fundamentals: Cache in Phase 1, Nachladung in 2b.** Die Spec zieht 2b aus
+Phase 1 heraus. Ersatzlos ginge das nicht:
+- `run_trade_proposals()` (16:10-Lauf) reicht dieselbe Snapshot-Liste in den
+  Re-Validierungs-Prompt und den Portfolio-Check, beide brauchen den Sektor
+- `broad_scan` (Phase 2) erhält den Sektor als Feldname
+
+**Lösung:** Phase 1 liest `fundamentals_cache` (0 Calls, kein Finnhub-Overhead).
+Phase 2b holt Fundamentals nach **nur für Kandidaten mit Cache-Miss** — der
+teure Teil bleibt kandidaten-only, der Tageslauf im Normalfall Finnhub-frei.
+Die Kostenaussage der Spec (§ 13.2) bleibt exakt erhalten.
+
+**c) `get_earnings_calendar()` ins Wochenjob.** Läuft heute je Ticker je Lauf,
+ungecacht. § 8 nimmt das raus und ratenbegrenzt. Der Tageslauf kennt
+`earnings_in_days` nur aus dem Cache.
+
+**d) Earnings als Datum speichern, nicht als Tageszahl.** `days_to_next` ist relativ
+zum Abrufzeitpunkt; bei 7-Tage-TTL wäre ein gecachter Wert nach vier Tagen schlicht
+falsch. Gespeichert wird `earnings_next_date` (ISO-String), `earnings_in_days` wird
+beim Lesen gerechnet. § 16.1 akzeptiert damit 7 Tage alte *Termine*, nicht 7 Tage
+alte *Countdowns*.
+
+### 18.2 Phase 1: Persistenz und Prompt-Payload
+
+**e) `premarket_change_pct` und `technical_signal` laufen neben `td`, nicht darin.**
+Die Lehre aus dem Plan-1-Critical: `td` wird in vier Prompts serialisiert (`quick_filter`,
+`deep_analysis`, `commodities_crypto`, `portfolio_check` über `main.py`'s `snapshots`).
+Beide Werte erzengen nach der Spec täglich neue Informationen (Live-Kurs, Indikatoren),
+die die Auswahl beeinflussen sollen — aber nicht die *bestehenden* Prompts. Sie laufen
+in parallelen Strukturen neben `td` bis zur Persistierungs- bzw. Cutoff-Grenze.
+
+**f) `data_quality` zerfällt sauber.** Der `'low'`-Skip (fehlendes RSI/ATR) bleibt in
+Phase 1 — rein indikatorbasiert und keine Geheimnis-Abhängigkeit. Die
+`medium`/`high`-Einstufung entsteht in Phase 2b, nachdem die Fundamentals da sind.
+
+### 18.3 Rohstoffe / Krypto
+
+Die sieben (Gold, Silber, Öl, BTC, ETH, SOL, XRP) umgehen den Trichter komplett —
+sie werden **immer** tief analysiert. Plan 2 implementiert § 6.1–6.3:
+- Automatische Deaktivierung aus `is_ticker_inactive()` ausgenommen (§ 6.1)
+- Umgehen Phase-2-Scan, Cutoff, Phase 2b Fundamentals (§ 6.2/6.3)
+- Ihre Tiefenanalyse läuft parallel zu (nicht statt) den Batch-Analysen der Aktien
+
+---
+
+## 19. Offene Punkte
 
 | # | Punkt | Wann |
 |---|---|---|
