@@ -5,6 +5,7 @@ Session is created lazily on first call and reused for the lifetime of the
 provider instance (one instance per run).
 """
 import logging
+import time
 from datetime import date as _date, datetime as _datetime, timedelta, timezone
 
 import pandas as pd
@@ -18,6 +19,19 @@ log = logging.getLogger("shares_future.capital")
 # Capital.com beantwortet /prices mit max>1000 per HTTP 400. Empirisch am
 # 2026-07-27 ermittelt: max=1000 liefert 1000 Bars, max=1001 einen 400er.
 MAX_BARS_PER_REQUEST = 1000
+
+# Kurs-Sweep (Spec 4.3.1): 20 Epics pro Sammelabruf sind per
+# setup/probe_epics_batch.py bestaetigt -- als Untergrenze, nicht als
+# gemessenes Maximum (bei 25 Calls fuer 500 Ticker bringt mehr ohnehin nichts).
+PREMARKET_BATCH_CHUNK_SIZE = 20
+
+# 429-Notbremse (Spec 4.3.3): fuenf 429-Antworten IN FOLGE (durch jeden Erfolg
+# zurueckgesetzt) brechen den gesamten Sweep vorzeitig ab.
+PREMARKET_BATCH_MAX_CONSECUTIVE_429 = 5
+
+# Pause, wenn eine 429-Antwort keinen (oder einen nicht-numerischen)
+# Retry-After-Header mitschickt.
+PREMARKET_BATCH_RETRY_AFTER_FALLBACK = 2.0
 
 
 def _not_in_future(ts: str) -> str:
@@ -61,6 +75,32 @@ def epic_to_ticker(epic: str) -> str | None:
     known = set(config.SP500_FULL_TICKERS if config.USE_FULL_SP500
                 else config.SP500_MVP_TICKERS)
     return epic if epic in known else None
+
+
+def _extract_markets(payload: dict) -> list[dict]:
+    """Holt die Instrumentenliste aus einer /markets-Antwort.
+
+    Capital.com nennt sie 'marketDetails' bei einer Epic-Liste, 'markets' bei
+    einer Volltextsuche -- dieselbe Unterscheidung wie in
+    setup/probe_epics_batch.py, die diese Frage zuerst geklaert hat."""
+    for key in ("marketDetails", "markets"):
+        value = payload.get(key)
+        if isinstance(value, list):
+            return value
+    return []
+
+
+def _retry_after_seconds(resp: requests.Response) -> float:
+    """Liest den Retry-After-Header (Sekunden) einer 429-Antwort; faellt auf
+    PREMARKET_BATCH_RETRY_AFTER_FALLBACK zurueck, wenn er fehlt oder nicht
+    numerisch ist (z.B. ein HTTP-Datum statt einer Sekundenzahl)."""
+    raw = (resp.headers or {}).get("Retry-After")
+    if raw is None:
+        return PREMARKET_BATCH_RETRY_AFTER_FALLBACK
+    try:
+        return max(float(raw), 0.0)
+    except (TypeError, ValueError):
+        return PREMARKET_BATCH_RETRY_AFTER_FALLBACK
 
 
 class CapitalComProvider(DataProvider):
@@ -289,6 +329,110 @@ class CapitalComProvider(DataProvider):
         except Exception as e:
             log.warning(f"{ticker}: Capital.com premarket fetch failed: {e}")
             return None
+
+    def get_premarket_prices_batch(
+        self, tickers: list[str], chunk_size: int = PREMARKET_BATCH_CHUNK_SIZE,
+    ) -> dict[str, float | None]:
+        """Live-Bid-Kurse fuer viele Ticker auf einmal ueber Capital.coms
+        Sammelabruf `/markets?epics=A,B,C` statt einem Call je Ticker
+        (Spec 4.3.1). `tickers` wird in Chunks zu `chunk_size` Epics aufgeteilt
+        (per setup/probe_epics_batch.py bis 20 bestaetigt).
+
+        429-Notbremse (Spec 4.3.3), Zustand gilt fuer den gesamten Aufruf:
+          - Der ERSTE 429 ueberhaupt schaltet den restlichen Sweep dauerhaft in
+            getakteten Modus (Pause vor jedem weiteren Call = Retry-After-Header,
+            sonst 2s) und wiederholt den betroffenen Chunk genau einmal.
+          - Jeder WEITERE 429, waehrend der Sweep schon getaktet ist, ueberspringt
+            nur den betroffenen Chunk (kein erneuter Retry) -- der Sweep laeuft
+            weiter, jetzt mit Pause vor jedem folgenden Call.
+          - FUENF 429-Antworten IN FOLGE (durch jeden Erfolg zurueckgesetzt)
+            brechen den gesamten Sweep vorzeitig ab; die restlichen Ticker
+            bleiben ohne Live-Kurs. Ein WARNING nennt die betroffene Zahl.
+          - In jedem Fall laeuft der aufrufende Lauf weiter -- ein fehlender
+            Live-Kurs ist nicht fatal (Spec 4.3.3, letzte Zeile).
+
+        Rueckgabe: {ticker: bid} fuer jeden Ticker, dessen Chunk erfolgreich
+        beantwortet wurde (bid ist None, wenn die Antwort selbst keinen
+        bid-Wert enthielt). Ticker aus uebersprungenen oder nie erreichten
+        Chunks fehlen im Dict komplett -- der Aufrufer behandelt sie wie jeden
+        anderen fehlenden Live-Kurs (Cutoff-Regel: fehlend faellt hinter jeden
+        gemessenen Wert, siehe Spec 4.3)."""
+        def _fetch(epics_list: list[str]):
+            return requests.get(
+                f"{config.CAPITAL_COM_BASE_URL}/api/v1/markets",
+                headers=self._headers(),
+                params={"epics": ",".join(epics_list)},
+                timeout=30,
+            )
+
+        result: dict[str, float | None] = {}
+        paced = False
+        pace_delay = PREMARKET_BATCH_RETRY_AFTER_FALLBACK
+        consecutive_429 = 0
+
+        for i in range(0, len(tickers), chunk_size):
+            chunk = tickers[i:i + chunk_size]
+            epics = [self._map(t) for t in chunk]
+            epic_to_ticker = dict(zip(epics, chunk))
+
+            if paced:
+                time.sleep(pace_delay)
+
+            try:
+                resp = _fetch(epics)
+            except Exception as e:
+                log.warning(f"Capital.com Batch-Kursabruf fehlgeschlagen ({chunk}): {e}")
+                continue
+
+            retried_this_chunk = False
+            while resp is not None and resp.status_code == 429:
+                consecutive_429 += 1
+                if consecutive_429 >= PREMARKET_BATCH_MAX_CONSECUTIVE_429:
+                    remaining = len(tickers) - len(result)
+                    log.warning(
+                        f"Capital.com: {PREMARKET_BATCH_MAX_CONSECUTIVE_429} "
+                        f"aufeinanderfolgende 429 -- Sweep abgebrochen, "
+                        f"{remaining} Ticker ohne Live-Kurs"
+                    )
+                    return result
+
+                already_paced = paced
+                paced = True
+                pace_delay = _retry_after_seconds(resp)
+
+                if already_paced or retried_this_chunk:
+                    log.warning(f"Capital.com 429 (getaktet) -- Chunk uebersprungen: {chunk}")
+                    resp = None
+                    break
+
+                retried_this_chunk = True
+                time.sleep(pace_delay)
+                try:
+                    resp = _fetch(epics)
+                except Exception as e:
+                    log.warning(f"Capital.com Batch-Kursabruf (Retry) fehlgeschlagen: {e}")
+                    resp = None
+                    break
+
+            if resp is None:
+                continue
+
+            if resp.status_code != 200:
+                log.warning(f"Capital.com Batch-Kursabruf {resp.status_code}: {chunk}")
+                continue
+
+            consecutive_429 = 0
+            markets = _extract_markets(resp.json())
+            for m in markets:
+                instrument = m.get("instrument") or {}
+                epic = instrument.get("epic") or m.get("epic")
+                ticker = epic_to_ticker.get(epic)
+                if ticker is None:
+                    continue
+                bid = (m.get("snapshot") or {}).get("bid")
+                result[ticker] = float(bid) if bid is not None else None
+
+        return result
 
     def get_open_positions(self) -> list[dict]:
         """Returns all currently open demo-account positions as a list of dicts

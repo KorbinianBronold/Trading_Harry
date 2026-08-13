@@ -32,3 +32,21 @@ class DataProvider(ABC):
     ) -> pd.DataFrame | None:
         """Daily OHLC bars inclusive [start_date, end_date]. None if empty."""
         ...
+
+    def get_premarket_prices_batch(
+        self, tickers: list[str], chunk_size: int = 20,
+    ) -> dict[str, float | None]:
+        """Batch live-quote lookup for many tickers at once (Spec 4.3.1).
+
+        Deliberately NOT @abstractmethod: single-ticker get_premarket_price()
+        is itself not part of this interface today — only Capital.com serves
+        live quotes at all (Provider-Hierarchie: Capital.com ist alleiniger
+        OHLC-Provider, Finnhub liefert nur Fundamentals). Forcing every
+        DataProvider subclass to implement this would break FinnhubProvider
+        for a method it is never called on. Declared here anyway so the
+        contract is documented and typed for callers that hold a DataProvider
+        reference. Default: not supported."""
+        raise NotImplementedError(
+            f"{type(self).__name__} liefert keine Live-Kurse "
+            f"(get_premarket_prices_batch)"
+        )
