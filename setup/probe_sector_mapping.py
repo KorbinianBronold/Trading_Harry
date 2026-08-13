@@ -44,7 +44,7 @@ db.init_schema(conn)
 tickers = config.SP500_MVP_TICKERS
 print(f"\nPhase 1 fuer {len(tickers)} MVP-Ticker gegen Capital.com + Finnhub ...\n")
 
-tds, skipped = collect(
+tds, skipped, _sidecar = collect(
     tickers=tickers,
     price_provider=CapitalComProvider(),
     earnings_provider=FinnhubProvider(),
