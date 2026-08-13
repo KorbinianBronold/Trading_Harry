@@ -1,0 +1,14 @@
+{
+  "results": [
+    {
+      "ticker": "MSFT",
+      "news_strength": 1,
+      "news_note": "Named in a cloud-sector roundup, no company-specific news."
+    },
+    {
+      "ticker": "AAPL",
+      "news_strength": 2,
+      "news_note": "iPhone pre-orders beat estimates per Reuters supply-chain check."
+    }
+  ]
+}
