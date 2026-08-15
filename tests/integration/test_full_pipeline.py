@@ -40,6 +40,16 @@ def test_full_pipeline_writes_predictions_and_sends_email(tmp_path, monkeypatch)
     # und TP/SL-Fixtures unveraendert greifen.
     fake_provider.get_premarket_price.return_value = float(
         _mock_ohlc()["Close"].iloc[-1])
+    # Seit Sprint 3C / Plan 2, Task 5 laeuft Phase 1b ueber den Sammelabruf
+    # get_premarket_prices_batch() statt ueber get_premarket_price() je Ticker
+    # (_sweep_phase()). Ohne dieses Mock liefert die bare MagicMock-Kette einen
+    # nicht-JSON-serialisierbaren Wert in den Sidecar, den broad_scan_batch()
+    # (Task 10) als erstes tatsaechlich serialisiert -- vorher blieb das
+    # unbemerkt, weil quick_filter_batch() den Sidecar nie gelesen hat.
+    _close_price = float(_mock_ohlc()["Close"].iloc[-1])
+    fake_provider.get_premarket_prices_batch.side_effect = (
+        lambda tickers: {t: _close_price for t in tickers}
+    )
     fake_provider.get_fundamentals.return_value = {
         "pe_ratio": 25.0, "forward_pe": 23.0, "market_cap_b": 200.0,
         "debt_equity": 1.0, "sector": "Technology", "analyst_upside": 5.0,
@@ -61,7 +71,6 @@ def test_full_pipeline_writes_predictions_and_sends_email(tmp_path, monkeypatch)
 
     # Stub Claude calls (one mock per module-level call_claude)
     trend_resp = (FIXTURE_DIR / "mock_trend_response.json").read_text()
-    quick_resp = (FIXTURE_DIR / "mock_quick_filter_response.json").read_text()
     policy_resp = (FIXTURE_DIR / "mock_policy_monitor_response.json").read_text()
     deep_resp = (FIXTURE_DIR / "mock_deep_analysis_response.json").read_text()
     cc_resp = (FIXTURE_DIR / "mock_commodities_crypto_response.json").read_text()
@@ -77,17 +86,15 @@ def test_full_pipeline_writes_predictions_and_sends_email(tmp_path, monkeypatch)
         r.web_search_calls = web_search_calls
         return r
 
-    # Adjust quick_filter fixture to cover the 3 SP500 tickers
-    quick_obj = json.loads(quick_resp)
-    quick_obj["results"] = [
-        {"ticker": "AAPL", "long_score": 7.5, "short_score": 2.0,
-         "confidence": "high", "evidence": ["x"], "exclude": False},
-        {"ticker": "MSFT", "long_score": 6.5, "short_score": 3.0,
-         "confidence": "medium", "evidence": ["x"], "exclude": False},
-        {"ticker": "NVDA", "long_score": 8.0, "short_score": 1.5,
-         "confidence": "high", "evidence": ["x"], "exclude": False},
-    ]
-    quick_resp_3 = json.dumps(quick_obj)
+    # Seit Sprint 3C / Plan 2, Task 10 ersetzt der Nachrichten-Scan
+    # (broad_scan_batch) den Haiku-Quick-Filter. news_strength=1 fuer alle drei
+    # laesst sie den Cutoff passieren, damit die drei nachfolgenden
+    # deep_analysis-Calls (sequence[3..5]) weiterhin wie bisher feuern.
+    broad_scan_resp_3 = json.dumps({"results": [
+        {"ticker": "AAPL", "news_strength": 1, "news_note": "x"},
+        {"ticker": "MSFT", "news_strength": 1, "news_note": "x"},
+        {"ticker": "NVDA", "news_strength": 1, "news_note": "x"},
+    ]})
 
     deep_obj = json.loads(deep_resp)
     def _deep_for(ticker: str) -> str:
@@ -113,7 +120,7 @@ def test_full_pipeline_writes_predictions_and_sends_email(tmp_path, monkeypatch)
 
     sequence = [
         _r(trend_resp, web_search_calls=4),                  # analyze_trends
-        _r(quick_resp_3, web_search_calls=0, model="claude-haiku-4-5"),  # quick_filter
+        _r(broad_scan_resp_3, web_search_calls=3),            # broad_scan
         _r(policy_resp, web_search_calls=3),                 # policy_monitor
         _r(_deep_for("AAPL")),                                # deep AAPL
         _r(_deep_for("MSFT")),                                # deep MSFT
@@ -153,7 +160,7 @@ def test_full_pipeline_writes_predictions_and_sends_email(tmp_path, monkeypatch)
     with patch("src.market_context.call_claude",
                side_effect=[_r(market_ctx_resp, web_search_calls=2)]), \
          patch("src.trend_analyzer.call_claude", side_effect=[sequence[0]]), \
-         patch("src.quick_filter.call_claude", side_effect=[sequence[1]]), \
+         patch("src.broad_scan.call_claude", side_effect=[sequence[1]]), \
          patch("src.deep_analysis.call_claude",
                side_effect=[sequence[2], sequence[3], sequence[4], sequence[5]]), \
          patch("src.commodities_crypto.call_claude",

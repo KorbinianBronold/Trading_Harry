@@ -251,8 +251,11 @@ SP500_MIN_MARKET_CAP_B = 5
 SP500_MIN_ATR_PCT = 2.0
 MAX_HOLD_DAYS = 5
 HOLD_TARGET = "intraday"
-MAX_DEEP_ANALYSIS = 80
-BATCH_SIZE_QUICK = 30
+# Sprint 3C / Analyse-Pipeline-Umbau, Plan 2 (Trichter), Task 10: 80 -> 50 und
+# ab sofort gelesen (broad_scan.cutoff_candidates()). War bis dahin tot.
+# BATCH_SIZE_QUICK entfernt -- ebenfalls tot, quick_filter_batch() lief immer
+# als ein Call ueber alle Ticker, nie in 30er-Batches.
+MAX_DEEP_ANALYSIS = 50
 
 # Sprint 3C / Analyse-Pipeline-Umbau, Plan 2 (Trichter), Spec 4.7: ein Ticker
 # qualifiziert technisch, sobald eine Richtung entsteht (Mehrheit ab zwei

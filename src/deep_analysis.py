@@ -140,3 +140,27 @@ def analyze_assets(
         f"cost so far: {cost_tracker.total_eur:.3f} EUR"
     )
     return out
+
+
+def adapt_cutoff_to_quick_filter(all_evaluated: list[dict]) -> list[dict]:
+    """Interim-Adapter (Sprint 3C / Plan 2, Task 10): konvertiert den zweiten
+    Rueckgabewert von broad_scan.cutoff_candidates() (Task 9) in die
+    quick_filter-Form, die analyze_asset()/analyze_assets() heute erwarten.
+
+    all_evaluated traegt bereits JEDEN Ticker mit einem selected-Flag (Task 9)
+    -- exclude ist dessen Komplement, kein zweiter Filterschritt. Es gibt kein
+    long_score/short_score mehr im Cutoff-Modell; an ihrer Stelle die
+    tatsaechliche Cutoff-Begruendung (news_strength, tech_direction,
+    tech_strength), damit Phase 3 nicht auf reinen None-Platzhaltern sitzt.
+    Bleibt bis Plan 3 deep_analysis_v2 einfuehrt und quick_filter_result
+    obsolet macht."""
+    return [
+        {
+            "ticker": e["ticker"],
+            "exclude": not e["selected"],
+            "news_strength": e.get("news_strength"),
+            "tech_direction": e.get("tech_direction"),
+            "tech_strength": e.get("tech_strength"),
+        }
+        for e in all_evaluated
+    ]

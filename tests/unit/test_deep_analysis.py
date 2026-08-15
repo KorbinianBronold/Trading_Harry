@@ -6,6 +6,7 @@ import pytest
 from src.cost_tracker import CostTracker
 from src.deep_analysis import (
     run_policy_monitor, analyze_asset, analyze_assets, DeepAnalysisError,
+    adapt_cutoff_to_quick_filter,
 )
 
 FIXTURE_DIR = Path(__file__).parent.parent / "fixtures"
@@ -204,3 +205,61 @@ def test_analyze_asset_passes_trend_and_policy_into_user_message():
     assert "ai-capex" in user_msg
     assert "tariff truce" in user_msg.lower() or "tariff-truce" in user_msg.lower()
     assert "AAPL" in user_msg
+
+
+# ---------- adapt_cutoff_to_quick_filter() (Sprint 3C / Plan 2, Task 10) ----------
+
+
+def test_adapt_cutoff_to_quick_filter_maps_selected_to_exclude_false():
+    """Interim-Adapter: cutoff_candidates()' zweiter Rueckgabewert (all_evaluated,
+    JEDER Ticker mit einem selected-Flag aus Task 9) wird zur quick_filter-Form,
+    die analyze_asset() heute erwartet -- exclude ist das Komplement von selected."""
+    all_evaluated = [
+        {"ticker": "AAPL", "news_strength": 2, "tech_direction": "long",
+         "tech_strength": 3, "selected": True},
+        {"ticker": "MSFT", "news_strength": 0, "tech_direction": "none",
+         "tech_strength": 0, "selected": False},
+    ]
+
+    adapted = adapt_cutoff_to_quick_filter(all_evaluated)
+
+    assert len(adapted) == 2
+    by_ticker = {a["ticker"]: a for a in adapted}
+    assert by_ticker["AAPL"]["exclude"] is False
+    assert by_ticker["MSFT"]["exclude"] is True
+
+
+def test_adapt_cutoff_to_quick_filter_carries_the_cutoff_reasoning():
+    """Es gibt kein long_score/short_score mehr im Cutoff-Modell -- an ihrer
+    Stelle die tatsaechliche Begruendung, damit Phase 3 nicht auf reinen
+    None-Platzhaltern sitzt."""
+    all_evaluated = [
+        {"ticker": "AAPL", "news_strength": 2, "tech_direction": "long",
+         "tech_strength": 3, "selected": True},
+    ]
+
+    adapted = adapt_cutoff_to_quick_filter(all_evaluated)
+
+    assert adapted[0]["news_strength"] == 2
+    assert adapted[0]["tech_direction"] == "long"
+    assert adapted[0]["tech_strength"] == 3
+
+
+def test_adapt_cutoff_to_quick_filter_excluded_ticker_skips_deep_analysis():
+    """Gegenprobe gegen die echte analyze_asset()-Gate-Logik, nicht nur gegen
+    die Adapter-Form: ein exclude=True aus dem Adapter fuehrt tatsaechlich zu
+    keinem Claude-Call."""
+    adapted = adapt_cutoff_to_quick_filter([
+        {"ticker": "MSFT", "news_strength": 0, "tech_direction": "none",
+         "tech_strength": 0, "selected": False},
+    ])
+    tracker = CostTracker(hard_cap_eur=10.0)
+    with patch("src.deep_analysis.call_claude") as mock_call:
+        result = analyze_asset(
+            ticker_data=_td("MSFT"),
+            quick_filter_result=adapted[0],
+            trend_context=_trend_context(), policy_context=_policy_context(),
+            cost_tracker=tracker,
+        )
+    assert result is None
+    mock_call.assert_not_called()

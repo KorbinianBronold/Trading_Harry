@@ -1,14 +1,20 @@
 # PROJECT_STATUS.md — Shares_Future (Trading_Harry)
 
-**Zuletzt aktualisiert:** 2026-08-15 — **Plan 2 (Trichter), Task 9: Cutoff + `cutoff_log`.**
+**Zuletzt aktualisiert:** 2026-08-15 — **Plan 2 (Trichter), Task 10: Verdrahtung, live
+gemessen.** `main.run_pipeline()` ruft jetzt `broad_scan_batch()` + `cutoff_candidates()`
++ `adapt_cutoff_to_quick_filter()` statt `quick_filter_batch()`; `MAX_DEEP_ANALYSIS`
+80 → 50. **Live gegen eine Wegwerf-Kopie von `data/tracking.db` gemessen** (echte
+Capital.com-/Finnhub-/Anthropic-Calls, 20 MVP-Ticker, kein Mailversand):
+**3,3551 EUR, kein `CostCapExceeded`** — güns­tiger als der alte Weg (3,9217 EUR am
+14.08.), weil der Cutoff 5 von 20 Tickern aus der teuren Phase 3 ausschloss. Die
+**vorherige Kostendeckel-Sorge war damit eine unbestätigte Plausibilitätsvermutung, keine
+Messung, und lag falsch** — Details und die Lehre daraus: **C.7**, Befund 2 (Korrektur)
+und Befund 9 (Messung). **719 Tests grün, 91,45 % Coverage.**
+
+Davor, 2026-08-15 — **Plan 2 (Trichter), Task 9: Cutoff + `cutoff_log`.**
 TDD, gegen den echten Sidecar aus Task 5/6 implementiert, nicht gegen den Plan-Pseudocode
-blind übernommen: `config.TECH_MIN_FOR_DEEP = 2`, Tabelle `cutoff_log`,
-`db.log_cutoff()`, `broad_scan.cutoff_candidates()`. Drei Abweichungen vom Plan-Pseudocode
-(Sidecar statt separatem `tech_signals`-Parameter, `is not None` statt Wahrheitswertprüfung
-bei `premarket_change_pct`, `rank_position` über alle sortierten statt unsortierten
-Kandidaten) — Details **C.7**, Befund 6. ⚠️ **Noch nicht in `main.py` verdrahtet** — das
-bleibt Task 10, der erste echte Verhaltenswechsel, vor dem der Kostendeckel zu klären ist
-(3,9217 EUR gegen 4,00 EUR Maximum). **717 Tests grün, 91,44 % Coverage.**
+blind übernommen — drei Abweichungen vom Plan-Pseudocode dabei gefunden (Details **C.7**,
+Befund 6).
 
 Davor, 2026-08-15 — **Doku-Abgleich gegen das echte Repo.**
 Der Stand von **Plan 2 des Analyse-Pipeline-Umbaus (Trichter)** stand in keinem Dokument:
@@ -33,7 +39,7 @@ Davor, 2026-08-12 — **Plan 1 (Fundament) des Analyse-Pipeline-Umbaus ist
 code-fertig**, Tasks 2–8 committed (Task 9 zieht diese Dokumente nach). 17 Indikatoren
 laufen mit und füllen 29 neue Spalten in `technical_indicators`; das Technik-Signal ist
 berechenbar, steuert aber nichts. **Keine Verhaltensänderung.** 647 Tests grün, Coverage
-93,32 %. Details: Abschnitt **C.6**. (Plan 2 hat darauf aufgesetzt und ist zu 9 von 13
+93,32 %. Details: Abschnitt **C.6**. (Plan 2 hat darauf aufgesetzt und ist zu 10 von 13
 Tasks umgesetzt — s. **C.7**, nicht mehr „Einstieg".)
 ⚠️ Der abschliessende Ganz-Branch-Review fand die Verhaltensänderungs-Garantie zunächst
 gebrochen vor (29 neue Werte liefen in vier Claude-Prompts mit) plus einen strukturellen
@@ -160,7 +166,7 @@ Einen Branch `sprint3b/plan2-pipeline-umbau` gibt es weder lokal noch remote.
 | 3A | Roadmap + Doku aktualisieren | ✅ erledigt (dieses Dokument) |
 | 3B | Cron-Struktur + Pipeline-Umbau | 🟢 **Code vollständig, Live-Verifikation abgeschlossen** — Plan 1 (2026-07-29) und Plan 2 (20/20 Tasks, 2026-08-04), alles auf `main`. Verifiziert: `pre_market`, `close`, `final_close` (P2.10, P3.5) und **`trade_proposals` inkl. E3/E5 (2026-08-14, P2.12)**. ⏳ Offen: `weekly`, `bootstrap-db`-Lauf, dann Reaktivierung von `analyze.yml` |
 | **3B-M** | **Mail-Provider-Wechsel (Zwischensprint)** | ✅ **ABGESCHLOSSEN 2026-07-30** — Mailversand läuft über **Resend**, eigene Domain verifiziert, Zustellung live bestätigt. Details s. unten |
-| 3C | Ranking-Überarbeitung | 🟡 **Plan 1 (Fundament) abgeschlossen** (C.6, keine Verhaltensänderung) · **Plan 2 (Trichter) zu 9 von 13 Tasks** — Trichter noch nicht verdrahtet, s. **C.7** · Plan 3 (Analyse & Ranking) offen. C.1–C.4 sind in den Analyse-Pipeline-Umbau aufgegangen |
+| 3C | Ranking-Überarbeitung | 🟡 **Plan 1 (Fundament) abgeschlossen** (C.6, keine Verhaltensänderung) · **Plan 2 (Trichter) zu 10 von 13 Tasks** — Trichter live verdrahtet und gemessen, s. **C.7** · Plan 3 (Analyse & Ranking) offen. C.1–C.4 sind in den Analyse-Pipeline-Umbau aufgegangen |
 | 3D | Learning Modul | ⚠️ **Platzhalter — Planungssession ausstehend** |
 | 3E | Human-in-the-Loop | ⚠️ **Platzhalter — Planungssession ausstehend** |
 | 3F | Volle 500-Ticker-Skalierung | ⚠️ **Platzhalter — Planungssession ausstehend** |
@@ -1602,7 +1608,7 @@ die zwei Signale und das Ranking gemeinsam neu fasst:
 - **Spec:** `docs/superpowers/specs/2026-08-11-analyse-pipeline-umbau-design.md`
 - **Plan 1 (Fundament):** `docs/superpowers/plans/2026-08-11-analyse-pipeline-plan1-fundament.md`
 - **Plan 2 (Trichter):** `docs/superpowers/plans/2026-08-13-analyse-pipeline-plan2-trichter.md`
-  — 9 von 13 Tasks umgesetzt, s. **C.7**
+  — 10 von 13 Tasks umgesetzt, s. **C.7**
 - **Plan 3 (Analyse & Ranking):** offen, noch keine Plan-Datei
 
 Die Spec ersetzt C.1 (fehlende Indikator-Werte — jetzt Teil des `predictions`-Umbaus),
@@ -1710,17 +1716,16 @@ Plan 1 seine Nichtangriffsgarantie fuer das Pipeline-Verhalten verliert.
 
 ---
 
-### C.7 — Analyse-Pipeline-Umbau, Plan 2 (Trichter) 🟡 9 von 13 Tasks
+### C.7 — Analyse-Pipeline-Umbau, Plan 2 (Trichter) 🟡 10 von 13 Tasks
 
 Spec: `docs/superpowers/specs/2026-08-11-analyse-pipeline-umbau-design.md` (§ 4.2–4.8, § 18)
 Plan: `docs/superpowers/plans/2026-08-13-analyse-pipeline-plan2-trichter.md`
 
 **Stand 2026-08-15**, gegen das echte Repo geprüft: alles auf `main`, Arbeitsbaum clean,
-`origin/main` == lokal. **717 Tests grün, 14 skipped, 91,44 % Coverage** (`--cov=src`).
+`origin/main` == lokal. **719 Tests grün, 14 skipped, 91,45 % Coverage** (`--cov=src`).
 
-⚠️ **Der Trichter ist noch nicht live.** `src/broad_scan.py` existiert samt Prompt und
-Tests, ist aber **nicht verdrahtet**: `main.py:21` importiert und `main.py:378` ruft
-weiterhin `quick_filter_batch()`. Der erste echte Verhaltenswechsel ist **Task 10**.
+✅ **Der Trichter ist live verdrahtet und live gegen echte Daten gemessen** (Task 10,
+s. Befund 9 unten). `quick_filter_batch()` ist aus `run_pipeline()` verschwunden.
 
 | Task | Commit(s) | Was landete |
 |---|---|---|
@@ -1732,13 +1737,13 @@ weiterhin `quick_filter_batch()`. Der erste echte Verhaltenswechsel ist **Task 1
 | 6 | `8351e31` | `technical_signal.compute()` liest `{**td, **extra_indicators}`; die vier Werte (`tech_direction`, `tech_agreement`, `tech_adx_band`, `tech_strength`) gehen in den **Sidecar**, nie in `td` |
 | 7 | `f545901`, `7165bf5` | Phase 1 liest `fundamentals_cache` **nur noch** (0 Finnhub-Calls); das Nachladen sitzt in `fetch_missing_fundamentals()` (Phase 2b, gebaut, noch nicht verdrahtet). `earnings_next_date` wird als ISO-Datum gecacht statt als relative Tageszahl (§ 18.1d), `earnings_in_days` beim Lesen gerechnet, ein Termin in der Vergangenheit liefert `None`. `get_earnings_calendar()` ist aus dem Tageslauf verschwunden, `earnings_beat_pct` dort dauerhaft `None` |
 | 8 | `b861b48`, `b902b23`, `9a7cd1f` | `src/broad_scan.py` + `prompts/broad_scan_v1.txt`: ein Sonnet-Call mit Websuche über alle Phase-1-Überlebenden, je Ticker `news_strength` (0–3) + `news_note`. Nutzlast wird aus **acht** Feldern gebaut statt `td` zu dumpen — die 19 unbeteiligten `td`-Felder bleiben draussen. Ein unparsebarer Scan degradiert den ganzen Batch auf `news_strength=0` statt zu werfen (§ 10) |
-| 9 | *(dieser Commit)* | `config.TECH_MIN_FOR_DEEP = 2`; Tabelle `cutoff_log` (SCHEMA_SQL + Migrationsguard über `sqlite_master`, kein Zähler); `db.log_cutoff()` (`INSERT OR REPLACE`, ein Aufruf pro Lauf schreibt **alle** bewerteten Ticker); `broad_scan.cutoff_candidates()`. **Noch nicht in `main.py` verdrahtet** — das bleibt Task 10 |
+| 9 | *(Vorgänger-Commit)* | `config.TECH_MIN_FOR_DEEP = 2`; Tabelle `cutoff_log` (SCHEMA_SQL + Migrationsguard über `sqlite_master`, kein Zähler); `db.log_cutoff()` (`INSERT OR REPLACE`, ein Aufruf pro Lauf schreibt **alle** bewerteten Ticker); `broad_scan.cutoff_candidates()` |
+| 10 | *(dieser Commit)* | `main.run_pipeline()`: `quick_filter_batch()` raus, `broad_scan_batch()` + `cutoff_candidates()` + `db.log_cutoff()` rein, `deep_analysis.adapt_cutoff_to_quick_filter()` als Interim-Adapter. `MAX_DEEP_ANALYSIS` 80 → 50, `BATCH_SIZE_QUICK` entfernt (tot). `main._apply_forced_candidates()` entfernt — die Pflicht-Kandidaten-Logik sitzt jetzt in `cutoff_candidates()` selbst. **Live gegen echte Daten verifiziert, s. Befund 9** |
 
-#### Was noch fehlt — Tasks 10–13, im Code verifiziert
+#### Was noch fehlt — Tasks 11–13, im Code verifiziert
 
 | Task | Fehlt konkret |
 |---|---|
-| 10 | `main.py:378` ruft `quick_filter_batch()`; kein Interim-Adapter in `deep_analysis.py`. `config.py:254-255` trägt unverändert `MAX_DEEP_ANALYSIS = 80` und das tote `BATCH_SIZE_QUICK = 30` |
 | 11 | Keine Ratenbegrenzung in `finnhub_provider.py` |
 | 12 | Kein Fundamentals-Vorlauf in `run_weekly()` |
 | 13 | Modul-Docstrings, restliche Doku-Feinarbeit (CLAUDE.md/ARCHITECTURE-Nachtrag für Plan 2 ist bereits erfolgt, s. Kopf dieses Dokuments) |
@@ -1754,14 +1759,21 @@ Nachladeversuche und damit potenziell mehr Skips. Genau deshalb durfte es nicht 
 (s. C.6, letzter ⚠️-Absatz) — dort war die Nichtangriffsgarantie bindend. Global Constraint 2
 des Plans ist damit für Tasks 1–2 und 4–8 wahr, für Task 3 bewusst nicht.
 
-**2. ⚠️ Der Kostendeckel ist vor Task 10 zu klären.** Der Lauf vom 2026-08-14 kostete
-**3,9217 EUR** gegen `MAX_COST_PER_RUN_EUR = 4.00` (`config.py:282`) — 8 Cent Luft.
-Task 10 tauscht den billigen Haiku-Quick-Filter gegen einen Sonnet-Call **mit Websuche**;
-bei 20 MVP-Tickern greift `MAX_DEEP_ANALYSIS = 50` nicht, Phase 3 bleibt bei 20 Einzelcalls
-à ~0,12 EUR. **Plan 2 macht den MVP-Lauf also teurer, nicht billiger** — die Ersparnis
-steckt im Phase-3-Batching (§ 13.2: 0,034 statt 0,12 EUR je Ticker), und das ist Plan 3.
-Entweder den Deckel anheben oder das Batching vorziehen; sonst läuft der erste Testlauf
-nach Task 10 mit realistischer Chance in `CostCapExceeded`.
+**2. ✅ Kostendeckel-Sorge war unbegründet — live widerlegt, s. Befund 9.** Vor Task 10
+stand hier die Vermutung, der Tausch Haiku-Quick-Filter → Sonnet-Scan-mit-Websuche würde
+den MVP-Lauf über `MAX_COST_PER_RUN_EUR = 4.00` treiben, weil `MAX_DEEP_ANALYSIS = 50`
+bei 20 Tickern nicht greift. **Das war eine Plausibilitätsvermutung, keine Messung** —
+und falsch: der reale Lauf kostete 3,3551 EUR, **günstiger** als der Referenzlauf vom
+14.08. (3,9217 EUR). Der Cutoff schliesst genug Ticker aus Phase 3 aus (5 von 20 in der
+Messung), dass die Ersparnis dort den Mehrpreis von `broad_scan` übersteigt — die
+Milchmädchenrechnung „50 greift nicht, also bleibt Phase 3 gleich teuer" berücksichtigte
+nicht, dass der Cutoff *innerhalb* der 20 trotzdem aussortiert, nicht nur *über* 20 deckelt.
+
+**Lehre:** `cost_tracking` hat keine Phasenaufschlüsselung (nur eine Zeile je Lauf) —
+diese Einschränkung stand schon vor Task 9 fest. Die richtige Reaktion darauf war nicht,
+aus Spec-Schätzungen eine Kostenwarnung zu extrapolieren, sondern **zu messen** (wie
+Befund 9 es dann auch getan hat). Vor einer Warnung, die den Nutzer zu einer Entscheidung
+zwingt, zuerst prüfen, ob die Messung selbst güns­tig genug ist, um sie einzuholen.
 
 **3. Der Zwischen-Review nach Task 8 hat gegriffen** — zwei Befunde, beide gefixt:
 - `MAX_TOKENS` war mit einer **falschen Begründung** gedeckelt: der Kommentar behauptete
@@ -1817,6 +1829,55 @@ Der Kopf dieses Dokuments und CLAUDE.md sagten beide „Einstieg ist jetzt Plan 
 Muster, vor dem die zwei Korrekturkästen im Kopf warnen. Nachgezogen am 2026-08-15.
 Nebenbefund im Plan selbst: Global Constraint 2 nennt „Task 9 (broad_scan)" als ersten
 Konsumenten; `broad_scan` ist Task 8, und erster Konsument ist Task 10.
+
+**9. ✅ Task 10 live gemessen (2026-08-15): 3,3551 EUR, kein `CostCapExceeded`, günstiger
+als der alte Weg.** Lauf gegen eine Wegwerf-Kopie von `data/tracking.db`, echte
+Capital.com-/Finnhub-/Anthropic-Calls, 20 MVP-Ticker, `run_type=pre_market`,
+Mailversand unterdrückt (Testlauf-Konvention „kein Mailversand" aus der Plan-Einordnung).
+Die reale Produktions-DB blieb unberührt.
+
+| Phase | Kumulierte Kosten | Was passierte |
+|---|---|---|
+| 0 (Trends) | 0,140 EUR | 7 Trends |
+| 0b (Marktkontext) + 2 (`broad_scan`) | 0,413 EUR | zusammen 0,273 EUR — `cost_tracking` trennt Phasen nicht, s. unten |
+| 2a (Cutoff) | — | **15 von 20 Kandidaten ausgewählt**, `MAX_DEEP_ANALYSIS=50` greift nicht (erwartet) |
+| Policy Monitor | 0,540 EUR | level=high, 6 Events |
+| 3 (Tiefenanalyse) | 2,435 EUR | **15 Calls, nicht 20** — die 5 vom Cutoff ausgeschlossenen (META, BRK-B, JPM, JNJ, PG) wurden im Log als „skipped by quick_filter exclude" bestätigt, exakt deckungsgleich mit `cutoff_log.selected=0` |
+| 3b (Rohstoffe/Krypto) | 3,166 EUR | 7 Assets, alle immer |
+| 4a (Portfolio-Check) | **3,3551 EUR** | 11 offene Positionen, 10 Empfehlungen geschrieben |
+
+**Die ursprüngliche Sorge war falsch, aber aus einem nachvollziehbaren Grund.** Sie nahm
+an, Phase 3 bliebe bei 20 Einzelcalls, weil der Deckel (50) nicht greift — das stimmt für
+den Deckel, aber der Cutoff selbst sortiert *unabhängig vom Deckel* nach Qualifikation
+aus. 5 ausgeschlossene Ticker sparen ~5 × 0,126 EUR ≈ 0,63 EUR in Phase 3 — mehr, als
+`broad_scan` zusätzlich kostet. Der Vergleich zum 14.08.-Lauf (3,9217 EUR, alle 20 tief
+analysiert) ist nicht exakt bereinigt (andere Anzahl offener Positionen, andere
+Cache-Trefferquote), zeigt aber dieselbe Grössenordnung: **kein Kostensprung, eher das
+Gegenteil.**
+
+⚠️ **Weiterhin unlösbar ohne Code-Änderung: die genaue Aufteilung Marktkontext/`broad_scan`
+bleibt eine Schätzung** (0,273 EUR zusammen), weil `cost_tracking` nur eine Gesamtzeile je
+Lauf führt, keine Phasenzeilen. Für 3D/3F relevant, falls die Phasenkosten je einzeln
+gebraucht werden.
+
+**Kein Zufallsbefund, kein Crash.** Cache-Trefferquote 47,48 %, `aborted_at_phase: None`,
+keine ERROR-Zeilen im Log. Ein Nebenbefund ohne Regression: `META` hatte eine offene
+Paper-Position (Prediction), wurde vom Cutoff aber nicht für Phase 3 ausgewählt — der
+Portfolio-Check konnte dafür keine frische Analyse finden und übersprang sie mit einer
+WARNING (`10 von 11` Empfehlungen). Das ist **kein neues Verhalten**: `analyze_asset()`
+hat `exclude=True`-Ticker schon unter dem alten Quick-Filter übersprungen, exakt derselbe
+Mechanismus — nur sichtbar geworden, weil der Cutoff diesmal genau diesen Fall traf.
+
+⏳ **Nebenbefund, nicht untersucht, nicht Teil von Task 10:** die finale `cost_summary`
+weist `web_search_calls: 0` und `web_search_eur: 0.0` aus, obwohl mehrere Phasen
+(Trends, Policy Monitor, `broad_scan`, Tiefenanalysen) alle mit `WEB_SEARCH_TOOL`
+aufgerufen wurden. `CostTracker.add_call()`/`add_from_result()` selbst summieren korrekt
+(`src/cost_tracker.py:77`) — der Wert kommt bereits als 0 aus `utils.call_claude()`
+(`web_search_calls = getattr(server_tool_use, "web_search_requests", 0) or 0`,
+`src/utils.py:96`), vermutlich weil das reale API-Antwortobjekt `server_tool_use` anders
+befüllt als angenommen. Nicht verifiziert, nur beobachtet — vorbestehend, keine der
+Tasks 1–13 hat `cost_tracker.py` oder `utils.py` seit Plan-1-Task-2 angefasst. Für eine
+eigene Untersuchung vormerken, nicht für einen Aufräumlauf.
 
 ---
 

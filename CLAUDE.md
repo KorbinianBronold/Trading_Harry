@@ -1,19 +1,23 @@
 # Shares_Future – SP500 CFD Research Tool
 
-**Zuletzt aktualisiert:** 2026-08-15 — **Plan 2 (Trichter), Task 9: Cutoff.**
-`config.TECH_MIN_FOR_DEEP = 2`, Tabelle `cutoff_log`, `db.log_cutoff()`,
-`broad_scan.cutoff_candidates()` — TDD gegen den echten Sidecar aus Task 5/6, nicht
-gegen den Plan-Pseudocode blind übernommen (der hatte drei Bugs: separater
-`tech_signals`-Parameter, den es seit der Sidecar-Invariante nicht mehr gibt; eine
-Wahrheitswertprüfung, die einen echten 0,0-%-Kurs wie `None` behandelt hätte;
-`rank_position` über eine unsortierte statt sortierte Liste). Details: PROJECT_STATUS
-**C.7**, Befund 6. **9 von 13 Tasks umgesetzt.**
-⚠️ **Der Trichter ist weiterhin nicht live:** `main.py:378` ruft weiterhin
-`quick_filter_batch()`, erster Verhaltenswechsel ist **Task 10** — davor ist der
-Kostendeckel zu klären (3,9217 EUR gemessen gegen `MAX_COST_PER_RUN_EUR = 4.00`; Task 10
-macht den MVP-Lauf teurer, die Ersparnis steckt erst im Phase-3-Batching aus Plan 3).
-Offen: Task 10 (Verdrahtung), 11 (Finnhub-Ratenbegrenzung), 12 (`run_weekly`-Vorlauf),
-13 (Doku). **717 Tests grün, 91,44 % Coverage.**
+**Zuletzt aktualisiert:** 2026-08-15 — **Plan 2 (Trichter), Task 10: Trichter ist live.**
+`main.run_pipeline()` ruft `broad_scan_batch()` + `cutoff_candidates()` +
+`adapt_cutoff_to_quick_filter()` statt `quick_filter_batch()`; `MAX_DEEP_ANALYSIS`
+80 → 50, jetzt gelesen. `main._apply_forced_candidates()` entfernt — die Pflicht-
+Kandidaten-Logik sitzt seit Task 9 in `cutoff_candidates()` selbst.
+✅ **Live gegen eine Wegwerf-Kopie von `data/tracking.db` gemessen** (echte API-Calls,
+20 MVP-Ticker, kein Mailversand): **3,3551 EUR, kein `CostCapExceeded`** — güns­tiger als
+der alte Weg (3,9217 EUR am 14.08.). Die **Kostendeckel-Sorge aus dem letzten Eintrag war
+eine unbestätigte Vermutung und lag falsch**: der Cutoff schloss 5 von 20 Tickern aus der
+teuren Phase 3 aus, das spart mehr als `broad_scan` zusätzlich kostet. Details, Lehre und
+Phasen-Aufschlüsselung: PROJECT_STATUS **C.7**, Befund 2 (Korrektur) und Befund 9.
+**10 von 13 Tasks umgesetzt.** Offen: 11 (Finnhub-Ratenbegrenzung), 12
+(`run_weekly`-Vorlauf), 13 (Doku). **719 Tests grün, 91,45 % Coverage.**
+
+Davor, 2026-08-15 — **Plan 2 (Trichter), Task 9: Cutoff.** `config.TECH_MIN_FOR_DEEP = 2`,
+Tabelle `cutoff_log`, `db.log_cutoff()`, `broad_scan.cutoff_candidates()` — TDD gegen den
+echten Sidecar aus Task 5/6, nicht gegen den Plan-Pseudocode blind übernommen. Details:
+PROJECT_STATUS **C.7**, Befund 6.
 
 Davor, 2026-08-15 — **Live-Verifikation von Plan 2 (Sprint 3B) abgeschlossen.**
 `trade_proposals` lief am 2026-08-14 erstmals gegen echte Signale; E3 (Ablösung statt
@@ -196,16 +200,15 @@ nachweislich zu niedrig. Erster echter Messlauf am 2026-07-29: ein `pre_market`
 mit **20** MVP-Tickern kostete **3,3143 EUR** (`cost_tracking`) — die Doku nannte
 ~3,20 EUR für 500 Ticker. Treiber ist Phase 3 mit ~0,12 EUR je Tiefenanalyse.
 
-⚠️ **`MAX_DEEP_ANALYSIS = 80` und `BATCH_SIZE_QUICK = 30` sind tote Konstanten** —
-sie werden nirgends im Code gelesen (verifiziert 2026-07-30). Es gibt **keinen**
-Deckel auf die Zahl der Tiefenanalysen ausser `CostCapExceeded`, und Phase 2 macht
-*einen* Haiku-Call über alle Ticker statt 30er-Batches. Jede Hochrechnung, die mit
-„80 Slots" argumentiert, ist damit die optimistische Untergrenze. Der Deckel ist **nicht**
-eine bessere Auswahl innerhalb eines bestehenden Limits, sondern die einzige
-Mengenbegrenzung überhaupt. **Der Fix ist gebaut, aber nicht scharf:** er hängt an
-Plan 2, Task 10 (`MAX_DEEP_ANALYSIS` 80 → 50, erstmals gelesen; `BATCH_SIZE_QUICK`
-entfällt). Bis dahin gilt der Satz oben unverändert — s. PROJECT_STATUS C.7.
-Details, Laufzeit-Hochrechnung und der Cron-Konflikt: PROJECT_STATUS.md, F.1.
+✅ **Historisch — bis 2026-08-15 wahr, dann durch Plan 2 / Task 10 geschlossen:**
+`MAX_DEEP_ANALYSIS = 80` und `BATCH_SIZE_QUICK = 30` waren tote Konstanten, ungelesen,
+kein Deckel ausser `CostCapExceeded`. Jede Hochrechnung mit „80 Slots" war die
+optimistische Untergrenze. **Seit Task 10:** `MAX_DEEP_ANALYSIS = 50` wird von
+`broad_scan.cutoff_candidates()` gelesen und ist der einzige harte Deckel auf Phase 3;
+`BATCH_SIZE_QUICK` ist entfernt. Für die 500-Ticker-Hochrechnung (3F) bleibt relevant,
+dass die Deckel-Wirkung bei 500 Kandidaten etwas anderes ist als bei den bisher
+gemessenen 20 (dort greift der Cutoff über die Qualifikationsregel, nicht über den
+Deckel — s. PROJECT_STATUS C.7, Befund 9). Details: PROJECT_STATUS.md, F.1.
 
 ## Wichtige Befehle
 Standardaufrufe (`pytest tests/ --cov=src --cov-fail-under=80`, `python main.py
@@ -285,12 +288,12 @@ und der getroffenen Entscheidungen. Kurzfassung:
     **abgeschlossen, ändert kein Pipeline-Verhalten**: das Technik-Signal ist berechenbar,
     steuert aber nichts. Stand: PROJECT_STATUS **C.6**.
   - **Plan 2 (Trichter)** — `…/plans/2026-08-13-analyse-pipeline-plan2-trichter.md`,
-    **9 von 13 Tasks umgesetzt**, alle auf `main`. Offen: Task 10 (Verdrahtung —
-    `quick_filter` raus, `broad_scan` + `cutoff_candidates` rein, `MAX_DEEP_ANALYSIS`
-    80 → 50), 11 (Finnhub-Ratenbegrenzung), 12 (`run_weekly`-Vorlauf), 13 (Doku), danach
-    Abschluss-Review über `c978d70..HEAD` und Testlauf. ⚠️ **Bis Task 10 ist der Trichter
-    nicht live** — die eine bewusste Verhaltensänderung davor ist `GAP_SCAN_BARS`
-    200 → 220 (Task 3). Stand und sechs Befunde: PROJECT_STATUS **C.7**.
+    **10 von 13 Tasks umgesetzt**, alle auf `main`. ✅ **Der Trichter ist live** —
+    `quick_filter` ist aus `run_pipeline()` verschwunden, `broad_scan` +
+    `cutoff_candidates` (`MAX_DEEP_ANALYSIS` 80 → 50) laufen live, gemessen gegen echte
+    Daten: 3,3551 EUR, kein `CostCapExceeded`, güns­tiger als der alte Weg. Offen: Task 11
+    (Finnhub-Ratenbegrenzung), 12 (`run_weekly`-Vorlauf), 13 (Doku), danach
+    Abschluss-Review über `c978d70..HEAD`. Stand und neun Befunde: PROJECT_STATUS **C.7**.
   - **Plan 3 (Analyse & Ranking)** — offen; bringt Phase-3-Batching (der eigentliche
     Kostenhebel: ~0,034 statt ~0,12 EUR je Ticker), `deep_analysis_v2` und `rank_score`.
 - **3D / 3E / 3F** sind ⚠️ **Platzhalter** — bei Erreichen aktiv nachfragen und den

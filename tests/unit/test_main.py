@@ -62,8 +62,7 @@ def _mock_all_other_phases(mocker) -> list[str]:
     fake_trends = {"trends": [{"name": "x"}], "trend_summary": "ok"}
     fake_policy = {"policy_risk_level": "low", "events": []}
     fake_collect = ([{"ticker": "AAPL", "intraday_range_pct": 1.5, "price": 178.0}], 0, {})
-    fake_quick = [{"ticker": "AAPL", "exclude": False, "long_score": 7.0,
-                   "short_score": 2.0, "confidence": "high", "evidence": []}]
+    fake_broad_scan = [{"ticker": "AAPL", "news_strength": 2, "news_note": "x"}]
     fake_deep = [{"ticker": "AAPL", "direction": "long", "current_price": 178.0,
                   "tp_price": 184.0, "sl_price": 176.0, "rr_ratio": 3.0,
                   "total_score": 7.6, "probability_pct": 65, "confidence": "high",
@@ -83,8 +82,8 @@ def _mock_all_other_phases(mocker) -> list[str]:
 
     mocker.patch("main.analyze_trends", side_effect=make_mock("trend", fake_trends))
     mocker.patch("main.collect", side_effect=make_mock("collect", fake_collect))
-    mocker.patch("main.quick_filter_batch",
-                 side_effect=make_mock("quick_filter", fake_quick))
+    mocker.patch("main.broad_scan_batch",
+                 side_effect=make_mock("broad_scan", fake_broad_scan))
     mocker.patch("main.run_policy_monitor",
                  side_effect=make_mock("policy", fake_policy))
     mocker.patch("main.analyze_assets", side_effect=make_mock("deep", fake_deep))
@@ -115,7 +114,7 @@ def test_run_pipeline_calls_phases_in_order(mocker):
     run_pipeline(run_type="close", date="2026-05-19", db_path=":memory:")
 
     assert call_log == [
-        "trend", "market_context", "collect", "collect", "quick_filter", "policy",
+        "trend", "market_context", "collect", "collect", "broad_scan", "policy",
         "deep", "cc", "ranking", "portfolio", "email",
     ]
 
@@ -154,7 +153,6 @@ def test_run_pipeline_partial_email_when_cost_cap_hit(tmp_db_path):
     with patch("main.analyze_trends", return_value={"trends": [{"name": "x"}],
                                                      "trend_summary": "ok"}), \
          patch("main.collect", return_value=([], 0, {})), \
-         patch("main.quick_filter_batch", return_value=[]), \
          patch("main.run_policy_monitor",
                side_effect=CostCapExceeded("cap hit")), \
          patch("main.send_daily_email") as mock_email, \
@@ -270,7 +268,6 @@ def _stub_pipeline(mocker) -> None:
     nur dessen Verdrahtung pruefen."""
     mocker.patch("main.analyze_trends", return_value={"trends": []})
     mocker.patch("main.collect", return_value=([], 0, {}))
-    mocker.patch("main.quick_filter_batch", return_value=[])
     mocker.patch("main.run_policy_monitor", return_value={})
     mocker.patch("main.analyze_assets", return_value=[])
     mocker.patch("main.analyze_commodities_and_crypto", return_value=[])
@@ -406,7 +403,7 @@ def test_cost_cap_abort_reports_the_actual_phase(tmp_db_path, mocker):
 @pytest.mark.parametrize("phase_fn, expected", [
     ("main.fetch_market_context",          "market_context"),
     ("main.collect_sector_momentum",       "sector_momentum"),
-    ("main.quick_filter_batch",            "quick_filter"),
+    ("main.broad_scan_batch",              "broad_scan"),
     ("main.run_policy_monitor",            "policy_monitor"),
     ("main.analyze_assets",                "deep_analysis"),
     ("main.analyze_commodities_and_crypto", "commodities_crypto"),
@@ -609,36 +606,28 @@ def test_forced_candidates_is_empty_when_provider_fails(mocker):
     assert _forced_candidates(provider) == set()
 
 
-def test_forced_candidates_override_quick_filter_exclude():
-    """Der Kern von B.4: ein Ticker mit offener Position darf nicht am
-    Quick-Filter haengenbleiben."""
-    from main import _apply_forced_candidates
-    quick = [{"ticker": "AAPL", "exclude": True},
-             {"ticker": "MSFT", "exclude": True}]
-    out = _apply_forced_candidates(quick, forced={"AAPL"})
-    by_t = {q["ticker"]: q for q in out}
-    assert by_t["AAPL"]["exclude"] is False
-    assert by_t["MSFT"]["exclude"] is True
-
-
 def test_forced_candidate_reaches_deep_analysis_with_exclude_false(tmp_db_path, mocker):
     """Integrationstest fuer B.4: eine offene Capital.com-Position auf AAPL, die
-    der Quick-Filter eigentlich ausschliessen wollte, muss trotzdem mit
-    exclude=False bei analyze_assets (Phase 3) ankommen — sonst greift Phase 1c
-    nicht bis in die Tiefenanalyse durch, obwohl echtes Geld daran haengt."""
+    der Cutoff eigentlich nicht ausgewaehlt haette (news_strength=0, kein
+    Tech-Signal), muss trotzdem mit exclude=False bei analyze_assets (Phase 3)
+    ankommen — sonst greift Phase 1c nicht bis in die Tiefenanalyse durch,
+    obwohl echtes Geld daran haengt. Die Ueberschreibung sitzt seit Sprint 3C /
+    Plan 2 Task 10 direkt in cutoff_candidates() (forced_candidates-Parameter),
+    nicht mehr in einem separaten _apply_forced_candidates()-Schritt."""
     _stub_pipeline(mocker)
     mocker.patch("main.fetch_market_context", return_value=dict(_CTX))
     mocker.patch("main.rank_and_persist", return_value={
         "top_long": [], "top_short": [], "commodities_crypto": [],
     })
+    mocker.patch("main.collect", return_value=(
+        [{"ticker": "AAPL", "intraday_range_pct": 1.5, "price": 178.0}], 0, {}))
 
     provider = MagicMock()
     provider.get_open_positions.return_value = [{"ticker": "AAPL"}]
     mocker.patch("main.CapitalComProvider", return_value=provider)
 
-    mocker.patch("main.quick_filter_batch", return_value=[
-        {"ticker": "AAPL", "exclude": True, "long_score": 1.0, "short_score": 1.0,
-         "confidence": "low", "evidence": []},
+    mocker.patch("main.broad_scan_batch", return_value=[
+        {"ticker": "AAPL", "news_strength": 0, "news_note": ""},
     ])
     mock_deep = mocker.patch("main.analyze_assets", return_value=[])
 

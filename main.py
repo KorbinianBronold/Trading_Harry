@@ -18,8 +18,8 @@ from src.cost_tracker import CostTracker, CostCapExceeded
 from src.data_collector import collect
 from src.sector_momentum import collect_sector_momentum
 from src.trend_analyzer import analyze_trends, TrendAnalyzerError
-from src.quick_filter import quick_filter_batch
-from src.deep_analysis import run_policy_monitor, analyze_assets
+from src.broad_scan import broad_scan_batch, cutoff_candidates
+from src.deep_analysis import run_policy_monitor, analyze_assets, adapt_cutoff_to_quick_filter
 from src.commodities_crypto import (
     analyze_commodities_and_crypto, fetch_fear_greed,
 )
@@ -93,17 +93,6 @@ def _forced_candidates(price_provider) -> set[str]:
         log.info(f"Phase 1c: {len(forced)} Pflicht-Kandidaten aus offenen Positionen: "
                  f"{sorted(forced)}")
     return forced
-
-
-def _apply_forced_candidates(
-    quick_results: list[dict], forced: set[str],
-) -> list[dict]:
-    """Setzt exclude=False fuer jeden Pflicht-Kandidaten aus Phase 1c, damit
-    Phase 3 ihn garantiert analysiert."""
-    for q in quick_results:
-        if q.get("ticker") in forced:
-            q["exclude"] = False
-    return quick_results
 
 
 def _aggregate_yesterday_outcomes(conn, today: str) -> dict:
@@ -321,7 +310,7 @@ def run_pipeline(run_type: str, date: str, db_path: str) -> None:
         current_phase = "data_collection"
         # Phase 1 — Stocks data
         _tickers = config.SP500_FULL_TICKERS if config.USE_FULL_SP500 else config.SP500_MVP_TICKERS
-        sp500_tds, skipped_sp, _sp500_sidecar = collect(
+        sp500_tds, skipped_sp, sp500_sidecar = collect(
             tickers=_tickers,
             price_provider=price_provider,
             earnings_provider=earnings_provider,
@@ -373,13 +362,32 @@ def run_pipeline(run_type: str, date: str, db_path: str) -> None:
         except Exception as e:
             log.warning(f"Sektor-Momentum nicht ermittelbar, Run laeuft ohne: {e}")
 
-        current_phase = "quick_filter"
-        # Phase 2 — quick filter (stocks only)
-        quick = quick_filter_batch(
-            batch=sp500_tds, trend_context=trend_context,
+        current_phase = "broad_scan"
+        # Phase 2 — Nachrichten-Scan (Sonnet + Websuche, stocks only). Ersetzt
+        # den Haiku-Quick-Filter (Sprint 3C / Analyse-Pipeline-Umbau, Plan 2,
+        # Task 10). Rohstoffe/Krypto umgehen Scan, Cutoff und 2b komplett
+        # (Spec 18.3) -- sie laufen separat ueber cc_tds/deep_cc weiter unten.
+        broad_results = broad_scan_batch(
+            ticker_datas=sp500_tds, sidecar=sp500_sidecar,
+            trend_context=trend_context, market_context=market_ctx,
             cost_tracker=cost_tracker,
         )
-        quick = _apply_forced_candidates(quick, forced)
+        # Phase 2a — Cutoff: waehlt ≤ MAX_DEEP_ANALYSIS Kandidaten aus, Pflicht-
+        # Kandidaten aus Phase 1c stehen vorn und zaehlen gegen den Deckel.
+        selected, all_evaluated = cutoff_candidates(
+            ticker_datas=sp500_tds, broad_scan_results=broad_results,
+            sidecar=sp500_sidecar, forced_candidates=forced,
+            max_deep_analysis=config.MAX_DEEP_ANALYSIS,
+        )
+        db.log_cutoff(conn, date=date, run_type=run_type, evaluated=all_evaluated)
+        log.info(
+            f"Phase 2a (cutoff) done: {len(selected)} von {len(all_evaluated)} "
+            f"Kandidaten ausgewaehlt (max_deep_analysis={config.MAX_DEEP_ANALYSIS})"
+        )
+
+        # Interim-Adapter: cutoff-Form -> quick_filter-Form, bis Plan 3
+        # deep_analysis_v2 einfuehrt und das exclude-Flag obsolet macht.
+        quick = adapt_cutoff_to_quick_filter(all_evaluated)
 
         current_phase = "policy_monitor"
         # Phase 3 policy monitor (1× for all of Phase 3 + 3b + 4a)
