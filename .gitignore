@@ -18,3 +18,4 @@ venv/
 notes
 *.db
 data/logs/
+graphify-out/
