@@ -1,6 +1,6 @@
 # Analyse-Pipeline-Umbau, Plan 2: Trichter — Implementation Plan
 
-**Status:** 🟡 **In Umsetzung — 10 von 13 Tasks committed, Trichter live gemessen (Stand 2026-08-15)**
+**Status:** 🟡 **In Umsetzung — 11 von 13 Tasks committed, Trichter live gemessen (Stand 2026-08-15)**
 **Erstellt:** 2026-08-13
 
 | Task | Stand | Commit(s) |
@@ -14,8 +14,8 @@
 | 7 Fundamentals aus Phase 1 lösen | ✅ | `f545901`, `7165bf5` |
 | 8 `broad_scan.py` + Prompt | ✅ | `b861b48`, `b902b23`, `9a7cd1f` |
 | 9 Cutoff + `cutoff_log` | ✅ | `0b4cfe3` |
-| 10 `run_pipeline()` verdrahten | ✅ | *(dieser Commit)* |
-| 11 Finnhub-Ratenbegrenzung | ⏳ offen | — |
+| 10 `run_pipeline()` verdrahten | ✅ | `efd341a` |
+| 11 Finnhub-Ratenbegrenzung | ✅ | *(dieser Commit)* |
 | 12 `run_weekly()`-Vorlauf | ⏳ offen | — |
 | 13 Doku nachziehen | 🟡 teilweise | PROJECT_STATUS C.7, CLAUDE.md und ARCHITECTURE.md sind gezogen; Modul-Docstrings und die Phasentabelle fehlen |
 
@@ -34,6 +34,11 @@
    `None` behandelt, und `rank_position` über `enumerate(all_evaluated)` in **unsortierter**
    Reihenfolge wäre für den 3D-Vergleich „51. gegen 50." wertlos gewesen. Details:
    PROJECT_STATUS C.7, Befund 6.
+4. **Task 11s Pseudocode schlägt modulweiten State vor** (`_rate_limiter: dict` auf
+   Modulebene, mit einem nie gelesenen `last_reset`-Schlüssel). Implementiert stattdessen
+   als `self._call_times` auf `FinnhubProvider` — instanzgebunden, weil der Wochenlauf
+   (Task 12) ohnehin **eine** Instanz über das ganze Universum hält, und weil modulweiter
+   State Tests kontaminiert hätte. Details: PROJECT_STATUS C.7, Befund 10.
 
 ✅ **Kostendeckel-Sorge live widerlegt.** Vor Task 10 stand hier die Vermutung, der
 Tausch Haiku-ohne-Websuche gegen Sonnet-mit-Websuche würde den MVP-Lauf über

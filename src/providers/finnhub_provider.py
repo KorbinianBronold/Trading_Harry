@@ -2,6 +2,7 @@
 supply OHLC price data — that's CapitalComProvider's job; this provider only
 implements the fundamentals/earnings half of the DataProvider interface."""
 import logging
+import time
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 import finnhub
@@ -17,10 +18,39 @@ _client = (
     if config.FINNHUB_API_KEY else None
 )
 
+# Sprint 3C / Analyse-Pipeline-Umbau, Plan 2, Task 11: Finnhub Free-Tier
+# begrenzt auf 60 Calls/min. Ohne Drosselung wuerde der Wochenlauf (Task 12,
+# bis zu ~500 Ticker x 2 Calls) das Limit sprengen.
+_FINNHUB_RATE_LIMIT = 60
+_FINNHUB_RATE_WINDOW_S = 60.0
+
 
 class FinnhubProvider(DataProvider):
     LOOKBACK_DAYS = 90
     LOOKAHEAD_DAYS = 60
+
+    def __init__(self):
+        # Instanz-gebunden, nicht modulweit: der Wochenlauf haelt EINE
+        # FinnhubProvider-Instanz ueber das ganze Universum (dieselbe
+        # Invariante wie "ein Session-Object pro Run" bei Capital.com), und
+        # Tests bekommen so automatisch ein frisches Fenster ohne
+        # modulweiten Reset.
+        self._call_times: list[float] = []
+
+    def _respect_rate_limit(self) -> None:
+        """Sliding-Window-Drosselung: pausiert, bevor ein Call das
+        60-Sekunden-Fenster ueber _FINNHUB_RATE_LIMIT Eintraege hinaus
+        fuellen wuerde."""
+        now = time.time()
+        cutoff = now - _FINNHUB_RATE_WINDOW_S
+        while self._call_times and self._call_times[0] < cutoff:
+            self._call_times.pop(0)
+        if len(self._call_times) >= _FINNHUB_RATE_LIMIT:
+            sleep_s = _FINNHUB_RATE_WINDOW_S - (now - self._call_times[0])
+            if sleep_s > 0:
+                log.info(f"Finnhub rate limit: sleeping {sleep_s:.1f}s")
+                time.sleep(sleep_s)
+        self._call_times.append(time.time())
 
     def get_price_history(self, ticker, days=90):
         """Not supported — Finnhub is earnings/fundamentals-only in this project."""
@@ -35,6 +65,7 @@ class FinnhubProvider(DataProvider):
         Finnhub. Returns an empty dict if no API key is configured or any call fails."""
         if _client is None:
             return {}
+        self._respect_rate_limit()
         try:
             profile  = _client.company_profile2(symbol=ticker) or {}
             resp     = _client.company_basic_financials(ticker, "all") or {}
@@ -77,6 +108,7 @@ class FinnhubProvider(DataProvider):
         % EPS beat/miss of its last report, or Nones if unavailable/no API key."""
         if _client is None:
             return {"days_to_next": None, "last_beat_pct": None}
+        self._respect_rate_limit()
         today = datetime.now(BERLIN).date()
         try:
             resp = _client.earnings_calendar(

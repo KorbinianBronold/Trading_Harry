@@ -1,6 +1,15 @@
 # Shares_Future – SP500 CFD Research Tool
 
-**Zuletzt aktualisiert:** 2026-08-15 — **Plan 2 (Trichter), Task 10: Trichter ist live.**
+**Zuletzt aktualisiert:** 2026-08-15 — **Plan 2 (Trichter), Task 11: Finnhub-Ratenbegrenzung.**
+`FinnhubProvider._respect_rate_limit()`: Sliding-Window-Drosselung (60 Calls/60s) vor
+jedem `get_fundamentals()`/`get_earnings_calendar()`-Call. **Instanzgebunden, nicht
+modulweit** wie im Plan-Pseudocode vorgesehen — der Wochenlauf (Task 12) hält eine
+Instanz über das ganze Universum, dieselbe Invariante wie „ein Session-Object pro Run"
+bei Capital.com; modulweiter State hätte ausserdem Tests kontaminiert. Details:
+PROJECT_STATUS **C.7**, Befund 10. **11 von 13 Tasks umgesetzt.** Offen: 12
+(`run_weekly`-Vorlauf), 13 (Doku). **725 Tests grün, 91,52 % Coverage.**
+
+Davor, 2026-08-15 — **Plan 2 (Trichter), Task 10: Trichter ist live.**
 `main.run_pipeline()` ruft `broad_scan_batch()` + `cutoff_candidates()` +
 `adapt_cutoff_to_quick_filter()` statt `quick_filter_batch()`; `MAX_DEEP_ANALYSIS`
 80 → 50, jetzt gelesen. `main._apply_forced_candidates()` entfernt — die Pflicht-
@@ -11,8 +20,6 @@ der alte Weg (3,9217 EUR am 14.08.). Die **Kostendeckel-Sorge aus dem letzten Ei
 eine unbestätigte Vermutung und lag falsch**: der Cutoff schloss 5 von 20 Tickern aus der
 teuren Phase 3 aus, das spart mehr als `broad_scan` zusätzlich kostet. Details, Lehre und
 Phasen-Aufschlüsselung: PROJECT_STATUS **C.7**, Befund 2 (Korrektur) und Befund 9.
-**10 von 13 Tasks umgesetzt.** Offen: 11 (Finnhub-Ratenbegrenzung), 12
-(`run_weekly`-Vorlauf), 13 (Doku). **719 Tests grün, 91,45 % Coverage.**
 
 Davor, 2026-08-15 — **Plan 2 (Trichter), Task 9: Cutoff.** `config.TECH_MIN_FOR_DEEP = 2`,
 Tabelle `cutoff_log`, `db.log_cutoff()`, `broad_scan.cutoff_candidates()` — TDD gegen den
@@ -288,12 +295,12 @@ und der getroffenen Entscheidungen. Kurzfassung:
     **abgeschlossen, ändert kein Pipeline-Verhalten**: das Technik-Signal ist berechenbar,
     steuert aber nichts. Stand: PROJECT_STATUS **C.6**.
   - **Plan 2 (Trichter)** — `…/plans/2026-08-13-analyse-pipeline-plan2-trichter.md`,
-    **10 von 13 Tasks umgesetzt**, alle auf `main`. ✅ **Der Trichter ist live** —
+    **11 von 13 Tasks umgesetzt**, alle auf `main`. ✅ **Der Trichter ist live** —
     `quick_filter` ist aus `run_pipeline()` verschwunden, `broad_scan` +
     `cutoff_candidates` (`MAX_DEEP_ANALYSIS` 80 → 50) laufen live, gemessen gegen echte
-    Daten: 3,3551 EUR, kein `CostCapExceeded`, güns­tiger als der alte Weg. Offen: Task 11
-    (Finnhub-Ratenbegrenzung), 12 (`run_weekly`-Vorlauf), 13 (Doku), danach
-    Abschluss-Review über `c978d70..HEAD`. Stand und neun Befunde: PROJECT_STATUS **C.7**.
+    Daten: 3,3551 EUR, kein `CostCapExceeded`, güns­tiger als der alte Weg. Offen: Task 12
+    (`run_weekly`-Vorlauf), 13 (Doku), danach Abschluss-Review über `c978d70..HEAD`.
+    Stand und zehn Befunde: PROJECT_STATUS **C.7**.
   - **Plan 3 (Analyse & Ranking)** — offen; bringt Phase-3-Batching (der eigentliche
     Kostenhebel: ~0,034 statt ~0,12 EUR je Ticker), `deep_analysis_v2` und `rank_score`.
 - **3D / 3E / 3F** sind ⚠️ **Platzhalter** — bei Erreichen aktiv nachfragen und den

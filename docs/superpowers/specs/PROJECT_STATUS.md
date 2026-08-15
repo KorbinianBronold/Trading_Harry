@@ -1,15 +1,24 @@
 # PROJECT_STATUS.md — Shares_Future (Trading_Harry)
 
-**Zuletzt aktualisiert:** 2026-08-15 — **Plan 2 (Trichter), Task 10: Verdrahtung, live
-gemessen.** `main.run_pipeline()` ruft jetzt `broad_scan_batch()` + `cutoff_candidates()`
+**Zuletzt aktualisiert:** 2026-08-15 — **Plan 2 (Trichter), Task 11: Finnhub-Ratenbegrenzung.**
+`FinnhubProvider._respect_rate_limit()`: Sliding-Window-Drosselung (60 Calls/60s) vor
+jedem `get_fundamentals()`- und `get_earnings_calendar()`-Call. **Instanzgebunden, nicht
+modulweit wie im Plan-Pseudocode** — der Wochenlauf (Task 12) hält eine Instanz über das
+ganze Universum, dieselbe Invariante wie „ein Session-Object pro Run" bei Capital.com;
+modulweiter State hätte ausserdem Tests kontaminiert. Sechs neue Tests, darunter einer,
+der zwei Instanzen explizit gegeneinander prüft. Details: **C.7**, Befund 10.
+**725 Tests grün, 91,52 % Coverage.**
+
+Davor, 2026-08-15 — **Plan 2 (Trichter), Task 10: Verdrahtung, live gemessen.**
+`main.run_pipeline()` ruft jetzt `broad_scan_batch()` + `cutoff_candidates()`
 + `adapt_cutoff_to_quick_filter()` statt `quick_filter_batch()`; `MAX_DEEP_ANALYSIS`
 80 → 50. **Live gegen eine Wegwerf-Kopie von `data/tracking.db` gemessen** (echte
 Capital.com-/Finnhub-/Anthropic-Calls, 20 MVP-Ticker, kein Mailversand):
 **3,3551 EUR, kein `CostCapExceeded`** — güns­tiger als der alte Weg (3,9217 EUR am
-14.08.), weil der Cutoff 5 von 20 Tickern aus der teuren Phase 3 ausschloss. Die
-**vorherige Kostendeckel-Sorge war damit eine unbestätigte Plausibilitätsvermutung, keine
-Messung, und lag falsch** — Details und die Lehre daraus: **C.7**, Befund 2 (Korrektur)
-und Befund 9 (Messung). **719 Tests grün, 91,45 % Coverage.**
+14.08.). Die **Kostendeckel-Sorge aus dem letzten Eintrag war eine unbestätigte
+Vermutung und lag falsch**: der Cutoff schloss 5 von 20 Tickern aus der teuren Phase 3
+aus, das spart mehr als `broad_scan` zusätzlich kostet. Details, Lehre und
+Phasen-Aufschlüsselung: PROJECT_STATUS **C.7**, Befund 2 (Korrektur) und Befund 9.
 
 Davor, 2026-08-15 — **Plan 2 (Trichter), Task 9: Cutoff + `cutoff_log`.**
 TDD, gegen den echten Sidecar aus Task 5/6 implementiert, nicht gegen den Plan-Pseudocode
@@ -39,7 +48,7 @@ Davor, 2026-08-12 — **Plan 1 (Fundament) des Analyse-Pipeline-Umbaus ist
 code-fertig**, Tasks 2–8 committed (Task 9 zieht diese Dokumente nach). 17 Indikatoren
 laufen mit und füllen 29 neue Spalten in `technical_indicators`; das Technik-Signal ist
 berechenbar, steuert aber nichts. **Keine Verhaltensänderung.** 647 Tests grün, Coverage
-93,32 %. Details: Abschnitt **C.6**. (Plan 2 hat darauf aufgesetzt und ist zu 10 von 13
+93,32 %. Details: Abschnitt **C.6**. (Plan 2 hat darauf aufgesetzt und ist zu 11 von 13
 Tasks umgesetzt — s. **C.7**, nicht mehr „Einstieg".)
 ⚠️ Der abschliessende Ganz-Branch-Review fand die Verhaltensänderungs-Garantie zunächst
 gebrochen vor (29 neue Werte liefen in vier Claude-Prompts mit) plus einen strukturellen
@@ -166,7 +175,7 @@ Einen Branch `sprint3b/plan2-pipeline-umbau` gibt es weder lokal noch remote.
 | 3A | Roadmap + Doku aktualisieren | ✅ erledigt (dieses Dokument) |
 | 3B | Cron-Struktur + Pipeline-Umbau | 🟢 **Code vollständig, Live-Verifikation abgeschlossen** — Plan 1 (2026-07-29) und Plan 2 (20/20 Tasks, 2026-08-04), alles auf `main`. Verifiziert: `pre_market`, `close`, `final_close` (P2.10, P3.5) und **`trade_proposals` inkl. E3/E5 (2026-08-14, P2.12)**. ⏳ Offen: `weekly`, `bootstrap-db`-Lauf, dann Reaktivierung von `analyze.yml` |
 | **3B-M** | **Mail-Provider-Wechsel (Zwischensprint)** | ✅ **ABGESCHLOSSEN 2026-07-30** — Mailversand läuft über **Resend**, eigene Domain verifiziert, Zustellung live bestätigt. Details s. unten |
-| 3C | Ranking-Überarbeitung | 🟡 **Plan 1 (Fundament) abgeschlossen** (C.6, keine Verhaltensänderung) · **Plan 2 (Trichter) zu 10 von 13 Tasks** — Trichter live verdrahtet und gemessen, s. **C.7** · Plan 3 (Analyse & Ranking) offen. C.1–C.4 sind in den Analyse-Pipeline-Umbau aufgegangen |
+| 3C | Ranking-Überarbeitung | 🟡 **Plan 1 (Fundament) abgeschlossen** (C.6, keine Verhaltensänderung) · **Plan 2 (Trichter) zu 11 von 13 Tasks** — Trichter live verdrahtet und gemessen, s. **C.7** · Plan 3 (Analyse & Ranking) offen. C.1–C.4 sind in den Analyse-Pipeline-Umbau aufgegangen |
 | 3D | Learning Modul | ⚠️ **Platzhalter — Planungssession ausstehend** |
 | 3E | Human-in-the-Loop | ⚠️ **Platzhalter — Planungssession ausstehend** |
 | 3F | Volle 500-Ticker-Skalierung | ⚠️ **Platzhalter — Planungssession ausstehend** |
@@ -1608,7 +1617,7 @@ die zwei Signale und das Ranking gemeinsam neu fasst:
 - **Spec:** `docs/superpowers/specs/2026-08-11-analyse-pipeline-umbau-design.md`
 - **Plan 1 (Fundament):** `docs/superpowers/plans/2026-08-11-analyse-pipeline-plan1-fundament.md`
 - **Plan 2 (Trichter):** `docs/superpowers/plans/2026-08-13-analyse-pipeline-plan2-trichter.md`
-  — 10 von 13 Tasks umgesetzt, s. **C.7**
+  — 11 von 13 Tasks umgesetzt, s. **C.7**
 - **Plan 3 (Analyse & Ranking):** offen, noch keine Plan-Datei
 
 Die Spec ersetzt C.1 (fehlende Indikator-Werte — jetzt Teil des `predictions`-Umbaus),
@@ -1716,13 +1725,13 @@ Plan 1 seine Nichtangriffsgarantie fuer das Pipeline-Verhalten verliert.
 
 ---
 
-### C.7 — Analyse-Pipeline-Umbau, Plan 2 (Trichter) 🟡 10 von 13 Tasks
+### C.7 — Analyse-Pipeline-Umbau, Plan 2 (Trichter) 🟡 11 von 13 Tasks
 
 Spec: `docs/superpowers/specs/2026-08-11-analyse-pipeline-umbau-design.md` (§ 4.2–4.8, § 18)
 Plan: `docs/superpowers/plans/2026-08-13-analyse-pipeline-plan2-trichter.md`
 
 **Stand 2026-08-15**, gegen das echte Repo geprüft: alles auf `main`, Arbeitsbaum clean,
-`origin/main` == lokal. **719 Tests grün, 14 skipped, 91,45 % Coverage** (`--cov=src`).
+`origin/main` == lokal. **725 Tests grün, 14 skipped, 91,52 % Coverage** (`--cov=src`).
 
 ✅ **Der Trichter ist live verdrahtet und live gegen echte Daten gemessen** (Task 10,
 s. Befund 9 unten). `quick_filter_batch()` ist aus `run_pipeline()` verschwunden.
@@ -1738,13 +1747,13 @@ s. Befund 9 unten). `quick_filter_batch()` ist aus `run_pipeline()` verschwunden
 | 7 | `f545901`, `7165bf5` | Phase 1 liest `fundamentals_cache` **nur noch** (0 Finnhub-Calls); das Nachladen sitzt in `fetch_missing_fundamentals()` (Phase 2b, gebaut, noch nicht verdrahtet). `earnings_next_date` wird als ISO-Datum gecacht statt als relative Tageszahl (§ 18.1d), `earnings_in_days` beim Lesen gerechnet, ein Termin in der Vergangenheit liefert `None`. `get_earnings_calendar()` ist aus dem Tageslauf verschwunden, `earnings_beat_pct` dort dauerhaft `None` |
 | 8 | `b861b48`, `b902b23`, `9a7cd1f` | `src/broad_scan.py` + `prompts/broad_scan_v1.txt`: ein Sonnet-Call mit Websuche über alle Phase-1-Überlebenden, je Ticker `news_strength` (0–3) + `news_note`. Nutzlast wird aus **acht** Feldern gebaut statt `td` zu dumpen — die 19 unbeteiligten `td`-Felder bleiben draussen. Ein unparsebarer Scan degradiert den ganzen Batch auf `news_strength=0` statt zu werfen (§ 10) |
 | 9 | *(Vorgänger-Commit)* | `config.TECH_MIN_FOR_DEEP = 2`; Tabelle `cutoff_log` (SCHEMA_SQL + Migrationsguard über `sqlite_master`, kein Zähler); `db.log_cutoff()` (`INSERT OR REPLACE`, ein Aufruf pro Lauf schreibt **alle** bewerteten Ticker); `broad_scan.cutoff_candidates()` |
-| 10 | *(dieser Commit)* | `main.run_pipeline()`: `quick_filter_batch()` raus, `broad_scan_batch()` + `cutoff_candidates()` + `db.log_cutoff()` rein, `deep_analysis.adapt_cutoff_to_quick_filter()` als Interim-Adapter. `MAX_DEEP_ANALYSIS` 80 → 50, `BATCH_SIZE_QUICK` entfernt (tot). `main._apply_forced_candidates()` entfernt — die Pflicht-Kandidaten-Logik sitzt jetzt in `cutoff_candidates()` selbst. **Live gegen echte Daten verifiziert, s. Befund 9** |
+| 10 | `efd341a` | `main.run_pipeline()`: `quick_filter_batch()` raus, `broad_scan_batch()` + `cutoff_candidates()` + `db.log_cutoff()` rein, `deep_analysis.adapt_cutoff_to_quick_filter()` als Interim-Adapter. `MAX_DEEP_ANALYSIS` 80 → 50, `BATCH_SIZE_QUICK` entfernt (tot). `main._apply_forced_candidates()` entfernt — die Pflicht-Kandidaten-Logik sitzt jetzt in `cutoff_candidates()` selbst. **Live gegen echte Daten verifiziert, s. Befund 9** |
+| 11 | *(dieser Commit)* | `FinnhubProvider._respect_rate_limit()`: Sliding-Window-Drosselung (60 Calls/60s), **instanzgebunden** (nicht modulweit wie im Plan-Pseudocode) — der Wochenlauf haelt eine Instanz über das ganze Universum, dieselbe Invariante wie „ein Session-Object pro Run" bei Capital.com. Vor jedem echten `get_fundamentals()`- und `get_earnings_calendar()`-Call, nach dem bestehenden `_client is None`-Kurzschluss (kein Call ohne API-Key → keine Drosselung nötig) |
 
-#### Was noch fehlt — Tasks 11–13, im Code verifiziert
+#### Was noch fehlt — Tasks 12–13, im Code verifiziert
 
 | Task | Fehlt konkret |
 |---|---|
-| 11 | Keine Ratenbegrenzung in `finnhub_provider.py` |
 | 12 | Kein Fundamentals-Vorlauf in `run_weekly()` |
 | 13 | Modul-Docstrings, restliche Doku-Feinarbeit (CLAUDE.md/ARCHITECTURE-Nachtrag für Plan 2 ist bereits erfolgt, s. Kopf dieses Dokuments) |
 
@@ -1878,6 +1887,18 @@ aufgerufen wurden. `CostTracker.add_call()`/`add_from_result()` selbst summieren
 befüllt als angenommen. Nicht verifiziert, nur beobachtet — vorbestehend, keine der
 Tasks 1–13 hat `cost_tracker.py` oder `utils.py` seit Plan-1-Task-2 angefasst. Für eine
 eigene Untersuchung vormerken, nicht für einen Aufräumlauf.
+
+**10. Task 11 weicht bewusst vom Plan-Pseudocode ab: instanzgebundener statt modulweiter
+Rate-Limiter-State.** Der Plan (§ Task 11, Step 1) schlägt ein Modul-Dict
+`_rate_limiter: dict = {"calls": [], "last_reset": 0}` vor — modulweiter, mutierbarer
+Zustand mit einem nie gelesenen `last_reset`-Schlüssel. Implementiert stattdessen als
+`self._call_times: list[float]` auf `FinnhubProvider` selbst: der Wochenlauf (Task 12)
+hält ohnehin **eine** Instanz über das ganze Universum — dieselbe Invariante wie „ein
+Session-Object pro Run" bei Capital.com (Abschnitt 4) —, und modulweiter State hätte
+Tests kontaminiert (ein Test mit 60 Calls hätte den nächsten Test mit einem bereits
+gefüllten Fenster starten lassen, ohne expliziten Reset zwischen Tests). Sechs Tests
+pinnen das Verhalten, darunter einer, der zwei Instanzen explizit gegeneinander prüft
+(`test_rate_limiter_state_is_per_instance_not_shared_globally`).
 
 ---
 

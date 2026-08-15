@@ -115,3 +115,122 @@ def test_get_fundamentals_no_client_returns_empty():
     finally:
         fh._client = original
     assert result == {}
+
+
+# ---------- Ratenbegrenzung (Sprint 3C / Plan 2, Task 11) ----------
+
+
+def _empty_client():
+    """Fake-Client, dessen Aufrufe Nones/leere Antworten liefern -- die
+    Rate-Limiter-Tests interessieren sich nur dafuer, DASS ein Call passiert,
+    nicht fuer sein Ergebnis."""
+    c = MagicMock()
+    c.company_profile2.return_value = {}
+    c.company_basic_financials.return_value = {}
+    c.recommendation_trends.return_value = []
+    c.earnings_calendar.return_value = {"earningsCalendar": []}
+    return c
+
+
+def test_no_sleep_under_the_limit(mocker):
+    """Weit unter 60 Calls/min: kein einziger Sleep."""
+    sleeps = []
+    mocker.patch("src.providers.finnhub_provider.time.sleep",
+                 side_effect=lambda s: sleeps.append(s))
+    with patch("src.providers.finnhub_provider._client", _empty_client()):
+        p = FinnhubProvider()
+        for _ in range(5):
+            p.get_fundamentals("AAPL")
+    assert sleeps == []
+
+
+def test_sleeps_when_60_calls_already_in_the_current_window(mocker):
+    """Der 61. Call innerhalb von 60s muss warten, bis der aelteste der 60
+    aus dem Fenster faellt."""
+    t = [1_000.0]
+    mocker.patch("src.providers.finnhub_provider.time.time", side_effect=lambda: t[0])
+    sleeps = []
+    mocker.patch("src.providers.finnhub_provider.time.sleep",
+                 side_effect=lambda s: sleeps.append(s))
+    with patch("src.providers.finnhub_provider._client", _empty_client()):
+        p = FinnhubProvider()
+        for _ in range(60):
+            p.get_fundamentals("AAPL")
+        assert sleeps == []          # noch keiner der ersten 60 wartet
+
+        p.get_fundamentals("AAPL")   # der 61.
+
+    assert len(sleeps) == 1
+    assert sleeps[0] == pytest.approx(60.0, abs=0.01)
+
+
+def test_calls_older_than_the_window_are_evicted(mocker):
+    """60 Calls, aber der aelteste liegt schon ausserhalb des 60s-Fensters --
+    der 61. darf sofort durch, kein Sleep."""
+    t = [1_000.0]
+    mocker.patch("src.providers.finnhub_provider.time.time", side_effect=lambda: t[0])
+    sleeps = []
+    mocker.patch("src.providers.finnhub_provider.time.sleep",
+                 side_effect=lambda s: sleeps.append(s))
+    with patch("src.providers.finnhub_provider._client", _empty_client()):
+        p = FinnhubProvider()
+        for _ in range(60):
+            p.get_fundamentals("AAPL")
+        t[0] += 61.0                 # das aelteste Fenster ist jetzt abgelaufen
+        p.get_fundamentals("AAPL")
+
+    assert sleeps == []
+
+
+def test_get_earnings_calendar_also_respects_the_rate_limit(mocker):
+    """Task 11 verlangt beide Finnhub-Methoden gedrosselt, nicht nur
+    get_fundamentals()."""
+    t = [1_000.0]
+    mocker.patch("src.providers.finnhub_provider.time.time", side_effect=lambda: t[0])
+    sleeps = []
+    mocker.patch("src.providers.finnhub_provider.time.sleep",
+                 side_effect=lambda s: sleeps.append(s))
+    with patch("src.providers.finnhub_provider._client", _empty_client()):
+        p = FinnhubProvider()
+        for _ in range(60):
+            p.get_earnings_calendar("AAPL")
+        p.get_earnings_calendar("AAPL")
+
+    assert len(sleeps) == 1
+
+
+def test_rate_limiter_state_is_per_instance_not_shared_globally(mocker):
+    """Eine zweite FinnhubProvider-Instanz startet mit einem leeren Fenster --
+    kein modulweiter State, der Tests oder parallele Instanzen kontaminiert."""
+    t = [1_000.0]
+    mocker.patch("src.providers.finnhub_provider.time.time", side_effect=lambda: t[0])
+    sleeps = []
+    mocker.patch("src.providers.finnhub_provider.time.sleep",
+                 side_effect=lambda s: sleeps.append(s))
+    with patch("src.providers.finnhub_provider._client", _empty_client()):
+        p1 = FinnhubProvider()
+        for _ in range(60):
+            p1.get_fundamentals("AAPL")
+
+        p2 = FinnhubProvider()
+        p2.get_fundamentals("AAPL")
+
+    assert sleeps == []
+
+
+def test_no_client_skips_rate_limiter_entirely(mocker):
+    """Ohne API-Key gibt es keinen echten Call -- also auch keinen Grund zu
+    drosseln (deckt sich mit dem bestehenden Fruehausstieg)."""
+    sleeps = []
+    mocker.patch("src.providers.finnhub_provider.time.sleep",
+                 side_effect=lambda s: sleeps.append(s))
+    import src.providers.finnhub_provider as fh
+    original = fh._client
+    fh._client = None
+    try:
+        p = fh.FinnhubProvider()
+        for _ in range(70):
+            p.get_fundamentals("AAPL")
+    finally:
+        fh._client = original
+    assert sleeps == []
