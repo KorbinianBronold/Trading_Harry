@@ -1,6 +1,21 @@
 # PROJECT_STATUS.md — Shares_Future (Trading_Harry)
 
-**Zuletzt aktualisiert:** 2026-08-15 — **Plan 2 (Trichter), Task 13: Doku — alle 13 Tasks
+**Zuletzt aktualisiert:** 2026-08-15 — ✅ **Plan 2 (Trichter) ist abgeschlossen:
+Abschluss-Review über `c978d70..HEAD` durchgeführt, vier Befunde gefunden und behoben.**
+Zwei davon verfehlten den erklärten Zweck ihrer eigenen Task:
+**(R1)** Phase 2b hatte trotz Spec § 4.7 **keinen Produktions-Aufrufer** — Task 7 baute
+`fetch_missing_fundamentals()` und schrieb „das macht Task 10", Task 10 tat es nicht.
+Behoben mit `run_phase_2b()`, das die Werte auch in die `td`-Dicts zurückspiegelt (der
+naheliegende Ein-Zeilen-Fix hätte nur den Cache für morgen gewärmt) und dabei Spec § 18.1f
+einlöst. **(R2)** Die Ratenbegrenzung aus Task 11 zählte Methodenaufrufe statt echter
+Requests — `get_fundamentals()` setzt drei ab — und hätte den Wochenlauf mit ~120
+Requests/min gegen ein 60/min-Limit fahren lassen. Dazu **(R3)** `tech_strength` fehlte in
+`cutoff_log`, obwohl es den Cutoff mitentscheidet, und **(R4)** dieselbe Tabelle war die
+einzige Ereignistabelle ohne Retention. Details: **C.8**.
+**746 Tests grün, 91,28 % Coverage** (`--cov=src --cov=main`). Offen: nur noch Plan 3
+(Analyse & Ranking).
+
+Davor, 2026-08-15 — **Plan 2 (Trichter), Task 13: Doku — alle 13 Tasks
 abgeschlossen.** `docs/ARCHITECTURE.md` nachgezogen: Modul 3 (`quick_filter.py`) als
 „ersetzt" markiert, Modul 3b (`broad_scan.py`) als „live", die grosse Pipeline-Grafik auf
 Phase 2/2a (Nachrichten-Scan + Cutoff) und Phase 1 (Gate/Sweep/Process) aktualisiert,
@@ -189,7 +204,7 @@ Einen Branch `sprint3b/plan2-pipeline-umbau` gibt es weder lokal noch remote.
 | 3A | Roadmap + Doku aktualisieren | ✅ erledigt (dieses Dokument) |
 | 3B | Cron-Struktur + Pipeline-Umbau | 🟢 **Code vollständig, Live-Verifikation abgeschlossen** — Plan 1 (2026-07-29) und Plan 2 (20/20 Tasks, 2026-08-04), alles auf `main`. Verifiziert: `pre_market`, `close`, `final_close` (P2.10, P3.5) und **`trade_proposals` inkl. E3/E5 (2026-08-14, P2.12)**. ⏳ Offen: `weekly`, `bootstrap-db`-Lauf, dann Reaktivierung von `analyze.yml` |
 | **3B-M** | **Mail-Provider-Wechsel (Zwischensprint)** | ✅ **ABGESCHLOSSEN 2026-07-30** — Mailversand läuft über **Resend**, eigene Domain verifiziert, Zustellung live bestätigt. Details s. unten |
-| 3C | Ranking-Überarbeitung | 🟡 **Plan 1 (Fundament) abgeschlossen** (C.6, keine Verhaltensänderung) · **Plan 2 (Trichter) zu 13 von 13 Tasks abgeschlossen**, s. **C.7** · Plan 3 (Analyse & Ranking) offen. C.1–C.4 sind in den Analyse-Pipeline-Umbau aufgegangen |
+| 3C | Ranking-Überarbeitung | 🟡 **Plan 1 (Fundament) abgeschlossen** (C.6) · **Plan 2 (Trichter) abgeschlossen inkl. Abschluss-Review**, 13/13 Tasks + vier behobene Review-Befunde, s. **C.7** und **C.8** · Plan 3 (Analyse & Ranking) offen. C.1–C.4 sind in den Analyse-Pipeline-Umbau aufgegangen |
 | 3D | Learning Modul | ⚠️ **Platzhalter — Planungssession ausstehend** |
 | 3E | Human-in-the-Loop | ⚠️ **Platzhalter — Planungssession ausstehend** |
 | 3F | Volle 500-Ticker-Skalierung | ⚠️ **Platzhalter — Planungssession ausstehend** |
@@ -1935,6 +1950,85 @@ mit jedem anderen `run_*`-Test in dieser Datei, der Provider immer explizit mock
 Test `test_run_weekly_runs_the_fundamentals_prerun_before_the_aggregate` pinnt zusätzlich
 die Reihenfolge (Vorlauf vor dem Aggregat, wie im Plan vorgesehen). Laufzeit danach: 1,0 s
 statt 60,7 s.
+
+---
+
+### C.8 — Abschluss-Review Plan 2 ✅ (2026-08-15), vier Befunde, alle behoben
+
+Prüfung über `c978d70..HEAD` (Plan-1-Ende bis Plan-2-Ende) gegen die sechs Kriterien aus
+der Plan-Datei. **746 Tests grün, 91,28 % Coverage** (`--cov=src --cov=main`), nach den
+Fixes unten. Vier Befunde, davon zwei, die den erklärten Zweck ihrer eigenen Task
+verfehlten.
+
+| Kriterium | Ergebnis |
+|---|---|
+| 1. Phase-1-Ablauf (Gate → Sweep → Indikatoren → Technik-Signal) | ✅ sauber; Rohstoff-/Krypto-Ausnahme im Gate verifiziert |
+| 2. Phase-2-Schnittstelle (Scan-In/Out, Cutoff, Adapter) | ⚠️ **Befund R1** — Phase 2b fehlte komplett |
+| 3. Rohstoff-Ausnahmen (Scan/Cutoff/2b umgangen?) | ✅ alle drei bekommen ausschliesslich `sp500_tds`/`selected`, `cc_tds` taucht dort nirgends auf |
+| 4. Kosten gegen Spec § 13.2 | ✅ gemessen, s. Befund 9 |
+| 5. Regression Phase 3 / 3b / 4 / 4a | ✅ unverändert, Integrationstests grün |
+| 6. DB-Konsistenz (`cutoff_log`, Migration, Altdaten) | ⚠️ **Befunde R2 + R3** |
+
+**R1. ⚠️ Phase 2b hatte keinen Produktions-Aufrufer — die Spec verlangt sie ausdrücklich.**
+`fetch_missing_fundamentals()` war in Task 7 gebaut, mit acht Tests belegt, und der eigene
+Docstring sagte „das macht Task 10, R16". **Task 10 hat es nicht getan.** Damit fehlte die
+in Spec § 4.7 / § 18.1b beschriebene Selbstheilung: ein Ticker mit Cache-Miss ging mit
+`pe_ratio=None`, `market_cap_b=None`, `sector="Unknown"` in die Tiefenanalyse, obwohl die
+Spec festhält, dass „`market_cap_b` Claude weiterhin über den Ticker-Snapshot aus 2b
+erreicht".
+**Behoben** mit `data_collector.run_phase_2b()`, verdrahtet zwischen Cutoff und Phase 3.
+⚠️ Der naheliegende Ein-Zeilen-Fix (nur `fetch_missing_fundamentals()` aufrufen) wäre eine
+Halblösung gewesen: er wärmt den Cache für **morgen**, während der **heutige** Prompt
+weiter `None` sähe — die `td`-Dicts entstehen in Phase 1 und werden von Phase 3 gelesen.
+`run_phase_2b()` spiegelt die Werte deshalb in die `td`-Dicts zurück. Dabei zusätzlich
+Spec § 18.1f eingelöst, das bis dahin niemand umgesetzt hatte: die
+**medium/high-Einstufung von `data_quality` entsteht in 2b**, nicht in Phase 1 — eine
+Rückstufung auf `'low'` ist ausgeschlossen, der low-Skip gehört ausschliesslich in Phase 1.
+Die Feldliste liegt jetzt einmal in `_apply_fundamentals_to_td()` statt doppelt (Phase 1
+und 2b hätten sonst auseinanderlaufen können), das Sektor-Mapping analog in `_map_sector()`.
+Sechs neue Tests, darunter einer, der die **Sidecar-Invariante** pinnt: 2b füllt nur
+bestehende `td`-Schlüssel, führt nie neue ein.
+
+**R2. ⚠️ Die Ratenbegrenzung aus Task 11 zählte Methodenaufrufe statt echter Requests —
+und verfehlte damit ihren Zweck um Faktor 2.** `get_fundamentals()` setzt **drei**
+Finnhub-Requests ab (`company_profile2`, `company_basic_financials`,
+`recommendation_trends`), registrierte aber nur **einen** beim Limiter. Im Wochenlauf sind
+das je Ticker 4 echte Requests gegen 2 Registrierungen: der Limiter hätte 60
+Registrierungen/Minute durchgelassen = 30 Ticker/min = **120 echte Requests/min gegen ein
+60/min-Limit**. Genau das 429, das Task 11 verhindern sollte.
+**Behoben:** `_respect_rate_limit()` sitzt jetzt vor **jedem** einzelnen Request. Drei
+Tests, die die alte (falsche) Arithmetik gepinnt hatten, sind auf das korrigierte Modell
+gezogen; zwei neue pinnen die Request-Zählung explizit
+(`test_rate_limiter_counts_every_real_http_call_not_every_method_call`,
+`test_a_multi_request_method_hits_the_limit_after_20_calls`).
+
+**R3. `cutoff_log` speicherte `tech_strength` nicht — den dritten Sortierschlüssel und die
+halbe Qualifikationsregel.** Die Tabelle existiert ausschliesslich, damit 3D „den 51. mit
+dem 50. vergleichen" kann. Der Wert, der über `tech_strength ≥ TECH_MIN_FOR_DEEP`
+entscheidet und die Sortierung mitbestimmt, fehlte aber. Aus `tech_agreement` ist er
+**nicht** ableitbar: das ADX-Band moduliert ihn (weak deckelt auf 1, strong gibt +1), und
+`tech_adx_band` wird ebenfalls nicht gespeichert. **Behoben:** Spalte + Migrationsguard für
+Bestands-DBs aus der Task-9-Zwischenzeit.
+⏳ Bewusst **nicht** ergänzt: ein `forced`-Flag. Ein Pflicht-Kandidat kann mit
+`news_strength=0` und `tech_strength=0` selektiert erscheinen, was ohne Flag verwirrt —
+rekonstruierbar bleibt es über die Positionshistorie, und eine Spalte für einen noch nicht
+existierenden Konsumenten ist eine Schema-Festlegung auf Verdacht. Für 3D vormerken.
+
+**R4. `cutoff_log` war die einzige Ereignistabelle ohne Retention — und die
+volumenstärkste.** Eine Zeile je **bewertetem** Ticker je Lauf: bei 500 Tickern ~1000
+Zeilen täglich, ~250 k im Jahr. `cleanup_old_data()` kannte sie nicht, während
+`news_summaries` (30 d), `skipped_tickers` (90 d) und `trend_analyses` (180 d) alle
+begrenzt sind. Die Datenbank reist bei **jedem** Lauf durch ein GitHub Release, unbegrenztes
+Wachstum ist dort keine Theorie. **Behoben** mit 180 Tagen — bewusst dieselbe Grenze wie
+`trend_analyses`: reichlich für die 3D-Auswertung, für die die Tabelle gebaut wurde, aber
+beschränkt.
+
+⏳ **Nicht behoben, bewusst:** `prompts/deep_analysis_v1.txt` spricht weiter von der
+„quick-filter pre-score", bekommt seit Task 10 aber die Cutoff-Felder (`news_strength`,
+`tech_direction`, `tech_strength`). Der Prompt liest keine konkreten Feldnamen aus, der
+Widerspruch ist rein sprachlich — und Plan 3 ersetzt die Datei ohnehin durch
+`deep_analysis_v2`. Eine v1-Änderung jetzt wäre Arbeit an einem Artefakt mit bekanntem
+Ablaufdatum.
 
 ---
 

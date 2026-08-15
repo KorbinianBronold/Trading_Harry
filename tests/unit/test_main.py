@@ -663,6 +663,60 @@ def test_forced_candidate_reaches_deep_analysis_with_exclude_false(tmp_db_path, 
     assert by_ticker["AAPL"]["exclude"] is False
 
 
+# ---------- Phase 2b verdrahtet (Abschluss-Review Plan 2, Spec 4.7) ----------
+
+
+def test_phase_2b_runs_for_the_cutoff_candidates(tmp_db_path, mocker):
+    """Abschluss-Review-Befund: fetch_missing_fundamentals() war gebaut und
+    getestet, hatte aber KEINEN Produktions-Aufrufer -- Spec 4.7 verlangt sie
+    als Selbstheilung fuer Kandidaten mit Cache-Miss. Der Test pinnt, dass
+    Phase 2b laeuft und genau die Cutoff-Auswahl bekommt."""
+    _stub_pipeline(mocker)
+    mocker.patch("main.fetch_market_context", return_value=dict(_CTX))
+    mocker.patch("main.rank_and_persist", return_value={
+        "top_long": [], "top_short": [], "commodities_crypto": [],
+    })
+    mocker.patch("main.collect", return_value=(
+        [{"ticker": "AAPL", "intraday_range_pct": 1.5, "price": 178.0},
+         {"ticker": "MSFT", "intraday_range_pct": 1.2, "price": 400.0}], 0, {}))
+    mocker.patch("main.broad_scan_batch", return_value=[
+        {"ticker": "AAPL", "news_strength": 2, "news_note": "x"},
+        {"ticker": "MSFT", "news_strength": 0, "news_note": ""},
+    ])
+    mock_2b = mocker.patch("main.run_phase_2b")
+
+    from main import run_pipeline
+    run_pipeline(run_type="pre_market", date="2026-07-27", db_path=str(tmp_db_path))
+
+    mock_2b.assert_called_once()
+    kwargs = mock_2b.call_args.kwargs
+    # nur der qualifizierte Ticker, nicht das ganze Universum (Spec 4.7)
+    assert kwargs["candidates"] == ["AAPL"]
+
+
+def test_phase_2b_failure_does_not_abort_the_run(tmp_db_path, mocker):
+    """Finnhub ist in 2b ausdruecklich kein Single Point of Failure (Spec 4.7):
+    ein Ausfall kostet Kontext-Qualitaet, nicht den bezahlten Lauf."""
+    _stub_pipeline(mocker)
+    mocker.patch("main.fetch_market_context", return_value=dict(_CTX))
+    mocker.patch("main.rank_and_persist", return_value={
+        "top_long": [], "top_short": [], "commodities_crypto": [],
+    })
+    mocker.patch("main.collect", return_value=(
+        [{"ticker": "AAPL", "intraday_range_pct": 1.5, "price": 178.0}], 0, {}))
+    mocker.patch("main.broad_scan_batch", return_value=[
+        {"ticker": "AAPL", "news_strength": 2, "news_note": "x"}])
+    mocker.patch("main.run_phase_2b", side_effect=RuntimeError("finnhub down"))
+    mock_email = mocker.patch("main.send_daily_email")
+
+    from main import run_pipeline
+    run_pipeline(run_type="pre_market", date="2026-07-27", db_path=str(tmp_db_path))
+
+    mock_email.assert_called_once()
+    assert mock_email.call_args.kwargs["payload"]["cost_summary"][
+        "aborted_at_phase"] is None
+
+
 # ---------- Sprint 3B / Plan 2, Task 3: kein toter Code (B.1) ----------
 
 def test_removed_functions_are_gone():

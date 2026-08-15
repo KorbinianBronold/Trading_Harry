@@ -1,6 +1,17 @@
 # Shares_Future – SP500 CFD Research Tool
 
-**Zuletzt aktualisiert:** 2026-08-15 — **Plan 2 (Trichter), Task 13: Doku — alle 13 Tasks
+**Zuletzt aktualisiert:** 2026-08-15 — ✅ **Plan 2 (Trichter) abgeschlossen inkl.
+Abschluss-Review** über `c978d70..HEAD`: vier Befunde, alle behoben. Zwei verfehlten den
+Zweck ihrer eigenen Task — **Phase 2b hatte keinen Produktions-Aufrufer** (Task 7 baute
+`fetch_missing_fundamentals()`, Task 10 verdrahtete sie entgegen der eigenen Notiz nicht;
+jetzt `run_phase_2b()`, das die Werte auch in die `td`-Dicts zurückspiegelt), und die
+**Finnhub-Ratenbegrenzung zählte Methodenaufrufe statt echter Requests** (`get_fundamentals()`
+setzt drei ab → der Wochenlauf wäre mit ~120 Requests/min gegen ein 60/min-Limit gelaufen).
+Dazu: `tech_strength` fehlte in `cutoff_log`, und die Tabelle hatte als einzige
+Ereignistabelle keine Retention (jetzt 180 Tage). Details: PROJECT_STATUS **C.8**.
+**746 Tests grün, 91,28 % Coverage.** Offen: nur noch Plan 3 (Analyse & Ranking).
+
+Davor, 2026-08-15 — **Plan 2 (Trichter), Task 13: Doku — alle 13 Tasks
 abgeschlossen.** `docs/ARCHITECTURE.md` nachgezogen: Modul 3 (`quick_filter.py`) als
 „ersetzt" markiert, Modul 3b (`broad_scan.py`) als „live", Pipeline-Grafik auf
 Phase 2/2a und Phase 1 (Gate/Sweep/Process) aktualisiert, `cutoff_log` ergänzt,
@@ -114,8 +125,13 @@ Die Pipeline-Phasen lassen sich an `main.py:run_pipeline()` ablesen.
   Werte (~250 Tokens je Ticker) unbemerkt in die Prompts. Ein Test pinnt die exakte
   Schlüsselmenge von `_process_ticker()`.
 - **Phase 1 ist Finnhub-frei.** Sie liest `fundamentals_cache` und ruft nichts ab; das
-  Nachladen bei Cache-Miss ist Phase 2b (`fetch_missing_fundamentals()`, gebaut, noch
-  nicht verdrahtet) und trifft nur Kandidaten. `get_earnings_calendar()` kommt im
+  Nachladen bei Cache-Miss ist Phase 2b (`run_phase_2b()`, läuft zwischen Cutoff und
+  Phase 3) und trifft **nur die Kandidaten**. ⚠️ Phase 2b macht **zwei** Dinge, die
+  zusammengehören: Cache füllen **und** die Werte in die `td`-Dicts zurückspiegeln — ohne
+  Schritt 2 wärmte sie nur den Cache für morgen, während der heutige Phase-3-Prompt
+  weiter `None` sähe. Dort entsteht laut Spec § 18.1f auch die `medium`/`high`-Einstufung
+  von `data_quality`; eine Rückstufung auf `low` ist ausgeschlossen (der low-Skip gehört
+  allein in Phase 1). `get_earnings_calendar()` kommt im
   Tageslauf nicht mehr vor, `earnings_beat_pct` ist dort dauerhaft `None`.
   ⚠️ `earnings_next_date` wird als **ISO-Datum** gecacht, nie als Countdown:
   `earnings_in_days` wird beim Lesen gerechnet, ein Termin in der Vergangenheit liefert
@@ -309,13 +325,13 @@ und der getroffenen Entscheidungen. Kurzfassung:
     **abgeschlossen, ändert kein Pipeline-Verhalten**: das Technik-Signal ist berechenbar,
     steuert aber nichts. Stand: PROJECT_STATUS **C.6**.
   - **Plan 2 (Trichter)** — `…/plans/2026-08-13-analyse-pipeline-plan2-trichter.md`,
-    **alle 13 Tasks umgesetzt und dokumentiert**, alle auf `main`. ✅ **Der Trichter ist
-    live** — `quick_filter` ist aus `run_pipeline()` verschwunden, `broad_scan` +
-    `cutoff_candidates` (`MAX_DEEP_ANALYSIS` 80 → 50) laufen live, gemessen gegen echte
-    Daten: 3,3551 EUR, kein `CostCapExceeded`, güns­tiger als der alte Weg. `run_weekly()`
-    füllt `fundamentals_cache` + `earnings_next_date` fürs ganze Universum,
-    `FinnhubProvider` drosselt sich auf 60 Calls/Minute. Offen: nur noch der
-    Abschluss-Review über `c978d70..HEAD`. Stand und zwölf Befunde: PROJECT_STATUS **C.7**.
+    ✅ **abgeschlossen**: 13/13 Tasks plus Abschluss-Review mit vier behobenen Befunden.
+    Der Trichter ist live — `quick_filter` ist aus `run_pipeline()` verschwunden,
+    `broad_scan` + `cutoff_candidates` (`MAX_DEEP_ANALYSIS` 80 → 50) + `run_phase_2b`
+    laufen, gemessen gegen echte Daten: 3,3551 EUR, kein `CostCapExceeded`, güns­tiger als
+    der alte Weg. `run_weekly()` füllt `fundamentals_cache` + `earnings_next_date` fürs
+    ganze Universum, `FinnhubProvider` drosselt sich auf 60 **Requests**/Minute.
+    Stand: PROJECT_STATUS **C.7** (zwölf Umsetzungs-Befunde) und **C.8** (Review).
   - **Plan 3 (Analyse & Ranking)** — offen; bringt Phase-3-Batching (der eigentliche
     Kostenhebel: ~0,034 statt ~0,12 EUR je Ticker), `deep_analysis_v2` und `rank_score`.
 - **3D / 3E / 3F** sind ⚠️ **Platzhalter** — bei Erreichen aktiv nachfragen und den

@@ -232,6 +232,11 @@ CREATE TABLE IF NOT EXISTS cutoff_log (
     premarket_change_pct REAL,
     tech_direction       TEXT,
     tech_agreement       INTEGER,
+    tech_strength        INTEGER,   -- dritter Sortierschluessel UND halbe
+                                     -- Qualifikationsregel (>= TECH_MIN_FOR_DEEP).
+                                     -- Aus tech_agreement NICHT ableitbar: der
+                                     -- ADX-Band moduliert ihn (weak deckelt auf
+                                     -- 1, strong gibt +1).
     rank_position        INTEGER,   -- Reihenfolge nach der Cutoff-Sortierung,
                                      -- ueber ALLE bewerteten Ticker (Spec: 3D
                                      -- vergleicht den 51. mit dem 50.)
@@ -352,11 +357,18 @@ def _apply_migrations(conn: sqlite3.Connection) -> None:
                 premarket_change_pct REAL,
                 tech_direction TEXT,
                 tech_agreement INTEGER,
+                tech_strength INTEGER,
                 rank_position INTEGER,
                 selected BOOLEAN NOT NULL,
                 UNIQUE(date, run_type, ticker)
             )
         """)
+    else:
+        # Abschluss-Review Plan 2: tech_strength kam erst nach Task 9 dazu --
+        # Bestands-DBs aus der Zwischenzeit tragen die Spalte noch nicht.
+        cl_cols = {r["name"] for r in conn.execute("PRAGMA table_info(cutoff_log)")}
+        if "tech_strength" not in cl_cols:
+            conn.execute("ALTER TABLE cutoff_log ADD COLUMN tech_strength INTEGER")
 
     # Sprint 3C / Analyse-Pipeline-Umbau (Task 7): earnings_next_date als
     # ISO-Datum statt Tageszahl (Spec 18.1d) -- days_to_next war relativ zum
@@ -597,7 +609,7 @@ def log_cutoff(
     einer Dublette."""
     cols = ["date", "run_type", "ticker", "news_strength",
             "premarket_change_pct", "tech_direction", "tech_agreement",
-            "rank_position", "selected"]
+            "tech_strength", "rank_position", "selected"]
     placeholders = ", ".join(["?"] * len(cols))
     rows = [
         [date, run_type] + [e.get(c) for c in cols[2:]]
@@ -831,12 +843,20 @@ def save_cost_tracking(conn: sqlite3.Connection, row: dict) -> None:
 
 
 def cleanup_old_data(conn: sqlite3.Connection) -> None:
-    """Loescht abgelaufene Zeilen: news_summaries > 30 Tage, trend_analyses
-    > 180 Tage, skipped_tickers-Events > 90 Tage (Sprint 3B / B.7, D4).
+    """Loescht abgelaufene Zeilen: news_summaries > 30 Tage, trend_analyses und
+    cutoff_log > 180 Tage, skipped_tickers-Events > 90 Tage (Sprint 3B / B.7, D4).
 
     Die Skip-Events halten laenger als frueher, weil die Weekly-Mail auswerten
     soll, welcher Ticker wie oft und warum uebersprungen wurde. News altern
     dagegen schneller aus — aeltere Zusammenfassungen sind wertlos.
+
+    `cutoff_log` kam im Abschluss-Review von Plan 2 dazu und ist die
+    volumenstaerkste Tabelle des Systems: eine Zeile je BEWERTETEM Ticker je
+    Lauf, bei 500 Tickern also ~1000 Zeilen taeglich. Ohne Retention waechst sie
+    unbegrenzt — und die Datenbank reist bei jedem Lauf durch ein GitHub
+    Release. 180 Tage sind bewusst dieselbe Grenze wie fuer trend_analyses:
+    reichlich fuer die 3D-Auswertung, fuer die die Tabelle gebaut wurde, aber
+    beschraenkt.
 
     ticker_status wird bewusst NIE angefasst: der kumulative Skip-Zaehler und das
     inactive-Flag muessen die Event-Retention ueberleben. Zurueckgesetzt wird nur
@@ -846,6 +866,7 @@ def cleanup_old_data(conn: sqlite3.Connection) -> None:
         DELETE FROM news_summaries WHERE date < date('now', '-30 days');
         DELETE FROM trend_analyses WHERE date < date('now', '-180 days');
         DELETE FROM skipped_tickers WHERE date < date('now', '-90 days');
+        DELETE FROM cutoff_log     WHERE date < date('now', '-180 days');
         """
     )
     conn.commit()

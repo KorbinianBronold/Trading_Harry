@@ -132,6 +132,30 @@ def _empty_client():
     return c
 
 
+def test_rate_limiter_counts_every_real_http_call_not_every_method_call():
+    """Abschluss-Review-Befund: get_fundamentals() setzt DREI Finnhub-Requests ab
+    (company_profile2, company_basic_financials, recommendation_trends), nicht
+    einen. Zaehlt der Limiter nur den Methodenaufruf, erlaubt er das Dreifache
+    des echten Limits — und der Wochenlauf (Task 12, ~500 Ticker x 4 Requests)
+    liefe genau in das 429, das Task 11 verhindern soll."""
+    client = _empty_client()
+    with patch("src.providers.finnhub_provider._client", client):
+        p = FinnhubProvider()
+        p.get_fundamentals("AAPL")
+        registrations_after_fundamentals = len(p._call_times)
+        p.get_earnings_calendar("AAPL")
+        registrations_after_earnings = len(p._call_times)
+
+    # drei echte Requests in get_fundamentals ...
+    assert client.company_profile2.call_count == 1
+    assert client.company_basic_financials.call_count == 1
+    assert client.recommendation_trends.call_count == 1
+    assert registrations_after_fundamentals == 3
+    # ... und genau einer in get_earnings_calendar
+    assert client.earnings_calendar.call_count == 1
+    assert registrations_after_earnings == 4
+
+
 def test_no_sleep_under_the_limit(mocker):
     """Weit unter 60 Calls/min: kein einziger Sleep."""
     sleeps = []
@@ -144,9 +168,11 @@ def test_no_sleep_under_the_limit(mocker):
     assert sleeps == []
 
 
-def test_sleeps_when_60_calls_already_in_the_current_window(mocker):
-    """Der 61. Call innerhalb von 60s muss warten, bis der aelteste der 60
-    aus dem Fenster faellt."""
+def test_sleeps_when_60_requests_already_in_the_current_window(mocker):
+    """Der 61. REQUEST innerhalb von 60s muss warten, bis der aelteste der 60
+    aus dem Fenster faellt. Gezaehlt wird ueber get_earnings_calendar(), weil
+    das genau einen Request je Aufruf absetzt — die Fenster-Arithmetik bleibt
+    so 1:1 lesbar."""
     t = [1_000.0]
     mocker.patch("src.providers.finnhub_provider.time.time", side_effect=lambda: t[0])
     sleeps = []
@@ -155,18 +181,38 @@ def test_sleeps_when_60_calls_already_in_the_current_window(mocker):
     with patch("src.providers.finnhub_provider._client", _empty_client()):
         p = FinnhubProvider()
         for _ in range(60):
-            p.get_fundamentals("AAPL")
+            p.get_earnings_calendar("AAPL")
         assert sleeps == []          # noch keiner der ersten 60 wartet
 
-        p.get_fundamentals("AAPL")   # der 61.
+        p.get_earnings_calendar("AAPL")   # der 61.
 
     assert len(sleeps) == 1
     assert sleeps[0] == pytest.approx(60.0, abs=0.01)
 
 
-def test_calls_older_than_the_window_are_evicted(mocker):
-    """60 Calls, aber der aelteste liegt schon ausserhalb des 60s-Fensters --
-    der 61. darf sofort durch, kein Sleep."""
+def test_a_multi_request_method_hits_the_limit_after_20_calls(mocker):
+    """Gegenprobe zur Drei-Request-Zaehlung: 20 x get_fundamentals sind bereits
+    60 Requests, der 21. Aufruf muss also warten. Vor dem Abschluss-Review haette
+    er das erst beim 61. getan — dreifach ueber dem echten Limit."""
+    t = [1_000.0]
+    mocker.patch("src.providers.finnhub_provider.time.time", side_effect=lambda: t[0])
+    sleeps = []
+    mocker.patch("src.providers.finnhub_provider.time.sleep",
+                 side_effect=lambda s: sleeps.append(s))
+    with patch("src.providers.finnhub_provider._client", _empty_client()):
+        p = FinnhubProvider()
+        for _ in range(20):
+            p.get_fundamentals("AAPL")
+        assert sleeps == []
+
+        p.get_fundamentals("AAPL")   # der 21. -> Requests 61-63
+
+    assert len(sleeps) == 3          # jeder der drei Requests wartet einzeln
+
+
+def test_requests_older_than_the_window_are_evicted(mocker):
+    """60 Requests, aber die aeltesten liegen schon ausserhalb des 60s-Fensters
+    -- der naechste darf sofort durch, kein Sleep."""
     t = [1_000.0]
     mocker.patch("src.providers.finnhub_provider.time.time", side_effect=lambda: t[0])
     sleeps = []
@@ -175,9 +221,9 @@ def test_calls_older_than_the_window_are_evicted(mocker):
     with patch("src.providers.finnhub_provider._client", _empty_client()):
         p = FinnhubProvider()
         for _ in range(60):
-            p.get_fundamentals("AAPL")
+            p.get_earnings_calendar("AAPL")
         t[0] += 61.0                 # das aelteste Fenster ist jetzt abgelaufen
-        p.get_fundamentals("AAPL")
+        p.get_earnings_calendar("AAPL")
 
     assert sleeps == []
 
@@ -210,10 +256,10 @@ def test_rate_limiter_state_is_per_instance_not_shared_globally(mocker):
     with patch("src.providers.finnhub_provider._client", _empty_client()):
         p1 = FinnhubProvider()
         for _ in range(60):
-            p1.get_fundamentals("AAPL")
+            p1.get_earnings_calendar("AAPL")
 
         p2 = FinnhubProvider()
-        p2.get_fundamentals("AAPL")
+        p2.get_earnings_calendar("AAPL")
 
     assert sleeps == []
 

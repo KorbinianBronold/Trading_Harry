@@ -1893,6 +1893,74 @@ def test_log_cutoff_persists_all_evaluated_tickers(in_memory_db):
     assert rows[1]["premarket_change_pct"] is None
 
 
+def test_cutoff_log_persists_tech_strength(in_memory_db):
+    """Abschluss-Review-Befund: tech_strength ist der dritte Sortierschluessel
+    UND die halbe Qualifikationsregel (>= TECH_MIN_FOR_DEEP), war aber nicht
+    persistiert. Aus tech_agreement allein ist er nicht rekonstruierbar -- der
+    ADX-Band moduliert ihn (weak deckelt auf 1, strong gibt +1). Ohne die Spalte
+    kann 3D nicht beantworten, warum der 51. hinter dem 50. lag."""
+    init_schema(in_memory_db)
+    log_cutoff(in_memory_db, date="2026-08-15", run_type="pre_market", evaluated=[
+        {"ticker": "AAPL", "news_strength": 0, "premarket_change_pct": 0.4,
+         "tech_direction": "long", "tech_agreement": 2, "tech_strength": 3,
+         "rank_position": 0, "selected": True},
+    ])
+    row = in_memory_db.execute(
+        "SELECT tech_agreement, tech_strength FROM cutoff_log "
+        "WHERE ticker='AAPL'").fetchone()
+    assert row["tech_agreement"] == 2
+    assert row["tech_strength"] == 3      # vom ADX-Band angehoben, nicht == agreement
+
+
+def test_migration_adds_tech_strength_to_a_legacy_cutoff_log():
+    """Bestands-DBs, die cutoff_log schon ohne die Spalte tragen (Task 9),
+    bekommen sie nachgereicht statt an INSERT zu scheitern."""
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    init_schema(conn)
+    conn.execute("DROP TABLE cutoff_log")
+    conn.execute("""CREATE TABLE cutoff_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, date TEXT NOT NULL,
+        run_type TEXT NOT NULL, ticker TEXT NOT NULL, news_strength INTEGER,
+        premarket_change_pct REAL, tech_direction TEXT, tech_agreement INTEGER,
+        rank_position INTEGER, selected BOOLEAN NOT NULL,
+        UNIQUE(date, run_type, ticker))""")
+    conn.commit()
+
+    init_schema(conn)
+
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(cutoff_log)")}
+    assert "tech_strength" in cols
+    conn.close()
+
+
+def test_cleanup_prunes_cutoff_log_after_180_days(in_memory_db):
+    """Abschluss-Review-Befund: cutoff_log ist die volumenstaerkste Tabelle des
+    Systems (eine Zeile je bewertetem Ticker je Lauf -- bei 500 Tickern ~1000
+    Zeilen taeglich) und war als einzige Ereignistabelle von cleanup_old_data()
+    ausgenommen. Die DB reist bei JEDEM Lauf durch ein GitHub Release, also
+    darf sie nicht unbegrenzt wachsen. 180 Tage = dieselbe Aufbewahrung wie
+    trend_analyses, reichlich fuer die 3D-Auswertung, fuer die die Tabelle
+    gebaut wurde."""
+    init_schema(in_memory_db)
+    row = {"ticker": "AAPL", "news_strength": 1, "premarket_change_pct": 0.5,
+           "tech_direction": "long", "tech_agreement": 2, "tech_strength": 2,
+           "rank_position": 0, "selected": True}
+    in_memory_db.execute(
+        "INSERT INTO cutoff_log (date, run_type, ticker, selected) "
+        "VALUES (date('now','-200 days'), 'pre_market', 'OLD', 1)")
+    log_cutoff(in_memory_db, date="2026-08-15", run_type="pre_market",
+               evaluated=[row])
+    in_memory_db.commit()
+
+    cleanup_old_data(in_memory_db)
+
+    remaining = {r["ticker"] for r in in_memory_db.execute(
+        "SELECT ticker FROM cutoff_log")}
+    assert "OLD" not in remaining
+    assert "AAPL" in remaining
+
+
 def test_log_cutoff_upserts_on_rerun(in_memory_db):
     """Ein doppelter Lauf desselben Tages/Run-Types ersetzt die Zeile statt
     sie zu duplizieren (UNIQUE date, run_type, ticker)."""

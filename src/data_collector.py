@@ -53,6 +53,48 @@ import config
 BATCH_PAUSE_EVERY = 30
 
 
+def _apply_fundamentals_to_td(td: dict, fundamentals: dict, date: str) -> None:
+    """Schreibt eine fundamentals_cache-Zeile in die dafuer vorgesehenen
+    td-Felder. EINE Definition fuer beide Leser -- Phase 1 (_process_ticker,
+    Cache-Lesung) und Phase 2b (run_phase_2b, nach dem Nachladen). Liefen die
+    zwei Feldlisten auseinander, saehe Claude in Phase 3 andere Werte als in
+    der DB stehen.
+
+    ⚠️ Aktualisiert ausschliesslich BESTEHENDE Schluessel -- td wird in vier
+    Claude-Prompts serialisiert, ein neuer Schluessel aendert sie stillschweigend
+    alle vier (Sidecar-Invariante).
+
+    earnings_in_days wird beim Lesen gerechnet, nie gecacht (Spec 18.1d):
+    das Datum steht im Cache, der Countdown waere nach vier Tagen falsch.
+    earnings_beat_pct ist im Tageslauf dauerhaft None (R15) -- die Quelle dafuer
+    (get_earnings_calendar) laeuft nur noch im Wochenjob."""
+    td.update({
+        "pe_ratio":              fundamentals.get("pe_ratio"),
+        "forward_pe":            fundamentals.get("forward_pe"),
+        "market_cap_b":          fundamentals.get("market_cap_b"),
+        "debt_equity":           fundamentals.get("debt_equity"),
+        "sector":                fundamentals.get("sector") or "Unknown",
+        "analyst_target_upside": fundamentals.get("analyst_upside"),
+        "analyst_consensus":     fundamentals.get("consensus"),
+        "earnings_in_days":      _earnings_in_days(
+            fundamentals.get("earnings_next_date"), date),
+        "earnings_beat_pct":     None,
+    })
+
+
+def _map_sector(conn, ticker: str, raw_sector: str | None) -> None:
+    """Pflegt das Sub-Sektor-Mapping organisch (Sprint 3B / B.10): der
+    Finnhub-Rohwert wird normalisiert und in ticker_sectors geschrieben — kein
+    statisches Ticker->Sektor-Mapping im Code. Unbekannte Werte loggt
+    db.resolve_sector_id(); der Ticker bleibt dann ungemappt und laeuft ohne
+    Sektor-Guardrail. Bei einem Cache-Miss ist raw_sector None -- der Upsert
+    entfaellt, eine bestehende Zuordnung bleibt stehen statt auf 'Unknown'
+    zurueckgesetzt zu werden."""
+    sector_id = db.resolve_sector_id(conn, raw_sector)
+    if sector_id is not None:
+        db.upsert_ticker_sector(conn, ticker, sector_id, source="finnhub")
+
+
 def _classify_data_quality(td: dict) -> str:
     """Classifies a ticker's data as 'low' (missing core indicators), 'medium'
     (missing peripheral fundamentals), or 'high' (everything present)."""
@@ -395,44 +437,18 @@ def _process_ticker(
 
     # Fundamentals: NUR Cache-Lesung (Sprint 3C / Analyse-Pipeline-Umbau, Task 7).
     # Phase 1 ruft Finnhub nicht mehr auf -- 0 Calls, kein Geld. Das Nachladen
-    # bei einem Cache-Miss sitzt jetzt in fetch_missing_fundamentals()
-    # (Phase 2b), die diese Task baut, aber bewusst noch NICHT verdrahtet
-    # (das macht Task 10, R16).
+    # bei einem Cache-Miss sitzt in run_phase_2b() (Phase 2b) und trifft nur die
+    # Cutoff-Kandidaten.
     #
-    # R14: bewusst akzeptierte Verhaltensaenderung bis dahin -- ein Cache-Miss
-    # kann keinen Skip ausloesen (_classify_data_quality stuft 'low' nur nach
-    # rsi_14/atr_pct ein), verschiebt aber 'high' auf 'medium', weil pe_ratio/
-    # market_cap_b/sector zu den peripheral-Feldern zaehlen.
+    # R14: ein Cache-Miss kann hier keinen Skip ausloesen
+    # (_classify_data_quality stuft 'low' nur nach rsi_14/atr_pct ein),
+    # verschiebt aber 'high' auf 'medium', weil pe_ratio/market_cap_b/sector zu
+    # den peripheral-Feldern zaehlen. Genau diese Einstufung holt Phase 2b nach,
+    # sobald die Fundamentals da sind (Spec 18.1f).
     fundamentals = db.get_cached_fundamentals(conn, ticker, today=date) or {}
 
-    td.update({
-        "pe_ratio":              fundamentals.get("pe_ratio"),
-        "forward_pe":            fundamentals.get("forward_pe"),
-        "market_cap_b":          fundamentals.get("market_cap_b"),
-        "debt_equity":           fundamentals.get("debt_equity"),
-        "sector":                fundamentals.get("sector", "Unknown"),
-        "analyst_target_upside": fundamentals.get("analyst_upside"),
-        "analyst_consensus":     fundamentals.get("consensus"),
-    })
-
-    # Sub-Sektor-Mapping organisch pflegen (Sprint 3B / B.10): der Finnhub-Rohwert
-    # wird normalisiert und in ticker_sectors geschrieben — kein statisches
-    # Ticker->Sektor-Mapping im Code. Unbekannte Werte loggt db.resolve_sector_id();
-    # der Ticker bleibt dann schlicht ungemappt und laeuft ohne Sektor-Guardrail.
-    # Bei einem Cache-Miss ist fundamentals.get("sector") None -- resolve_sector_id
-    # gibt dann fruehzeitig None zurueck und der Upsert entfaellt, eine bestehende
-    # Zuordnung bleibt also stehen statt auf 'Unknown' zurueckgesetzt zu werden.
-    _sector_id = db.resolve_sector_id(conn, fundamentals.get("sector"))
-    if _sector_id is not None:
-        db.upsert_ticker_sector(conn, ticker, _sector_id, source="finnhub")
-
-    # Earnings (R15): get_earnings_calendar() verschwindet aus dem Tageslauf --
-    # gehoert in den Wochenjob (Spec 18.1c). earnings_beat_pct gibt es im
-    # Tageslauf deshalb nicht mehr. earnings_in_days wird stattdessen aus dem
-    # gecachten earnings_next_date (Datum, s.o. save_fundamentals_cache)
-    # gerechnet -- relativ zum HEUTIGEN Abrufdatum, nicht zum Fetch-Zeitpunkt.
-    td["earnings_in_days"]  = _earnings_in_days(fundamentals.get("earnings_next_date"), date)
-    td["earnings_beat_pct"] = None
+    _apply_fundamentals_to_td(td, fundamentals, date)
+    _map_sector(conn, ticker, fundamentals.get("sector"))
 
     td["data_quality"] = _classify_data_quality(td)
     if td["data_quality"] == "low":
@@ -653,6 +669,53 @@ def fetch_missing_fundamentals(
             if existing is not None and existing["earnings_next_date"]:
                 raw["earnings_next_date"] = existing["earnings_next_date"]
         db.save_fundamentals_cache(conn, t, raw, fetched_date=date)
-        _sector_id = db.resolve_sector_id(conn, raw.get("sector"))
-        if _sector_id is not None:
-            db.upsert_ticker_sector(conn, t, _sector_id, source="finnhub")
+        _map_sector(conn, t, raw.get("sector"))
+
+
+def run_phase_2b(
+    ticker_datas: list[dict],
+    candidates: list[str],
+    earnings_provider: DataProvider,
+    conn,
+    date: str,
+) -> None:
+    """Phase 2b (Spec 4.7, 18.1b/f): holt fehlende Fundamentaldaten fuer die
+    Cutoff-Kandidaten nach und spiegelt sie in deren td-Dicts zurueck.
+
+    Zwei Schritte, die zusammengehoeren:
+      1. `fetch_missing_fundamentals()` fuellt den Cache (0 Calls, wenn er warm
+         ist -- der Normalfall dank Wochenjob).
+      2. Die Werte werden aus dem Cache in die td-Dicts uebernommen. Ohne
+         diesen zweiten Schritt waermte 2b nur den Cache fuer MORGEN, waehrend
+         der HEUTIGE Phase-3-Prompt weiter pe_ratio=None saehe -- die Spec
+         verlangt ausdruecklich, dass `market_cap_b` Claude "ueber den
+         Ticker-Snapshot aus 2b" erreicht.
+
+    Danach wird `data_quality` neu eingestuft: laut Spec 18.1f entsteht die
+    medium/high-Unterscheidung genau hier, nicht in Phase 1. ⚠️ Eine
+    Rueckstufung auf 'low' ist ausgeschlossen -- der low-Skip gehoert
+    ausschliesslich in Phase 1, und 2b laeuft nach dem Cutoff, wenn der Lauf
+    fuer diesen Ticker schon Geld gekostet hat.
+
+    Nur Kandidaten (Spec 4.7): `candidates` ist die Auswahl aus dem Cutoff,
+    nicht das ganze Universum. Rohstoffe/Krypto stehen nie darin -- Finnhub hat
+    fuer sie ohnehin nichts (Spec 6.3)."""
+    if not candidates:
+        return
+    fetch_missing_fundamentals(candidates, earnings_provider, conn, date)
+
+    picked = set(candidates)
+    upgraded = 0
+    for td in ticker_datas:
+        if td.get("ticker") not in picked:
+            continue
+        fundamentals = db.get_cached_fundamentals(conn, td["ticker"], today=date) or {}
+        _apply_fundamentals_to_td(td, fundamentals, date)
+        _map_sector(conn, td["ticker"], fundamentals.get("sector"))
+        if _classify_data_quality(td) == "high" and td.get("data_quality") != "high":
+            td["data_quality"] = "high"
+            upgraded += 1
+    log.info(
+        f"Phase 2b done: {len(picked)} Kandidaten geprueft, "
+        f"{upgraded}x data_quality medium->high"
+    )

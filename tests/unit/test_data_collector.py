@@ -1611,9 +1611,10 @@ def test_fetch_missing_fundamentals_does_not_override_a_freshly_fetched_earnings
 
 
 def test_fetch_missing_fundamentals_not_wired_into_process_ticker(in_memory_db):
-    """R16: main.py/collect()/_process_ticker rufen fetch_missing_fundamentals
-    nicht auf -- Task 7 baut sie nur. Ein Cache-Miss bleibt in _process_ticker
-    unbeantwortet, auch wenn der Provider Daten liefern koennte."""
+    """R16: _process_ticker (Phase 1) ruft fetch_missing_fundamentals nicht auf
+    -- Phase 1 bleibt Finnhub-frei. Das Nachladen sitzt in Phase 2b
+    (run_phase_2b(), seit dem Abschluss-Review in main.run_pipeline verdrahtet),
+    nicht hier."""
     init_schema(in_memory_db)
     df = _df_monotonic_up(250)
     _seed_price_history(in_memory_db, "AAPL", df)
@@ -1626,3 +1627,150 @@ def test_fetch_missing_fundamentals_not_wired_into_process_ticker(in_memory_db):
     )
     assert out["sector"] == "Unknown"
     ep.get_fundamentals.assert_not_called()
+
+
+# ---------- run_phase_2b() -- Phase 2b (Abschluss-Review, Spec 4.7 / 18.1b+f) ----------
+
+from src.data_collector import run_phase_2b
+from src.db import save_fundamentals_cache
+
+
+def test_phase_2b_mirrors_freshly_fetched_fundamentals_into_the_td(in_memory_db):
+    """Der Kern des Befunds: fetch_missing_fundamentals() allein waermt nur den
+    Cache fuer MORGEN. Die Werte muessen auch in das td-Dict zurueck, das HEUTE
+    in den Phase-3-Prompt geht (Spec: 'market_cap_b erreicht Claude weiterhin
+    ueber den Ticker-Snapshot aus 2b')."""
+    init_schema(in_memory_db)
+    td = {"ticker": "AAPL", "rsi_14": 55.0, "atr_pct": 2.5, "above_sma200": 3.0,
+          "pe_ratio": None, "forward_pe": None, "market_cap_b": None,
+          "debt_equity": None, "sector": "Unknown",
+          "analyst_target_upside": None, "analyst_consensus": None,
+          "earnings_in_days": None, "earnings_beat_pct": None,
+          "data_quality": "medium"}
+    ep = MagicMock()
+    ep.get_fundamentals.return_value = {
+        "pe_ratio": 28.4, "forward_pe": 26.0, "market_cap_b": 2800.0,
+        "debt_equity": 1.4, "sector": "Semiconductors",
+        "analyst_upside": 7.5, "consensus": "buy",
+    }
+
+    run_phase_2b([td], ["AAPL"], ep, in_memory_db, date="2026-05-19")
+
+    assert td["market_cap_b"] == 2800.0
+    assert td["sector"] == "Semiconductors"
+    assert td["pe_ratio"] == 28.4
+    assert td["analyst_consensus"] == "buy"
+
+
+def test_phase_2b_upgrades_data_quality_to_high(in_memory_db):
+    """Spec 18.1f: die medium/high-Einstufung entsteht in Phase 2b, nachdem die
+    Fundamentals da sind -- nicht in Phase 1."""
+    init_schema(in_memory_db)
+    td = {"ticker": "AAPL", "rsi_14": 55.0, "atr_pct": 2.5, "above_sma200": 3.0,
+          "pe_ratio": None, "market_cap_b": None, "sector": "Unknown",
+          "forward_pe": None, "debt_equity": None,
+          "analyst_target_upside": None, "analyst_consensus": None,
+          "earnings_in_days": None, "earnings_beat_pct": None,
+          "data_quality": "medium"}
+    ep = MagicMock()
+    ep.get_fundamentals.return_value = {
+        "pe_ratio": 28.4, "forward_pe": 26.0, "market_cap_b": 2800.0,
+        "debt_equity": 1.4, "sector": "Semiconductors",
+        "analyst_upside": 7.5, "consensus": "buy",
+    }
+
+    run_phase_2b([td], ["AAPL"], ep, in_memory_db, date="2026-05-19")
+
+    assert td["data_quality"] == "high"
+
+
+def test_phase_2b_never_downgrades_to_low(in_memory_db):
+    """Ein Ticker, der Phase 1 ueberlebt hat, darf in 2b nicht nachtraeglich auf
+    'low' fallen -- der low-Skip gehoert laut Spec 18.1f ausschliesslich in
+    Phase 1, und 2b laeuft erst nach dem Cutoff (Analyse teils bezahlt)."""
+    init_schema(in_memory_db)
+    td = {"ticker": "AAPL", "rsi_14": None, "atr_pct": None, "above_sma200": None,
+          "pe_ratio": None, "market_cap_b": None, "sector": "Unknown",
+          "forward_pe": None, "debt_equity": None,
+          "analyst_target_upside": None, "analyst_consensus": None,
+          "earnings_in_days": None, "earnings_beat_pct": None,
+          "data_quality": "medium"}
+    ep = MagicMock()
+    ep.get_fundamentals.return_value = {}
+
+    run_phase_2b([td], ["AAPL"], ep, in_memory_db, date="2026-05-19")
+
+    assert td["data_quality"] == "medium"
+
+
+def test_phase_2b_only_touches_the_selected_candidates(in_memory_db):
+    """2b ist kandidaten-only (Spec 4.7) -- ein nicht ausgewaehlter Ticker
+    kostet keinen Finnhub-Call und behaelt seinen Phase-1-Stand."""
+    init_schema(in_memory_db)
+    picked = {"ticker": "AAPL", "rsi_14": 55.0, "atr_pct": 2.5, "sector": "Unknown",
+              "pe_ratio": None, "market_cap_b": None, "above_sma200": 1.0,
+              "forward_pe": None, "debt_equity": None,
+              "analyst_target_upside": None, "analyst_consensus": None,
+              "earnings_in_days": None, "earnings_beat_pct": None,
+              "data_quality": "medium"}
+    dropped = {**picked, "ticker": "MSFT"}
+    ep = MagicMock()
+    ep.get_fundamentals.return_value = {
+        "pe_ratio": 28.4, "forward_pe": 26.0, "market_cap_b": 2800.0,
+        "debt_equity": 1.4, "sector": "Semiconductors",
+        "analyst_upside": 7.5, "consensus": "buy",
+    }
+
+    run_phase_2b([picked, dropped], ["AAPL"], ep, in_memory_db, date="2026-05-19")
+
+    assert picked["sector"] == "Semiconductors"
+    assert dropped["sector"] == "Unknown"
+    ep.get_fundamentals.assert_called_once_with("AAPL")
+
+
+def test_phase_2b_computes_earnings_in_days_from_the_cached_date(in_memory_db):
+    """earnings_in_days wird beim Lesen gerechnet (Spec 18.1d) -- auch auf dem
+    2b-Pfad, nicht nur in Phase 1."""
+    init_schema(in_memory_db)
+    save_fundamentals_cache(
+        in_memory_db, "AAPL",
+        {"pe_ratio": 25.0, "forward_pe": 23.0, "market_cap_b": 200.0,
+         "debt_equity": 1.0, "sector": "Technology", "analyst_upside": 5.0,
+         "consensus": "buy", "earnings_next_date": "2026-05-29"},
+        fetched_date="2026-05-19",
+    )
+    td = {"ticker": "AAPL", "rsi_14": 55.0, "atr_pct": 2.5, "above_sma200": 1.0,
+          "pe_ratio": None, "market_cap_b": None, "sector": "Unknown",
+          "forward_pe": None, "debt_equity": None,
+          "analyst_target_upside": None, "analyst_consensus": None,
+          "earnings_in_days": None, "earnings_beat_pct": None,
+          "data_quality": "medium"}
+    ep = MagicMock()
+
+    run_phase_2b([td], ["AAPL"], ep, in_memory_db, date="2026-05-19")
+
+    assert td["earnings_in_days"] == 10
+    ep.get_fundamentals.assert_not_called()   # Cache war warm
+
+
+def test_phase_2b_adds_no_new_keys_to_the_td(in_memory_db):
+    """Sidecar-Invariante: td geht in vier Claude-Prompts. 2b darf vorhandene
+    Werte fuellen, aber niemals neue Schluessel einfuehren."""
+    init_schema(in_memory_db)
+    td = {"ticker": "AAPL", "rsi_14": 55.0, "atr_pct": 2.5, "above_sma200": 1.0,
+          "pe_ratio": None, "market_cap_b": None, "sector": "Unknown",
+          "forward_pe": None, "debt_equity": None,
+          "analyst_target_upside": None, "analyst_consensus": None,
+          "earnings_in_days": None, "earnings_beat_pct": None,
+          "data_quality": "medium"}
+    before = set(td)
+    ep = MagicMock()
+    ep.get_fundamentals.return_value = {
+        "pe_ratio": 28.4, "forward_pe": 26.0, "market_cap_b": 2800.0,
+        "debt_equity": 1.4, "sector": "Semiconductors",
+        "analyst_upside": 7.5, "consensus": "buy",
+    }
+
+    run_phase_2b([td], ["AAPL"], ep, in_memory_db, date="2026-05-19")
+
+    assert set(td) == before

@@ -15,7 +15,7 @@ import config
 from src import db
 from src import signal_window
 from src.cost_tracker import CostTracker, CostCapExceeded
-from src.data_collector import collect
+from src.data_collector import collect, run_phase_2b
 from src.sector_momentum import collect_sector_momentum
 from src.trend_analyzer import analyze_trends, TrendAnalyzerError
 from src.broad_scan import broad_scan_batch, cutoff_candidates
@@ -384,6 +384,20 @@ def run_pipeline(run_type: str, date: str, db_path: str) -> None:
             f"Phase 2a (cutoff) done: {len(selected)} von {len(all_evaluated)} "
             f"Kandidaten ausgewaehlt (max_deep_analysis={config.MAX_DEEP_ANALYSIS})"
         )
+
+        current_phase = "fundamentals_2b"
+        # Phase 2b — Fundamentaldaten der Kandidaten (Spec 4.7, 18.1b/f).
+        # Nicht fatal: Finnhub ist hier ausdruecklich kein Single Point of
+        # Failure, ein Ausfall kostet nur Kontext-Qualitaet, keinen Lauf.
+        try:
+            run_phase_2b(
+                ticker_datas=sp500_tds,
+                candidates=[c["ticker"] for c in selected],
+                earnings_provider=earnings_provider,
+                conn=conn, date=date,
+            )
+        except Exception as e:
+            log.warning(f"Phase 2b nicht vollstaendig, Run laeuft weiter: {e}")
 
         # Interim-Adapter: cutoff-Form -> quick_filter-Form, bis Plan 3
         # deep_analysis_v2 einfuehrt und das exclude-Flag obsolet macht.

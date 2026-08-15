@@ -65,11 +65,16 @@ class FinnhubProvider(DataProvider):
         Finnhub. Returns an empty dict if no API key is configured or any call fails."""
         if _client is None:
             return {}
-        self._respect_rate_limit()
         try:
+            # R: je ECHTEM Request drosseln, nicht je Methodenaufruf -- diese
+            # eine Methode setzt drei Finnhub-Requests ab. Ein einzelnes
+            # _respect_rate_limit() davor haette das Limit effektiv verdreifacht.
+            self._respect_rate_limit()
             profile  = _client.company_profile2(symbol=ticker) or {}
+            self._respect_rate_limit()
             resp     = _client.company_basic_financials(ticker, "all") or {}
             metrics  = resp.get("metric") or {}
+            self._respect_rate_limit()
             recs     = _client.recommendation_trends(ticker) or []
         except Exception as e:
             log.warning(f"{ticker}: Finnhub fundamentals failed: {e}")

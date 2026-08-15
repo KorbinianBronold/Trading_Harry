@@ -1,7 +1,10 @@
 # Analyse-Pipeline-Umbau, Plan 2: Trichter — Implementation Plan
 
-**Status:** ✅ **Alle 13 Tasks committed, Trichter live gemessen (Stand 2026-08-15) —
-nur noch der Abschluss-Review über `c978d70..HEAD` offen**
+**Status:** ✅ **ABGESCHLOSSEN (2026-08-15)** — alle 13 Tasks committed, Trichter live
+gemessen, Abschluss-Review über `c978d70..HEAD` durchgeführt: **vier Befunde, alle behoben**
+(Phase 2b war nie verdrahtet; die Ratenbegrenzung zählte Methodenaufrufe statt Requests;
+`tech_strength` fehlte in `cutoff_log`; dieselbe Tabelle hatte keine Retention).
+Details: PROJECT_STATUS **C.8**. Nächster Schritt: Plan 3 (Analyse & Ranking).
 **Erstellt:** 2026-08-13
 
 | Task | Stand | Commit(s) |
