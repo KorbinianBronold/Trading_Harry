@@ -1,7 +1,7 @@
 # Preismodell: drei Entscheidungs-Snapshots + finale Tages-OHLC (Design)
 
 **Erstellt:** 2026-08-06
-**Status:** Spezifikation — Implementierung folgt über eine eigene Plan-Datei unter `docs/superpowers/plans/`
+**Status:** ✅ **umgesetzt und live verifiziert** — Plan `…/plans/2026-08-06-preismodell-snapshots.md`, 11 Tasks / 13 Commits (2026-08-06/07). `final_close` ist am 2026-08-08 erstmals gelaufen und geprüft. Ist-Stand und vier Befunde: PROJECT_STATUS **P3**
 **Vorgänger:** Sprint 3B / Plan 2 (abgeschlossen), Task-20-Review (2026-08-05/06, s. PROJECT_STATUS P2.8)
 
 ---

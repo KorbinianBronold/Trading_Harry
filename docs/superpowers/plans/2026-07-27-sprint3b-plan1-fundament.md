@@ -1,5 +1,9 @@
 # Sprint 3B / Plan 1: Fundament (Sektor-DB, ticker_status, Markt-Kontext, Gap-Erkennung)
 
+> ⚠️ **HISTORISCH — abgeschlossen 2026-07-29, alle 14 Tasks.** Nicht als Ist-Zustand lesen
+> und nicht mehr bearbeiten. Aktueller Stand: `docs/superpowers/specs/PROJECT_STATUS.md`
+> (Sprint 3B, Abschnitt B / B.12).
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Alle additiven Bausteine für Sprint 3B bauen — Sub-Sektor-Datenbank mit Finnhub-Normalisierung, kumulativer `ticker_status`-Zähler mit Auto-Retry, persistierte Guardrail-Rejects, echter Markt-Kontext statt hardcodiertem `None`-Dict, Gap-Erkennung in Phase 1 und der B-05-Fix.

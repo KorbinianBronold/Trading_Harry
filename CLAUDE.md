@@ -1,6 +1,18 @@
 # Shares_Future – SP500 CFD Research Tool
 
-**Zuletzt aktualisiert:** 2026-08-15 — **Live-Verifikation von Plan 2 abgeschlossen.**
+**Zuletzt aktualisiert:** 2026-08-15 — **Doku-Abgleich: Plan 2 des Analyse-Pipeline-Umbaus
+(Trichter) ist zu 8 von 13 Tasks umgesetzt** und stand in keinem Dokument. Committed und
+gepusht sind die Vorfixes, der Batch-Kurs-Sweep, die Phase-1-Zerlegung (Gate/Sweep/Process),
+das Technik-Signal im Sidecar, die Fundamentals-Entkopplung und `src/broad_scan.py`.
+⚠️ **Der Trichter ist noch nicht live:** `main.py:378` ruft weiterhin `quick_filter_batch()`,
+erster Verhaltenswechsel ist Task 10. Offen sind Task 9 (Cutoff + `cutoff_log`), 10
+(Verdrahtung), 11 (Finnhub-Ratenbegrenzung), 12 (`run_weekly`-Vorlauf), 13 (Doku).
+⚠️ **Vor Task 10 zu entscheiden:** 3,9217 EUR gemessen gegen `MAX_COST_PER_RUN_EUR = 4.00`
+— Task 10 macht den MVP-Lauf teurer (Sonnet+Websuche statt Haiku, Deckel 50 greift bei 20
+Tickern nicht); die Ersparnis steckt erst im Phase-3-Batching aus Plan 3.
+Stand, Befunde und Task-Tabelle: PROJECT_STATUS **C.7**.
+
+Davor, 2026-08-15 — **Live-Verifikation von Plan 2 (Sprint 3B) abgeschlossen.**
 `trade_proposals` lief am 2026-08-14 erstmals gegen echte Signale; E3 (Ablösung statt
 Dublette) und E5 (gedrehte Signale werden gemeldet, nicht gehandelt) verhalten sich wie
 spezifiziert. Details und vier Befunde: PROJECT_STATUS **P2.12**.
@@ -13,7 +25,7 @@ UNIQUE-Index erzwingt die Invariante jetzt in der Datenbank (s. unten).
 Davor, 2026-08-12 — Sprint 3C / **Plan 1 (Fundament) ist code-fertig**
 (Analyse-Pipeline-Umbau: Trichter, zwei zählbare Signale, neues Ranking). 17 Indikatoren
 laufen mit und füllen 29 neue Spalten, das Technik-Signal ist berechenbar — **keine
-Verhaltensänderung.** Details: PROJECT_STATUS C.6. Einstieg ist jetzt Plan 2 (Trichter).
+Verhaltensänderung.** Details: PROJECT_STATUS C.6. (Plan 2 hat darauf aufgesetzt, s. oben.)
 ⚠️ Der abschliessende Ganz-Branch-Review fand die Garantie tatsächlich gebrochen vor (die
 29 neuen Werte liefen in vier Claude-Prompts mit) und einen zweiten Bug (`ichi_chikou` war
 strukturell immer `None`) — beide im selben Fix-Wave behoben, s. PROJECT_STATUS C.6.
@@ -63,6 +75,32 @@ Die Pipeline-Phasen lassen sich an `main.py:run_pipeline()` ablesen.
   Kreuzung) sind bewusste Entscheidungen — welche besser predictet, misst 3D.
 - `technical_indicators` trägt 17 Indikatoren, von denen zunächst nur vier etwas
   steuern. Der Rest läuft mit, damit 3D später Historie hat statt bei null zu beginnen.
+- ⚠️ **Sidecar-Invariante: neue Werte laufen *neben* `td`, nie darin.** Das `td`-Dict aus
+  `_process_ticker()` wird in **vier** Claude-Prompts `json.dumps`'t (`quick_filter`,
+  `deep_analysis`, `commodities_crypto` und über `main.py`s `snapshots` auch
+  `portfolio_check`). Wer dort einen Schlüssel hinzufügt, ändert stillschweigend vier
+  Prompts. Deshalb reist `collect()` mit einem dritten Rückgabewert: dem **Sidecar**
+  (`premarket_change_pct` + die vier Technik-Signal-Werte), und die 29 Plan-1-Indikatoren
+  liegen in einem separaten `extra_indicators`-Dict, das erst unmittelbar vor
+  `_persist_indicators()` dazukommt. Anlass war ein echter Vorfall: Plan 1 schickte 29
+  Werte (~250 Tokens je Ticker) unbemerkt in die Prompts. Ein Test pinnt die exakte
+  Schlüsselmenge von `_process_ticker()`.
+- **Phase 1 ist Finnhub-frei.** Sie liest `fundamentals_cache` und ruft nichts ab; das
+  Nachladen bei Cache-Miss ist Phase 2b (`fetch_missing_fundamentals()`, gebaut, noch
+  nicht verdrahtet) und trifft nur Kandidaten. `get_earnings_calendar()` kommt im
+  Tageslauf nicht mehr vor, `earnings_beat_pct` ist dort dauerhaft `None`.
+  ⚠️ `earnings_next_date` wird als **ISO-Datum** gecacht, nie als Countdown:
+  `earnings_in_days` wird beim Lesen gerechnet, ein Termin in der Vergangenheit liefert
+  `None`. Ein gecachter Tageszähler wäre nach vier Tagen schlicht falsch.
+  ⚠️ `save_fundamentals_cache()` ist ein `INSERT OR REPLACE` der **ganzen** Zeile — wer
+  dort schreibt, ohne `earnings_next_date` mitzubringen, löscht es (der Wochenjob und die
+  Fundamentals-TTL haben verschiedene Rhythmen).
+- Der Kurs-Sweep holt alle Live-Kurse als **Sammelabruf** (`/markets?epics=`, Chunks zu 20,
+  ~25 Calls für 500 Ticker statt ~500). 20 ist eine bestätigte Untergrenze, kein gemessenes
+  Maximum — grösser bringt nichts. Dreistufige 429-Notbremse: erster 429 → getakteter Modus,
+  weitere → Chunk überspringen, fünf in Folge → Sweep abbrechen. ⚠️ Ein fehlender Live-Kurs
+  ist **kein Skip**: er fällt auf den letzten finalen Close zurück (WARNING), und
+  `premarket_change_pct` bleibt `None` statt einer erfundenen 0.
 - Mailversand über Resend. Ein `2xx` heisst nur "angenommen"; die Zustellung läuft
   asynchron und scheitert ggf. später unter `GET /emails/{id}` mit
   `last_event="failed"`. Erfolg nie am Statuscode festmachen.
@@ -115,10 +153,13 @@ Die Pipeline-Phasen lassen sich an `main.py:run_pipeline()` ablesen.
   anfasst (Aktien + Rohstoffe + Krypto + Sub-Sektor-ETFs). `run_final_close`, der
   Bootstrap und der Historien-Guard lesen alle dort — getrennt gepflegt liefen sie
   auseinander, und ein neuer Ticker bekäme Backfill ohne Fortschreibung oder umgekehrt.
-- Lückenerkennung prüft den **gesamten jüngsten Abschnitt** (200 Bars), nicht nur
-  `MAX(date)`. Sonst blendet die erste Bar nach einem Ausfall das Loch dahinter für
-  immer aus. ⚠️ Innenliegende Lücken zählen erst ab **zwei** aufeinanderfolgenden
-  Handelstagen: einzelne fehlende Wochentage sind US-Feiertage (35 der 1000 AAPL-Bars).
+- Lückenerkennung prüft den **gesamten jüngsten Abschnitt** (`GAP_SCAN_BARS = 220`), nicht
+  nur `MAX(date)`. Sonst blendet die erste Bar nach einem Ausfall das Loch dahinter für
+  immer aus. Der Wert ist **deckungsgleich mit dem Ladefenster** von
+  `load_price_history_from_db()` — bei 200 gegen 220 wäre eine Lücke auf Bar 201–220
+  unsichtbar, verzerrte aber SMA200. ⚠️ Innenliegende Lücken zählen erst ab **zwei**
+  aufeinanderfolgenden Handelstagen: einzelne fehlende Wochentage sind US-Feiertage
+  (35 der 1000 AAPL-Bars).
 - ⚠️ Capital.com beantwortet ein `to` **in der Zukunft** (UTC) mit HTTP 400 — fünf
   Minuten genügen. Nicht dokumentiert, empirisch ermittelt. `_not_in_future()` klemmt es.
 - ⚠️ Der `open` der Tages-Bar ist **nicht** der Eröffnungskurs: die Bar beginnt laut
@@ -156,10 +197,11 @@ mit **20** MVP-Tickern kostete **3,3143 EUR** (`cost_tracking`) — die Doku nan
 sie werden nirgends im Code gelesen (verifiziert 2026-07-30). Es gibt **keinen**
 Deckel auf die Zahl der Tiefenanalysen ausser `CostCapExceeded`, und Phase 2 macht
 *einen* Haiku-Call über alle Ticker statt 30er-Batches. Jede Hochrechnung, die mit
-„80 Slots" argumentiert, ist damit die optimistische Untergrenze. Der Fix gehört zu
-Sprint 3C (C.4, technischer Pre-Filter) — der Pre-Filter ist dort **nicht** eine
-bessere Auswahl innerhalb eines bestehenden Deckels, sondern die einzige
-Mengenbegrenzung überhaupt.
+„80 Slots" argumentiert, ist damit die optimistische Untergrenze. Der Deckel ist **nicht**
+eine bessere Auswahl innerhalb eines bestehenden Limits, sondern die einzige
+Mengenbegrenzung überhaupt. **Der Fix ist gebaut, aber nicht scharf:** er hängt an
+Plan 2, Task 10 (`MAX_DEEP_ANALYSIS` 80 → 50, erstmals gelesen; `BATCH_SIZE_QUICK`
+entfällt). Bis dahin gilt der Satz oben unverändert — s. PROJECT_STATUS C.7.
 Details, Laufzeit-Hochrechnung und der Cron-Konflikt: PROJECT_STATUS.md, F.1.
 
 ## Wichtige Befehle
@@ -232,16 +274,23 @@ und der getroffenen Entscheidungen. Kurzfassung:
   Stand und Befunde in PROJECT_STATUS, Abschnitt P3. ⚠️ **Nie in einem echten
   Pipelinelauf ausgeführt** — verifiziert wurde nur lesend gegen die API, in
   Wegwerf-Datenbanken. Er entstand nach den Läufen vom 2026-08-04.
-- **3C** (Ranking-Überarbeitung): **Plan 1 (Fundament) ist code-fertig**, Plan 2 und 3
-  offen. Die Teilschritte C.1–C.4 sind in einer gemeinsamen Spec aufgegangen, die den
-  Trichter, die zwei Signale und das Ranking zusammen neu fasst:
+- **3C** (Ranking-Überarbeitung): Die Teilschritte C.1–C.4 sind in einer gemeinsamen Spec
+  aufgegangen, die den Trichter, die zwei Signale und das Ranking zusammen neu fasst:
   `docs/superpowers/specs/2026-08-11-analyse-pipeline-umbau-design.md`.
-  Die Umsetzung zerfällt in **drei unabhängig lieferbare Pläne**; Plan 1 (Fundament:
-  17 Indikatoren, Technik-Signal, Schema) ist unter
-  `docs/superpowers/plans/2026-08-11-analyse-pipeline-plan1-fundament.md` **abgeschlossen
-  und ändert kein Pipeline-Verhalten** — das Technik-Signal ist berechenbar, steuert aber
-  nichts. Einstieg ist jetzt **Plan 2 (Trichter)**. Stand und Messprotokoll:
-  PROJECT_STATUS, Abschnitt C.6.
+  Die Umsetzung zerfällt in **drei unabhängig lieferbare Pläne**:
+  - **Plan 1 (Fundament)** — `…/plans/2026-08-11-analyse-pipeline-plan1-fundament.md`,
+    **abgeschlossen, ändert kein Pipeline-Verhalten**: das Technik-Signal ist berechenbar,
+    steuert aber nichts. Stand: PROJECT_STATUS **C.6**.
+  - **Plan 2 (Trichter)** — `…/plans/2026-08-13-analyse-pipeline-plan2-trichter.md`,
+    **8 von 13 Tasks umgesetzt**, alle auf `main`. Offen: Task 9 (Cutoff + `cutoff_log` +
+    `TECH_MIN_FOR_DEEP`, das es im Code noch nicht gibt), 10 (Verdrahtung — `quick_filter`
+    raus, `broad_scan` + Cutoff rein, `MAX_DEEP_ANALYSIS` 80 → 50), 11
+    (Finnhub-Ratenbegrenzung), 12 (`run_weekly`-Vorlauf), 13 (Doku), danach
+    Abschluss-Review über `c978d70..HEAD` und Testlauf. ⚠️ **Bis Task 10 ist der Trichter
+    nicht live** — die eine bewusste Verhaltensänderung davor ist `GAP_SCAN_BARS`
+    200 → 220 (Task 3). Stand und sechs Befunde: PROJECT_STATUS **C.7**.
+  - **Plan 3 (Analyse & Ranking)** — offen; bringt Phase-3-Batching (der eigentliche
+    Kostenhebel: ~0,034 statt ~0,12 EUR je Ticker), `deep_analysis_v2` und `rank_score`.
 - **3D / 3E / 3F** sind ⚠️ **Platzhalter** — bei Erreichen aktiv nachfragen und den
   Sprint gemeinsam ausarbeiten, **bevor** Code entsteht. Die Stichpunkte dort sind
   keine Spezifikation.

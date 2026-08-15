@@ -1,5 +1,10 @@
 # Analyse-Pipeline-Umbau, Plan 1: Fundament — Implementation Plan
 
+> ⚠️ **HISTORISCH — abgeschlossen 2026-08-12, Tasks 2–8 plus Review-Fix-Wave.** Nicht als
+> Ist-Zustand lesen und nicht mehr bearbeiten. Aktueller Stand:
+> `docs/superpowers/specs/PROJECT_STATUS.md`, Abschnitt **C.6**; der Nachfolger ist
+> `2026-08-13-analyse-pipeline-plan2-trichter.md` (in Umsetzung, s. **C.7**).
+
 > **Für agentische Bearbeiter:** ERFORDERLICHE SUB-SKILL: `superpowers:subagent-driven-development`
 > (empfohlen) oder `superpowers:executing-plans`, um diesen Plan Task für Task umzusetzen.
 > Die Schritte nutzen Checkbox-Syntax (`- [ ]`) zur Fortschrittsverfolgung.

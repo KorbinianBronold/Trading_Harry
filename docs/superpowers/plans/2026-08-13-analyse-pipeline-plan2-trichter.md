@@ -1,7 +1,43 @@
 # Analyse-Pipeline-Umbau, Plan 2: Trichter — Implementation Plan
 
-**Status:** 📋 Spezifikation & Design freigegeben, Plan in Umsetzung
+**Status:** 🟡 **In Umsetzung — 8 von 13 Tasks committed (Stand 2026-08-15)**
 **Erstellt:** 2026-08-13
+
+| Task | Stand | Commit(s) |
+|---|---|---|
+| 1 ADX-Grenzwerte pinnen | ✅ | `086d49a` |
+| 2 `cache_hit_rate` | ✅ | `aa2f222` |
+| 3 `GAP_SCAN_BARS` 200 → 220 | ✅ | `da4cab1` |
+| 4 Provider-Sammelabruf + 429-Notbremse | ✅ | `4801a63`, `a242d32` |
+| 5 Phase 1a/1b Gate/Sweep/Indikatoren | ✅ | `aea3656`, `03354bb` |
+| 6 Phase 1d Technik-Signal verdrahten | ✅ | `8351e31` |
+| 7 Fundamentals aus Phase 1 lösen | ✅ | `f545901`, `7165bf5` |
+| 8 `broad_scan.py` + Prompt | ✅ | `b861b48`, `b902b23`, `9a7cd1f` |
+| 9 Cutoff + `cutoff_log` | ⏳ offen | — |
+| 10 `run_pipeline()` verdrahten | ⏳ offen | — |
+| 11 Finnhub-Ratenbegrenzung | ⏳ offen | — |
+| 12 `run_weekly()`-Vorlauf | ⏳ offen | — |
+| 13 Doku nachziehen | 🟡 teilweise | PROJECT_STATUS C.7, CLAUDE.md und ARCHITECTURE.md sind gezogen; Modul-Docstrings und die Phasentabelle fehlen |
+
+⚠️ **Zwei Korrekturen an diesem Plan, gegen den Code geprüft:**
+1. **Global Constraint 2 gilt für Task 3 nicht.** `GAP_SCAN_BARS` 200 → 220 **ändert** die
+   Ticker-Auswahl (mehr erkannte Lücken → mehr Nachladeversuche, ggf. mehr Skips) — genau
+   deshalb lag es nicht in Plan 1. Bewusste, dokumentierte Ausnahme; für Tasks 1–2 und 4–8
+   ist die Garantie eingehalten.
+2. **Numerierungs-Fehler in Constraint 2:** dort heisst es „Task 9 (broad_scan) ist der
+   erste Konsument". `broad_scan` ist **Task 8**, und erster Konsument ist **Task 10**
+   (die Verdrahtung). Task 9 ist der Cutoff.
+
+⚠️ **Vor Task 10 zu entscheiden — Kostendeckel.** Gemessen am 2026-08-14: 3,9217 EUR gegen
+`MAX_COST_PER_RUN_EUR = 4.00`. Task 10 tauscht Haiku ohne Websuche gegen Sonnet **mit**
+Websuche; bei 20 MVP-Tickern greift `MAX_DEEP_ANALYSIS = 50` nicht, Phase 3 bleibt bei 20
+Einzelcalls. Der Lauf wird damit **teurer**, nicht billiger — der Hebel ist das
+Phase-3-Batching aus Plan 3. Deckel anheben oder Batching vorziehen, sonst endet der erste
+Testlauf in `CostCapExceeded`. S. PROJECT_STATUS C.7, Befund 2.
+
+⏳ **Task 4 hat eine offene Frage hinterlassen:** ob der Sammelabruf ein `offer`-Feld
+liefert (Spec § 19.1a), ist **nicht** protokolliert. Die Sonde prüft es
+(`setup/probe_epics_batch.py:144-147`), `get_premarket_prices_batch()` liest nur `bid`.
 **Betrifft:** Phase 1–2 (Datensammlung & Scan), Auswahl-Logik, Trichter-Cutoff
 **Design & Designentscheidungen:** docs/superpowers/specs/2026-08-11-analyse-pipeline-umbau-design.md (§ 4.2–4.8, § 6.1–6.3, § 18)
 

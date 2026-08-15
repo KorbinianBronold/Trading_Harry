@@ -1,6 +1,13 @@
 # Shares_Future – Architektur & Design
 
-**Zuletzt aktualisiert:** 2026-08-15 — Live-Verifikation von Plan 2 abgeschlossen
+**Zuletzt aktualisiert:** 2026-08-15 — **Sprint 3C / Plan 2 (Trichter) nachgezogen:
+8 von 13 Tasks sind umgesetzt und standen in keinem Dokument.** Neu beschrieben: Phase 1
+läuft in drei Pässen (Gate → Sweep → Process) mit **Sidecar** als drittem Rückgabewert,
+Phase 1 ist Finnhub-frei, `src/broad_scan.py` als Modul 3b, `GAP_SCAN_BARS = 220`.
+⚠️ **Der Trichter ist noch nicht live** — `main.py:378` ruft weiterhin
+`quick_filter_batch()`; erster Verhaltenswechsel ist Task 10. Stand: PROJECT_STATUS **C.7**.
+
+Davor, 2026-08-15 — Live-Verifikation von Plan 2 (Sprint 3B) abgeschlossen
 (PROJECT_STATUS P2.12): `pre_market` → `trade_proposals` → `close` liefen zu den echten
 Cron-Zeiten, E3 (Ablösung) und E5 (kein Gegenpositionshandel) bestätigt. Dabei gefunden und
 geschlossen: `predictions` erzwingt jetzt über einen partiellen UNIQUE-Index
@@ -216,31 +223,52 @@ DB-Close.
 
 ### 1. **`src/data_collector.py`** (Phase 1)
 
-Datensammlung für 500 SP500-Aktien + Commodities/Crypto.
+Datensammlung für 500 SP500-Aktien + Commodities/Crypto. **Seit Sprint 3C / Plan 2, Task 5
+(`aea3656`) in drei Pässen** statt einer Schleife mit einem Kurs-Call je Ticker.
 
 ```python
 def collect(
-    provider: DataProvider,
     tickers: list[str],
-    cost_tracker: CostTracker,
-) -> tuple[list[dict], list[str]]:
-    """
-    Returns: (ok_data, skipped_tickers)
-    - ok_data: [{ticker, price, rsi_14, macd, atr_pct, above_sma200, 
-                volume_ratio, pe_ratio, market_cap_b, sector, earnings_in_days,
-                earnings_beat_pct, data_quality, intraday_range_pct}]
-    - skipped_tickers: list (no data, bad quality, etc.)
-    
-    Rate Limiting: 0.8s/Ticker + 12s/30er-Batch
-    Data Quality: 3 Levels (high/medium/low)
-    """
+    price_provider: DataProvider,
+    earnings_provider: DataProvider,
+    conn,
+    date: str,
+    run_type: str,
+) -> tuple[list[dict], int, dict[str, dict]]:
+    """Returns: (ok_data, skipped_count, sidecar)"""
+```
+
+| Pass | Funktion | Was passiert |
+|---|---|---|
+| **1a Gate** | `_gate_phase()` | wirft dauerhaft deaktivierte Ticker heraus, **bevor** ein API-Call fällt. Die Bar-Zählung bleibt bewusst draussen (Spec § 18.1a): sie sitzt hinter `_fill_price_gaps()`, sonst fielen Ticker heraus, die nach dem Nachladen genug Bars hätten. Rohstoffe und Krypto sind von der Deaktivierung ausgenommen (§ 6.1) — nur WARNING statt Rauswurf |
+| **1b Sweep** | `_sweep_phase()` | **ein** Batch-Call für die Live-Kurse aller Survivors. Provider ohne Batch-Unterstützung werfen `NotImplementedError`, der Sweep fängt das ab und liefert ein leeres Dict — dann fällt jeder Ticker auf seinen letzten finalen Close zurück, **keiner wird deswegen übersprungen**. Über 20 % Survivors ohne Live-Kurs → WARNING |
+| **1c/1d** | `_process_ticker()` | Indikatoren aus den letzten 220 DB-Bars, Technik-Signal, Fundamentals **nur aus dem Cache**. Übernimmt den Sweep-Kurs statt selbst anzufragen |
+
+**Der dritte Rückgabewert ist der Sidecar** — ein Dict `ticker → {premarket_change_pct,
+tech_direction, tech_agreement, tech_adx_band, tech_strength}`. Er existiert, weil `td`
+unverändert in vier Claude-Prompts serialisiert wird; s. „Sidecar-Invariante" unten und
+CLAUDE.md.
+
+```python
+def fetch_missing_fundamentals(tickers, earnings_provider, conn, date) -> ...
+    """Phase 2b: holt Fundamentals für Kandidaten mit Cache-Miss nach.
+    Gebaut (Task 7), noch NICHT verdrahtet — das ist Task 10."""
 ```
 
 **Invarianten:**
-- Mindestens 20 Zeilen historische Daten pro Ticker
+- Mindestens 20 Zeilen historische Daten pro Ticker (`MIN_BARS_RSI`)
 - `intraday_range_pct` = (High - Low) / Close × 100 (letzte 5 Tage)
 - `above_sma200` = (Price - SMA200) / SMA200 × 100
 - RSI-14, MACD, ATR berechenbar (oder `data_quality=low`)
+- **Phase 1 ist Finnhub-frei:** `fundamentals_cache` wird nur gelesen, 0 Calls.
+  `get_earnings_calendar()` kommt im Tageslauf nicht mehr vor, `earnings_beat_pct` ist
+  dort dauerhaft `None`. `earnings_next_date` liegt als ISO-Datum im Cache,
+  `earnings_in_days` wird beim Lesen gerechnet
+- ⚠️ **Sidecar-Invariante:** neue Werte gehören **nie** in `td`. `td` wird in
+  `quick_filter`, `deep_analysis`, `commodities_crypto` und über `main.py`s `snapshots`
+  auch `portfolio_check` `json.dumps`'t — ein zusätzlicher Schlüssel ändert stillschweigend
+  vier Prompts. Die 29 Plan-1-Indikatoren liegen deshalb in `extra_indicators` und kommen
+  erst unmittelbar vor `_persist_indicators()` dazu; ein Test pinnt die Schlüsselmenge
 
 ---
 
@@ -376,7 +404,12 @@ def collect_sector_momentum(conn, date, run_type, price_provider) -> dict[int, d
 
 ---
 
-### 3. **`src/quick_filter.py`** (Phase 2)
+### 3. **`src/quick_filter.py`** (Phase 2) — ⏳ wird ersetzt
+
+⚠️ **Dieses Modul ist auf dem Weg hinaus.** Sprint 3C / Plan 2 tauscht es gegen
+`broad_scan.py` + Cutoff (s. Modul 3b). Der Nachfolger ist gebaut, die Umschaltung ist
+**Task 10** und noch nicht erfolgt: `main.py:378` ruft weiterhin `quick_filter_batch()`.
+Bis dahin gilt die Beschreibung unten unverändert.
 
 Batch-Scoring ohne Web-Search (reduziert auf Top 80).
 
@@ -399,6 +432,51 @@ def quick_filter_batch(
 ```
 
 **Fail-Verhalten:** `QuickFilterError` → skip Batch, continue mit nächstem.
+
+---
+
+### 3b. **`src/broad_scan.py`** (neu, Sprint 3C / Plan 2, Task 8 — ⏳ noch nicht verdrahtet)
+
+Der Nachfolger von Phase 2: **ein** Sonnet-Call **mit Websuche** über alle
+Phase-1-Überlebenden, statt eines Haiku-Calls ohne Websuche. Er liefert pro Ticker eine
+zählbare Nachrichtenstärke — **keine Richtung und keine „lohnt sich"-Einschätzung.**
+
+```python
+def broad_scan_batch(ticker_datas, sidecar, trend_context, market_context,
+                     policy_context, cost_tracker) -> dict[str, dict]:
+    """→ {ticker: {news_strength: 0-3, news_note: str}}"""
+```
+
+| `news_strength` | Bedeutung |
+|---|---|
+| 0 | keine Auffälligkeit |
+| 1 | am Rande erwähnt |
+| 2 | klarer Einzelticker-Katalysator |
+| 3 | marktbewegend |
+
+**Entscheidungen, die nicht aus dem Code folgen:**
+- Die Nutzlast wird **explizit aus acht Feldern gebaut** (sieben aus `td`,
+  `premarket_change_pct` aus dem Sidecar), nicht aus `td` gedumpt — die 19 unbeteiligten
+  `td`-Felder bleiben draussen.
+- **`news_note` ist Pflicht ab Stärke 1.** Fehlt der Beleg, setzt der Code die Stärke auf
+  0: eine Stärke ohne Beleg ist nicht überprüfbar. Dasselbe für Werte ausserhalb 0–3,
+  Nachkommaanteile und `bool` — sie werden auf 0 gezogen, nicht geklemmt.
+- **Kein `technical_flag` vom Modell.** Das Technik-Signal ist Mathematik über
+  `price_history`, kostet nichts und liegt für jeden Ticker vor; Sonnets Einschätzung
+  derselben Zahlen wäre teurer, ungenauer und eine zweite Wahrheit für dieselbe Grösse.
+- Ein **unparsebarer** Scan degradiert den ganzen Batch auf `news_strength=0` statt zu
+  werfen (Spec § 10) — ein einzelner fehlender Ticker ebenso.
+- ⚠️ `MAX_TOKENS = 24000`, und eine WARNING feuert bei Nähe zur Grenze. Ohne sie wäre ein
+  wegen Kappung auf 0 degradierter Batch im Log nicht von einem echten ruhigen
+  Nachrichtentag zu unterscheiden. Der begrenzende Faktor ist der 600-s-Client-Timeout,
+  **nicht** ein SDK-Guard — den gibt es in `anthropic==0.42.0` nicht.
+
+⏳ **Was noch fehlt:** `cutoff_candidates()` + Tabelle `cutoff_log` (Task 9), dann die
+Verdrahtung in `run_pipeline()` (Task 10). Cutoff-Regel laut Spec § 4.7:
+`news_strength ≥ 1 ODER tech_strength ≥ TECH_MIN_FOR_DEEP` (= 2), Sortierung
+`(news_strength, |premarket_change_pct|, tech_strength, ticker)`, Schnitt bei
+`MAX_DEEP_ANALYSIS` (50). Die Rohstoffe/Krypto umgehen Scan, Cutoff und 2b komplett
+(§ 18.3), Pflicht-Kandidaten aus Phase 1e stehen vorn und zählen gegen den Deckel.
 
 ---
 
@@ -914,7 +992,8 @@ Versionssuffix:
 |---|---|
 | `trend_analyzer` | `trend_analyzer_v1.txt` |
 | `market_context` | `market_context_v1.txt` |
-| `quick_filter` | `quick_filter_v1.txt` |
+| `quick_filter` | `quick_filter_v1.txt` — ⏳ entfällt mit Plan 2, Task 10 |
+| `broad_scan` | `broad_scan_v1.txt` — vorhanden, ⏳ noch nicht verdrahtet |
 | `deep_analysis` | `deep_analysis_v1.txt`, `policy_monitor_v1.txt` |
 | `commodities_crypto` | `commodities_crypto_v1.txt` |
 | `portfolio_check` | **`portfolio_check_v2.txt`** |
@@ -949,16 +1028,24 @@ class CostTracker:
 
 **Hard Cap Logik in main.py:**
 ```python
+current_phase = "..."           # wird durch den try-Block mitgeführt
 try:
     phases_1_to_4(cost_tracker)
 except CostCapExceeded as e:
-    cost_tracker.aborted_at_phase = "policy_monitor"  # placeholder
-    send_partial_email(cost_summary={"aborted_at_phase": ...})
+    send_partial_email(cost_summary={"aborted_at_phase": current_phase})
 ```
+✅ Seit `7c4c311` (Bug B-05) steht dort die **echte** Phase: `run_pipeline()` führt
+`current_phase` mit, der `except`-Zweig liest sie. Das frühere
+`_guess_aborted_phase()` gab immer `"policy_monitor"` zurück und liess die
+Kosten-Abbruch-Mail systematisch auf die falsche Phase zeigen.
 
 ---
 
 ## Data Flow: Ein Beispiel
+
+⚠️ **Illustration aus Sprint 1, keine Messung.** Die Zahlen stammen aus der
+500-Ticker-Hochrechnung von damals; echte gemessene Läufe stehen in PROJECT_STATUS
+(P2.10, P2.12: 20 Ticker, 3,13 bzw. 3,92 EUR). Der Ablauf stimmt, die Mengen nicht.
 
 ```
 heute = 2026-05-20, run_type = "close"
@@ -978,10 +1065,12 @@ heute = 2026-05-20, run_type = "close"
 
   ↓
 [Phase 2] quick_filter_batch()
-  → Haiku × 17 Calls (30er-Batches)
-  ← 500 Ergebnisse (scores + exclude-Flag)
-  → Filter: Top 80 long, Top 80 short
+  → 1 Haiku-Call über ALLE Ticker (nicht 30er-Batches: BATCH_SIZE_QUICK ist tot)
+  ← Ergebnisse (scores + exclude-Flag)
+  → KEIN Deckel — MAX_DEEP_ANALYSIS wird nicht gelesen, nur exclude filtert
   ✓ costs ~0.15 EUR
+  ⏳ Zielzustand nach Plan 2, Task 10: broad_scan_batch() (1 Sonnet + Websuche)
+     → cutoff_candidates() → ≤ MAX_DEEP_ANALYSIS = 50
 
   ↓
 [Phase 3] run_policy_monitor()
@@ -1061,9 +1150,11 @@ TOTAL: ~3.50 EUR
 13. **Ladefenster ≥ längster Indikator + Reserve** – `load_price_history_from_db()` muss
     mindestens die Länge des längsten Indikators tragen, aktuell **220** Bars (SMA200
     braucht 200; die 20 Bars Reserve verhindern, dass der Wert an einer einzigen
-    fehlenden Bar hängt). ⚠️ `GAP_SCAN_BARS` in `data_collector.py` bleibt bewusst bei
-    **200** — die Lückenprüfung und das Indikator-Ladefenster sind seit 2026-08-12 zwei
-    verschiedene Zahlen, s. PROJECT_STATUS C.6
+    fehlenden Bar hängt). ✅ **`GAP_SCAN_BARS` trägt seit Plan 2, Task 3 (`da4cab1`)
+    ebenfalls 220** — Lückenprüfung und Ladefenster sind wieder **eine** Zahl. Bei 200
+    gegen 220 war eine Lücke auf Bar 201–220 unsichtbar, verzerrte aber SMA200. Die
+    Anhebung ändert die Ticker-Auswahl (mehr erkannte Lücken → mehr Nachladeversuche,
+    ggf. mehr Skips) und war deshalb in Plan 1 nicht erlaubt, s. PROJECT_STATUS C.6/C.7
 
 ---
 
@@ -1167,7 +1258,7 @@ Aus der Ursachenanalyse der leeren Läufe vom 2026-08-04 (PROJECT_STATUS P2.4/P2
 | **neu** `.github/workflows/bootstrap-db.yml` | einmaliger Backfill der CI-DB, nur `workflow_dispatch`, teilt die `concurrency`-Gruppe mit `analyze.yml` |
 | `main` | Historien-Guard am CLI-Einstieg — Abbruch bei zu dünner Datenlage, bevor Kosten entstehen. Ausgenommen `final_close`, `close`, `weekly` |
 | `data_collector` | `_skip()` loggt jeden Skip mit Grund; `collect()` gibt die Verteilung gebündelt aus (D1) |
-| `data_collector` | Lückenerkennung prüft den gesamten jüngsten Abschnitt (`GAP_SCAN_BARS = 200`) statt nur `MAX(date)`. ⚠️ Innenliegende Lücken erst ab **zwei** aufeinanderfolgenden Handelstagen — einzelne fehlende Wochentage sind US-Feiertage |
+| `data_collector` | Lückenerkennung prüft den gesamten jüngsten Abschnitt (`GAP_SCAN_BARS = 220`, deckungsgleich mit dem Ladefenster) statt nur `MAX(date)`. ⚠️ Innenliegende Lücken erst ab **zwei** aufeinanderfolgenden Handelstagen — einzelne fehlende Wochentage sind US-Feiertage |
 | `ranking` | Enthaltungen (`direction='none'`) werden gezählt und in der Phase-4-Zeile mitgeführt, bleiben aber **kein** Reject (D2); ein Lauf ohne Prediction warnt von sich aus (D3) |
 | `db` | `skip_reason_counts()` — Skip-Gründe eines Laufs, gruppiert auf der Art des Grundes |
 | `historical_loader` | schreibt den laufenden Tag nicht mehr (fiel bei Krypto auf, das durchgehend handelt) |

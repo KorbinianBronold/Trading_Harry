@@ -1,5 +1,9 @@
 # Preismodell: drei Entscheidungs-Snapshots + finale Tages-OHLC — Implementation Plan
 
+> ⚠️ **HISTORISCH — abgeschlossen 2026-08-07, 11 Tasks / 13 Commits; `final_close` live
+> verifiziert 2026-08-08.** Nicht als Ist-Zustand lesen und nicht mehr bearbeiten.
+> Aktueller Stand: `docs/superpowers/specs/PROJECT_STATUS.md`, Abschnitt **P3**.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** `price_history` enthält nur noch finale Tagesbars und hat genau einen Schreiber; Entscheidungskurse wandern als drei eigene Spalten in `predictions`; die Auswertung läuft auf finalen Daten ab dem Signal-Zeitpunkt.

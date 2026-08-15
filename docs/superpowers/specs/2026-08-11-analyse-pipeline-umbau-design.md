@@ -1,7 +1,17 @@
 # Analyse-Pipeline-Umbau — Design
 
-**Status:** 📋 Spezifikation, Implementierung offen
+**Status:** 🟡 **Spezifikation gültig, Umsetzung teilweise erfolgt** (Stand 2026-08-15)
 **Erstellt:** 2026-08-11
+
+- **Plan 1 (Fundament)** ✅ abgeschlossen — 17 Indikatoren, Technik-Signal, Schema.
+  Keine Verhaltensänderung. PROJECT_STATUS **C.6**
+- **Plan 2 (Trichter)** 🟡 8 von 13 Tasks — § 4.3 (Sammelabruf), § 4.4/4.5 (Phase 1
+  zerlegt, Technik-Signal im Sidecar), § 4.6 (`broad_scan.py`, **nicht verdrahtet**),
+  § 18.1b–d (Fundamentals/Earnings) sind umgesetzt. **Offen:** § 4.7 (Cutoff +
+  `cutoff_log`, `TECH_MIN_FOR_DEEP`), die Verdrahtung, § 8 (Finnhub-Ratenbegrenzung,
+  Wochen-Vorlauf). PROJECT_STATUS **C.7**
+- **Plan 3 (Analyse & Ranking)** ⏳ offen — § 4.8 (Batch-Tiefenanalyse), § 5 (`rank_score`),
+  Prompts v2. **Hier sitzt der Kostenhebel** (§ 13.2: 0,034 statt 0,12 EUR je Ticker)
 **Betrifft:** Phasen 1c/2/3 sowie Ranking und Scoring in `pre_market`
 **Nicht betroffen:** Preismodell und Snapshots, `final_close`, Evaluator, Cron-Struktur,
 DB-Persistenz, R/R- und VIX-Logik, CFD-Eignungsregeln, Mail-Versandmechanik
@@ -1013,7 +1023,7 @@ sie werden **immer** tief analysiert. Plan 2 implementiert § 6.1–6.3:
 | # | Punkt | Wann |
 |---|---|---|
 | ~~1~~ | ~~Akzeptiert `/api/v1/markets` eine `epics=`-Liste?~~ | ✅ **beantwortet 2026-08-12** — ja, Chunks zu 20 (§ 4.3.1) |
-| 1a | Liefert `marketDetails` auch `offer` (Spread)? | bei der Umsetzung des Sweeps in Plan 2 |
+| 1a | Liefert `marketDetails` auch `offer` (Spread)? | ⏳ **nach Task 4 weiterhin offen** — die Sonde prüft es (`probe_epics_batch.py:144-147`), ein Ergebnis ist nirgends protokolliert, `get_premarket_prices_batch()` liest nur `bid`. Lauf mit `--run-live` nachzuholen |
 | 2 | Endgültige Batch-Grösse der **Tiefenanalyse** | nach dem Testlauf |
 | 3 | `TECH_MIN_FOR_DEEP` | nach dem Testlauf, gegen echte Verteilungen |
 | 4 | Plausibilität von `rank_score` | Testlauf |

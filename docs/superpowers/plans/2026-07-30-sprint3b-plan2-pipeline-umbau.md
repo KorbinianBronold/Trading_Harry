@@ -1,5 +1,9 @@
 # Sprint 3B / Plan 2: Pipeline-Umbau (Cron, trade_proposals, Checks, Mails)
 
+> ⚠️ **HISTORISCH — abgeschlossen 2026-08-04, alle 20 Tasks; live verifiziert bis
+> 2026-08-15.** Nicht als Ist-Zustand lesen und nicht mehr bearbeiten. Aktueller Stand:
+> `docs/superpowers/specs/PROJECT_STATUS.md`, Abschnitte **P2.2–P2.13**.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Die Pipeline auf die Ziel-Cron-Struktur umbauen — `midday`, `evaluate` und `position_check` entfernen, den neuen Run-Type `trade_proposals` (16:10 Berlin) einführen, die sieben B.3-Checks verdrahten, Phase 1c und die getauschte Phase-4/4a-Reihenfolge einbauen und die Mails nachziehen.

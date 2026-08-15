@@ -1,6 +1,17 @@
 # PROJECT_STATUS.md — Shares_Future (Trading_Harry)
 
-**Zuletzt aktualisiert:** 2026-08-15 — **Die Live-Verifikation von Plan 2 ist abgeschlossen.**
+**Zuletzt aktualisiert:** 2026-08-15 — **Doku-Abgleich gegen das echte Repo.**
+Der Stand von **Plan 2 des Analyse-Pipeline-Umbaus (Trichter)** stand in keinem Dokument:
+**8 der 13 Tasks sind committed und gepusht** (Vorfixes, Batch-Kurs-Sweep, Phase-1-Zerlegung,
+Technik-Signal im Sidecar, Fundamentals-Entkopplung, `broad_scan.py`), während Kopf und
+Roadmap weiter „Einstieg ist jetzt Plan 2" sagten. Neu: Abschnitt **C.7** mit Task-Stand,
+den fünf offenen Tasks und sechs Befunden. ⚠️ Der Trichter ist dabei **noch nicht live** —
+`main.py:378` ruft weiterhin `quick_filter_batch()`, erster Verhaltenswechsel ist Task 10.
+⚠️ **Vor Task 10 zu entscheiden:** der Lauf vom 14.08. kostete 3,9217 EUR gegen einen Deckel
+von 4,00 — Task 10 macht den MVP-Lauf teurer, die Ersparnis steckt erst im Phase-3-Batching
+(Plan 3). Details: **C.7**. **707 Tests grün, 91,35 % Coverage.**
+
+Davor, 2026-08-15 — **Die Live-Verifikation von Plan 2 (Sprint 3B) ist abgeschlossen.**
 Am 2026-08-14 liefen `pre_market`, `trade_proposals` und `close` zu den echten Cron-Zeiten
 gegen eine Wegwerf-Kopie. **E3 (Ablösung statt Dublette) und E5 (gedrehte Signale werden
 gemeldet, nicht gehandelt) verhalten sich exakt wie spezifiziert** — 8 Signale, 5 abgelöst,
@@ -17,7 +28,8 @@ Davor, 2026-08-12 — **Plan 1 (Fundament) des Analyse-Pipeline-Umbaus ist
 code-fertig**, Tasks 2–8 committed (Task 9 zieht diese Dokumente nach). 17 Indikatoren
 laufen mit und füllen 29 neue Spalten in `technical_indicators`; das Technik-Signal ist
 berechenbar, steuert aber nichts. **Keine Verhaltensänderung.** 647 Tests grün, Coverage
-93,32 %. Details: Abschnitt **C.6**. Einstieg ist jetzt Plan 2 (Trichter).
+93,32 %. Details: Abschnitt **C.6**. (Plan 2 hat darauf aufgesetzt und ist zu 8 von 13
+Tasks umgesetzt — s. **C.7**, nicht mehr „Einstieg".)
 ⚠️ Der abschliessende Ganz-Branch-Review fand die Verhaltensänderungs-Garantie zunächst
 gebrochen vor (29 neue Werte liefen in vier Claude-Prompts mit) plus einen strukturellen
 `ichi_chikou`-Bug — Fix-Wave-Details unten in C.6.
@@ -143,7 +155,7 @@ Einen Branch `sprint3b/plan2-pipeline-umbau` gibt es weder lokal noch remote.
 | 3A | Roadmap + Doku aktualisieren | ✅ erledigt (dieses Dokument) |
 | 3B | Cron-Struktur + Pipeline-Umbau | 🟢 **Code vollständig, Live-Verifikation abgeschlossen** — Plan 1 (2026-07-29) und Plan 2 (20/20 Tasks, 2026-08-04), alles auf `main`. Verifiziert: `pre_market`, `close`, `final_close` (P2.10, P3.5) und **`trade_proposals` inkl. E3/E5 (2026-08-14, P2.12)**. ⏳ Offen: `weekly`, `bootstrap-db`-Lauf, dann Reaktivierung von `analyze.yml` |
 | **3B-M** | **Mail-Provider-Wechsel (Zwischensprint)** | ✅ **ABGESCHLOSSEN 2026-07-30** — Mailversand läuft über **Resend**, eigene Domain verifiziert, Zustellung live bestätigt. Details s. unten |
-| 3C | Ranking-Überarbeitung | 🟢 **Plan 1 (Fundament) code-fertig, keine Verhaltensänderung.** C.1–C.4 sind in den Analyse-Pipeline-Umbau aufgegangen; Plan 2 (Trichter) und Plan 3 (Analyse & Ranking) offen — s. C.6 |
+| 3C | Ranking-Überarbeitung | 🟡 **Plan 1 (Fundament) abgeschlossen** (C.6, keine Verhaltensänderung) · **Plan 2 (Trichter) zu 8 von 13 Tasks** — Trichter noch nicht verdrahtet, s. **C.7** · Plan 3 (Analyse & Ranking) offen. C.1–C.4 sind in den Analyse-Pipeline-Umbau aufgegangen |
 | 3D | Learning Modul | ⚠️ **Platzhalter — Planungssession ausstehend** |
 | 3E | Human-in-the-Loop | ⚠️ **Platzhalter — Planungssession ausstehend** |
 | 3F | Volle 500-Ticker-Skalierung | ⚠️ **Platzhalter — Planungssession ausstehend** |
@@ -1584,7 +1596,9 @@ die zwei Signale und das Ranking gemeinsam neu fasst:
 
 - **Spec:** `docs/superpowers/specs/2026-08-11-analyse-pipeline-umbau-design.md`
 - **Plan 1 (Fundament):** `docs/superpowers/plans/2026-08-11-analyse-pipeline-plan1-fundament.md`
-- Plan 2 (Trichter) und Plan 3 (Analyse & Ranking) folgen
+- **Plan 2 (Trichter):** `docs/superpowers/plans/2026-08-13-analyse-pipeline-plan2-trichter.md`
+  — 8 von 13 Tasks umgesetzt, s. **C.7**
+- **Plan 3 (Analyse & Ranking):** offen, noch keine Plan-Datei
 
 Die Spec ersetzt C.1 (fehlende Indikator-Werte — jetzt Teil des `predictions`-Umbaus),
 C.2 (kombinierter Score — jetzt `rank_score` aus zwei zählbaren Signalen), C.3
@@ -1621,7 +1635,10 @@ nur **acht Ausnahmen** (Gold, Silber, Öl, die vier Krypto-Paare, BRK-B). US-Lar
 bei Capital.com 1:1 ihr Tickersymbol. Für die Chunk-Bildung heisst das: `_map()` gilt
 uniform, kein Sonderweg nötig.
 
-⏳ **Offen für Plan 2:** liefert `marketDetails` neben `bid` auch `offer`? Falls ja, fällt
+⏳ **Weiterhin offen, auch nach Task 4 (Stand 2026-08-15):** liefert `marketDetails` neben
+`bid` auch `offer`? Die Sonde prüft es inzwischen (`probe_epics_batch.py:144-147`), aber ein
+Ergebnis ist nirgends protokolliert, und `get_premarket_prices_batch()` liest ausschliesslich
+`bid` — s. C.7, Befund 5. Ursprüngliche Notiz: falls ja, fällt
 der Spread beim Sweep kostenlos mit ab und der 2b-Punkt „spread-bereinigtes R/R" wird
 deutlich billiger. Kostet bei der Implementierung einen Blick in die Rohantwort.
 
@@ -1658,6 +1675,8 @@ Bar 201–220 liegt, ist für die Lückenprüfung damit unsichtbar, verzerrt abe
 SMA200. Eine Anhebung von `GAP_SCAN_BARS` würde ändern, welche Ticker wegen Datenqualität
 übersprungen werden — eine Verhaltensänderung, die Plan 1 explizit nicht anfassen darf
 (s. Kommentar an der Konstanten, `src/data_collector.py`). Liegt bei Plan 2.
+✅ **Eingelöst in Plan 2, Task 3** (`da4cab1`): `GAP_SCAN_BARS = 220`. Es ist damit die eine
+bewusste Verhaltensänderung vor Task 10 — s. C.7, Befund 1.
 
 Nach Task 9 gilt: der Stand ist gefahrlos einspielbar, kein einziges Pipeline-Verhalten
 hat sich geändert. Plan 2 (Trichter) setzt darauf auf.
@@ -1683,6 +1702,93 @@ den der Chikou-Span den heutigen Kurs tatsaechlich vergleicht. Der bisherige Tes
 
 Nach diesem Fix-Wave: 647 Tests (+1), 93,32 % Coverage — beide Befunde behoben, ohne dass
 Plan 1 seine Nichtangriffsgarantie fuer das Pipeline-Verhalten verliert.
+
+---
+
+### C.7 — Analyse-Pipeline-Umbau, Plan 2 (Trichter) 🟡 8 von 13 Tasks
+
+Spec: `docs/superpowers/specs/2026-08-11-analyse-pipeline-umbau-design.md` (§ 4.2–4.8, § 18)
+Plan: `docs/superpowers/plans/2026-08-13-analyse-pipeline-plan2-trichter.md`
+
+**Stand 2026-08-15**, gegen das echte Repo geprüft: alles auf `main`, Arbeitsbaum clean,
+`origin/main` == lokal. **707 Tests grün, 14 skipped, 91,35 % Coverage** (`--cov=src`).
+
+⚠️ **Der Trichter ist noch nicht live.** `src/broad_scan.py` existiert samt Prompt und
+Tests, ist aber **nicht verdrahtet**: `main.py:21` importiert und `main.py:378` ruft
+weiterhin `quick_filter_batch()`. Der erste echte Verhaltenswechsel ist **Task 10**.
+
+| Task | Commit(s) | Was landete |
+|---|---|---|
+| 1 | `086d49a` | ADX-Grenzwerte gepinnt: `_adx_band()` nutzt geschlossene Intervalle (≤/≥), vier Randwert-Tests (20,0 → weak, 25,0 → strong). Derselbe Commit trägt die Plan-Datei selbst |
+| 2 | `aa2f222` | `cache_hit_rate = cache_read / (cache_read + cache_creation)`. Die alte Formel teilte durch `input_tokens` — das ist bereits der ungecachte Rest, die Rate konnte über 1 gehen |
+| 3 | `da4cab1` | `GAP_SCAN_BARS` 200 → 220, deckungsgleich mit dem Ladefenster aus Plan 1 Task 4 |
+| 4 | `4801a63`, `a242d32` | `CapitalComProvider.get_premarket_prices_batch()`: `/markets?epics=` in 20er-Chunks statt eines GET je Ticker, dreistufige 429-Notbremse (getakteter Modus → Chunk-Skip → Abbruch nach fünf 429 in Folge). `base.py` bekommt die Methode als **nicht**-abstrakte Default-Implementierung, damit `FinnhubProvider` nicht ohne Nutzen bricht |
+| 5 | `aea3656`, `03354bb` | `collect()` läuft in drei Pässen: `_gate_phase()` (deaktivierte Ticker, Rohstoffe/Krypto ausgenommen — § 6.1), `_sweep_phase()` (ein Batch-Call für alle Überlebenden), `_process_ticker()` (übernimmt den Sweep-Kurs statt selbst anzufragen). Fehlender Live-Kurs fällt auf den letzten finalen Close zurück (WARNING, kein Skip), `premarket_change_pct` bleibt dabei `None` statt einer erfundenen 0. **Rückgabe ist jetzt ein 3-Tupel** `(results, skipped, sidecar)` |
+| 6 | `8351e31` | `technical_signal.compute()` liest `{**td, **extra_indicators}`; die vier Werte (`tech_direction`, `tech_agreement`, `tech_adx_band`, `tech_strength`) gehen in den **Sidecar**, nie in `td` |
+| 7 | `f545901`, `7165bf5` | Phase 1 liest `fundamentals_cache` **nur noch** (0 Finnhub-Calls); das Nachladen sitzt in `fetch_missing_fundamentals()` (Phase 2b, gebaut, noch nicht verdrahtet). `earnings_next_date` wird als ISO-Datum gecacht statt als relative Tageszahl (§ 18.1d), `earnings_in_days` beim Lesen gerechnet, ein Termin in der Vergangenheit liefert `None`. `get_earnings_calendar()` ist aus dem Tageslauf verschwunden, `earnings_beat_pct` dort dauerhaft `None` |
+| 8 | `b861b48`, `b902b23`, `9a7cd1f` | `src/broad_scan.py` + `prompts/broad_scan_v1.txt`: ein Sonnet-Call mit Websuche über alle Phase-1-Überlebenden, je Ticker `news_strength` (0–3) + `news_note`. Nutzlast wird aus **acht** Feldern gebaut statt `td` zu dumpen — die 19 unbeteiligten `td`-Felder bleiben draussen. Ein unparsebarer Scan degradiert den ganzen Batch auf `news_strength=0` statt zu werfen (§ 10) |
+
+#### Was noch fehlt — Tasks 9–13, im Code verifiziert
+
+| Task | Fehlt konkret |
+|---|---|
+| 9 | Kein `cutoff_log` (Tabelle + Migration), kein `cutoff_candidates()`. **`TECH_MIN_FOR_DEEP` existiert nirgends im Code** — Spec § 4.7 setzt 2 |
+| 10 | `main.py:378` ruft `quick_filter_batch()`; kein Interim-Adapter in `deep_analysis.py`. `config.py:254-255` trägt unverändert `MAX_DEEP_ANALYSIS = 80` und das tote `BATCH_SIZE_QUICK = 30` |
+| 11 | Keine Ratenbegrenzung in `finnhub_provider.py` |
+| 12 | Kein Fundamentals-Vorlauf in `run_weekly()` |
+| 13 | Dieser Abschnitt (jetzt geschrieben), CLAUDE.md- und ARCHITECTURE-Nachtrag |
+
+Danach: Abschluss-Review über `c978d70..HEAD`, Testlauf mit Kostenmessung gegen Spec
+§ 13.2, dann Plan 3 (Analyse & Ranking).
+
+#### Befunde
+
+**1. ⚠️ Task 3 ist die eine bewusste Ausnahme von „keine Verhaltensänderung bis Task 10".**
+`GAP_SCAN_BARS` 200 → 220 **ändert die Ticker-Auswahl**: mehr erkannte Lücken heisst mehr
+Nachladeversuche und damit potenziell mehr Skips. Genau deshalb durfte es nicht in Plan 1
+(s. C.6, letzter ⚠️-Absatz) — dort war die Nichtangriffsgarantie bindend. Global Constraint 2
+des Plans ist damit für Tasks 1–2 und 4–8 wahr, für Task 3 bewusst nicht.
+
+**2. ⚠️ Der Kostendeckel ist vor Task 10 zu klären.** Der Lauf vom 2026-08-14 kostete
+**3,9217 EUR** gegen `MAX_COST_PER_RUN_EUR = 4.00` (`config.py:282`) — 8 Cent Luft.
+Task 10 tauscht den billigen Haiku-Quick-Filter gegen einen Sonnet-Call **mit Websuche**;
+bei 20 MVP-Tickern greift `MAX_DEEP_ANALYSIS = 50` nicht, Phase 3 bleibt bei 20 Einzelcalls
+à ~0,12 EUR. **Plan 2 macht den MVP-Lauf also teurer, nicht billiger** — die Ersparnis
+steckt im Phase-3-Batching (§ 13.2: 0,034 statt 0,12 EUR je Ticker), und das ist Plan 3.
+Entweder den Deckel anheben oder das Batching vorziehen; sonst läuft der erste Testlauf
+nach Task 10 mit realistischer Chance in `CostCapExceeded`.
+
+**3. Der Zwischen-Review nach Task 8 hat gegriffen** — zwei Befunde, beide gefixt:
+- `MAX_TOKENS` war mit einer **falschen Begründung** gedeckelt: der Kommentar behauptete
+  einen SDK-seitigen `ValueError`-Guard gegen grosse `max_tokens` bei Non-Streaming-Requests,
+  den es im gepinnten `anthropic==0.42.0` nachweislich nicht gibt. Das reale Risiko ist der
+  600-s-Default-Timeout. 16000 → 24000, dazu eine WARNING bei Nähe zur Grenze — sonst ist ein
+  wegen Kappung auf `news_strength=0` degradierter Batch im Log nicht von einem echten ruhigen
+  Nachrichtentag zu unterscheiden (`b902b23`). Im Prompt zugleich „3–6" → „3–5" Websuchen
+  korrigiert, weil `WEB_SEARCH_TOOL` bei `max_uses=5` deckelt.
+- `news_strength` wurde nur auf *numerisch* geprüft, nie auf den **Wertebereich**: 7 oder −2
+  liefen durch. Werte ausserhalb 0–3 und Nachkommaanteile werden jetzt auf 0 gezogen (nicht
+  geklemmt), `bool` gilt als Typfehler (`9a7cd1f`). Relevant genau für Task 9, das nach
+  `news_strength` sortiert.
+
+**4. Ein Review-Fund zu Task 7, der zwei Ablauf-Rhythmen betraf.**
+`save_fundamentals_cache()` ist ein `INSERT OR REPLACE` der **ganzen** Zeile. Da
+`get_fundamentals()` nie ein `earnings_next_date` liefert (das kommt vom Wochenjob, Task 12),
+löschte ein Refresh wegen abgelaufener Fundamentals-TTL ein bereits gesetztes Datum.
+Fix bewusst **lokal** in `fetch_missing_fundamentals()` statt als COALESCE-Semantik für alle
+Aufrufer (`7165bf5`).
+
+**5. Spec § 19.1a bleibt unbeantwortet: liefert der Sammelabruf ein `offer`-Feld?**
+Die Sonde prüft es (`setup/probe_epics_batch.py:144-147`), ein Ergebnis ist **nirgends
+protokolliert**, und `get_premarket_prices_batch()` liest ausschliesslich `bid`. Das
+spread-bereinigte R/R aus § 4.3.1 bleibt damit offen — der Lauf mit `--run-live` ist
+nachzuholen, nicht zu vermuten.
+
+**6. Doku-Befund: dieser Abschnitt fehlte, während acht Tasks committed und gepusht waren.**
+Der Kopf dieses Dokuments und CLAUDE.md sagten beide „Einstieg ist jetzt Plan 2" — dasselbe
+Muster, vor dem die zwei Korrekturkästen im Kopf warnen. Nachgezogen am 2026-08-15.
+Nebenbefund im Plan selbst: Global Constraint 2 nennt „Task 9 (broad_scan)" als ersten
+Konsumenten; `broad_scan` ist Task 8, und erster Konsument ist Task 10.
 
 ---
 

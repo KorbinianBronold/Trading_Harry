@@ -1,7 +1,7 @@
 # Sprint 3B / Plan 2 — Pipeline-Umbau (Design)
 
 **Erstellt:** 2026-07-30
-**Status:** Spezifikation — Implementierung folgt über eine eigene Plan-Datei unter `docs/superpowers/plans/`
+**Status:** ✅ **umgesetzt und live verifiziert** — Plan `…/plans/2026-07-30-sprint3b-plan2-pipeline-umbau.md`, 20 von 20 Tasks, alles auf `main`. `pre_market`, `trade_proposals` (inkl. E3/E5), `close` und `final_close` sind gelaufen und geprüft. Ist-Stand und Befunde: PROJECT_STATUS **P2.2–P2.13**. ⏳ Nur `weekly` ist zugestellt, aber nie inhaltlich verifiziert
 **Vorgänger:** Sprint 3B / Plan 1 (Fundament, abgeschlossen 2026-07-29), Sprint 3B-M (Resend, abgeschlossen 2026-07-30)
 
 ---
