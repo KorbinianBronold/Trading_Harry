@@ -1,6 +1,6 @@
 # Analyse-Pipeline-Umbau, Plan 2: Trichter — Implementation Plan
 
-**Status:** 🟡 **In Umsetzung — 11 von 13 Tasks committed, Trichter live gemessen (Stand 2026-08-15)**
+**Status:** 🟡 **In Umsetzung — 12 von 13 Tasks committed, Trichter live gemessen (Stand 2026-08-15)**
 **Erstellt:** 2026-08-13
 
 | Task | Stand | Commit(s) |
@@ -15,8 +15,8 @@
 | 8 `broad_scan.py` + Prompt | ✅ | `b861b48`, `b902b23`, `9a7cd1f` |
 | 9 Cutoff + `cutoff_log` | ✅ | `0b4cfe3` |
 | 10 `run_pipeline()` verdrahten | ✅ | `efd341a` |
-| 11 Finnhub-Ratenbegrenzung | ✅ | *(dieser Commit)* |
-| 12 `run_weekly()`-Vorlauf | ⏳ offen | — |
+| 11 Finnhub-Ratenbegrenzung | ✅ | `1ebd247` |
+| 12 `run_weekly()`-Vorlauf | ✅ | *(dieser Commit)* |
 | 13 Doku nachziehen | 🟡 teilweise | PROJECT_STATUS C.7, CLAUDE.md und ARCHITECTURE.md sind gezogen; Modul-Docstrings und die Phasentabelle fehlen |
 
 ⚠️ **Zwei Korrekturen an diesem Plan, gegen den Code geprüft:**
@@ -39,6 +39,13 @@
    als `self._call_times` auf `FinnhubProvider` — instanzgebunden, weil der Wochenlauf
    (Task 12) ohnehin **eine** Instanz über das ganze Universum hält, und weil modulweiter
    State Tests kontaminiert hätte. Details: PROJECT_STATUS C.7, Befund 10.
+5. **Task 12s Skip-Prüfung im Plan-Pseudocode hätte Ticker dauerhaft ohne Earnings-Datum
+   gelassen.** Der Plan überspringt, sobald `get_cached_fundamentals()` irgendetwas
+   zurückgibt — unabhängig davon, ob `earnings_next_date` gesetzt ist. Der häufigste Fall
+   ist aber eine Zeile ohne: Phase 2b (Task 7) legt täglich frische Fundamentals-Zeilen
+   für Kandidaten an, ruft aber laut R15 **nie** `get_earnings_calendar()`. Implementiert:
+   übersprungen wird nur, wenn die Zeile frisch **und** mit gesetztem `earnings_next_date`
+   vorliegt. Details: PROJECT_STATUS C.7, Befund 11.
 
 ✅ **Kostendeckel-Sorge live widerlegt.** Vor Task 10 stand hier die Vermutung, der
 Tausch Haiku-ohne-Websuche gegen Sonnet-mit-Websuche würde den MVP-Lauf über

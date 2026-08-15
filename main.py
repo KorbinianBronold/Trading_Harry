@@ -937,9 +937,57 @@ def run_final_close(date: str, db_path: str) -> None:
     conn.close()
 
 
+def _update_weekly_fundamentals(
+    conn, date: str, provider, universe: list[str] | None = None,
+) -> None:
+    """Wochenlauf-Vorlauf (Sprint 3C / Analyse-Pipeline-Umbau, Plan 2,
+    Task 12; Spec 18.1c): fuellt fundamentals_cache UND earnings_next_date
+    fuer das ganze Universum. get_earnings_calendar() ist bewusst NUR hier --
+    der Tageslauf (data_collector.fetch_missing_fundamentals(), Task 7 / R15)
+    ruft sie nie, das ist die in Spec 18.1c getroffene Aufgabenteilung.
+
+    Ein Ticker mit frischen Fundamentals, aber OHNE earnings_next_date, wird
+    NICHT uebersprungen -- das ist der haeufigste Fall (der Tageslauf hat ihn
+    als Kandidaten nachgeladen, kennt aber keine Earnings) und der Grund,
+    warum die Skip-Pruefung mehr braucht als 'ist gecacht': der Plan-
+    Pseudocode prueft nur Letzteres und haette solche Ticker fuer immer ohne
+    Earnings-Datum gelassen.
+
+    Nicht fatal: ein API-Fehler bei einem Ticker (oder ein leeres Ergebnis --
+    get_fundamentals() faengt eigene Fehler intern ab und liefert dann {})
+    ueberspringt nur diesen, der Lauf macht mit den uebrigen weiter."""
+    updated = skipped = failed = 0
+    for ticker in universe if universe is not None else full_universe():
+        cached = db.get_cached_fundamentals(conn, ticker, today=date)
+        if cached is not None and cached.get("earnings_next_date"):
+            skipped += 1
+            continue
+        try:
+            raw = provider.get_fundamentals(ticker)
+            earnings = provider.get_earnings_calendar(ticker)
+        except Exception as e:
+            log.warning(f"{ticker}: weekly fundamentals failed (non-fatal): {e}")
+            failed += 1
+            continue
+        if not isinstance(raw, dict) or not raw:
+            failed += 1
+            continue
+        if earnings.get("days_to_next") is not None:
+            next_date = (date_cls.fromisoformat(date)
+                        + timedelta(days=earnings["days_to_next"]))
+            raw["earnings_next_date"] = next_date.isoformat()
+        db.save_fundamentals_cache(conn, ticker, raw, fetched_date=date)
+        updated += 1
+    log.info(
+        f"Weekly fundamentals pre-run: {updated} updated, {skipped} already "
+        f"fresh (fundamentals + earnings), {failed} failed"
+    )
+
+
 def run_weekly(date: str, db_path: str) -> None:
     conn = db.connect(db_path)
     db.init_schema(conn)
+    _update_weekly_fundamentals(conn, date=date, provider=FinnhubProvider())
     agg = load_recent_outcomes_aggregate(conn, today=date)
     week_label = "KW" + date_cls.fromisoformat(date).strftime("%V")
     since = (date_cls.fromisoformat(date) - timedelta(days=7)).isoformat()

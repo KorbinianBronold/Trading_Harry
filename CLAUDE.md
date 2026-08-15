@@ -1,13 +1,19 @@
 # Shares_Future – SP500 CFD Research Tool
 
-**Zuletzt aktualisiert:** 2026-08-15 — **Plan 2 (Trichter), Task 11: Finnhub-Ratenbegrenzung.**
-`FinnhubProvider._respect_rate_limit()`: Sliding-Window-Drosselung (60 Calls/60s) vor
-jedem `get_fundamentals()`/`get_earnings_calendar()`-Call. **Instanzgebunden, nicht
-modulweit** wie im Plan-Pseudocode vorgesehen — der Wochenlauf (Task 12) hält eine
-Instanz über das ganze Universum, dieselbe Invariante wie „ein Session-Object pro Run"
-bei Capital.com; modulweiter State hätte ausserdem Tests kontaminiert. Details:
-PROJECT_STATUS **C.7**, Befund 10. **11 von 13 Tasks umgesetzt.** Offen: 12
-(`run_weekly`-Vorlauf), 13 (Doku). **725 Tests grün, 91,52 % Coverage.**
+**Zuletzt aktualisiert:** 2026-08-15 — **Plan 2 (Trichter), Task 12: Wochenlauf-Vorlauf.**
+`main._update_weekly_fundamentals()`, verdrahtet vor dem wöchentlichen Aggregat in
+`run_weekly()`: füllt `fundamentals_cache` **und** `earnings_next_date` fürs ganze
+Universum via `full_universe()`. **Bug-Fix gegenüber dem Plan-Pseudocode:** dessen
+Skip-Prüfung („ist gecacht?") hätte einen vom Tageslauf frisch gecachten Ticker (der laut
+R15 nie Earnings mitbringt) für immer übersprungen und er hätte nie ein Earnings-Datum
+bekommen — die Prüfung verlangt jetzt zusätzlich ein gesetztes `earnings_next_date`.
+Details: PROJECT_STATUS **C.7**, Befund 11. **12 von 13 Tasks umgesetzt** — nur noch
+Task 13 (Doku-Feinarbeit) offen. **733 Tests grün, 91,52 % Coverage.**
+
+Davor, 2026-08-15 — **Plan 2 (Trichter), Task 11: Finnhub-Ratenbegrenzung.**
+`FinnhubProvider._respect_rate_limit()`: Sliding-Window-Drosselung (60 Calls/60s),
+instanzgebunden statt modulweit wie im Plan-Pseudocode. Details: PROJECT_STATUS **C.7**,
+Befund 10.
 
 Davor, 2026-08-15 — **Plan 2 (Trichter), Task 10: Trichter ist live.**
 `main.run_pipeline()` ruft `broad_scan_batch()` + `cutoff_candidates()` +
@@ -295,11 +301,12 @@ und der getroffenen Entscheidungen. Kurzfassung:
     **abgeschlossen, ändert kein Pipeline-Verhalten**: das Technik-Signal ist berechenbar,
     steuert aber nichts. Stand: PROJECT_STATUS **C.6**.
   - **Plan 2 (Trichter)** — `…/plans/2026-08-13-analyse-pipeline-plan2-trichter.md`,
-    **11 von 13 Tasks umgesetzt**, alle auf `main`. ✅ **Der Trichter ist live** —
+    **12 von 13 Tasks umgesetzt**, alle auf `main`. ✅ **Der Trichter ist live** —
     `quick_filter` ist aus `run_pipeline()` verschwunden, `broad_scan` +
     `cutoff_candidates` (`MAX_DEEP_ANALYSIS` 80 → 50) laufen live, gemessen gegen echte
-    Daten: 3,3551 EUR, kein `CostCapExceeded`, güns­tiger als der alte Weg. Offen: Task 12
-    (`run_weekly`-Vorlauf), 13 (Doku), danach Abschluss-Review über `c978d70..HEAD`.
+    Daten: 3,3551 EUR, kein `CostCapExceeded`, güns­tiger als der alte Weg. `run_weekly()`
+    füllt seit Task 12 `fundamentals_cache` + `earnings_next_date` fürs ganze Universum.
+    Offen: Task 13 (Doku), danach Abschluss-Review über `c978d70..HEAD`.
     Stand und zehn Befunde: PROJECT_STATUS **C.7**.
   - **Plan 3 (Analyse & Ranking)** — offen; bringt Phase-3-Batching (der eigentliche
     Kostenhebel: ~0,034 statt ~0,12 EUR je Ticker), `deep_analysis_v2` und `rank_score`.

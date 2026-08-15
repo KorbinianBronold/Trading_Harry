@@ -168,6 +168,8 @@ def test_run_pipeline_partial_email_when_cost_cap_hit(tmp_db_path):
 
 def test_run_weekly_calls_send_weekly_email(tmp_db_path):
     with patch("main.send_weekly_email") as mock_send, \
+         patch("main._update_weekly_fundamentals") as mock_fundamentals, \
+         patch("main.FinnhubProvider"), \
          patch("main.load_recent_outcomes_aggregate",
                return_value={"long_correct": 0, "long_total": 0,
                              "long_avg_pl": 0.0, "short_correct": 0,
@@ -175,6 +177,28 @@ def test_run_weekly_calls_send_weekly_email(tmp_db_path):
                              "total_pl_eur": 0.0, "trades": []}):
         run_weekly(date="2026-05-24", db_path=str(tmp_db_path))
     mock_send.assert_called_once()
+    mock_fundamentals.assert_called_once()
+
+
+# ---------- Sprint 3C / Plan 2, Task 12: Fundamentals/Earnings-Vorlauf ----------
+
+
+def test_run_weekly_runs_the_fundamentals_prerun_before_the_aggregate(tmp_db_path):
+    """Der Vorlauf muss VOR dem woechentlichen Aggregat laufen (Spec 18: er
+    fuellt fundamentals_cache, das das Aggregat/die Mail nicht direkt liest,
+    aber die Reihenfolge aus dem Plan ist bewusst -- Fundamentals zuerst)."""
+    order = []
+    with patch("main.send_weekly_email"), \
+         patch("main._update_weekly_fundamentals",
+               side_effect=lambda *a, **kw: order.append("fundamentals")), \
+         patch("main.FinnhubProvider"), \
+         patch("main.load_recent_outcomes_aggregate",
+               side_effect=lambda *a, **kw: order.append("aggregate") or {
+                   "long_correct": 0, "long_total": 0, "long_avg_pl": 0.0,
+                   "short_correct": 0, "short_total": 0, "short_avg_pl": 0.0,
+                   "total_pl_eur": 0.0, "trades": []}):
+        run_weekly(date="2026-05-24", db_path=str(tmp_db_path))
+    assert order == ["fundamentals", "aggregate"]
 
 
 def test_close_run_does_not_call_claude(tmp_db_path, mocker):
