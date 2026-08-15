@@ -482,3 +482,118 @@ def test_broad_scan_empty_batch_returns_empty_list():
     assert out == []
     assert tracker.input_tokens == 0
     mock_call.assert_not_called()
+
+
+# ---------- cutoff_candidates() (Sprint 3C / Plan 2, Task 9) ----------
+
+from src.broad_scan import cutoff_candidates
+
+
+def _scan(ticker: str, news_strength: int = 0) -> dict:
+    return {"ticker": ticker, "news_strength": news_strength, "news_note": ""}
+
+
+def test_cutoff_sorts_by_news_strength_first():
+    """Bei zwei qualifizierten Kandidaten mit gleichem Tech-Signal entscheidet
+    die Nachrichtenstaerke die Reihenfolge; ein Ticker ohne Nachricht und ohne
+    ausreichendes Tech-Signal qualifiziert gar nicht erst."""
+    ticker_datas = [_td("A"), _td("B"), _td("C")]
+    scans = [_scan("A", news_strength=1), _scan("B", news_strength=0),
+             _scan("C", news_strength=2)]
+    sidecar = {"A": {"tech_strength": 0}, "B": {"tech_strength": 0},
+               "C": {"tech_strength": 0}}
+
+    selected, _ = cutoff_candidates(
+        ticker_datas=ticker_datas, broad_scan_results=scans, sidecar=sidecar,
+        forced_candidates=set(), max_deep_analysis=50,
+    )
+
+    assert [c["ticker"] for c in selected] == ["C", "A"]
+
+
+def test_cutoff_respects_max_deep_analysis():
+    """Deckel bei max_deep_analysis, auch wenn mehr Ticker qualifizieren."""
+    ticker_datas = [_td(f"T{i}") for i in range(100)]
+    scans = [_scan(f"T{i}", news_strength=1) for i in range(100)]
+    sidecar = {f"T{i}": {"tech_strength": 0} for i in range(100)}
+
+    selected, evaluated = cutoff_candidates(
+        ticker_datas=ticker_datas, broad_scan_results=scans, sidecar=sidecar,
+        forced_candidates=set(), max_deep_analysis=50,
+    )
+
+    assert len(selected) == 50
+    assert len(evaluated) == 100
+
+
+def test_cutoff_qualifies_only_news_or_tech():
+    """Kandidat = news_strength >= 1 ODER tech_strength >= TECH_MIN_FOR_DEEP.
+    Ohne beides bleibt ein Ticker draussen, auch wenn er news_strength=0 UND
+    ein schwaches Tech-Signal (1, unter der Schwelle 2) traegt."""
+    ticker_datas = [_td("NEWS_ONLY"), _td("TECH_ONLY"), _td("NEITHER")]
+    scans = [_scan("NEWS_ONLY", news_strength=1), _scan("TECH_ONLY", news_strength=0),
+             _scan("NEITHER", news_strength=0)]
+    sidecar = {
+        "NEWS_ONLY": {"tech_strength": 0},
+        "TECH_ONLY": {"tech_strength": 2},
+        "NEITHER": {"tech_strength": 1},
+    }
+
+    selected, _ = cutoff_candidates(
+        ticker_datas=ticker_datas, broad_scan_results=scans, sidecar=sidecar,
+        forced_candidates=set(), max_deep_analysis=50,
+    )
+
+    assert {c["ticker"] for c in selected} == {"NEWS_ONLY", "TECH_ONLY"}
+
+
+def test_cutoff_forced_candidates_stand_at_front_and_count_against_cap():
+    """Pflicht-Kandidaten aus Phase 1e (offene Positionen) qualifizieren immer,
+    stehen vor jedem regulaeren Kandidaten und zaehlen gegen den Deckel."""
+    ticker_datas = [_td("FORCED"), _td("BEST")]
+    scans = [_scan("FORCED", news_strength=0), _scan("BEST", news_strength=3)]
+    sidecar = {"FORCED": {"tech_strength": 0}, "BEST": {"tech_strength": 0}}
+
+    selected, _ = cutoff_candidates(
+        ticker_datas=ticker_datas, broad_scan_results=scans, sidecar=sidecar,
+        forced_candidates={"FORCED"}, max_deep_analysis=1,
+    )
+
+    assert [c["ticker"] for c in selected] == ["FORCED"]
+
+
+def test_cutoff_missing_premarket_change_pct_sorts_behind_measured_zero():
+    """Spec: premarket_change_pct=None sortiert hinter JEDEM gemessenen Wert --
+    auch hinter einem echten 0%-Wert. Eine Wahrheitswert-Pruefung (`if pct`)
+    wuerde 0.0 faelschlich wie None behandeln (bool(0.0) is False)."""
+    ticker_datas = [_td("ZERO"), _td("NONE")]
+    scans = [_scan("ZERO", news_strength=1), _scan("NONE", news_strength=1)]
+    sidecar = {
+        "ZERO": {"tech_strength": 0, "premarket_change_pct": 0.0},
+        "NONE": {"tech_strength": 0, "premarket_change_pct": None},
+    }
+
+    selected, _ = cutoff_candidates(
+        ticker_datas=ticker_datas, broad_scan_results=scans, sidecar=sidecar,
+        forced_candidates=set(), max_deep_analysis=50,
+    )
+
+    assert [c["ticker"] for c in selected] == ["ZERO", "NONE"]
+
+
+def test_cutoff_all_evaluated_includes_non_selected():
+    """cutoff_log braucht auch die Nicht-Kandidaten -- 3D vergleicht den 51.
+    mit dem 50."""
+    ticker_datas = [_td("IN"), _td("OUT")]
+    scans = [_scan("IN", news_strength=1), _scan("OUT", news_strength=0)]
+    sidecar = {"IN": {"tech_strength": 0}, "OUT": {"tech_strength": 0}}
+
+    selected, evaluated = cutoff_candidates(
+        ticker_datas=ticker_datas, broad_scan_results=scans, sidecar=sidecar,
+        forced_candidates=set(), max_deep_analysis=50,
+    )
+
+    assert {c["ticker"] for c in selected} == {"IN"}
+    assert {e["ticker"] for e in evaluated} == {"IN", "OUT"}
+    out_row = next(e for e in evaluated if e["ticker"] == "OUT")
+    assert out_row["selected"] is False

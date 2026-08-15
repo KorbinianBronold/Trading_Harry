@@ -254,6 +254,13 @@ HOLD_TARGET = "intraday"
 MAX_DEEP_ANALYSIS = 80
 BATCH_SIZE_QUICK = 30
 
+# Sprint 3C / Analyse-Pipeline-Umbau, Plan 2 (Trichter), Spec 4.7: ein Ticker
+# qualifiziert technisch, sobald eine Richtung entsteht (Mehrheit ab zwei
+# Teilindikatoren) UND der Trend nicht als schwach eingestuft ist (der
+# Weak-ADX-Deckel drueckt die Staerke sonst auf 1). Vorlaeufig -- endgueltig
+# nach dem Testlauf gegen echte Verteilungen (Spec 19.3).
+TECH_MIN_FOR_DEEP = 2
+
 # Ticker-Deaktivierung (Sprint 3B / B.7, Entscheidung D3): ein Ticker, der
 # wiederholt keine brauchbaren Daten liefert, wird nach TICKER_MAX_SKIPS Skips
 # deaktiviert und erst nach TICKER_RETRY_AFTER_DAYS Tagen automatisch erneut

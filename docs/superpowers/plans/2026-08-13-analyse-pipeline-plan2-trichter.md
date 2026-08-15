@@ -1,6 +1,6 @@
 # Analyse-Pipeline-Umbau, Plan 2: Trichter — Implementation Plan
 
-**Status:** 🟡 **In Umsetzung — 8 von 13 Tasks committed (Stand 2026-08-15)**
+**Status:** 🟡 **In Umsetzung — 9 von 13 Tasks committed (Stand 2026-08-15)**
 **Erstellt:** 2026-08-13
 
 | Task | Stand | Commit(s) |
@@ -13,7 +13,7 @@
 | 6 Phase 1d Technik-Signal verdrahten | ✅ | `8351e31` |
 | 7 Fundamentals aus Phase 1 lösen | ✅ | `f545901`, `7165bf5` |
 | 8 `broad_scan.py` + Prompt | ✅ | `b861b48`, `b902b23`, `9a7cd1f` |
-| 9 Cutoff + `cutoff_log` | ⏳ offen | — |
+| 9 Cutoff + `cutoff_log` | ✅ | *(dieser Commit)* |
 | 10 `run_pipeline()` verdrahten | ⏳ offen | — |
 | 11 Finnhub-Ratenbegrenzung | ⏳ offen | — |
 | 12 `run_weekly()`-Vorlauf | ⏳ offen | — |
@@ -27,6 +27,13 @@
 2. **Numerierungs-Fehler in Constraint 2:** dort heisst es „Task 9 (broad_scan) ist der
    erste Konsument". `broad_scan` ist **Task 8**, und erster Konsument ist **Task 10**
    (die Verdrahtung). Task 9 ist der Cutoff.
+3. **Task 9s eigener Pseudocode hatte drei Bugs**, alle beim Implementieren gegen den
+   echten Code gefunden und in `cutoff_candidates()` anders gelöst: der separate
+   `tech_signals`-Parameter existiert nicht (liegt im Sidecar aus Task 5/6), die
+   Wahrheitswertprüfung auf `premarket_change_pct` hätte einen echten 0,0-%-Wert wie
+   `None` behandelt, und `rank_position` über `enumerate(all_evaluated)` in **unsortierter**
+   Reihenfolge wäre für den 3D-Vergleich „51. gegen 50." wertlos gewesen. Details:
+   PROJECT_STATUS C.7, Befund 6.
 
 ⚠️ **Vor Task 10 zu entscheiden — Kostendeckel.** Gemessen am 2026-08-14: 3,9217 EUR gegen
 `MAX_COST_PER_RUN_EUR = 4.00`. Task 10 tauscht Haiku ohne Websuche gegen Sonnet **mit**

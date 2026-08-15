@@ -1,15 +1,20 @@
 # PROJECT_STATUS.md — Shares_Future (Trading_Harry)
 
-**Zuletzt aktualisiert:** 2026-08-15 — **Doku-Abgleich gegen das echte Repo.**
+**Zuletzt aktualisiert:** 2026-08-15 — **Plan 2 (Trichter), Task 9: Cutoff + `cutoff_log`.**
+TDD, gegen den echten Sidecar aus Task 5/6 implementiert, nicht gegen den Plan-Pseudocode
+blind übernommen: `config.TECH_MIN_FOR_DEEP = 2`, Tabelle `cutoff_log`,
+`db.log_cutoff()`, `broad_scan.cutoff_candidates()`. Drei Abweichungen vom Plan-Pseudocode
+(Sidecar statt separatem `tech_signals`-Parameter, `is not None` statt Wahrheitswertprüfung
+bei `premarket_change_pct`, `rank_position` über alle sortierten statt unsortierten
+Kandidaten) — Details **C.7**, Befund 6. ⚠️ **Noch nicht in `main.py` verdrahtet** — das
+bleibt Task 10, der erste echte Verhaltenswechsel, vor dem der Kostendeckel zu klären ist
+(3,9217 EUR gegen 4,00 EUR Maximum). **717 Tests grün, 91,44 % Coverage.**
+
+Davor, 2026-08-15 — **Doku-Abgleich gegen das echte Repo.**
 Der Stand von **Plan 2 des Analyse-Pipeline-Umbaus (Trichter)** stand in keinem Dokument:
-**8 der 13 Tasks sind committed und gepusht** (Vorfixes, Batch-Kurs-Sweep, Phase-1-Zerlegung,
+8 der 13 Tasks waren committed und gepusht (Vorfixes, Batch-Kurs-Sweep, Phase-1-Zerlegung,
 Technik-Signal im Sidecar, Fundamentals-Entkopplung, `broad_scan.py`), während Kopf und
-Roadmap weiter „Einstieg ist jetzt Plan 2" sagten. Neu: Abschnitt **C.7** mit Task-Stand,
-den fünf offenen Tasks und sechs Befunden. ⚠️ Der Trichter ist dabei **noch nicht live** —
-`main.py:378` ruft weiterhin `quick_filter_batch()`, erster Verhaltenswechsel ist Task 10.
-⚠️ **Vor Task 10 zu entscheiden:** der Lauf vom 14.08. kostete 3,9217 EUR gegen einen Deckel
-von 4,00 — Task 10 macht den MVP-Lauf teurer, die Ersparnis steckt erst im Phase-3-Batching
-(Plan 3). Details: **C.7**. **707 Tests grün, 91,35 % Coverage.**
+Roadmap weiter „Einstieg ist jetzt Plan 2" sagten. Neu damals: Abschnitt **C.7**.
 
 Davor, 2026-08-15 — **Die Live-Verifikation von Plan 2 (Sprint 3B) ist abgeschlossen.**
 Am 2026-08-14 liefen `pre_market`, `trade_proposals` und `close` zu den echten Cron-Zeiten
@@ -28,7 +33,7 @@ Davor, 2026-08-12 — **Plan 1 (Fundament) des Analyse-Pipeline-Umbaus ist
 code-fertig**, Tasks 2–8 committed (Task 9 zieht diese Dokumente nach). 17 Indikatoren
 laufen mit und füllen 29 neue Spalten in `technical_indicators`; das Technik-Signal ist
 berechenbar, steuert aber nichts. **Keine Verhaltensänderung.** 647 Tests grün, Coverage
-93,32 %. Details: Abschnitt **C.6**. (Plan 2 hat darauf aufgesetzt und ist zu 8 von 13
+93,32 %. Details: Abschnitt **C.6**. (Plan 2 hat darauf aufgesetzt und ist zu 9 von 13
 Tasks umgesetzt — s. **C.7**, nicht mehr „Einstieg".)
 ⚠️ Der abschliessende Ganz-Branch-Review fand die Verhaltensänderungs-Garantie zunächst
 gebrochen vor (29 neue Werte liefen in vier Claude-Prompts mit) plus einen strukturellen
@@ -155,7 +160,7 @@ Einen Branch `sprint3b/plan2-pipeline-umbau` gibt es weder lokal noch remote.
 | 3A | Roadmap + Doku aktualisieren | ✅ erledigt (dieses Dokument) |
 | 3B | Cron-Struktur + Pipeline-Umbau | 🟢 **Code vollständig, Live-Verifikation abgeschlossen** — Plan 1 (2026-07-29) und Plan 2 (20/20 Tasks, 2026-08-04), alles auf `main`. Verifiziert: `pre_market`, `close`, `final_close` (P2.10, P3.5) und **`trade_proposals` inkl. E3/E5 (2026-08-14, P2.12)**. ⏳ Offen: `weekly`, `bootstrap-db`-Lauf, dann Reaktivierung von `analyze.yml` |
 | **3B-M** | **Mail-Provider-Wechsel (Zwischensprint)** | ✅ **ABGESCHLOSSEN 2026-07-30** — Mailversand läuft über **Resend**, eigene Domain verifiziert, Zustellung live bestätigt. Details s. unten |
-| 3C | Ranking-Überarbeitung | 🟡 **Plan 1 (Fundament) abgeschlossen** (C.6, keine Verhaltensänderung) · **Plan 2 (Trichter) zu 8 von 13 Tasks** — Trichter noch nicht verdrahtet, s. **C.7** · Plan 3 (Analyse & Ranking) offen. C.1–C.4 sind in den Analyse-Pipeline-Umbau aufgegangen |
+| 3C | Ranking-Überarbeitung | 🟡 **Plan 1 (Fundament) abgeschlossen** (C.6, keine Verhaltensänderung) · **Plan 2 (Trichter) zu 9 von 13 Tasks** — Trichter noch nicht verdrahtet, s. **C.7** · Plan 3 (Analyse & Ranking) offen. C.1–C.4 sind in den Analyse-Pipeline-Umbau aufgegangen |
 | 3D | Learning Modul | ⚠️ **Platzhalter — Planungssession ausstehend** |
 | 3E | Human-in-the-Loop | ⚠️ **Platzhalter — Planungssession ausstehend** |
 | 3F | Volle 500-Ticker-Skalierung | ⚠️ **Platzhalter — Planungssession ausstehend** |
@@ -1597,7 +1602,7 @@ die zwei Signale und das Ranking gemeinsam neu fasst:
 - **Spec:** `docs/superpowers/specs/2026-08-11-analyse-pipeline-umbau-design.md`
 - **Plan 1 (Fundament):** `docs/superpowers/plans/2026-08-11-analyse-pipeline-plan1-fundament.md`
 - **Plan 2 (Trichter):** `docs/superpowers/plans/2026-08-13-analyse-pipeline-plan2-trichter.md`
-  — 8 von 13 Tasks umgesetzt, s. **C.7**
+  — 9 von 13 Tasks umgesetzt, s. **C.7**
 - **Plan 3 (Analyse & Ranking):** offen, noch keine Plan-Datei
 
 Die Spec ersetzt C.1 (fehlende Indikator-Werte — jetzt Teil des `predictions`-Umbaus),
@@ -1705,13 +1710,13 @@ Plan 1 seine Nichtangriffsgarantie fuer das Pipeline-Verhalten verliert.
 
 ---
 
-### C.7 — Analyse-Pipeline-Umbau, Plan 2 (Trichter) 🟡 8 von 13 Tasks
+### C.7 — Analyse-Pipeline-Umbau, Plan 2 (Trichter) 🟡 9 von 13 Tasks
 
 Spec: `docs/superpowers/specs/2026-08-11-analyse-pipeline-umbau-design.md` (§ 4.2–4.8, § 18)
 Plan: `docs/superpowers/plans/2026-08-13-analyse-pipeline-plan2-trichter.md`
 
 **Stand 2026-08-15**, gegen das echte Repo geprüft: alles auf `main`, Arbeitsbaum clean,
-`origin/main` == lokal. **707 Tests grün, 14 skipped, 91,35 % Coverage** (`--cov=src`).
+`origin/main` == lokal. **717 Tests grün, 14 skipped, 91,44 % Coverage** (`--cov=src`).
 
 ⚠️ **Der Trichter ist noch nicht live.** `src/broad_scan.py` existiert samt Prompt und
 Tests, ist aber **nicht verdrahtet**: `main.py:21` importiert und `main.py:378` ruft
@@ -1727,16 +1732,16 @@ weiterhin `quick_filter_batch()`. Der erste echte Verhaltenswechsel ist **Task 1
 | 6 | `8351e31` | `technical_signal.compute()` liest `{**td, **extra_indicators}`; die vier Werte (`tech_direction`, `tech_agreement`, `tech_adx_band`, `tech_strength`) gehen in den **Sidecar**, nie in `td` |
 | 7 | `f545901`, `7165bf5` | Phase 1 liest `fundamentals_cache` **nur noch** (0 Finnhub-Calls); das Nachladen sitzt in `fetch_missing_fundamentals()` (Phase 2b, gebaut, noch nicht verdrahtet). `earnings_next_date` wird als ISO-Datum gecacht statt als relative Tageszahl (§ 18.1d), `earnings_in_days` beim Lesen gerechnet, ein Termin in der Vergangenheit liefert `None`. `get_earnings_calendar()` ist aus dem Tageslauf verschwunden, `earnings_beat_pct` dort dauerhaft `None` |
 | 8 | `b861b48`, `b902b23`, `9a7cd1f` | `src/broad_scan.py` + `prompts/broad_scan_v1.txt`: ein Sonnet-Call mit Websuche über alle Phase-1-Überlebenden, je Ticker `news_strength` (0–3) + `news_note`. Nutzlast wird aus **acht** Feldern gebaut statt `td` zu dumpen — die 19 unbeteiligten `td`-Felder bleiben draussen. Ein unparsebarer Scan degradiert den ganzen Batch auf `news_strength=0` statt zu werfen (§ 10) |
+| 9 | *(dieser Commit)* | `config.TECH_MIN_FOR_DEEP = 2`; Tabelle `cutoff_log` (SCHEMA_SQL + Migrationsguard über `sqlite_master`, kein Zähler); `db.log_cutoff()` (`INSERT OR REPLACE`, ein Aufruf pro Lauf schreibt **alle** bewerteten Ticker); `broad_scan.cutoff_candidates()`. **Noch nicht in `main.py` verdrahtet** — das bleibt Task 10 |
 
-#### Was noch fehlt — Tasks 9–13, im Code verifiziert
+#### Was noch fehlt — Tasks 10–13, im Code verifiziert
 
 | Task | Fehlt konkret |
 |---|---|
-| 9 | Kein `cutoff_log` (Tabelle + Migration), kein `cutoff_candidates()`. **`TECH_MIN_FOR_DEEP` existiert nirgends im Code** — Spec § 4.7 setzt 2 |
 | 10 | `main.py:378` ruft `quick_filter_batch()`; kein Interim-Adapter in `deep_analysis.py`. `config.py:254-255` trägt unverändert `MAX_DEEP_ANALYSIS = 80` und das tote `BATCH_SIZE_QUICK = 30` |
 | 11 | Keine Ratenbegrenzung in `finnhub_provider.py` |
 | 12 | Kein Fundamentals-Vorlauf in `run_weekly()` |
-| 13 | Dieser Abschnitt (jetzt geschrieben), CLAUDE.md- und ARCHITECTURE-Nachtrag |
+| 13 | Modul-Docstrings, restliche Doku-Feinarbeit (CLAUDE.md/ARCHITECTURE-Nachtrag für Plan 2 ist bereits erfolgt, s. Kopf dieses Dokuments) |
 
 Danach: Abschluss-Review über `c978d70..HEAD`, Testlauf mit Kostenmessung gegen Spec
 § 13.2, dann Plan 3 (Analyse & Ranking).
@@ -1778,13 +1783,36 @@ löschte ein Refresh wegen abgelaufener Fundamentals-TTL ein bereits gesetztes D
 Fix bewusst **lokal** in `fetch_missing_fundamentals()` statt als COALESCE-Semantik für alle
 Aufrufer (`7165bf5`).
 
-**5. Spec § 19.1a bleibt unbeantwortet: liefert der Sammelabruf ein `offer`-Feld?**
+**6. Task 9 weicht an drei Stellen bewusst vom Plan-Pseudocode ab.** Alle drei sind
+Bugs bzw. Inkonsistenzen im Plan selbst, gefunden beim Implementieren gegen den echten
+Sidecar aus Task 5/6:
+- **`tech_signals` als eigener Parameter entfällt.** Der Plan übergibt `tech_signals`
+  getrennt von `ticker_datas` und liest `premarket_change_pct` aus `td` — beides gibt es
+  seit der Sidecar-Invariante (C.6/C.7 Task 5–6) nicht mehr: beide Werte liegen im
+  **Sidecar**, nicht in `td`. `cutoff_candidates()` nimmt deshalb denselben
+  `sidecar: dict[str, dict]`-Parameter wie `broad_scan_batch()`.
+- **`None` vs. `0.0` bei `premarket_change_pct`.** Der Plan sortiert mit
+  `abs(pct) if pct else -1` — eine Wahrheitswertprüfung, die einen echten 0,0-%-Wert
+  wie ein fehlendes `None` behandelt (`bool(0.0) is False`). Die Spec verlangt aber
+  „`None` sortiert hinter **jedem gemessenen** Wert", explizit auch einer gemessenen 0.
+  Implementiert mit `is not None`, mit eigenem Test (`test_cutoff_missing_premarket_
+  change_pct_sorts_behind_measured_zero`).
+- **`rank_position` aus `enumerate(all_evaluated)` in Original-Reihenfolge wäre sinnlos.**
+  Der Plan sortiert nur die *qualifizierten* Kandidaten, vergibt `rank_position` aber über
+  `all_evaluated` in **unsortierter** Ticker-Reihenfolge — der Rang hätte nichts mit der
+  Cutoff-Sortierung zu tun. Implementiert: **alle** Ticker (qualifiziert oder nicht) laufen
+  durch denselben Sortierschlüssel, `rank_position` ist der Index danach. Das erfüllt den
+  eigentlichen Zweck der Tabelle direkt: den 51. neben dem 50. zu sehen.
+- Zusätzlich: Pflicht-Kandidaten stehen über einen eigenen primären Sortierschlüssel
+  (`0 if forced else 1`) vorn, wie in § 4.7 gefordert, aber im Pseudocode nicht umgesetzt.
+
+**7. Spec § 19.1a bleibt unbeantwortet: liefert der Sammelabruf ein `offer`-Feld?**
 Die Sonde prüft es (`setup/probe_epics_batch.py:144-147`), ein Ergebnis ist **nirgends
 protokolliert**, und `get_premarket_prices_batch()` liest ausschliesslich `bid`. Das
 spread-bereinigte R/R aus § 4.3.1 bleibt damit offen — der Lauf mit `--run-live` ist
 nachzuholen, nicht zu vermuten.
 
-**6. Doku-Befund: dieser Abschnitt fehlte, während acht Tasks committed und gepusht waren.**
+**8. Doku-Befund: dieser Abschnitt fehlte, während acht Tasks committed und gepusht waren.**
 Der Kopf dieses Dokuments und CLAUDE.md sagten beide „Einstieg ist jetzt Plan 2" — dasselbe
 Muster, vor dem die zwei Korrekturkästen im Kopf warnen. Nachgezogen am 2026-08-15.
 Nebenbefund im Plan selbst: Global Constraint 2 nennt „Task 9 (broad_scan)" als ersten

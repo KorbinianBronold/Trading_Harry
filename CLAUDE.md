@@ -1,16 +1,19 @@
 # Shares_Future – SP500 CFD Research Tool
 
-**Zuletzt aktualisiert:** 2026-08-15 — **Doku-Abgleich: Plan 2 des Analyse-Pipeline-Umbaus
-(Trichter) ist zu 8 von 13 Tasks umgesetzt** und stand in keinem Dokument. Committed und
-gepusht sind die Vorfixes, der Batch-Kurs-Sweep, die Phase-1-Zerlegung (Gate/Sweep/Process),
-das Technik-Signal im Sidecar, die Fundamentals-Entkopplung und `src/broad_scan.py`.
-⚠️ **Der Trichter ist noch nicht live:** `main.py:378` ruft weiterhin `quick_filter_batch()`,
-erster Verhaltenswechsel ist Task 10. Offen sind Task 9 (Cutoff + `cutoff_log`), 10
-(Verdrahtung), 11 (Finnhub-Ratenbegrenzung), 12 (`run_weekly`-Vorlauf), 13 (Doku).
-⚠️ **Vor Task 10 zu entscheiden:** 3,9217 EUR gemessen gegen `MAX_COST_PER_RUN_EUR = 4.00`
-— Task 10 macht den MVP-Lauf teurer (Sonnet+Websuche statt Haiku, Deckel 50 greift bei 20
-Tickern nicht); die Ersparnis steckt erst im Phase-3-Batching aus Plan 3.
-Stand, Befunde und Task-Tabelle: PROJECT_STATUS **C.7**.
+**Zuletzt aktualisiert:** 2026-08-15 — **Plan 2 (Trichter), Task 9: Cutoff.**
+`config.TECH_MIN_FOR_DEEP = 2`, Tabelle `cutoff_log`, `db.log_cutoff()`,
+`broad_scan.cutoff_candidates()` — TDD gegen den echten Sidecar aus Task 5/6, nicht
+gegen den Plan-Pseudocode blind übernommen (der hatte drei Bugs: separater
+`tech_signals`-Parameter, den es seit der Sidecar-Invariante nicht mehr gibt; eine
+Wahrheitswertprüfung, die einen echten 0,0-%-Kurs wie `None` behandelt hätte;
+`rank_position` über eine unsortierte statt sortierte Liste). Details: PROJECT_STATUS
+**C.7**, Befund 6. **9 von 13 Tasks umgesetzt.**
+⚠️ **Der Trichter ist weiterhin nicht live:** `main.py:378` ruft weiterhin
+`quick_filter_batch()`, erster Verhaltenswechsel ist **Task 10** — davor ist der
+Kostendeckel zu klären (3,9217 EUR gemessen gegen `MAX_COST_PER_RUN_EUR = 4.00`; Task 10
+macht den MVP-Lauf teurer, die Ersparnis steckt erst im Phase-3-Batching aus Plan 3).
+Offen: Task 10 (Verdrahtung), 11 (Finnhub-Ratenbegrenzung), 12 (`run_weekly`-Vorlauf),
+13 (Doku). **717 Tests grün, 91,44 % Coverage.**
 
 Davor, 2026-08-15 — **Live-Verifikation von Plan 2 (Sprint 3B) abgeschlossen.**
 `trade_proposals` lief am 2026-08-14 erstmals gegen echte Signale; E3 (Ablösung statt
@@ -282,10 +285,9 @@ und der getroffenen Entscheidungen. Kurzfassung:
     **abgeschlossen, ändert kein Pipeline-Verhalten**: das Technik-Signal ist berechenbar,
     steuert aber nichts. Stand: PROJECT_STATUS **C.6**.
   - **Plan 2 (Trichter)** — `…/plans/2026-08-13-analyse-pipeline-plan2-trichter.md`,
-    **8 von 13 Tasks umgesetzt**, alle auf `main`. Offen: Task 9 (Cutoff + `cutoff_log` +
-    `TECH_MIN_FOR_DEEP`, das es im Code noch nicht gibt), 10 (Verdrahtung — `quick_filter`
-    raus, `broad_scan` + Cutoff rein, `MAX_DEEP_ANALYSIS` 80 → 50), 11
-    (Finnhub-Ratenbegrenzung), 12 (`run_weekly`-Vorlauf), 13 (Doku), danach
+    **9 von 13 Tasks umgesetzt**, alle auf `main`. Offen: Task 10 (Verdrahtung —
+    `quick_filter` raus, `broad_scan` + `cutoff_candidates` rein, `MAX_DEEP_ANALYSIS`
+    80 → 50), 11 (Finnhub-Ratenbegrenzung), 12 (`run_weekly`-Vorlauf), 13 (Doku), danach
     Abschluss-Review über `c978d70..HEAD` und Testlauf. ⚠️ **Bis Task 10 ist der Trichter
     nicht live** — die eine bewusste Verhaltensänderung davor ist `GAP_SCAN_BARS`
     200 → 220 (Task 3). Stand und sechs Befunde: PROJECT_STATUS **C.7**.
@@ -308,3 +310,14 @@ Rules:
 - If graphify-out/wiki/index.md exists, use it for broad navigation instead of raw source browsing.
 - Read graphify-out/GRAPH_REPORT.md only for broad architecture review or when query/path/explain do not surface enough context.
 - After modifying code, run `graphify update .` to keep the graph current (AST-only, no API cost).
+
+## Claude-Skills: pragmatische Auswahl
+
+**Standard:** Superpowers-Skills **immer** checken vor jeder Response — das ist die Regel aus `superpowers:using-superpowers`.
+
+**Exception für dieses Projekt (bewusste Effizienz-Entscheidung):** Bei offensichtlich einfachen Code-Navigations-Fragen darf graphify direkt kommen:
+- **Einfache Navigation** ("wo ist Funktion X?", "was referenziert Y?") → `graphify query/path/explain` direkt (Millisekunden, keine LLM-Kosten)
+- **Komplexe Tasks** (Bug debuggen, Feature planen, Code reviewen) → `superpowers:*`-Skill **zuerst** (gibt Struktur vor), graphify dann als Werkzeug darin
+- **Unsicher** → superpowers (Standard-Weg: nie falsch, aber möglicherweise teurer)
+
+Die Exception gilt **nur** für Navigation. Alles andere checkt Skills zuerst.

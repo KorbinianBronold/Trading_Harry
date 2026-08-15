@@ -222,6 +222,22 @@ CREATE TABLE IF NOT EXISTS sector_momentum (
     created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(date, run_type, sector_id)
 );
+
+CREATE TABLE IF NOT EXISTS cutoff_log (
+    id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+    date                 TEXT NOT NULL,
+    run_type             TEXT NOT NULL,
+    ticker               TEXT NOT NULL,
+    news_strength        INTEGER,
+    premarket_change_pct REAL,
+    tech_direction       TEXT,
+    tech_agreement       INTEGER,
+    rank_position        INTEGER,   -- Reihenfolge nach der Cutoff-Sortierung,
+                                     -- ueber ALLE bewerteten Ticker (Spec: 3D
+                                     -- vergleicht den 51. mit dem 50.)
+    selected             BOOLEAN NOT NULL,  -- true = unter MAX_DEEP_ANALYSIS
+    UNIQUE(date, run_type, ticker)
+);
 """
 
 
@@ -320,6 +336,25 @@ def _apply_migrations(conn: sqlite3.Connection) -> None:
                 analyst_upside REAL, consensus TEXT,
                 earnings_next_date TEXT,
                 UNIQUE(ticker)
+            )
+        """)
+
+    # Sprint 3C / Analyse-Pipeline-Umbau, Plan 2, Task 9: neue Tabelle fuer
+    # Bestands-DBs, die vor diesem Task init_schema() schon einmal liefen.
+    if "cutoff_log" not in tables:
+        conn.execute("""
+            CREATE TABLE cutoff_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                date TEXT NOT NULL,
+                run_type TEXT NOT NULL,
+                ticker TEXT NOT NULL,
+                news_strength INTEGER,
+                premarket_change_pct REAL,
+                tech_direction TEXT,
+                tech_agreement INTEGER,
+                rank_position INTEGER,
+                selected BOOLEAN NOT NULL,
+                UNIQUE(date, run_type, ticker)
             )
         """)
 
@@ -548,6 +583,30 @@ def save_sector_momentum(conn: sqlite3.Connection, row: dict) -> None:
         f"INSERT OR REPLACE INTO sector_momentum ({', '.join(cols)}) "
         f"VALUES ({placeholders})",
         [row.get(c) for c in cols],
+    )
+    conn.commit()
+
+
+def log_cutoff(
+    conn: sqlite3.Connection, date: str, run_type: str, evaluated: list[dict],
+) -> None:
+    """Schreibt die Cutoff-Bewertung EINES Laufs -- jeden bewerteten Ticker,
+    nicht nur die ausgewaehlten (Sprint 3C / Plan 2, Task 9). 3D braucht die
+    volle Liste, um den 51. mit dem 50. zu vergleichen. UNIQUE(date, run_type,
+    ticker) macht einen doppelten Lauf desselben Tages zu einem Ersetzen statt
+    einer Dublette."""
+    cols = ["date", "run_type", "ticker", "news_strength",
+            "premarket_change_pct", "tech_direction", "tech_agreement",
+            "rank_position", "selected"]
+    placeholders = ", ".join(["?"] * len(cols))
+    rows = [
+        [date, run_type] + [e.get(c) for c in cols[2:]]
+        for e in evaluated
+    ]
+    conn.executemany(
+        f"INSERT OR REPLACE INTO cutoff_log ({', '.join(cols)}) "
+        f"VALUES ({placeholders})",
+        rows,
     )
     conn.commit()
 

@@ -1,10 +1,15 @@
-"""Phase 2: Sonnet-Batch-Nachrichtenscan mit Websuche.
+"""Phase 2 (Nachrichten-Scan) + Phase 2a (Cutoff).
 
-Ein Sonnet-Call mit Websuche ueber alle Ueberlebenden aus Phase 1. Liefert je
-Ticker {ticker, news_strength (0-3), news_note}. Noch nicht in die Pipeline
-verdrahtet -- das macht Task 10, die auch die Rohstoff/Krypto-Filterung vor
-dem Aufruf uebernimmt (Spec 6.2, R25). Kein DB-Schreiben -- der Aufrufer
-konsumiert die Liste im Speicher."""
+broad_scan_batch(): ein Sonnet-Call mit Websuche ueber alle Ueberlebenden aus
+Phase 1. Liefert je Ticker {ticker, news_strength (0-3), news_note}.
+
+cutoff_candidates(): waehlt daraus die Kandidaten fuer Phase 3 (Spec 4.7) --
+deterministisch, kein Claude-Call. Kein DB-Schreiben in diesem Modul; die
+Persistenz von cutoff_candidates()' zweitem Rueckgabewert ist db.log_cutoff().
+
+Noch nicht in die Pipeline verdrahtet -- das macht Task 10, die auch die
+Rohstoff/Krypto-Filterung vor dem broad_scan_batch()-Aufruf uebernimmt
+(Spec 6.2, R25)."""
 import json
 import logging
 from pathlib import Path
@@ -224,3 +229,75 @@ def broad_scan_batch(
         f"cost so far: {cost_tracker.total_eur:.3f} EUR"
     )
     return ordered
+
+
+def cutoff_candidates(
+    ticker_datas: list[dict],
+    broad_scan_results: list[dict],
+    sidecar: dict[str, dict],
+    forced_candidates: set[str],
+    max_deep_analysis: int = config.MAX_DEEP_ANALYSIS,
+) -> tuple[list[dict], list[dict]]:
+    """Phase 2a: waehlt die Kandidaten fuer Phase 3 (Spec 4.7).
+
+    Kandidat = news_strength >= 1 ODER tech_strength >= TECH_MIN_FOR_DEEP ODER
+    Pflicht-Kandidat aus Phase 1e. Sortierung: Pflicht-Kandidaten zuerst, dann
+    (news_strength, |premarket_change_pct|, tech_strength, ticker) absteigend.
+    Ein fehlender premarket_change_pct sortiert hinter jedem gemessenen Wert
+    -- auch hinter einem echten 0.0, deshalb die explizite `is not None`-
+    Pruefung statt einer Wahrheitswert-Abfrage.
+
+    Rueckgabe: (selected, all_evaluated). all_evaluated traegt ALLE Ticker in
+    derselben Sortierreihenfolge mit rank_position und selected-Flag -- das
+    ist die Nutzlast fuer db.log_cutoff() (3D vergleicht den 51. mit dem 50.).
+    Tech-Werte und premarket_change_pct kommen aus dem Sidecar (R22), nie aus
+    td -- Rohstoffe/Krypto filtert der Aufrufer vorher (Spec 18.3)."""
+    scan_by_ticker = {s["ticker"]: s for s in broad_scan_results}
+
+    evaluated = []
+    for td in ticker_datas:
+        t = td["ticker"]
+        scan = scan_by_ticker.get(t, {})
+        side = sidecar.get(t, {})
+        news_strength = scan.get("news_strength", 0)
+        tech_strength = side.get("tech_strength", 0)
+        forced = t in forced_candidates
+        qualifies = (
+            news_strength >= 1
+            or tech_strength >= config.TECH_MIN_FOR_DEEP
+            or forced
+        )
+        evaluated.append({
+            "ticker": t,
+            "news_strength": news_strength,
+            "premarket_change_pct": side.get("premarket_change_pct"),
+            "tech_direction": side.get("tech_direction"),
+            "tech_agreement": side.get("tech_agreement"),
+            "tech_strength": tech_strength,
+            "forced": forced,
+            "qualifies": qualifies,
+        })
+
+    def sort_key(e):
+        change = e["premarket_change_pct"]
+        return (
+            0 if e["forced"] else 1,
+            -e["news_strength"],
+            -abs(change) if change is not None else 1.0,
+            -e["tech_strength"],
+            e["ticker"],
+        )
+
+    evaluated.sort(key=sort_key)
+
+    selected_tickers = set()
+    for e in evaluated:
+        if e["qualifies"] and len(selected_tickers) < max_deep_analysis:
+            selected_tickers.add(e["ticker"])
+
+    for rank, e in enumerate(evaluated):
+        e["rank_position"] = rank
+        e["selected"] = e["ticker"] in selected_tickers
+
+    selected = [e for e in evaluated if e["selected"]]
+    return selected, evaluated

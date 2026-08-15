@@ -1837,3 +1837,78 @@ def test_sma200_computable_with_default_load_window(tmp_path):
     # an einer einzigen fehlenden Bar.
     assert len(df) >= 220
     assert compute_sma_distance_pct(df, 200) is not None
+
+
+# ---------- cutoff_log (Sprint 3C / Plan 2, Task 9) ----------
+
+from src.db import log_cutoff
+
+
+def test_init_schema_creates_cutoff_log(in_memory_db):
+    init_schema(in_memory_db)
+    assert "cutoff_log" in get_tables(in_memory_db)
+
+
+def test_migration_creates_cutoff_log_on_a_legacy_db():
+    """Eine Bestands-DB ohne cutoff_log bekommt die Tabelle nachgereicht
+    (Regel 5: PRAGMA/sqlite_master-Guard, kein Zaehler)."""
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    init_schema(conn)
+    conn.execute("DROP TABLE cutoff_log")
+    conn.commit()
+    assert "cutoff_log" not in get_tables(conn)
+
+    init_schema(conn)
+
+    assert "cutoff_log" in get_tables(conn)
+
+
+def test_log_cutoff_persists_all_evaluated_tickers(in_memory_db):
+    """cutoff_log enthaelt alle bewerteten Ticker, nicht nur die selected --
+    3D braucht den 51. neben dem 50."""
+    init_schema(in_memory_db)
+    evaluated = [
+        {"ticker": "AAPL", "news_strength": 2, "premarket_change_pct": 1.5,
+         "tech_direction": "long", "tech_agreement": 3, "rank_position": 0,
+         "selected": True},
+        {"ticker": "MSFT", "news_strength": 0, "premarket_change_pct": None,
+         "tech_direction": "none", "tech_agreement": 0, "rank_position": 1,
+         "selected": False},
+    ]
+
+    log_cutoff(in_memory_db, date="2026-08-15", run_type="pre_market",
+               evaluated=evaluated)
+
+    rows = in_memory_db.execute(
+        "SELECT * FROM cutoff_log WHERE date = ? AND run_type = ? "
+        "ORDER BY rank_position",
+        ("2026-08-15", "pre_market"),
+    ).fetchall()
+    assert len(rows) == 2
+    assert rows[0]["ticker"] == "AAPL"
+    assert rows[0]["selected"] == 1
+    assert rows[1]["ticker"] == "MSFT"
+    assert rows[1]["selected"] == 0
+    assert rows[1]["premarket_change_pct"] is None
+
+
+def test_log_cutoff_upserts_on_rerun(in_memory_db):
+    """Ein doppelter Lauf desselben Tages/Run-Types ersetzt die Zeile statt
+    sie zu duplizieren (UNIQUE date, run_type, ticker)."""
+    init_schema(in_memory_db)
+    row = {"ticker": "AAPL", "news_strength": 1, "premarket_change_pct": 0.5,
+           "tech_direction": "long", "tech_agreement": 2, "rank_position": 0,
+           "selected": True}
+
+    log_cutoff(in_memory_db, date="2026-08-15", run_type="pre_market",
+               evaluated=[row])
+    log_cutoff(in_memory_db, date="2026-08-15", run_type="pre_market",
+               evaluated=[{**row, "news_strength": 3}])
+
+    rows = in_memory_db.execute(
+        "SELECT * FROM cutoff_log WHERE date = ? AND run_type = ?",
+        ("2026-08-15", "pre_market"),
+    ).fetchall()
+    assert len(rows) == 1
+    assert rows[0]["news_strength"] == 3
