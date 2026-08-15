@@ -1334,24 +1334,30 @@ def test_migration_adds_supersede_columns_to_an_existing_db(tmp_db_path):
     conn.close()
 
 
-def test_record_revision_with_successor_marks_superseded(in_memory_db):
+def test_record_revision_cannot_supersede_a_row(in_memory_db):
+    """record_revision() loest NIE ab — dafuer gibt es ausschliesslich
+    supersede_prediction(), das INSERT und UPDATE in eine Transaktion legt (C1,
+    P2.8). Der frueher hier vorhandene superseded_by-Parameter war der zweite,
+    nicht-atomare Weg zum selben Ziel und ist entfernt: seit dem partiellen
+    UNIQUE-Index koennen alte und neue Zeile ohnehin nicht gleichzeitig offen
+    sein, sein einziger Anwendungsfall war also strukturell unmoeglich geworden."""
     db.init_schema(in_memory_db)
-    old = db.save_prediction(in_memory_db, {
+    pid = db.save_prediction(in_memory_db, {
         "date": "2026-07-30", "run_type": "pre_market",
         "ticker": "AAPL", "direction": "long"})
-    new = db.save_prediction(in_memory_db, {
-        "date": "2026-07-30", "run_type": "trade_proposals",
-        "ticker": "AAPL", "direction": "long"})
-    db.record_revision(in_memory_db, old, verdict="bestaetigt", superseded_by=new)
+
+    with pytest.raises(TypeError):
+        db.record_revision(in_memory_db, pid, verdict="bestaetigt", superseded_by=99)
+
+    # Auch das Urteil, das frueher zur Abloesung gehoerte, laesst die Zeile offen.
+    db.record_revision(in_memory_db, pid, verdict="bestaetigt")
     row = in_memory_db.execute(
-        "SELECT status, superseded_by, revision_verdict FROM predictions WHERE id=?",
-        (old,)).fetchone()
-    assert row["status"] == "superseded"
-    assert row["superseded_by"] == new
-    assert row["revision_verdict"] == "bestaetigt"
+        "SELECT status, superseded_by FROM predictions WHERE id=?", (pid,)).fetchone()
+    assert row["status"] == "open"
+    assert row["superseded_by"] is None
 
 
-def test_record_revision_without_successor_keeps_it_open(in_memory_db):
+def test_record_revision_keeps_a_rejected_signal_open(in_memory_db):
     """E5: ein gedrehtes Signal bleibt offen und wird regulaer ausgewertet —
     genau das beantwortet, ob die Drehung richtig lag."""
     db.init_schema(in_memory_db)
@@ -1443,6 +1449,52 @@ def test_supersede_prediction_writes_both_sides(in_memory_db):
     assert new_row["revision_verdict"] is None
 
 
+def test_second_open_prediction_for_the_same_idea_is_rejected(in_memory_db):
+    """Zwei offene Zeilen fuer dieselbe (date, ticker, direction) darf es nie
+    geben — der Evaluator schloesse beide und jede Kennzahl zaehlte doppelt.
+
+    Real passiert am 2026-08-13, als pre_market zweimal lief (P2.12, Befund 1)."""
+    db.init_schema(in_memory_db)
+    first = db.save_prediction(in_memory_db, {
+        "date": "2026-08-13", "run_type": "pre_market",
+        "ticker": "AAPL", "direction": "short", "entry_price": 303.35})
+
+    second = db.save_prediction(in_memory_db, {
+        "date": "2026-08-13", "run_type": "pre_market",
+        "ticker": "AAPL", "direction": "short", "entry_price": 303.29})
+
+    assert first is not None
+    assert second is None, "der Doppellauf darf keine zweite Zeile anlegen"
+    open_rows = in_memory_db.execute(
+        "SELECT * FROM predictions WHERE status='open'").fetchall()
+    assert len(open_rows) == 1
+    assert open_rows[0]["entry_price"] == 303.35, "die erste Zeile bleibt stehen"
+
+
+def test_init_schema_closes_preexisting_open_duplicates(in_memory_db):
+    """Bestandsdatenbanken tragen die Duplikate schon — ohne Bereinigung liesse
+    sich der Index dort gar nicht anlegen und jeder Lauf stuerbe an init_schema."""
+    db.init_schema(in_memory_db)
+    in_memory_db.execute("DROP INDEX IF EXISTS ux_predictions_one_open_per_idea")
+    older = db._insert_prediction(in_memory_db, {
+        "date": "2026-08-13", "run_type": "pre_market",
+        "ticker": "XOM", "direction": "long", "entry_price": 158.24})
+    newer = db._insert_prediction(in_memory_db, {
+        "date": "2026-08-13", "run_type": "pre_market",
+        "ticker": "XOM", "direction": "long", "entry_price": 158.24})
+    in_memory_db.commit()
+
+    db.init_schema(in_memory_db)
+
+    older_row = in_memory_db.execute(
+        "SELECT * FROM predictions WHERE id=?", (older,)).fetchone()
+    newer_row = in_memory_db.execute(
+        "SELECT * FROM predictions WHERE id=?", (newer,)).fetchone()
+    assert older_row["status"] == "closed_stale_pre_rollout"
+    assert older_row["learnable"] == 0, "eine Dublette gehoert nie ins Lernmodul"
+    assert newer_row["status"] == "open", "die juengste Zeile bleibt die gueltige"
+
+
 def test_superseded_predictions_are_invisible_to_the_evaluator(in_memory_db):
     """Der Kern von E3: eine Trade-Idee, genau EIN Outcome. Ohne das zaehlt
     jede Kennzahl doppelt."""
@@ -1450,10 +1502,12 @@ def test_superseded_predictions_are_invisible_to_the_evaluator(in_memory_db):
     old = db.save_prediction(in_memory_db, {
         "date": "2026-07-29", "run_type": "pre_market",
         "ticker": "AAPL", "direction": "long"})
-    new = db.save_prediction(in_memory_db, {
+    # Ueber supersede_prediction() statt record_revision(): das ist der Weg, den
+    # run_trade_proposals() geht, und seit dem UNIQUE-Index der einzige, auf dem
+    # beide Zeilen ueberhaupt entstehen koennen.
+    new = db.supersede_prediction(in_memory_db, old, {
         "date": "2026-07-29", "run_type": "trade_proposals",
-        "ticker": "AAPL", "direction": "long"})
-    db.record_revision(in_memory_db, old, verdict="bestaetigt", superseded_by=new)
+        "ticker": "AAPL", "direction": "long"}, verdict="bestaetigt")
     open_ids = {r["id"] for r in db.load_open_predictions(in_memory_db)}
     assert open_ids == {new}
     within = {r["id"] for r in db.load_open_predictions_within_max_age_days(
@@ -1534,10 +1588,15 @@ def test_revision_effectiveness_is_empty_without_any_1610_run(in_memory_db):
 
 def test_revision_verdict_stats_group_by_verdict(in_memory_db):
     db.init_schema(in_memory_db)
-    for verdict in ("bestaetigt", "bestaetigt", "gedreht"):
+    # Je Verdict ein eigener Ticker: drei offene Zeilen fuer dieselbe Trade-Idee
+    # laesst der partielle UNIQUE-Index nicht mehr zu, und sie waeren auch nie
+    # entstanden — gruppiert wird nach Verdict, nicht nach Ticker.
+    for ticker, verdict in (
+        ("AAPL", "bestaetigt"), ("MSFT", "bestaetigt"), ("NVDA", "gedreht"),
+    ):
         pid = db.save_prediction(in_memory_db, {
             "date": "2026-07-30", "run_type": "pre_market",
-            "ticker": "AAPL", "direction": "long"})
+            "ticker": ticker, "direction": "long"})
         db.record_revision(in_memory_db, pid, verdict=verdict)
     rows = {r["revision_verdict"]: r["n"]
             for r in db.load_revision_verdict_stats(in_memory_db, "2026-07-01")}

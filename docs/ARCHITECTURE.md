@@ -1,6 +1,15 @@
 # Shares_Future – Architektur & Design
 
-**Zuletzt aktualisiert:** 2026-08-12 — Sprint 3C / Plan 1 (Fundament) nachgezogen: zwei
+**Zuletzt aktualisiert:** 2026-08-15 — Live-Verifikation von Plan 2 abgeschlossen
+(PROJECT_STATUS P2.12): `pre_market` → `trade_proposals` → `close` liefen zu den echten
+Cron-Zeiten, E3 (Ablösung) und E5 (kein Gegenpositionshandel) bestätigt. Dabei gefunden und
+geschlossen: `predictions` erzwingt jetzt über einen partiellen UNIQUE-Index
+`ux_predictions_one_open_per_idea` (`WHERE status='open'`), dass je Trade-Idee genau eine
+offene Zeile existiert — s. Abschnitt „Eine offene Prediction je Trade-Idee" unten und
+PROJECT_STATUS P2.13. `record_revision()` verlor dabei ihren `superseded_by`-Parameter;
+Ablösen kann seither ausschliesslich `supersede_prediction()`.
+
+Davor, 2026-08-12 — Sprint 3C / Plan 1 (Fundament) nachgezogen: zwei
 neue Module (`src/indicators.py`, `src/technical_signal.py`), 29 neue Spalten in
 `technical_indicators`, Ladefenster-Invariante, Testzahlen auf 647. **Keine
 Verhaltensänderung** — Details PROJECT_STATUS C.6. ⚠️ Diese Garantie war zwischenzeitlich
@@ -17,10 +26,12 @@ Universums, Historien-Guard, erweiterte Invariantenliste, Testzahlen auf 608.
 > getauschte Reihenfolge 4 → 4a, `analyses_by_ticker` und die beiden neuen Module
 > `src/signal_checks.py` / `src/revalidation.py` stehen jetzt im Text selbst.
 >
-> ⚠️ **Eine Einschränkung bleibt:** Der beschriebene Code liegt vollständig auf `main`,
-> wurde aber **noch nie ausgeführt**. `analyze.yml` steht auf `disabled_manually`, der
-> letzte Pipeline-Lauf war am 2026-07-13. Was hier steht, ist also der Ist-Zustand des
-> *Codes*, nicht der eines laufenden Systems. Live-Verifikation: PROJECT_STATUS, P2.4.
+> ✅ **Live-Verifikation abgeschlossen (2026-08-14, PROJECT_STATUS P2.12).**
+> `pre_market` → `trade_proposals` → `close` liefen zu den echten Cron-Zeiten gegen eine
+> Wegwerf-Kopie, mit echten API-Calls und echtem Mailversand. `analyze.yml` steht weiterhin
+> auf `disabled_manually` — das ist eine bewusste Pausierung bis zum `bootstrap-db`-Lauf,
+> keine offene Frage zum Code mehr. Einzig `weekly` ist zugestellt, aber nicht inhaltlich
+> geprüft.
 >
 > Historische Abschnitte weiter unten (Sprint 1 / Sprint 2) sind bewusst nicht
 > umgeschrieben — sie sind als Historie gekennzeichnet.
@@ -1032,7 +1043,17 @@ TOTAL: ~3.50 EUR
    laufenden Tag. Die Vermischung von provisorisch und final war der Frozen-Bar-Bug
 10. **Eine offene Prediction je Trade-Idee** – `trade_proposals` löst die `pre_market`-Zeile
     über `status='superseded'` + `superseded_by` ab, statt eine zweite daneben zu legen.
-    Das Urteil steht auf der **alten** Zeile (`revision_verdict`)
+    Das Urteil steht auf der **alten** Zeile (`revision_verdict`). Seit 2026-08-15 erzwingt
+    das ein partieller UNIQUE-Index `ux_predictions_one_open_per_idea` auf
+    `(date, ticker, direction) WHERE status='open'` — bewusst partiell, sonst könnten
+    abgelöste und ablösende Zeile (die sich alle drei Spalten teilen) nicht nebeneinander
+    stehen. Daraus folgt eine erzwungene Reihenfolge in `supersede_prediction()`: die alte
+    Zeile muss `status='open'` verlassen, **bevor** die neue eingefügt wird — SQLite prüft
+    den Index je Statement, nicht beim Commit. `record_revision()` kann seither **nicht**
+    mehr ablösen (Parameter `superseded_by` entfernt); dafür gibt es ausschliesslich
+    `supersede_prediction()`, das INSERT und UPDATE in einer Transaktion hält (C1, P2.8).
+    Bestandsdatenbanken bereinigt `init_schema()` selbst: die ältere von zwei offenen
+    Duplikaten geht auf `closed_stale_pre_rollout`. Details: PROJECT_STATUS P2.13
 11. **Ein Lauf ohne brauchbare Historie startet nicht** – der Guard in `main` bricht
     `pre_market` und `trade_proposals` ab, bevor Kosten entstehen (seit 2026-08-08)
 12. **Tests telefonieren nicht nach draussen** – ausserhalb `tests/live/` sperrt ein
@@ -1102,9 +1123,10 @@ Kurzüberblick, was sich an der oben beschriebenen Architektur ändern wird:
 ### Sprint 3B / Plan 2 — umgesetzt (2026-07-30 bis 2026-08-04)
 
 Code vollständig, 20/20 Tasks, alles auf `main`. ⚠️ `analyze.yml` steht weiterhin auf
-`disabled_manually`. Ausgeführt und verifiziert sind inzwischen `pre_market`, `close` und
-`final_close` (lokal, gegen Wegwerf-Kopien); offen bleiben `trade_proposals` und `weekly`
-(PROJECT_STATUS, P2.4 und P3.5).
+`disabled_manually` — bewusst, bis der `bootstrap-db`-Lauf steht. Ausgeführt und verifiziert
+sind `pre_market`, `close`, `final_close` und seit 2026-08-14 auch `trade_proposals`
+(lokal, gegen Wegwerf-Kopien, zu den echten Cron-Zeiten) — PROJECT_STATUS P2.10, P3.5, P2.12.
+Offen bleibt nur noch `weekly`: zugestellt, aber nicht inhaltlich geprüft.
 
 | Bereich | Änderung |
 |---|---|

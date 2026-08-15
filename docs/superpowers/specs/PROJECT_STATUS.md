@@ -1,6 +1,19 @@
 # PROJECT_STATUS.md — Shares_Future (Trading_Harry)
 
-**Zuletzt aktualisiert:** 2026-08-12 — **Plan 1 (Fundament) des Analyse-Pipeline-Umbaus ist
+**Zuletzt aktualisiert:** 2026-08-15 — **Die Live-Verifikation von Plan 2 ist abgeschlossen.**
+Am 2026-08-14 liefen `pre_market`, `trade_proposals` und `close` zu den echten Cron-Zeiten
+gegen eine Wegwerf-Kopie. **E3 (Ablösung statt Dublette) und E5 (gedrehte Signale werden
+gemeldet, nicht gehandelt) verhalten sich exakt wie spezifiziert** — 8 Signale, 5 abgelöst,
+3 offen ohne Nachfolger, genau eine offene Zeile je Trade-Idee. Alle drei Mails zugestellt.
+Details und vier Befunde: Abschnitt **P2.12**.
+✅ Ein Befund war ein echter Datenfehler (vier doppelte offene Predictions aus einem
+Doppellauf am 13.08.) — bereinigt **und die Ursache geschlossen**: ein partieller
+UNIQUE-Index erzwingt die Invariante „je Trade-Idee genau EINE offene Prediction" jetzt in
+SQLite. **707 Tests grün, Coverage 90,94 %.** Details: **P2.13**.
+⏳ Offen: `weekly` (nie inhaltlich verifiziert), der `bootstrap-db`-Lauf, danach die
+Reaktivierung von `analyze.yml`.
+
+Davor, 2026-08-12 — **Plan 1 (Fundament) des Analyse-Pipeline-Umbaus ist
 code-fertig**, Tasks 2–8 committed (Task 9 zieht diese Dokumente nach). 17 Indikatoren
 laufen mit und füllen 29 neue Spalten in `technical_indicators`; das Technik-Signal ist
 berechenbar, steuert aber nichts. **Keine Verhaltensänderung.** 647 Tests grün, Coverage
@@ -128,7 +141,7 @@ Einen Branch `sprint3b/plan2-pipeline-umbau` gibt es weder lokal noch remote.
 | Sprint | Inhalt | Status |
 |---|---|---|
 | 3A | Roadmap + Doku aktualisieren | ✅ erledigt (dieses Dokument) |
-| 3B | Cron-Struktur + Pipeline-Umbau | 🟢 **Code vollständig** — Plan 1 (2026-07-29) und Plan 2 (20/20 Tasks, 2026-08-04), alles auf `main`. Verifiziert: `pre_market`, `close`, `final_close` (P2.10, P3.5). ⏳ Offen: `trade_proposals`, `weekly`, `bootstrap-db`-Lauf, dann Reaktivierung von `analyze.yml` |
+| 3B | Cron-Struktur + Pipeline-Umbau | 🟢 **Code vollständig, Live-Verifikation abgeschlossen** — Plan 1 (2026-07-29) und Plan 2 (20/20 Tasks, 2026-08-04), alles auf `main`. Verifiziert: `pre_market`, `close`, `final_close` (P2.10, P3.5) und **`trade_proposals` inkl. E3/E5 (2026-08-14, P2.12)**. ⏳ Offen: `weekly`, `bootstrap-db`-Lauf, dann Reaktivierung von `analyze.yml` |
 | **3B-M** | **Mail-Provider-Wechsel (Zwischensprint)** | ✅ **ABGESCHLOSSEN 2026-07-30** — Mailversand läuft über **Resend**, eigene Domain verifiziert, Zustellung live bestätigt. Details s. unten |
 | 3C | Ranking-Überarbeitung | 🟢 **Plan 1 (Fundament) code-fertig, keine Verhaltensänderung.** C.1–C.4 sind in den Analyse-Pipeline-Umbau aufgegangen; Plan 2 (Trichter) und Plan 3 (Analyse & Ranking) offen — s. C.6 |
 | 3D | Learning Modul | ⚠️ **Platzhalter — Planungssession ausstehend** |
@@ -1018,6 +1031,200 @@ Docker `ENTRYPOINT`/`CMD` entsprechen der Beschreibung · kein yfinance- oder
 
 ---
 
+### P2.12 — ✅ Live-Verifikation von Plan 2 abgeschlossen (2026-08-14)
+
+**Der letzte offene Prüfstein von Plan 2 ist eingelöst.** `trade_proposals` hatte bis
+hierhin nie eine einzige Zeile zu bearbeiten (s. P3.5); die Ablöse-Mechanik aus E3/E5 war
+damit ungetestet. Am 2026-08-14 (Freitag) liefen `pre_market`, `trade_proposals` und
+`close` **zu den echten Cron-Zeiten aus `analyze.yml`** (15:00 / 16:10 / 22:30 Berlin),
+lokal gegen eine **Wegwerf-Kopie** von `data/tracking.db`, mit echten API-Calls und echtem
+Mailversand. `analyze.yml` blieb dabei `disabled_manually`, `data/tracking.db` unberührt.
+
+Erstmals mit vollständigem DEBUG-Logging: Root-Logger auf DEBUG plus `ANTHROPIC_LOG=debug`.
+⚠️ Das SDK loggt auf DEBUG **nur Requests, keine Response-Bodies** — für die Verifikation
+der Mail-Inhalte musste `GET /emails/{id}` bei Resend herhalten. Wer künftig Antworten
+braucht, muss sie selbst protokollieren.
+
+**Das Ergebnis: E3 und E5 verhalten sich exakt wie spezifiziert.** 8 Signale aus dem
+Morgenlauf, alle 8 um 16:10 geprüft:
+
+| Ticker | `revision_verdict` | Ausgang |
+|---|---|---|
+| NVDA long, XRP-USD short | `unveraendert` | abgelöst (`superseded_by` 36 / 40) |
+| ABBV long, GC=F short, UNH short | `geschwaecht` | abgelöst (37 / 39 / 38) |
+| AVGO long | `gedreht` | bleibt **offen**, kein Nachfolger |
+| BRK-B short, MSFT long | `verworfen` | bleibt **offen**, kein Nachfolger |
+
+- **E3 trägt:** 5 Ablösungen, je genau eine `superseded`-Zeile plus eine neue offene. Keine
+  Dublette, keine verwaiste Zeile.
+- **E5 trägt:** die drei gedrehten/verworfenen bleiben offen und werden regulär ausgewertet;
+  eine Gegenposition entsteht nicht.
+- **„Genau EINE offene Prediction je Trade-Idee":** 8 Ideen → 8 offene Zeilen. Geht auf.
+
+`close` schloss die Kette: Evaluator fand 15 offene (vom 13.08.), schloss 5 per `sl_hit`.
+
+| Lauf | Kosten | Anmerkung |
+|---|---|---|
+| `pre_market` | **3,9217 EUR** | 20 Tiefenanalysen + 7 Rohstoffe/Krypto; 4 long / 2 short / 2 c-c aus 27 Analysen, 18 Enthaltungen |
+| `trade_proposals` | **0,6268 EUR** | 8 Signale geprüft — am oberen Rand der E1-Erwartung (0,5–0,7), E1 bestätigt |
+| `close` | 0 | kein Claude-Call |
+
+Der Anstieg bei `pre_market` gegen die 3,13 EUR vom 2026-08-09 ist **kein** Kostenwachstum
+der Analyse: Phase 4a prüfte diesmal 15 offene Positionen (0,282 EUR) gegen null am 09.08.,
+und der `cost_tracker`-Fix aus `f8f6684` weist Cache-Treffer seither korrekt aus — die
+alten Zahlen waren zu niedrig. Beide Läufe sind nur eingeschränkt vergleichbar.
+
+Alle drei Mails **zugestellt** (`last_event="delivered"`, per `GET /emails/{id}` geprüft,
+nicht am Statuscode festgemacht) — inklusive der Weekly-Mail vom 2026-08-14 10:55
+(`KW33 — Wochen-Summary`). ⚠️ `weekly` bleibt trotzdem als **nicht verifiziert** geführt:
+zugestellt heisst nicht inhaltlich geprüft, und `cost_summary` ist dort weiterhin hart auf
+Nullen verdrahtet (P2.6).
+
+#### Vier Befunde aus der Verifikation
+
+**1. Doppelte offene Predictions — bereinigt, Ursache offen.**
+`pre_market` lief am 13.08. zweimal (08:54:03 und 08:55:59). Ergebnis: vier Trade-Ideen
+mit je **zwei** offenen Zeilen (AAPL short 19/24, GOOGL short 17/25, META short 18/23,
+XOM long 13/22). `predictions` hat **kein UNIQUE** — nur Indizes auf `status` und `date`.
+Der Evaluator hätte beide geschlossen, jede Kennzahl doppelt gezählt; Phase 4a prüfte und
+bezahlte sie täglich doppelt (15 statt 11 Claude-Calls).
+**Bereinigt am 2026-08-15** in `data/tracking.db`: die vier älteren Zeilen (13, 17, 18, 19)
+auf `status='closed_stale_pre_rollout'`, `closed_date='2026-08-15'`, `learnable=0` — dasselbe
+Muster wie die 12 Juli-Altlasten. Sicherung unter `data/tracking.db.bak-20260815-120803`.
+Danach 11 offene Zeilen, kein `(ticker, direction)`-Paar mehr doppelt.
+✅ **Ursache geschlossen am 2026-08-15** — s. P2.13.
+
+**2. `advance_decline_ratio` ist strukturell NULL — und hat gar keinen Abnehmer.**
+Der Wert ist seit dem 13.08. in jedem Lauf NULL; nur der 29.07. trägt einen (2,5).
+**Root Cause: keine belastbare Datenquelle, kein Code-Fehler.** `prompts/market_context_v1.txt`
+weist ausdrücklich an: *„Nicht ermittelbar -> null. Niemals schätzen oder erfinden"* und
+*„Ein null-Wert ist ausdrücklich besser als eine geratene Zahl"*. Claude findet per Websuche
+keine belegbare A/D-Ratio und antwortet weisungsgemäss mit `null`. Das Parsing in
+`market_context.py:104` arbeitet korrekt.
+⚠️ **Wichtige Präzisierung gegenüber B.3:** die Marktbreite ist **kein Guardrail und war
+nie einer**. Einziger Konsument im gesamten Code ist `email_sender.py:415`
+(`_section_market_warnings`) — B.3 weist ihr selbst nur „Kontext / Warnung" zu, der
+Docstring dort sagt es ebenfalls. Es läuft also nicht ein Check leer, sondern eine
+Kontextzeile bleibt leer. Vor Sprint 3C ist zu entscheiden, ob die A/D-Ratio eine echte
+Quelle bekommt (Provider statt Websuche) oder ersatzlos entfällt.
+
+**3. VIX-Widerspruch — die Guardrail rechnet mit dem richtigen Wert.**
+`market_context.py:96-98` bevorzugt den Capital.com-Wert und fällt nur ersatzweise auf
+Claudes Zahl zurück; `signal_checks.check_vix` liest genau dieses `vix_level`. Am 14.08.
+war das **17,6** (Quelle im Log: `VIX=17.6 (capital.com)`). Claudes „~14,55" steht
+ausschliesslich im Freitext `macro_summary`.
+**Betroffen ist nicht die Schwelle, sondern der Kontext:** `macro_summary` wird von
+**keiner** Mail gerendert (die Tagesmail ruft `_section_market_warnings` gar nicht auf,
+s. Befund unten), erreicht aber über `main.py:705` den Re-Validierungs-Prompt des
+16:10-Laufs — Claude liest dort also eine VIX-Zahl, die 3 Punkte neben der liegt, mit der
+gefiltert wird.
+⚠️ **Offene Frage für 3C/3D:** die Capital.com-Notierung lag ~3 Punkte über dem
+Spot-VIX — das Muster eines VIX-**Future**-CFDs (Contango), nicht des Spot-Index.
+`VIX_HIGH_CONFIDENCE_ONLY = 25` und `VIX_NO_NEW_LONGS = 35` sind erkennbar für den
+Spot-Index gedacht. Bei systematischem Aufschlag greifen beide Filter **früher als
+beabsichtigt**. Zu klären, bevor die Schwellen scharf gestellt oder nachjustiert werden.
+
+**Nebenbefund derselben Prüfung:** `_section_market_warnings` hängt nur in
+`render_trade_proposals_html` (`email_sender.py:441`), **nicht** in `render_daily_html`.
+Die Morgenmail zeigt damit weder VIX noch Marktbreite — in der 16:10-Mail steht
+„Marktlage · VIX 17.7", in der 15:00-Mail nichts. Verifiziert an beiden versendeten Mails.
+Nicht zwingend falsch (E4: um 15:00 wird ohnehin nicht durchgesetzt), aber undokumentiert.
+
+**4. Fünf leere `market_context`-Spalten — nur dokumentiert, bewusst nicht gefixt.**
+`sp500_change_pct`, `oil_price`, `gold_price`, `btc_price` und `fear_greed_value` sind in
+**jeder** Zeile NULL. `fetch_market_context()` liefert diese Keys nicht, `save_market_context()`
+führt sie aber in der Spaltenliste (`db.py:822`). Für die ersten vier gilt: **wirklich tot** —
+kein Konsument im Code, dieselbe Altlast-Klasse wie `MAX_DEEP_ANALYSIS` und die Tabellen
+`fundamentals` / `prompt_versions` (P2.11, Befund 5).
+
+`fear_greed_value` liegt anders und braucht eine eigene Klärung: **es gibt den Wert dreimal.**
+
+| # | Weg | Zustand |
+|---|---|---|
+| 1 | `commodities_crypto.fetch_fear_greed()` → `main.py:403` → `extra_context` | **funktioniert** — lieferte am 14.08. `{value: 29, label: "Fear"}` und ging als `EXTRA CONTEXT` in alle 7 Prompts (im Request-Log belegt) |
+| 2 | `market_context.fear_greed_value` (Spalte) | **tot** — nie geschrieben |
+| 3 | `prompts/commodities_crypto_v1.txt:45` → `analysis["extra"]["fear_greed_value"]` | **das ist, was die Mail zeigt** (`email_sender.py:197`) |
+
+✅ **Verifiziert, nicht vermutet:** die versendete Mail vom 14.08. zeigt in der F&G-Spalte
+**29** für GC=F und XRP-USD — Claude spiegelt den injizierten Wert exakt. Der angezeigte
+Wert ist also valide. **Aber nur zufällig verlässlich:** der Prompt gibt für
+`fear_greed_value` keinerlei Feldregel vor (anders als `market_context_v1.txt`, das Raten
+ausdrücklich verbietet). Nichts verpflichtet Claude, den Kontextwert durchzureichen — eine
+abweichende oder `null`-Antwort landete unbemerkt in der Mail, obwohl der echte Wert
+danebenliegt. **Klärungspunkt für 3C/3D:** die Drei-Wege-Redundanz auflösen — Weg 1 direkt
+in die Mail rendern, Weg 3 aus dem Prompt streichen, Weg 2 mit den vier toten Spalten
+zusammen entfernen.
+
+**Weiterhin offen:** `weekly` (nie inhaltlich verifiziert), der einmalige `bootstrap-db`-Lauf
+— davor der Check, ob der `db-latest`-Upload trägt — und danach die Reaktivierung von
+`analyze.yml`.
+
+---
+
+### P2.13 — ✅ Die Invariante steht jetzt in der Datenbank (2026-08-15)
+
+Befund 1 aus P2.12 hatte nur die Symptome beseitigt. Seit `ux_predictions_one_open_per_idea`
+erzwingt SQLite selbst, was die Doku seit Plan 2 behauptet: **je Trade-Idee genau EINE
+offene Prediction.**
+
+```sql
+CREATE UNIQUE INDEX IF NOT EXISTS ux_predictions_one_open_per_idea
+    ON predictions(date, ticker, direction) WHERE status = 'open';
+```
+
+**Warum partiell.** Ein UNIQUE über die drei Spalten allein hätte E3 gebrochen: die
+abgelöste `pre_market`-Zeile und ihre `trade_proposals`-Nachfolgerin teilen sich alle drei
+Werte und stehen dauerhaft nebeneinander. Nur die **offenen** dürfen eindeutig sein.
+
+⚠️ **Der Index erzwingt eine Reihenfolge, die nicht umgestellt werden darf.**
+`supersede_prediction()` fügte bisher **erst ein** und setzte die alte Zeile danach auf
+`superseded`. SQLite prüft einen Unique-Index **je Statement, nicht beim Commit** — dieser
+INSERT scheitert also, solange die alte Zeile noch offen ist. Die Funktion arbeitet jetzt in
+drei Schritten (alte Zeile auf `superseded` → INSERT → `superseded_by` nachtragen), alle
+weiterhin in **einer** Transaktion. Die Atomizitäts-Begründung aus C1 (P2.8) bleibt damit
+unangetastet.
+
+**Bestandsdatenbanken.** `CREATE UNIQUE INDEX` scheitert an vorhandenen Duplikaten — ohne
+Vorbereinigung stürbe `init_schema()` bei **jedem** Lauf. Deshalb räumt
+`_enforce_one_open_prediction_per_idea()` vorher auf: die jeweils **ältere** Zeile geht auf
+`closed_stale_pre_rollout` mit `learnable = 0`, mit einer WARNING, die die IDs nennt.
+Verifiziert gegen eine echte Kopie mit den vier 13.08.-Duplikaten — dieselben IDs
+(13, 17, 18, 19), Index angelegt, zweiter Aufruf idempotent.
+
+**Wenn die Regel greift, stirbt der Lauf nicht.** `save_prediction()` fängt den
+`IntegrityError`, loggt die Trade-Idee als WARNING und gibt `None` zurück. Ein Abbruch wäre
+teurer als der Nutzen: der Fall entsteht praktisch nur durch einen Doppellauf, und dann ist
+Phase 3 längst bezahlt — die Exception risse das Ranking mitten in einer je Zeile
+committenden Schleife auseinander. `ranking.py:221` wertet den Rückgabewert ohnehin nicht aus.
+
+**707 Tests grün, Coverage 90,94 %** (`--cov=src --cov=main`). Die Umstellung war
+testgetrieben: die zwei neuen Tests waren erst rot, und der Index legte beim ersten
+Gesamtlauf **13 bestehende Tests** um — darunter der komplette E3-Pfad. Genau diese
+Regression war der Beweis, dass die Reihenfolge in `supersede_prediction()` das eigentliche
+Risiko der Änderung war.
+
+Drei Tests bauten in ihrem **Setup** den nun verbotenen Zustand (zwei offene Zeilen je
+Idee) und wurden auf den Pfad gezogen, den die Produktion tatsächlich geht.
+⚠️ Dabei fiel auf: **der `superseded_by`-Zweig von `record_revision()` hatte keinen
+Produktions-Aufrufer mehr** — alle drei Stellen in `main.py` (534, 538, 553) rufen ohne ihn
+auf, seit C1 die Ablösung nach `supersede_prediction()` verlegt hat. Sein einziger
+legitimer Anwendungsfall war seit dem Index zusätzlich strukturell unmöglich: er setzt
+voraus, dass alte und neue Zeile gleichzeitig offen sind.
+
+✅ **Entfernt am 2026-08-15.** `record_revision()` nimmt nur noch `(conn, pred_id, verdict)`
+und lässt die Zeile immer offen; Ablösen kann ausschliesslich `supersede_prediction()`.
+Damit ist der zweite, **nicht-atomare** Weg zur Ablösung weg — genau der Defekt, den C1
+geschlossen hat, blieb als Parameter bis hierhin aufrufbar. Die **Spalte** `superseded_by`
+bleibt selbstverständlich: sie trägt `supersede_prediction()` und den
+`COALESCE(superseded_by, id)`-Join von Weekly-Block 2.
+Ein Test pinnt die Verengung (`test_record_revision_cannot_supersede_a_row`) — er war vor
+dem Eingriff rot und verhindert, dass der Parameter unbemerkt zurückkehrt.
+
+**Angewandt auf `data/tracking.db`** am 2026-08-15: 11 offene Zeilen, keine Duplikate,
+Index vorhanden. Sicherung vor dem Eingriff: `data/tracking.db.bak-20260815-120803`.
+
+---
+
 ## Preismodell-Umbau — drei Entscheidungs-Snapshots + finale Tages-OHLC (P3) ✅ CODE FERTIG
 
 **Spec:** `docs/superpowers/specs/2026-08-06-preismodell-snapshots-design.md`
@@ -1127,11 +1334,16 @@ solange ihr Fenster läuft. `closed_date` ist bei beiden geschlossenen der **Han
 aus statt eine Pipeline zu starten, `final_close` und `close` laufen im Container gegen
 einen Wegwerf-Mount, `data/tracking.db` bleibt unberührt.
 
-⏳ **Offen bleiben `trade_proposals` und `weekly`** — beide nie ausgeführt.
-`trade_proposals` re-validiert die `pre_market`-Signale **desselben Tages**; dafür braucht
-es eine DB mit frischen Signalen. Dahinter steckt die verwickeltste Mechanik von Plan 2
-(`superseded_by`, `revision_verdict`, „genau EINE offene Prediction je Trade-Idee"), die
-bis heute nie eine einzige Zeile zu bearbeiten hatte.
+✅ **`trade_proposals` ist am 2026-08-14 gelaufen und verifiziert** — s. **P2.12**. Der
+Absatz, der hier stand („beide nie ausgeführt"), ist damit überholt. Bestätigt hat sich
+dabei genau die Erwartung, die ihn begründete: der Lauf re-validiert die Signale
+**desselben Tages**, weshalb er einen vorausgehenden `pre_market`-Lauf braucht — ein
+Testlauf am Vormittag fand deshalb „0 offene pre_market-Signale" und liess die Mechanik
+erneut unberührt.
+
+⏳ **Offen bleibt `weekly`** — zwar zugestellt, aber nie inhaltlich verifiziert; die fünf
+Aggregate aus Task 18 und die vier B.9-Blöcke sind ungeprüft, und `cost_summary` ist hart
+auf Nullen verdrahtet (P2.6).
 
 ---
 

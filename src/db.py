@@ -358,6 +358,50 @@ def _apply_migrations(conn: sqlite3.Connection) -> None:
             conn.execute(f"ALTER TABLE predictions ADD COLUMN {col} {coltype}")
     conn.commit()
 
+    _enforce_one_open_prediction_per_idea(conn)
+
+
+def _enforce_one_open_prediction_per_idea(conn: sqlite3.Connection) -> None:
+    """Legt den partiellen UNIQUE-Index an, der die Invariante 'je Trade-Idee
+    genau EINE offene Prediction' erzwingt — und raeumt vorher auf.
+
+    Der Index ist bewusst partiell (`WHERE status = 'open'`). Ein UNIQUE ueber
+    (date, ticker, direction) allein wuerde E3 brechen: die abgeloeste
+    pre_market-Zeile und ihre trade_proposals-Nachfolgerin teilen sich alle drei
+    Werte und stehen dauerhaft nebeneinander. Nur die *offenen* duerfen eindeutig
+    sein.
+
+    Die Bereinigung davor ist Pflicht, nicht Komfort: Bestandsdatenbanken tragen
+    die Duplikate bereits (P2.12, Befund 1), und CREATE UNIQUE INDEX scheitert an
+    ihnen. Ohne diesen Schritt stuerbe init_schema() dort bei jedem Lauf.
+    Geschlossen wird die aeltere Zeile — die juengere traegt den frischeren Kurs —
+    nach demselben Muster wie die Juli-Altlasten: learnable=0, damit eine Dublette
+    nie ins Lernmodul geraet."""
+    duplicates = conn.execute(
+        """SELECT id FROM predictions
+            WHERE status = 'open'
+              AND id NOT IN (SELECT MAX(id) FROM predictions
+                              WHERE status = 'open'
+                              GROUP BY date, ticker, direction)"""
+    ).fetchall()
+    if duplicates:
+        ids = [r["id"] for r in duplicates]
+        log.warning(
+            f"{len(ids)} doppelte offene Prediction(s) gefunden und geschlossen: "
+            f"{ids} — Ursache ist fast immer ein doppelter Lauf desselben Run-Types"
+        )
+        conn.executemany(
+            """UPDATE predictions
+                  SET status = 'closed_stale_pre_rollout', learnable = 0
+                WHERE id = ?""",
+            [(i,) for i in ids],
+        )
+    conn.execute(
+        """CREATE UNIQUE INDEX IF NOT EXISTS ux_predictions_one_open_per_idea
+               ON predictions(date, ticker, direction) WHERE status = 'open'"""
+    )
+    conn.commit()
+
 
 def connect(db_path: str | Path) -> sqlite3.Connection:
     """Opens a SQLite connection with row_factory=sqlite3.Row and foreign keys enabled."""
@@ -583,9 +627,28 @@ def _insert_prediction(conn: sqlite3.Connection, pred: dict) -> int:
     return cur.lastrowid
 
 
-def save_prediction(conn: sqlite3.Connection, pred: dict) -> int:
-    """Inserts one predictions row and commits. Siehe _insert_prediction."""
-    new_id = _insert_prediction(conn, pred)
+def save_prediction(conn: sqlite3.Connection, pred: dict) -> int | None:
+    """Inserts one predictions row and commits. Siehe _insert_prediction.
+
+    Gibt None zurueck, wenn fuer dieselbe (date, ticker, direction) bereits eine
+    offene Zeile steht — der partielle UNIQUE-Index laesst die zweite nicht zu
+    (s. _enforce_one_open_prediction_per_idea).
+
+    Bewusst uebersprungen statt durchgereicht: der Fall entsteht praktisch nur
+    durch einen versehentlichen Doppellauf, und dann ist der Lauf bereits durch
+    Phase 3 gelaufen und hat mehrere Euro gekostet. Eine Exception hier risse ihn
+    mitten im Ranking ab — mit den bis dahin geschriebenen Zeilen committet, weil
+    save_prediction je Zeile committet. Die WARNING nennt die Idee beim Namen,
+    damit der Doppellauf nicht still bleibt."""
+    try:
+        new_id = _insert_prediction(conn, pred)
+    except sqlite3.IntegrityError:
+        conn.rollback()
+        log.warning(
+            f"{pred.get('ticker')} {pred.get('direction')} am {pred.get('date')}: "
+            "es steht bereits eine offene Prediction — nicht erneut angelegt"
+        )
+        return None
     conn.commit()
     return new_id
 
@@ -602,14 +665,25 @@ def supersede_prediction(
     ab — Lock, abgebrochener Actions-Job, Runner-Timeout —, ist dieser Zustand
     dauerhaft: es gibt weder ein UNIQUE ueber die drei Spalten (Befund 8) noch
     einen Reparaturlauf. Der Evaluator schliesst dann beide Zeilen und jede
-    Kennzahl zaehlt doppelt. Genau das soll E3 verhindern."""
+    Kennzahl zaehlt doppelt. Genau das soll E3 verhindern.
+
+    ⚠️ Die Reihenfolge ist erzwungen, nicht beliebig: die alte Zeile muss den
+    Zustand 'open' verlassen, BEVOR die neue eingefuegt wird. Beide teilen sich
+    (date, ticker, direction), und der partielle UNIQUE-Index prueft je Statement,
+    nicht erst beim Commit — ein INSERT davor scheitert an ihm. Deshalb drei
+    Schritte statt zwei: superseded_by kann erst gesetzt werden, wenn die neue ID
+    existiert. Die Transaktion klammert weiterhin alles."""
     try:
-        new_id = _insert_prediction(conn, new_pred)
         conn.execute(
             """UPDATE predictions
-               SET revision_verdict = ?, superseded_by = ?, status = 'superseded'
+               SET revision_verdict = ?, status = 'superseded'
                WHERE id = ?""",
-            (verdict, new_id, old_id),
+            (verdict, old_id),
+        )
+        new_id = _insert_prediction(conn, new_pred)
+        conn.execute(
+            "UPDATE predictions SET superseded_by = ? WHERE id = ?",
+            (new_id, old_id),
         )
         conn.commit()
     except Exception:
@@ -639,29 +713,28 @@ def close_prediction(
 
 def record_revision(
     conn: sqlite3.Connection, pred_id: int, verdict: str,
-    superseded_by: int | None = None,
 ) -> None:
-    """Schreibt das Urteil des 16:10-Laufs auf die pre_market-Zeile (E3).
+    """Schreibt das Urteil des 16:10-Laufs auf die pre_market-Zeile (E3) und
+    laesst sie dabei **offen**.
 
-    Mit `superseded_by` wird die Zeile abgeloest: status='superseded', damit der
-    Evaluator und Phase 4a sie nicht mehr sehen — beide filtern auf status='open'.
-    Ohne `superseded_by` (Urteil 'gedreht' oder 'verworfen') bleibt sie offen und
-    wird regulaer ausgewertet; nur so laesst sich messen, ob die Ablehnung richtig lag.
+    Das ist der Weg fuer 'gedreht' und 'verworfen': die Zeile wird regulaer
+    ausgewertet, nur so laesst sich messen, ob die Ablehnung richtig lag (E5).
+    Ablloesen kann diese Funktion nicht — dafuer gibt es ausschliesslich
+    supersede_prediction(), das INSERT und UPDATE in EINE Transaktion legt.
+
+    Der frueher hier vorhandene `superseded_by`-Parameter ist entfernt (2026-08-15).
+    Er war der zweite, nicht-atomare Weg zur Abloesung — genau der Defekt, den C1
+    (P2.8) mit supersede_prediction() geschlossen hat — und hatte seither keinen
+    Aufrufer mehr. Mit dem partiellen UNIQUE-Index (P2.13) war sein einziger
+    Anwendungsfall zusaetzlich strukturell unmoeglich: er setzt voraus, dass alte
+    und neue Zeile gleichzeitig offen sind.
 
     Das Urteil sitzt bewusst auf der ALTEN Zeile: in drei von sechs Ausgaengen
     entsteht gar keine neue, dort waere es sonst nirgends."""
-    if superseded_by is None:
-        conn.execute(
-            "UPDATE predictions SET revision_verdict = ? WHERE id = ?",
-            (verdict, pred_id),
-        )
-    else:
-        conn.execute(
-            """UPDATE predictions
-               SET revision_verdict = ?, superseded_by = ?, status = 'superseded'
-               WHERE id = ?""",
-            (verdict, superseded_by, pred_id),
-        )
+    conn.execute(
+        "UPDATE predictions SET revision_verdict = ? WHERE id = ?",
+        (verdict, pred_id),
+    )
     conn.commit()
 
 

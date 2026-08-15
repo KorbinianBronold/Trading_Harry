@@ -1,14 +1,22 @@
 # Shares_Future – SP500 CFD Research Tool
 
-**Zuletzt aktualisiert:** 2026-08-12 — Sprint 3C / **Plan 1 (Fundament) ist code-fertig**
+**Zuletzt aktualisiert:** 2026-08-15 — **Live-Verifikation von Plan 2 abgeschlossen.**
+`trade_proposals` lief am 2026-08-14 erstmals gegen echte Signale; E3 (Ablösung statt
+Dublette) und E5 (gedrehte Signale werden gemeldet, nicht gehandelt) verhalten sich wie
+spezifiziert. Details und vier Befunde: PROJECT_STATUS **P2.12**.
+✅ Der dabei gefundene Datenfehler — vier doppelte offene Predictions aus einem
+Doppellauf am 13.08. — ist bereinigt **und die Ursache geschlossen**: ein partieller
+UNIQUE-Index erzwingt die Invariante jetzt in der Datenbank (s. unten).
+⏳ Offen: `weekly` (zugestellt, aber nie inhaltlich verifiziert), der einmalige
+`bootstrap-db`-Lauf, danach die Reaktivierung von `analyze.yml`.
+
+Davor, 2026-08-12 — Sprint 3C / **Plan 1 (Fundament) ist code-fertig**
 (Analyse-Pipeline-Umbau: Trichter, zwei zählbare Signale, neues Ranking). 17 Indikatoren
 laufen mit und füllen 29 neue Spalten, das Technik-Signal ist berechenbar — **keine
 Verhaltensänderung.** Details: PROJECT_STATUS C.6. Einstieg ist jetzt Plan 2 (Trichter).
 ⚠️ Der abschliessende Ganz-Branch-Review fand die Garantie tatsächlich gebrochen vor (die
 29 neuen Werte liefen in vier Claude-Prompts mit) und einen zweiten Bug (`ichi_chikou` war
 strukturell immer `None`) — beide im selben Fix-Wave behoben, s. PROJECT_STATUS C.6.
-⏳ Offen und **unabhängig vom Umbau**: `trade_proposals` und `weekly` (nie ausgeführt), der
-einmalige `bootstrap-db`-Lauf, danach die Reaktivierung von `analyze.yml`.
 
 Davor, 2026-08-09 — `pre_market` erstmals vollständig gelaufen (3,13 EUR, 10 Predictions,
 Mail zugestellt), Docker-Smoke-Test bestanden, alle `.md`-Dateien auf diesen Stand gezogen.
@@ -63,6 +71,17 @@ Die Pipeline-Phasen lassen sich an `main.py:run_pipeline()` ablesen.
   eine zweite daneben zu legen. Ohne das schliesst der Evaluator beide und jede
   Kennzahl zählt doppelt. Das Urteil steht auf der **alten** Zeile
   (`revision_verdict`) — in drei von sechs Ausgängen entsteht gar keine neue.
+  Seit 2026-08-15 erzwingt das die **Datenbank**: ein partieller UNIQUE-Index
+  `ux_predictions_one_open_per_idea` über `(date, ticker, direction) WHERE
+  status='open'`. Partiell ist Absicht — ein UNIQUE über die drei Spalten allein
+  bräche E3, weil abgelöste und ablösende Zeile alle drei Werte teilen.
+  ⚠️ **Daraus folgt eine Reihenfolge, die man nicht umstellen darf:**
+  `db.supersede_prediction()` setzt die alte Zeile **zuerst** auf `superseded`
+  und fügt erst dann die neue ein (`superseded_by` kommt im dritten Schritt
+  nach). SQLite prüft den Index je Statement, nicht beim Commit — ein INSERT
+  davor scheitert. Alle drei Schritte liegen weiterhin in einer Transaktion.
+  Bestehende DBs mit Duplikaten räumt `init_schema()` beim ersten Lauf auf
+  (ältere Zeile → `closed_stale_pre_rollout`, `learnable=0`, mit WARNING).
 - Ein gedrehtes oder hart verworfenes Signal bleibt **offen** und wird regulär
   ausgewertet; nur so lässt sich messen, ob die Ablehnung richtig lag. Eine
   Gegenposition entsteht dabei nie (das Gegensignal lief nie durch Phase 3).

@@ -10,8 +10,11 @@ data/tracking.db.backup-*
 data/*.json
 # Laufprotokolle landen auch im Repo-Wurzelverzeichnis (z.B. pre_market.log),
 # nicht nur unter data/.
+*.log
 *.egg-info/
 .venv/
 venv/
 .worktrees/
 notes
+*.db
+data/logs/
