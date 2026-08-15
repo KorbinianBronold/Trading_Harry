@@ -1,11 +1,13 @@
 # Shares_Future – Architektur & Design
 
-**Zuletzt aktualisiert:** 2026-08-15 — **Sprint 3C / Plan 2 (Trichter) nachgezogen:
-8 von 13 Tasks sind umgesetzt und standen in keinem Dokument.** Neu beschrieben: Phase 1
-läuft in drei Pässen (Gate → Sweep → Process) mit **Sidecar** als drittem Rückgabewert,
-Phase 1 ist Finnhub-frei, `src/broad_scan.py` als Modul 3b, `GAP_SCAN_BARS = 220`.
-⚠️ **Der Trichter ist noch nicht live** — `main.py:378` ruft weiterhin
-`quick_filter_batch()`; erster Verhaltenswechsel ist Task 10. Stand: PROJECT_STATUS **C.7**.
+**Zuletzt aktualisiert:** 2026-08-15 — **Sprint 3C / Plan 2 (Trichter) abgeschlossen
+nachgezogen: 12 von 13 Tasks.** ✅ **Der Trichter ist live**: `quick_filter.py` ist aus
+`run_pipeline()` verschwunden (Modul 3 unten als „ersetzt" markiert), `broad_scan.py` +
+`cutoff_candidates()` (Modul 3b) laufen live und sind gegen echte Daten gemessen
+(3,3551 EUR, günstiger als der alte Weg). `run_weekly()` füllt seit Task 12
+`fundamentals_cache` + `earnings_next_date` fürs ganze Universum, `FinnhubProvider`
+drosselt sich seit Task 11 auf 60 Calls/Minute. Nur noch Task 13 (dieser Durchgang)
+offen, danach der Abschluss-Review über `c978d70..HEAD`. Stand: PROJECT_STATUS **C.7**.
 
 Davor, 2026-08-15 — Live-Verifikation von Plan 2 (Sprint 3B) abgeschlossen
 (PROJECT_STATUS P2.12): `pre_market` → `trade_proposals` → `close` liefen zu den echten
@@ -45,7 +47,7 @@ Universums, Historien-Guard, erweiterte Invariantenliste, Testzahlen auf 608.
 
 ## Überblick
 
-Das System folgt einer **Pipeline-Architektur** mit 9 Phasen (0, 0b, 1, 1c, 1d, 2, 3, 4, 4a, 5), die sequenziell ausgeführt werden. Jede Phase ist entkoppelt über klare Daten-Schnittstellen und kann unabhängig getestet werden.
+Das System folgt einer **Pipeline-Architektur** mit den Phasen 0, 0b, 1, 1c, 1d, 2, 2a, 3, 4, 4a, 5, die sequenziell ausgeführt werden. Jede Phase ist entkoppelt über klare Daten-Schnittstellen und kann unabhängig getestet werden.
 
 **Reihenfolge beachten:** Ranking (Phase 4) läuft seit B.5 **vor** dem Portfolio-Check (4a), nicht danach. Phase 4a bekommt dadurch die fertigen Phase-3-Analysen und braucht keinen eigenen `web_search`.
 
@@ -95,24 +97,26 @@ DB-Close.
 └─────────────────────────────────────────────────────────────────┘
                               ↓
 ┌─────────────────────────────────────────────────────────────────┐
-│                  PHASE 1: DATENSAMMLUNG                          │
+│         PHASE 1: DATENSAMMLUNG (Gate → Sweep → Process)         │
 │  Input: —                                                         │
+│  Gate: deaktivierte Ticker raus (Rohstoffe/Krypto ausgenommen)   │
+│  Sweep: EIN Batch-Call für alle Live-Kurse (20er-Chunks)         │
+│  Process: Indikatoren aus 220 DB-Tagen, Technik-Signal → Sidecar│
 │  Quelle: Capital.com (alleiniger OHLC-Provider, kein Fallback)   │
-│           500 Aktien + Commodities/Crypto                        │
-│           1 Bar täglich fetchen + letzte 200 aus DB              │
 │  Berechnen: RSI-14, MACD, ATR, SMA200, PE, Volume-Ratio, etc.   │
-│  Output: list[{ticker, price, rsi_14, macd, ..., intraday_range}│
+│  Output: (results, skipped, sidecar) — sidecar NIE in td, s.     │
+│          Sidecar-Invariante in CLAUDE.md                         │
 │  Cost: ~0.00 EUR                                                 │
 │  Fail: ✅ Skip Ticker, continue                                   │
-│  DB: tech_indicators-Table persistieren                          │
+│  DB: technical_indicators-Table persistieren                     │
 └─────────────────────────────────────────────────────────────────┘
                               ↓
 ┌─────────────────────────────────────────────────────────────────┐
 │      PHASE 1c: OFFENE POSITIONEN ALS PFLICHT-KANDIDATEN          │
 │  Capital.com GET /positions → Epics über die Reverse-Map auf     │
 │  Ticker zurückführen. Diese Ticker gehen garantiert in Phase 3,  │
-│  auch wenn der Quick-Filter sie aussortiert hätte — sonst        │
-│  verliert man die Analyse zu einer Position, die man hält.       │
+│  auch wenn der Cutoff sie aussortiert hätte — sonst verliert     │
+│  man die Analyse zu einer Position, die man hält.                 │
 │  Cost: ~0.00 EUR | Fail: ✅ leere Liste, continue                │
 └─────────────────────────────────────────────────────────────────┘
                               ↓
@@ -126,15 +130,26 @@ DB-Close.
 └─────────────────────────────────────────────────────────────────┘
                               ↓
 ┌─────────────────────────────────────────────────────────────────┐
-│              PHASE 2: QUICK-FILTER (Batch-Scoring)               │
-│  Input: phase1_data[], trend_context                             │
-│  Claude: 1× Haiku über ALLE Ticker                              │
-│  ⚠️ BATCH_SIZE_QUICK und MAX_DEEP_ANALYSIS sind tote            │
-│     Konstanten — es gibt weder 30er-Batches noch einen Deckel    │
-│     auf die Tiefenanalysen. Fix gehört zu C.4.                   │
-│  Output: list[{ticker, long_score, short_score, confidence}]    │
-│  Cost: ~0.15 EUR                                                 │
-│  Fail: ✅ Skip Batch, continue                                    │
+│           PHASE 2: NACHRICHTEN-SCAN (broad_scan_batch)           │
+│  Seit Sprint 3C / Plan 2, Task 10 (2026-08-15) — ersetzt         │
+│  quick_filter_batch(), s. Modul 3/3b weiter unten                │
+│  Input: sp500_tds[], sidecar, trend_context, market_context      │
+│  Claude: 1× Sonnet + web_search über ALLE Ticker                │
+│  Output: {ticker: {news_strength: 0-3, news_note}}               │
+│  Fail: ✅ unparsebar → ganzer Batch auf news_strength=0           │
+└─────────────────────────────────────────────────────────────────┘
+                              ↓
+┌─────────────────────────────────────────────────────────────────┐
+│              PHASE 2a: CUTOFF (cutoff_candidates)                │
+│  Kandidat: news_strength ≥ 1 ODER tech_strength ≥                │
+│            TECH_MIN_FOR_DEEP (= 2), Pflicht-Kandidaten vorn       │
+│  Sortierung: (news_strength, |premarket_change_pct|,             │
+│              tech_strength, ticker), Deckel MAX_DEEP_ANALYSIS    │
+│  ✅ MAX_DEEP_ANALYSIS = 50 wird seit Task 10 gelesen              │
+│     (vorher 80, tot; BATCH_SIZE_QUICK entfernt)                  │
+│  Output: (selected, all_evaluated) → db.log_cutoff() schreibt    │
+│          BEIDE (3D braucht den 51. neben dem 50.)                │
+│  Cost: 0 EUR (reiner Code)                                       │
 └─────────────────────────────────────────────────────────────────┘
                               ↓
 ┌─────────────────────────────────────────────────────────────────┐
@@ -148,9 +163,11 @@ DB-Close.
 └─────────────────────────────────────────────────────────────────┘
                               ↓
 ┌─────────────────────────────────────────────────────────────────┐
-│          PHASE 3: DEEP-ANALYSIS (Top 80 Long/Short)              │
-│  Input: quick_filter_top_80[], trend_context, policy_context    │
-│  Claude: Sonnet × 80 Calls (1 Ticker pro Call) + web_search     │
+│          PHASE 3: DEEP-ANALYSIS (≤ MAX_DEEP_ANALYSIS Ticker)     │
+│  Input: adapt_cutoff_to_quick_filter(all_evaluated),             │
+│         trend_context, policy_context (Interim-Adapter bis       │
+│         Plan 3 deep_analysis_v2 einführt)                        │
+│  Claude: Sonnet × ≤50 Calls (1 Ticker pro Call) + web_search    │
 │  Output: list[{ticker, direction, scores{8}, hold_days, ...}]   │
 │  8-Dim Score: market_env, company_quality, valuation, momentum, │
 │              risk, sector_trend, catalyst, policy_risk           │
@@ -404,12 +421,14 @@ def collect_sector_momentum(conn, date, run_type, price_provider) -> dict[int, d
 
 ---
 
-### 3. **`src/quick_filter.py`** (Phase 2) — ⏳ wird ersetzt
+### 3. **`src/quick_filter.py`** (Phase 2) — ✅ ersetzt, Modul bleibt im Repo
 
-⚠️ **Dieses Modul ist auf dem Weg hinaus.** Sprint 3C / Plan 2 tauscht es gegen
-`broad_scan.py` + Cutoff (s. Modul 3b). Der Nachfolger ist gebaut, die Umschaltung ist
-**Task 10** und noch nicht erfolgt: `main.py:378` ruft weiterhin `quick_filter_batch()`.
-Bis dahin gilt die Beschreibung unten unverändert.
+**Seit Sprint 3C / Plan 2, Task 10 nicht mehr Teil von `run_pipeline()`.**
+`main.py` importiert `quick_filter_batch` nicht mehr; sein Nachfolger ist
+`broad_scan.py` + `cutoff_candidates()` (Modul 3b unten). Die Datei selbst ist noch nicht
+gelöscht — `tests/unit/test_quick_filter.py` deckt sie weiterhin ab, und ein Löschen ist
+kein Bestandteil von Plan 2. Beschreibung unten als **historische Referenz**, kein
+Ist-Zustand mehr.
 
 Batch-Scoring ohne Web-Search (reduziert auf Top 80).
 
@@ -435,11 +454,11 @@ def quick_filter_batch(
 
 ---
 
-### 3b. **`src/broad_scan.py`** (neu, Sprint 3C / Plan 2, Task 8 — ⏳ noch nicht verdrahtet)
+### 3b. **`src/broad_scan.py`** (Sprint 3C / Plan 2 — ✅ live seit Task 10)
 
-Der Nachfolger von Phase 2: **ein** Sonnet-Call **mit Websuche** über alle
-Phase-1-Überlebenden, statt eines Haiku-Calls ohne Websuche. Er liefert pro Ticker eine
-zählbare Nachrichtenstärke — **keine Richtung und keine „lohnt sich"-Einschätzung.**
+Phase 2: **ein** Sonnet-Call **mit Websuche** über alle Phase-1-Überlebenden, statt eines
+Haiku-Calls ohne Websuche. Er liefert pro Ticker eine zählbare Nachrichtenstärke — **keine
+Richtung und keine „lohnt sich"-Einschätzung.**
 
 ```python
 def broad_scan_batch(ticker_datas, sidecar, trend_context, market_context,
@@ -471,12 +490,21 @@ def broad_scan_batch(ticker_datas, sidecar, trend_context, market_context,
   Nachrichtentag zu unterscheiden. Der begrenzende Faktor ist der 600-s-Client-Timeout,
   **nicht** ein SDK-Guard — den gibt es in `anthropic==0.42.0` nicht.
 
-⏳ **Was noch fehlt:** `cutoff_candidates()` + Tabelle `cutoff_log` (Task 9), dann die
-Verdrahtung in `run_pipeline()` (Task 10). Cutoff-Regel laut Spec § 4.7:
-`news_strength ≥ 1 ODER tech_strength ≥ TECH_MIN_FOR_DEEP` (= 2), Sortierung
-`(news_strength, |premarket_change_pct|, tech_strength, ticker)`, Schnitt bei
-`MAX_DEEP_ANALYSIS` (50). Die Rohstoffe/Krypto umgehen Scan, Cutoff und 2b komplett
-(§ 18.3), Pflicht-Kandidaten aus Phase 1e stehen vorn und zählen gegen den Deckel.
+**Phase 2a — Cutoff, `cutoff_candidates()` (Task 9), live verdrahtet in `run_pipeline()`
+(Task 10):** Kandidat = `news_strength ≥ 1 ODER tech_strength ≥ TECH_MIN_FOR_DEEP` (= 2),
+Sortierung `(news_strength, |premarket_change_pct|, tech_strength, ticker)`, Schnitt bei
+`MAX_DEEP_ANALYSIS` (50, seit Task 10 gelesen — vorher 80 und tot). Die ausgewählten
+Kandidaten laufen über `deep_analysis.adapt_cutoff_to_quick_filter()` (Interim-Adapter,
+bis Plan 3 `deep_analysis_v2` einführt) an `analyze_assets()` weiter; **jeder** bewertete
+Ticker (nicht nur die ausgewählten) landet über `db.log_cutoff()` in der Tabelle
+`cutoff_log` — 3D braucht die volle Liste, um den 51. mit dem 50. zu vergleichen. Die
+Rohstoffe/Krypto umgehen Scan, Cutoff und 2b komplett (§ 18.3), Pflicht-Kandidaten aus
+Phase 1e stehen vorn und zählen gegen den Deckel.
+
+✅ **Live gegen echte Daten gemessen (2026-08-15, 20 MVP-Ticker):** 3,3551 EUR gesamt,
+kein `CostCapExceeded` — günstiger als der alte Weg über `quick_filter` (3,9217 EUR).
+15 von 20 Tickern qualifizierten, die 5 ausgeschlossenen wurden in Phase 3 tatsächlich
+übersprungen. Details: PROJECT_STATUS C.7, Befund 9.
 
 ---
 
@@ -557,6 +585,14 @@ class CapitalComProvider(DataProvider):
 ```
 
 **Fundamentals** werden separat von `FinnhubProvider.get_fundamentals()` abgerufen und in `fundamentals_cache`-Tabelle mit 7-Tage TTL gecacht. Im täglichen Run wird der Cache aus der DB gelesen, kein Live-Call.
+
+⚠️ **Ratenbegrenzung (Sprint 3C / Plan 2, Task 11):** `FinnhubProvider._respect_rate_limit()`
+drosselt `get_fundamentals()` und `get_earnings_calendar()` auf 60 Calls/60s
+(Sliding-Window, **instanzgebunden** — nicht modulweit). Der Wochenlauf (Task 12,
+`main._update_weekly_fundamentals()`) hält dafür ohnehin **eine** Instanz über das ganze
+Universum, dieselbe Invariante wie „ein Session-Object pro Run" bei Capital.com.
+`get_earnings_calendar()` läuft **nur dort** — der Tageslauf (`fetch_missing_fundamentals()`,
+Phase 2b) ruft sie nie, das ist die Aufgabenteilung aus Spec § 18.1c.
 
 ---
 
@@ -885,12 +921,18 @@ SQLite-Schema + Persistence.
 - `skipped_tickers` – Ereignis-Log je übersprungenem Ticker mit Grund; trägt die
   Weekly-Auswertung und die Deaktivierung
 - `trend_analyses`, `news_summaries` – Phase-0-Ausgaben
+- `cutoff_log` *(neu, Sprint 3C / Plan 2, Task 9)* – **jeder** von Phase 2 bewertete
+  Ticker, nicht nur die für Phase 3 ausgewählten (`selected`-Flag +
+  `rank_position` nach der Cutoff-Sortierung). UNIQUE(date, run_type, ticker);
+  ein doppelter Lauf ersetzt statt zu duplizieren. 3D braucht die volle Liste,
+  um den 51. mit dem 50. zu vergleichen
 
 ⚠️ **Zwei tote Tabellen** (verifiziert 2026-08-09): `fundamentals` und `prompt_versions`
 werden von `init_schema()` angelegt, aber **nirgends gelesen oder geschrieben** — null
 Zugriffe im gesamten Code. Die Fundamentaldaten liegen in `fundamentals_cache`;
-`prompt_versions` gehört zum noch nicht gebauten A/B-Testing (Sprint 3D). Dieselbe Klasse
-Altlast wie die toten Konstanten `MAX_DEEP_ANALYSIS` und `BATCH_SIZE_QUICK`.
+`prompt_versions` gehört zum noch nicht gebauten A/B-Testing (Sprint 3D). ✅ Die dritte
+Altlast dieser Klasse ist seit Task 10 geschlossen: `MAX_DEEP_ANALYSIS` wird gelesen
+(80 → 50), `BATCH_SIZE_QUICK` ist entfernt, nicht nur tot.
 
 **Neu in Sprint 3B / Plan 1** (angelegt 2026-07-27/29):
 - `ticker_status` – kumulativer `skip_count` + `inactive`-Flag + `retry_after` pro Ticker
@@ -992,8 +1034,7 @@ Versionssuffix:
 |---|---|
 | `trend_analyzer` | `trend_analyzer_v1.txt` |
 | `market_context` | `market_context_v1.txt` |
-| `quick_filter` | `quick_filter_v1.txt` — ⏳ entfällt mit Plan 2, Task 10 |
-| `broad_scan` | `broad_scan_v1.txt` — vorhanden, ⏳ noch nicht verdrahtet |
+| `broad_scan` | `broad_scan_v1.txt` — ✅ live, ersetzt `quick_filter` seit Task 10 |
 | `deep_analysis` | `deep_analysis_v1.txt`, `policy_monitor_v1.txt` |
 | `commodities_crypto` | `commodities_crypto_v1.txt` |
 | `portfolio_check` | **`portfolio_check_v2.txt`** |
@@ -1064,13 +1105,17 @@ heute = 2026-05-20, run_type = "close"
   ✓ costs ~0.00 EUR
 
   ↓
-[Phase 2] quick_filter_batch()
-  → 1 Haiku-Call über ALLE Ticker (nicht 30er-Batches: BATCH_SIZE_QUICK ist tot)
-  ← Ergebnisse (scores + exclude-Flag)
-  → KEIN Deckel — MAX_DEEP_ANALYSIS wird nicht gelesen, nur exclude filtert
-  ✓ costs ~0.15 EUR
-  ⏳ Zielzustand nach Plan 2, Task 10: broad_scan_batch() (1 Sonnet + Websuche)
-     → cutoff_candidates() → ≤ MAX_DEEP_ANALYSIS = 50
+[Phase 2] broad_scan_batch() — seit Plan 2, Task 10 (2026-08-15)
+  → 1 Sonnet-Call + Websuche über ALLE Ticker
+  ← {ticker: {news_strength: 0-3, news_note}}
+
+  ↓
+[Phase 2a] cutoff_candidates()
+  → news_strength ≥ 1 ODER tech_strength ≥ TECH_MIN_FOR_DEEP, gedeckelt bei
+    MAX_DEEP_ANALYSIS = 50 (seit Task 10 gelesen, vorher 80 und tot)
+  ← selected, all_evaluated → db.log_cutoff() schreibt BEIDE (reiner Code, 0 EUR)
+  ⓘ Echte Kosten/Auswahlgrössen (20-Ticker-Live-Messung, nicht diese
+    Sprint-1-Illustration): PROJECT_STATUS C.7, Befund 9
 
   ↓
 [Phase 3] run_policy_monitor()
@@ -1162,12 +1207,11 @@ TOTAL: ~3.50 EUR
 
 - **Unit Tests**: isolierte Module, Mock-Claude, Fixtures
 - **Integration Tests** (4): volle Pipeline + E2E-HTML-Render + trade_proposals-Flow
-- **Coverage Gate**: 80 % Minimum (aktuell 93,32 %)
-- **Baseline**: `pytest tests/ --cov=src --cov-fail-under=80 -q` → **647 passed, 7 skipped**,
-  0 failures (Stand 2026-08-12, nach Plan 1 / Fundament inkl. abschliessendem Fix-Wave —
-  s. PROJECT_STATUS C.6). Die 7 übersprungenen sind die
-  Live-Tests unter `tests/live/`; sie laufen nur mit `--run-live` und sprechen dann echte
-  APIs an (inkl. echtem Mailversand).
+- **Coverage Gate**: 80 % Minimum (aktuell 91,52 %)
+- **Baseline**: `pytest tests/ --cov=src --cov-fail-under=80 -q` → **733 passed, 14 skipped**,
+  0 failures (Stand 2026-08-15, Plan 2 / Trichter zu 12 von 13 Tasks — s. PROJECT_STATUS
+  C.7). Die übersprungenen sind die Live-Tests unter `tests/live/`; sie laufen nur mit
+  `--run-live` und sprechen dann echte APIs an (inkl. echtem Mailversand).
 
 ---
 

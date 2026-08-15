@@ -1,18 +1,23 @@
 # PROJECT_STATUS.md — Shares_Future (Trading_Harry)
 
-**Zuletzt aktualisiert:** 2026-08-15 — **Plan 2 (Trichter), Task 12: Wochenlauf-Vorlauf.**
+**Zuletzt aktualisiert:** 2026-08-15 — **Plan 2 (Trichter), Task 13: Doku — alle 13 Tasks
+abgeschlossen.** `docs/ARCHITECTURE.md` nachgezogen: Modul 3 (`quick_filter.py`) als
+„ersetzt" markiert, Modul 3b (`broad_scan.py`) als „live", die grosse Pipeline-Grafik auf
+Phase 2/2a (Nachrichten-Scan + Cutoff) und Phase 1 (Gate/Sweep/Process) aktualisiert,
+`cutoff_log` in der Tabellenübersicht ergänzt, `FinnhubProvider`-Ratenbegrenzung
+dokumentiert, veraltete Test-Baseline (647 Tests / 93,32 %) auf den echten Stand korrigiert.
+**Plan 2 (Trichter) ist damit vollständig umgesetzt** — der Trichter läuft live und ist
+gegen echte Daten gemessen (3,3551 EUR, günstiger als der alte Weg über `quick_filter`).
+Offen bleibt nur noch der Abschluss-Review über `c978d70..HEAD`, dann Plan 3
+(Analyse & Ranking). **733 Tests grün, 91,52 % Coverage.**
+
+Davor, 2026-08-15 — **Plan 2 (Trichter), Task 12: Wochenlauf-Vorlauf.**
 `main._update_weekly_fundamentals()`, verdrahtet vor dem wöchentlichen Aggregat in
 `run_weekly()`: füllt `fundamentals_cache` **und** `earnings_next_date` fürs ganze
 Universum. **Bug-Fix gegenüber dem Plan-Pseudocode:** dessen Skip-Prüfung („ist gecacht?")
 hätte einen vom Tageslauf frisch gecachten Ticker (der nie Earnings mitbringt, R15) für
-immer übersprungen und er hätte nie ein Earnings-Datum bekommen — die Prüfung verlangt
-jetzt zusätzlich ein gesetztes `earnings_next_date`. Nebenbefund: ein vorbestehender Test
-brauchte dadurch plötzlich 60,7 s statt <1 s (ungemockter `FinnhubProvider` traf die
-Netzsperre pro Ticker im vollen Universum) — gefixt durch denselben expliziten
-Provider-Mock, den jeder andere `run_*`-Test in der Datei schon nutzt. Details: **C.7**,
-Befund 11 (Bug-Fix) und Befund 12 (Testlaufzeit). **12 von 13 Tasks umgesetzt** — nur noch
-Task 13 (Doku-Feinarbeit) offen, dann der Abschluss-Review über `c978d70..HEAD`.
-**733 Tests grün, 91,52 % Coverage.**
+immer übersprungen und er hätte nie ein Earnings-Datum bekommen. Details: **C.7**,
+Befund 11 (Bug-Fix) und Befund 12 (Testlaufzeit).
 
 Davor, 2026-08-15 — **Plan 2 (Trichter), Task 11: Finnhub-Ratenbegrenzung.**
 `FinnhubProvider._respect_rate_limit()`: Sliding-Window-Drosselung (60 Calls/60s),
@@ -57,7 +62,7 @@ Davor, 2026-08-12 — **Plan 1 (Fundament) des Analyse-Pipeline-Umbaus ist
 code-fertig**, Tasks 2–8 committed (Task 9 zieht diese Dokumente nach). 17 Indikatoren
 laufen mit und füllen 29 neue Spalten in `technical_indicators`; das Technik-Signal ist
 berechenbar, steuert aber nichts. **Keine Verhaltensänderung.** 647 Tests grün, Coverage
-93,32 %. Details: Abschnitt **C.6**. (Plan 2 hat darauf aufgesetzt und ist zu 12 von 13
+93,32 %. Details: Abschnitt **C.6**. (Plan 2 hat darauf aufgesetzt und ist zu 13 von 13
 Tasks umgesetzt — s. **C.7**, nicht mehr „Einstieg".)
 ⚠️ Der abschliessende Ganz-Branch-Review fand die Verhaltensänderungs-Garantie zunächst
 gebrochen vor (29 neue Werte liefen in vier Claude-Prompts mit) plus einen strukturellen
@@ -184,7 +189,7 @@ Einen Branch `sprint3b/plan2-pipeline-umbau` gibt es weder lokal noch remote.
 | 3A | Roadmap + Doku aktualisieren | ✅ erledigt (dieses Dokument) |
 | 3B | Cron-Struktur + Pipeline-Umbau | 🟢 **Code vollständig, Live-Verifikation abgeschlossen** — Plan 1 (2026-07-29) und Plan 2 (20/20 Tasks, 2026-08-04), alles auf `main`. Verifiziert: `pre_market`, `close`, `final_close` (P2.10, P3.5) und **`trade_proposals` inkl. E3/E5 (2026-08-14, P2.12)**. ⏳ Offen: `weekly`, `bootstrap-db`-Lauf, dann Reaktivierung von `analyze.yml` |
 | **3B-M** | **Mail-Provider-Wechsel (Zwischensprint)** | ✅ **ABGESCHLOSSEN 2026-07-30** — Mailversand läuft über **Resend**, eigene Domain verifiziert, Zustellung live bestätigt. Details s. unten |
-| 3C | Ranking-Überarbeitung | 🟡 **Plan 1 (Fundament) abgeschlossen** (C.6, keine Verhaltensänderung) · **Plan 2 (Trichter) zu 12 von 13 Tasks** — Trichter live verdrahtet und gemessen, s. **C.7** · Plan 3 (Analyse & Ranking) offen. C.1–C.4 sind in den Analyse-Pipeline-Umbau aufgegangen |
+| 3C | Ranking-Überarbeitung | 🟡 **Plan 1 (Fundament) abgeschlossen** (C.6, keine Verhaltensänderung) · **Plan 2 (Trichter) zu 13 von 13 Tasks abgeschlossen**, s. **C.7** · Plan 3 (Analyse & Ranking) offen. C.1–C.4 sind in den Analyse-Pipeline-Umbau aufgegangen |
 | 3D | Learning Modul | ⚠️ **Platzhalter — Planungssession ausstehend** |
 | 3E | Human-in-the-Loop | ⚠️ **Platzhalter — Planungssession ausstehend** |
 | 3F | Volle 500-Ticker-Skalierung | ⚠️ **Platzhalter — Planungssession ausstehend** |
@@ -1626,7 +1631,7 @@ die zwei Signale und das Ranking gemeinsam neu fasst:
 - **Spec:** `docs/superpowers/specs/2026-08-11-analyse-pipeline-umbau-design.md`
 - **Plan 1 (Fundament):** `docs/superpowers/plans/2026-08-11-analyse-pipeline-plan1-fundament.md`
 - **Plan 2 (Trichter):** `docs/superpowers/plans/2026-08-13-analyse-pipeline-plan2-trichter.md`
-  — 12 von 13 Tasks umgesetzt, s. **C.7**
+  — 13 von 13 Tasks umgesetzt, s. **C.7**
 - **Plan 3 (Analyse & Ranking):** offen, noch keine Plan-Datei
 
 Die Spec ersetzt C.1 (fehlende Indikator-Werte — jetzt Teil des `predictions`-Umbaus),
@@ -1734,13 +1739,14 @@ Plan 1 seine Nichtangriffsgarantie fuer das Pipeline-Verhalten verliert.
 
 ---
 
-### C.7 — Analyse-Pipeline-Umbau, Plan 2 (Trichter) 🟡 12 von 13 Tasks
+### C.7 — Analyse-Pipeline-Umbau, Plan 2 (Trichter) 🟢 13 von 13 Tasks
 
 Spec: `docs/superpowers/specs/2026-08-11-analyse-pipeline-umbau-design.md` (§ 4.2–4.8, § 18)
 Plan: `docs/superpowers/plans/2026-08-13-analyse-pipeline-plan2-trichter.md`
 
 **Stand 2026-08-15**, gegen das echte Repo geprüft: alles auf `main`, Arbeitsbaum clean,
 `origin/main` == lokal. **733 Tests grün, 14 skipped, 91,52 % Coverage** (`--cov=src`).
+✅ **Alle 13 Tasks umgesetzt.** Nur der Abschluss-Review über `c978d70..HEAD` steht noch aus.
 
 ✅ **Der Trichter ist live verdrahtet und live gegen echte Daten gemessen** (Task 10,
 s. Befund 9 unten). `quick_filter_batch()` ist aus `run_pipeline()` verschwunden.
@@ -1758,16 +1764,11 @@ s. Befund 9 unten). `quick_filter_batch()` ist aus `run_pipeline()` verschwunden
 | 9 | *(Vorgänger-Commit)* | `config.TECH_MIN_FOR_DEEP = 2`; Tabelle `cutoff_log` (SCHEMA_SQL + Migrationsguard über `sqlite_master`, kein Zähler); `db.log_cutoff()` (`INSERT OR REPLACE`, ein Aufruf pro Lauf schreibt **alle** bewerteten Ticker); `broad_scan.cutoff_candidates()` |
 | 10 | `efd341a` | `main.run_pipeline()`: `quick_filter_batch()` raus, `broad_scan_batch()` + `cutoff_candidates()` + `db.log_cutoff()` rein, `deep_analysis.adapt_cutoff_to_quick_filter()` als Interim-Adapter. `MAX_DEEP_ANALYSIS` 80 → 50, `BATCH_SIZE_QUICK` entfernt (tot). `main._apply_forced_candidates()` entfernt — die Pflicht-Kandidaten-Logik sitzt jetzt in `cutoff_candidates()` selbst. **Live gegen echte Daten verifiziert, s. Befund 9** |
 | 11 | `1ebd247` | `FinnhubProvider._respect_rate_limit()`: Sliding-Window-Drosselung (60 Calls/60s), **instanzgebunden** (nicht modulweit wie im Plan-Pseudocode) — der Wochenlauf haelt eine Instanz über das ganze Universum, dieselbe Invariante wie „ein Session-Object pro Run" bei Capital.com. Vor jedem echten `get_fundamentals()`- und `get_earnings_calendar()`-Call, nach dem bestehenden `_client is None`-Kurzschluss (kein Call ohne API-Key → keine Drosselung nötig) |
-| 12 | *(dieser Commit)* | `main._update_weekly_fundamentals()`, verdrahtet in `run_weekly()` vor dem wöchentlichen Aggregat. Füllt `fundamentals_cache` **und** `earnings_next_date` fürs ganze Universum via `full_universe()`. **Bug-Fix gegenüber dem Plan-Pseudocode, s. Befund 11**: die Skip-Prüfung verlangt neben frischen Fundamentals zusätzlich ein gesetztes `earnings_next_date` — sonst hätte ein vom Tageslauf frisch gecachter Ticker (der nie Earnings mitbringt) nie eins bekommen |
+| 12 | `695699b` | `main._update_weekly_fundamentals()`, verdrahtet in `run_weekly()` vor dem wöchentlichen Aggregat. Füllt `fundamentals_cache` **und** `earnings_next_date` fürs ganze Universum via `full_universe()`. **Bug-Fix gegenüber dem Plan-Pseudocode, s. Befund 11**: die Skip-Prüfung verlangt neben frischen Fundamentals zusätzlich ein gesetztes `earnings_next_date` — sonst hätte ein vom Tageslauf frisch gecachter Ticker (der nie Earnings mitbringt) nie eins bekommen |
+| 13 | *(dieser Commit)* | Doku-Feinarbeit: `docs/ARCHITECTURE.md` — Modul 3 (`quick_filter.py`) als „ersetzt" markiert, Modul 3b (`broad_scan.py`) als „live" markiert, die grosse Pipeline-ASCII-Grafik (Phase 2/2a neu, Phase 1 auf Gate/Sweep/Process aktualisiert), `cutoff_log` in der Tabellenübersicht ergänzt, `FinnhubProvider`-Ratenbegrenzung dokumentiert, veraltete Test-Baseline (647/93,32 %) auf 733/91,52 % korrigiert. Modul-Docstrings (`src/broad_scan.py`, `src/db.py`) waren bereits in Tasks 9/10 erledigt |
 
-#### Was noch fehlt — Task 13, im Code verifiziert
-
-| Task | Fehlt konkret |
-|---|---|
-| 13 | Modul-Docstrings, restliche Doku-Feinarbeit (CLAUDE.md/ARCHITECTURE-Nachtrag für Plan 2 ist bereits erfolgt, s. Kopf dieses Dokuments) |
-
-Danach: Abschluss-Review über `c978d70..HEAD`, Testlauf mit Kostenmessung gegen Spec
-§ 13.2, dann Plan 3 (Analyse & Ranking).
+Kein weiterer Task offen. Nächster Schritt: Abschluss-Review über `c978d70..HEAD`,
+Testlauf mit Kostenmessung gegen Spec § 13.2, dann Plan 3 (Analyse & Ranking).
 
 #### Befunde
 

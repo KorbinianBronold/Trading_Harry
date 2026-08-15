@@ -1,6 +1,7 @@
 # Analyse-Pipeline-Umbau, Plan 2: Trichter — Implementation Plan
 
-**Status:** 🟡 **In Umsetzung — 12 von 13 Tasks committed, Trichter live gemessen (Stand 2026-08-15)**
+**Status:** ✅ **Alle 13 Tasks committed, Trichter live gemessen (Stand 2026-08-15) —
+nur noch der Abschluss-Review über `c978d70..HEAD` offen**
 **Erstellt:** 2026-08-13
 
 | Task | Stand | Commit(s) |
@@ -16,8 +17,8 @@
 | 9 Cutoff + `cutoff_log` | ✅ | `0b4cfe3` |
 | 10 `run_pipeline()` verdrahten | ✅ | `efd341a` |
 | 11 Finnhub-Ratenbegrenzung | ✅ | `1ebd247` |
-| 12 `run_weekly()`-Vorlauf | ✅ | *(dieser Commit)* |
-| 13 Doku nachziehen | 🟡 teilweise | PROJECT_STATUS C.7, CLAUDE.md und ARCHITECTURE.md sind gezogen; Modul-Docstrings und die Phasentabelle fehlen |
+| 12 `run_weekly()`-Vorlauf | ✅ | `695699b` |
+| 13 Doku nachziehen | ✅ | *(dieser Commit)* |
 
 ⚠️ **Zwei Korrekturen an diesem Plan, gegen den Code geprüft:**
 1. **Global Constraint 2 gilt für Task 3 nicht.** `GAP_SCAN_BARS` 200 → 220 **ändert** die
@@ -46,6 +47,13 @@
    für Kandidaten an, ruft aber laut R15 **nie** `get_earnings_calendar()`. Implementiert:
    übersprungen wird nur, wenn die Zeile frisch **und** mit gesetztem `earnings_next_date`
    vorliegt. Details: PROJECT_STATUS C.7, Befund 11.
+6. **Task 13s Step 2 (Phasentabelle in CLAUDE.md) bewusst nicht umgesetzt.** Der Plan
+   schlägt eine neue Markdown-Tabelle mit API-Calls/Kosten je Phase direkt in CLAUDE.md
+   vor. Das würde exakt duplizieren, was `docs/ARCHITECTURE.md`s Pipeline-Grafik bereits
+   zeigt (jetzt auf Phase 2/2a aktualisiert) — und widerspricht einer bestehenden,
+   bewussten Entscheidung: CLAUDE.md ist auf nicht-ableitbaren Inhalt getrimmt, nie auf
+   Dinge, die aus Code oder anderer Doku hervorgehen. Modul-Docstrings (`src/broad_scan.py`,
+   `src/db.py`) waren dagegen schon in den Tasks 9/10 erledigt.
 
 ✅ **Kostendeckel-Sorge live widerlegt.** Vor Task 10 stand hier die Vermutung, der
 Tausch Haiku-ohne-Websuche gegen Sonnet-mit-Websuche würde den MVP-Lauf über

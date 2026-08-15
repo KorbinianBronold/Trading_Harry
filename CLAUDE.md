@@ -1,14 +1,22 @@
 # Shares_Future – SP500 CFD Research Tool
 
-**Zuletzt aktualisiert:** 2026-08-15 — **Plan 2 (Trichter), Task 12: Wochenlauf-Vorlauf.**
+**Zuletzt aktualisiert:** 2026-08-15 — **Plan 2 (Trichter), Task 13: Doku — alle 13 Tasks
+abgeschlossen.** `docs/ARCHITECTURE.md` nachgezogen: Modul 3 (`quick_filter.py`) als
+„ersetzt" markiert, Modul 3b (`broad_scan.py`) als „live", Pipeline-Grafik auf
+Phase 2/2a und Phase 1 (Gate/Sweep/Process) aktualisiert, `cutoff_log` ergänzt,
+Finnhub-Ratenbegrenzung dokumentiert, veraltete Test-Baseline korrigiert.
+**Plan 2 (Trichter) ist vollständig umgesetzt** — live, gegen echte Daten gemessen
+(3,3551 EUR, günstiger als der alte Weg). Offen bleibt nur der Abschluss-Review über
+`c978d70..HEAD`, dann Plan 3. **733 Tests grün, 91,52 % Coverage.**
+
+Davor, 2026-08-15 — **Plan 2 (Trichter), Task 12: Wochenlauf-Vorlauf.**
 `main._update_weekly_fundamentals()`, verdrahtet vor dem wöchentlichen Aggregat in
 `run_weekly()`: füllt `fundamentals_cache` **und** `earnings_next_date` fürs ganze
 Universum via `full_universe()`. **Bug-Fix gegenüber dem Plan-Pseudocode:** dessen
 Skip-Prüfung („ist gecacht?") hätte einen vom Tageslauf frisch gecachten Ticker (der laut
 R15 nie Earnings mitbringt) für immer übersprungen und er hätte nie ein Earnings-Datum
 bekommen — die Prüfung verlangt jetzt zusätzlich ein gesetztes `earnings_next_date`.
-Details: PROJECT_STATUS **C.7**, Befund 11. **12 von 13 Tasks umgesetzt** — nur noch
-Task 13 (Doku-Feinarbeit) offen. **733 Tests grün, 91,52 % Coverage.**
+Details: PROJECT_STATUS **C.7**, Befund 11.
 
 Davor, 2026-08-15 — **Plan 2 (Trichter), Task 11: Finnhub-Ratenbegrenzung.**
 `FinnhubProvider._respect_rate_limit()`: Sliding-Window-Drosselung (60 Calls/60s),
@@ -301,13 +309,13 @@ und der getroffenen Entscheidungen. Kurzfassung:
     **abgeschlossen, ändert kein Pipeline-Verhalten**: das Technik-Signal ist berechenbar,
     steuert aber nichts. Stand: PROJECT_STATUS **C.6**.
   - **Plan 2 (Trichter)** — `…/plans/2026-08-13-analyse-pipeline-plan2-trichter.md`,
-    **12 von 13 Tasks umgesetzt**, alle auf `main`. ✅ **Der Trichter ist live** —
-    `quick_filter` ist aus `run_pipeline()` verschwunden, `broad_scan` +
+    **alle 13 Tasks umgesetzt und dokumentiert**, alle auf `main`. ✅ **Der Trichter ist
+    live** — `quick_filter` ist aus `run_pipeline()` verschwunden, `broad_scan` +
     `cutoff_candidates` (`MAX_DEEP_ANALYSIS` 80 → 50) laufen live, gemessen gegen echte
     Daten: 3,3551 EUR, kein `CostCapExceeded`, güns­tiger als der alte Weg. `run_weekly()`
-    füllt seit Task 12 `fundamentals_cache` + `earnings_next_date` fürs ganze Universum.
-    Offen: Task 13 (Doku), danach Abschluss-Review über `c978d70..HEAD`.
-    Stand und zehn Befunde: PROJECT_STATUS **C.7**.
+    füllt `fundamentals_cache` + `earnings_next_date` fürs ganze Universum,
+    `FinnhubProvider` drosselt sich auf 60 Calls/Minute. Offen: nur noch der
+    Abschluss-Review über `c978d70..HEAD`. Stand und zwölf Befunde: PROJECT_STATUS **C.7**.
   - **Plan 3 (Analyse & Ranking)** — offen; bringt Phase-3-Batching (der eigentliche
     Kostenhebel: ~0,034 statt ~0,12 EUR je Ticker), `deep_analysis_v2` und `rank_score`.
 - **3D / 3E / 3F** sind ⚠️ **Platzhalter** — bei Erreichen aktiv nachfragen und den
