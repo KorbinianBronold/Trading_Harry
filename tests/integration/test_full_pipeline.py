@@ -96,11 +96,20 @@ def test_full_pipeline_writes_predictions_and_sends_email(tmp_path, monkeypatch)
         {"ticker": "NVDA", "news_strength": 1, "news_note": "x"},
     ]})
 
+    # Seit Sprint 3C / Plan 3a, Task 9 laeuft Phase 3 gebatcht
+    # (analyze_batches()): alle drei Ticker liegen im selben Sub-Sektor
+    # ("Technology", aus dem gefakten get_fundamentals()) und landen deshalb
+    # in EINEM Batch -- ein einziger call_claude-Call mit einer
+    # results-Liste statt drei Einzelantworten.
     deep_obj = json.loads(deep_resp)
-    def _deep_for(ticker: str) -> str:
+    def _deep_for(ticker: str) -> dict:
         cp = dict(deep_obj)
         cp["ticker"] = ticker
-        return json.dumps(cp)
+        return cp
+
+    deep_batch_resp = json.dumps({"results": [
+        _deep_for("AAPL"), _deep_for("MSFT"), _deep_for("NVDA"),
+    ]})
 
     cc_obj = json.loads(cc_resp)
     def _cc_for(ticker: str, asset_class: str) -> str:
@@ -122,9 +131,7 @@ def test_full_pipeline_writes_predictions_and_sends_email(tmp_path, monkeypatch)
         _r(trend_resp, web_search_calls=4),                  # analyze_trends
         _r(broad_scan_resp_3, web_search_calls=3),            # broad_scan
         _r(policy_resp, web_search_calls=3),                 # policy_monitor
-        _r(_deep_for("AAPL")),                                # deep AAPL
-        _r(_deep_for("MSFT")),                                # deep MSFT
-        _r(_deep_for("NVDA")),                                # deep NVDA
+        _r(deep_batch_resp),                                  # deep: 1 Batch (AAPL+MSFT+NVDA)
         _r(_cc_for("GC=F", "commodity")),                    # cc Gold
         _r(_cc_for("BTC-USD", "crypto")),                    # cc BTC
     ]
@@ -162,9 +169,9 @@ def test_full_pipeline_writes_predictions_and_sends_email(tmp_path, monkeypatch)
          patch("src.trend_analyzer.call_claude", side_effect=[sequence[0]]), \
          patch("src.broad_scan.call_claude", side_effect=[sequence[1]]), \
          patch("src.deep_analysis.call_claude",
-               side_effect=[sequence[2], sequence[3], sequence[4], sequence[5]]), \
+               side_effect=[sequence[2], sequence[3]]), \
          patch("src.commodities_crypto.call_claude",
-               side_effect=[sequence[6], sequence[7]]), \
+               side_effect=[sequence[4], sequence[5]]), \
          patch("src.portfolio_check.call_claude",
                side_effect=lambda **kw: _r(portfolio_check_resp, web_search_calls=0)), \
          patch("src.email_sender.requests.post") as mock_sg, \

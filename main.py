@@ -19,7 +19,7 @@ from src.data_collector import collect, run_phase_2b
 from src.sector_momentum import collect_sector_momentum
 from src.trend_analyzer import analyze_trends, TrendAnalyzerError
 from src.broad_scan import broad_scan_batch, cutoff_candidates
-from src.deep_analysis import run_policy_monitor, analyze_assets, adapt_cutoff_to_quick_filter
+from src.deep_analysis import run_policy_monitor, analyze_batches
 from src.commodities_crypto import (
     analyze_commodities_and_crypto, fetch_fear_greed,
 )
@@ -399,9 +399,13 @@ def run_pipeline(run_type: str, date: str, db_path: str) -> None:
         except Exception as e:
             log.warning(f"Phase 2b nicht vollstaendig, Run laeuft weiter: {e}")
 
-        # Interim-Adapter: cutoff-Form -> quick_filter-Form, bis Plan 3
-        # deep_analysis_v2 einfuehrt und das exclude-Flag obsolet macht.
-        quick = adapt_cutoff_to_quick_filter(all_evaluated)
+        # Phase 3 sieht ausschliesslich die selektierten Ticker. Bis Plan 3a
+        # uebergab main ALLE Ticker plus ein exclude-Flag (der Interim-Adapter
+        # aus Plan 2, Task 10) -- die Auswahl liegt jetzt vollstaendig im
+        # Cutoff, wo sie hingehoert.
+        selected_tickers = {c["ticker"] for c in selected}
+        selected_tds = [td for td in sp500_tds if td["ticker"] in selected_tickers]
+        cutoff_by_ticker = {c["ticker"]: c for c in selected}
 
         current_phase = "policy_monitor"
         # Phase 3 policy monitor (1× for all of Phase 3 + 3b + 4a)
@@ -411,14 +415,23 @@ def run_pipeline(run_type: str, date: str, db_path: str) -> None:
         payload["briefing"] = generate_daily_briefing(trend_context, policy_context)
 
         current_phase = "deep_analysis"
-        # Phase 3 deep analysis
-        deep_stocks = analyze_assets(
-            ticker_datas=sp500_tds,
-            quick_filter_results=quick,
+        # Phase 3 — Batch-Tiefenanalyse nach Sub-Sektor (Spec 4.8, 20.2).
+        # failed_deep sind Ticker, deren Batch auch nach Wiederholung und
+        # Halbierung nichts lieferte (Spec 10) -- sie werden gezaehlt, nicht
+        # stillschweigend verschluckt.
+        deep_stocks, failed_deep = analyze_batches(
+            ticker_datas=selected_tds,
+            cutoff_by_ticker=cutoff_by_ticker,
             trend_context=trend_context,
             policy_context=policy_context,
             cost_tracker=cost_tracker,
+            batch_size=config.BATCH_SIZE_DEEP,
         )
+        if failed_deep:
+            log.warning(
+                f"Phase 3: {len(failed_deep)} Kandidaten ohne Analyse: "
+                f"{', '.join(sorted(failed_deep))}"
+            )
 
         current_phase = "commodities_crypto"
         # Phase 3b commodities + crypto

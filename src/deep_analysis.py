@@ -1,9 +1,11 @@
-"""Phase 3: Policy monitor (1× per run) + per-asset deep analysis with web search.
+"""Phase 3: Policy monitor (1× per run) + Batch-Tiefenanalyse nach Sub-Sektor.
 
-Both callables use Sonnet + server-side web_search. The 8-dimension score is
-returned verbatim from the model and validated by guardrails.py downstream.
-Per-asset failures are caught and logged so a single broken ticker never aborts
-the run. Only CostCapExceeded (from cost_tracker) is fatal."""
+Beide Aufrufer nutzen Sonnet + server-seitige web_search. Die Ticker werden von
+build_batches() nach Sub-Sektor gruppiert und je Batch in einem gestreamten
+Call analysiert (analyze_batch()); analyze_batches() umschliesst das mit dem
+Retry/Halbier-Fehlerpfad aus Spec 10. Das 8-Dimensionen-Scoring kommt vom
+Modell unveraendert zurueck und wird stromabwaerts von guardrails.py geprueft.
+Nur CostCapExceeded (aus cost_tracker) ist fatal."""
 import json
 import logging
 from pathlib import Path
@@ -15,8 +17,7 @@ from src.utils import call_claude, extract_json_blob, WEB_SEARCH_TOOL
 log = logging.getLogger("shares_future.deep_analysis")
 
 PROMPT_DIR = Path(__file__).resolve().parent.parent / "prompts"
-DEEP_SYSTEM_PROMPT_V1 = (PROMPT_DIR / "deep_analysis_v1.txt").read_text()
-DEEP_SYSTEM_PROMPT = (PROMPT_DIR / "deep_analysis_v2.txt").read_text()  # fuer analyze_batch(); v1 entfaellt mit Task 9
+DEEP_SYSTEM_PROMPT = (PROMPT_DIR / "deep_analysis_v2.txt").read_text()  # fuer analyze_batch()
 POLICY_SYSTEM_PROMPT = (PROMPT_DIR / "policy_monitor_v1.txt").read_text()
 
 MODEL = "claude-sonnet-4-6"
@@ -27,7 +28,6 @@ MODEL = "claude-sonnet-4-6"
 TOKENS_PER_TICKER_DEEP = 900
 BATCH_TOKEN_RESERVE = 2000
 MAX_TOKENS_DEEP_MIN = 4096
-MAX_TOKENS_DEEP = MAX_TOKENS_DEEP_MIN  # Bestand fuer analyze_asset() (Task 6 unangetastet)
 MAX_TOKENS_POLICY = 3072
 
 
@@ -323,110 +323,3 @@ def analyze_batches(
         f"Kandidaten, cost so far: {cost_tracker.total_eur:.3f} EUR"
     )
     return analyses, failed
-
-
-def _build_user_message(
-    ticker_data: dict,
-    quick_filter_result: dict,
-    trend_context: dict,
-    policy_context: dict,
-) -> str:
-    """Serializes trend/policy context, the quick-filter pre-score, and one ticker
-    snapshot into the user message sent to Claude for a single deep analysis."""
-    parts = [
-        "TREND CONTEXT:", json.dumps(trend_context, ensure_ascii=False),
-        "\nPOLICY CONTEXT:", json.dumps(policy_context, ensure_ascii=False),
-        "\nQUICK FILTER PRE-SCORE:", json.dumps(quick_filter_result, ensure_ascii=False),
-        "\nTICKER SNAPSHOT:", json.dumps(ticker_data, ensure_ascii=False),
-        "\nReturn the JSON object defined in your system prompt for THIS one ticker.",
-    ]
-    return "\n".join(parts)
-
-
-def analyze_asset(
-    ticker_data: dict,
-    quick_filter_result: dict,
-    trend_context: dict,
-    policy_context: dict,
-    cost_tracker: CostTracker,
-) -> dict | None:
-    """Deep-analyze one asset. Returns the parsed analysis dict, or None if the
-    quick-filter excluded the ticker (no Claude call made). Raises DeepAnalysisError
-    on unparseable output — the caller (analyze_assets loop) must catch."""
-    if quick_filter_result.get("exclude"):
-        log.info(f"{ticker_data.get('ticker')}: skipped by quick_filter exclude")
-        return None
-
-    user_msg = _build_user_message(
-        ticker_data=ticker_data,
-        quick_filter_result=quick_filter_result,
-        trend_context=trend_context,
-        policy_context=policy_context,
-    )
-    result = call_claude(
-        model=MODEL, system=DEEP_SYSTEM_PROMPT_V1, user=user_msg,
-        max_tokens=MAX_TOKENS_DEEP, tools=[WEB_SEARCH_TOOL],
-    )
-    cost_tracker.add_from_result(result)
-    parsed = extract_json_blob(result.text, DeepAnalysisError)
-    return parsed
-
-
-def analyze_assets(
-    ticker_datas: list[dict],
-    quick_filter_results: list[dict],
-    trend_context: dict,
-    policy_context: dict,
-    cost_tracker: CostTracker,
-) -> list[dict]:
-    """Sequentially deep-analyze each ticker. Per-asset failures are caught and
-    logged so a single broken ticker never aborts the run. CostCapExceeded
-    propagates (the orchestrator handles partial-run e-mails)."""
-    qf_by_ticker = {q["ticker"]: q for q in quick_filter_results}
-    out: list[dict] = []
-    for td in ticker_datas:
-        t = td["ticker"]
-        qf = qf_by_ticker.get(t)
-        if qf is None:
-            log.warning(f"{t}: no quick_filter result, skipping deep_analysis")
-            continue
-        try:
-            a = analyze_asset(
-                ticker_data=td, quick_filter_result=qf,
-                trend_context=trend_context, policy_context=policy_context,
-                cost_tracker=cost_tracker,
-            )
-        except DeepAnalysisError as e:
-            log.warning(f"{t}: deep_analysis failed: {e}")
-            continue
-        if a is not None:
-            out.append(a)
-    log.info(
-        f"Phase 3 done: {len(out)} analyses produced, "
-        f"cost so far: {cost_tracker.total_eur:.3f} EUR"
-    )
-    return out
-
-
-def adapt_cutoff_to_quick_filter(all_evaluated: list[dict]) -> list[dict]:
-    """Interim-Adapter (Sprint 3C / Plan 2, Task 10): konvertiert den zweiten
-    Rueckgabewert von broad_scan.cutoff_candidates() (Task 9) in die
-    quick_filter-Form, die analyze_asset()/analyze_assets() heute erwarten.
-
-    all_evaluated traegt bereits JEDEN Ticker mit einem selected-Flag (Task 9)
-    -- exclude ist dessen Komplement, kein zweiter Filterschritt. Es gibt kein
-    long_score/short_score mehr im Cutoff-Modell; an ihrer Stelle die
-    tatsaechliche Cutoff-Begruendung (news_strength, tech_direction,
-    tech_strength), damit Phase 3 nicht auf reinen None-Platzhaltern sitzt.
-    Bleibt bis Plan 3 deep_analysis_v2 einfuehrt und quick_filter_result
-    obsolet macht."""
-    return [
-        {
-            "ticker": e["ticker"],
-            "exclude": not e["selected"],
-            "news_strength": e.get("news_strength"),
-            "tech_direction": e.get("tech_direction"),
-            "tech_strength": e.get("tech_strength"),
-        }
-        for e in all_evaluated
-    ]

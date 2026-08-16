@@ -86,7 +86,7 @@ def _mock_all_other_phases(mocker) -> list[str]:
                  side_effect=make_mock("broad_scan", fake_broad_scan))
     mocker.patch("main.run_policy_monitor",
                  side_effect=make_mock("policy", fake_policy))
-    mocker.patch("main.analyze_assets", side_effect=make_mock("deep", fake_deep))
+    mocker.patch("main.analyze_batches", side_effect=make_mock("deep", (fake_deep, [])))
     mocker.patch("main.analyze_commodities_and_crypto",
                  side_effect=make_mock("cc", fake_cc))
     mocker.patch("main.fetch_fear_greed", return_value={"value": 50, "label": "Neutral"})
@@ -293,7 +293,7 @@ def _stub_pipeline(mocker) -> None:
     mocker.patch("main.analyze_trends", return_value={"trends": []})
     mocker.patch("main.collect", return_value=([], 0, {}))
     mocker.patch("main.run_policy_monitor", return_value={})
-    mocker.patch("main.analyze_assets", return_value=[])
+    mocker.patch("main.analyze_batches", return_value=([], []))
     mocker.patch("main.analyze_commodities_and_crypto", return_value=[])
     mocker.patch("main.fetch_fear_greed", return_value={})
     mocker.patch("main.check_open_positions", return_value=[])
@@ -411,7 +411,7 @@ def test_cost_cap_abort_reports_the_actual_phase(tmp_db_path, mocker):
     from src.cost_tracker import CostCapExceeded
     _stub_pipeline(mocker)
     mocker.patch("main.fetch_market_context", return_value=dict(_CTX))
-    mocker.patch("main.analyze_assets", side_effect=CostCapExceeded("cap hit"))
+    mocker.patch("main.analyze_batches", side_effect=CostCapExceeded("cap hit"))
 
     from main import run_pipeline
     run_pipeline(run_type="pre_market", date="2026-07-27", db_path=str(tmp_db_path))
@@ -429,7 +429,7 @@ def test_cost_cap_abort_reports_the_actual_phase(tmp_db_path, mocker):
     ("main.collect_sector_momentum",       "sector_momentum"),
     ("main.broad_scan_batch",              "broad_scan"),
     ("main.run_policy_monitor",            "policy_monitor"),
-    ("main.analyze_assets",                "deep_analysis"),
+    ("main.analyze_batches",               "deep_analysis"),
     ("main.analyze_commodities_and_crypto", "commodities_crypto"),
     ("main.check_open_positions",          "portfolio_check"),
     ("main.rank_and_persist",              "ranking"),
@@ -630,14 +630,17 @@ def test_forced_candidates_is_empty_when_provider_fails(mocker):
     assert _forced_candidates(provider) == set()
 
 
-def test_forced_candidate_reaches_deep_analysis_with_exclude_false(tmp_db_path, mocker):
+def test_forced_candidate_reaches_deep_analysis(tmp_db_path, mocker):
     """Integrationstest fuer B.4: eine offene Capital.com-Position auf AAPL, die
     der Cutoff eigentlich nicht ausgewaehlt haette (news_strength=0, kein
-    Tech-Signal), muss trotzdem mit exclude=False bei analyze_assets (Phase 3)
-    ankommen — sonst greift Phase 1c nicht bis in die Tiefenanalyse durch,
-    obwohl echtes Geld daran haengt. Die Ueberschreibung sitzt seit Sprint 3C /
-    Plan 2 Task 10 direkt in cutoff_candidates() (forced_candidates-Parameter),
-    nicht mehr in einem separaten _apply_forced_candidates()-Schritt."""
+    Tech-Signal), muss trotzdem in Phase 3 (analyze_batches) ankommen — sonst
+    greift Phase 1c nicht bis in die Tiefenanalyse durch, obwohl echtes Geld
+    daran haengt. Die Ueberschreibung sitzt seit Sprint 3C / Plan 2 Task 10
+    direkt in cutoff_candidates() (forced_candidates-Parameter), nicht mehr in
+    einem separaten _apply_forced_candidates()-Schritt. Seit Plan 3a Task 9
+    zeigt sich die Aufnahme als Praesenz in ticker_datas statt als
+    exclude=False -- quick_filter_results ist mit dem Interim-Adapter
+    entfallen."""
     _stub_pipeline(mocker)
     mocker.patch("main.fetch_market_context", return_value=dict(_CTX))
     mocker.patch("main.rank_and_persist", return_value={
@@ -653,14 +656,13 @@ def test_forced_candidate_reaches_deep_analysis_with_exclude_false(tmp_db_path, 
     mocker.patch("main.broad_scan_batch", return_value=[
         {"ticker": "AAPL", "news_strength": 0, "news_note": ""},
     ])
-    mock_deep = mocker.patch("main.analyze_assets", return_value=[])
+    mock_deep = mocker.patch("main.analyze_batches", return_value=([], []))
 
     from main import run_pipeline
     run_pipeline(run_type="pre_market", date="2026-07-27", db_path=str(tmp_db_path))
 
-    passed_quick = mock_deep.call_args.kwargs["quick_filter_results"]
-    by_ticker = {q["ticker"]: q for q in passed_quick}
-    assert by_ticker["AAPL"]["exclude"] is False
+    passed_tickers = [td["ticker"] for td in mock_deep.call_args.kwargs["ticker_datas"]]
+    assert passed_tickers == ["AAPL"]
 
 
 # ---------- Phase 2b verdrahtet (Abschluss-Review Plan 2, Spec 4.7) ----------
@@ -715,6 +717,43 @@ def test_phase_2b_failure_does_not_abort_the_run(tmp_db_path, mocker):
     mock_email.assert_called_once()
     assert mock_email.call_args.kwargs["payload"]["cost_summary"][
         "aborted_at_phase"] is None
+
+
+# ---------- Sprint 3C / Plan 3a, Task 9: run_pipeline() auf Batch-Phase-3 ----------
+
+
+def test_run_pipeline_deep_analysis_only_receives_selected_tickers(tmp_db_path, mocker):
+    """Die Auswahl liegt im Cutoff, nicht mehr im exclude-Flag: Phase 3 sieht
+    ausschliesslich die selektierten Ticker."""
+    _stub_pipeline(mocker)
+    mocker.patch("main.fetch_market_context", return_value=dict(_CTX))
+    mocker.patch("main.rank_and_persist", return_value={
+        "top_long": [], "top_short": [], "commodities_crypto": [],
+    })
+    mocker.patch("main.collect", return_value=(
+        [{"ticker": "AAPL", "intraday_range_pct": 1.5, "price": 178.0},
+         {"ticker": "MSFT", "intraday_range_pct": 1.2, "price": 400.0}], 0, {}))
+    mocker.patch("main.broad_scan_batch", return_value=[
+        {"ticker": "AAPL", "news_strength": 2, "news_note": "x"},
+        {"ticker": "MSFT", "news_strength": 0, "news_note": ""},
+    ])
+
+    with patch("main.analyze_batches", return_value=([], [])) as ab:
+        run_pipeline(run_type="pre_market", date="2026-07-27",
+                     db_path=str(tmp_db_path))
+
+    uebergeben = [td["ticker"] for td in ab.call_args.kwargs["ticker_datas"]]
+    assert uebergeben == ["AAPL"]          # MSFT wurde nicht selektiert
+
+
+def test_adapter_and_single_analysis_path_are_gone():
+    """Die Plan-2-Interimsbruecke ist entfernt, nicht nur ungenutzt --
+    ungelesener Code, der Wirkung vortaeuscht, ist genau die Altlast-Klasse,
+    die MAX_DEEP_ANALYSIS vor Plan 2 war."""
+    import src.deep_analysis as da
+    assert not hasattr(da, "adapt_cutoff_to_quick_filter")
+    assert not hasattr(da, "analyze_assets")
+    assert not hasattr(da, "analyze_asset")
 
 
 # ---------- Sprint 3B / Plan 2, Task 3: kein toter Code (B.1) ----------
