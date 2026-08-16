@@ -1068,10 +1068,11 @@ Verhaltensänderung" zu behaupten und es dann doch zu tun.
 § 4.8 sagt „Batches nach Sub-Sektor, **wo möglich**". Das „wo möglich" trägt mehr
 Gewicht als es aussieht — gemessen an der echten Datenlage:
 
-> Die 20 MVP-Ticker zerfallen in **13 Sub-Sektoren**, der grösste hat **3** Ticker
-> (Retail: AMZN/WMT/HD). Sieben davon sind Rohstoffe/Krypto ohne Sektor und laufen
-> nach § 6 ohnehin als Einzelcalls. Striktes Sub-Sektor-Batching ergäbe **12 Batches
-> für 13 Aktien** — der Kostenhebel entstünde praktisch gar nicht.
+> Die **20 MVP-Aktien** zerfallen in **12 Sub-Sektoren**, der grösste hat **3** Ticker
+> (Retail: AMZN/WMT/HD), sechs haben genau einen. Die 7 Rohstoffe/Krypto tragen gar
+> keinen Sektor und laufen nach § 6 ohnehin als Einzelcalls. Striktes
+> Sub-Sektor-Batching ergäbe **12 Batches für 20 Aktien** — gegenüber 20 Einzelcalls
+> bliebe vom Kostenhebel fast nichts übrig.
 
 **Regel:** Sub-Sektoren sind **unteilbare Einheiten**, die bis zur Ziel-Batchgrösse
 gepackt werden (grösster zuerst, deterministisch sortiert). Ein Sub-Sektor wird nie über
@@ -1080,11 +1081,11 @@ er aufgeteilt. Kleine Sub-Sektoren teilen sich einen Batch.
 
 Die Regel braucht beide Richtungen, weil sich die Verteilung mit dem Universum dreht:
 
-| | heute (13 Aktien) | 3F-Ausbau (~500 Ticker) |
+| | heute (20 Aktien) | 3F-Ausbau (~500 Ticker) |
 |---|---|---|
-| Sub-Sektoren im Topf | 13, fast alle Einzelstücke | ≤ 21, **konzentriert** — der Cutoff sortiert primär nach `news_strength`, und Nachrichten clustern nach Sektor |
+| Sub-Sektoren im Topf | 12, die Hälfte davon Einzelstücke | ≤ 21, **konzentriert** — der Cutoff sortiert primär nach `news_strength`, und Nachrichten clustern nach Sektor |
 | Wirksamer Mechanismus | **Zusammenlegen** | **Aufteilen** |
-| Ergebnis bei `BATCH_SIZE_DEEP = 8` | 2 Batches, überwiegend gemischt | ~7 Batches, überwiegend sortenrein |
+| Ergebnis bei `BATCH_SIZE_DEEP = 8` | 3 Batches (8/8/4), überwiegend gemischt | ~7 Batches, überwiegend sortenrein |
 
 ⚠️ **Phase 3 sieht nie 500 Ticker.** `MAX_DEEP_ANALYSIS = 50` ist seit Plan 2 der harte
 Deckel; die Batch-Bildung arbeitet immer mit ≤ 50 Aktien plus den 7 Rohstoffen/Krypto,
@@ -1097,13 +1098,16 @@ ohne dass am Code etwas geändert werden muss.
 Bewusst ein **Startwert**, den der Testlauf bestätigt oder kippt (§ 19 #2), kein
 Endergebnis. Begründung:
 
-- Bei 13 MVP-Aktien: **2 Batches statt 12** — der Kostenhebel ist sofort messbar
+- Bei 20 MVP-Aktien: **3 Batches (8/8/4) statt 20 Einzelcalls** — der Kostenhebel ist
+  sofort messbar, und zwar mit demselben Faktor (~6,7×), den § 13.2 für den Vollausbau
+  unterstellt
 - `MAX_TOKENS_DEEP` landet bei ~8 × 900 + Reserve ≈ **9.000** — deutlich unter der Zone
   ab ~16.000, in der § 4.8 SDK-Timeouts erwartet, aber weit genug über der heutigen
   festen 4096, dass die Ableitung aus der Batchgrösse wirklich geprüft wird
 - § 12 verlangt, die Laufzeit bei **zwei** Batchgrössen zu messen. 8 lässt nach oben
-  und unten Raum zum Vergleichen; 13 (alle MVP-Aktien in einen Batch) liesse nur eine
-  Richtung und machte die Sub-Sektor-Semantik bedeutungslos
+  und unten Raum zum Vergleichen; 20 (alle MVP-Aktien in einen Batch) liesse nur eine
+  Richtung, machte die Sub-Sektor-Semantik bedeutungslos und läge mit ~18.000
+  Output-Tokens bereits in der Timeout-Zone aus § 4.8
 
 ### 20.4 Streaming entschärft auch den `broad_scan`
 
