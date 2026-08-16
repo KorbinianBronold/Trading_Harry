@@ -128,3 +128,20 @@ def test_user_message_includes_extra_context_keys():
     user_msg = mock_call.call_args.kwargs["user"]
     assert "fear_greed_value" in user_msg
     assert "btc_dominance_pct" in user_msg
+
+
+CC_V2 = Path(__file__).parent.parent.parent / "prompts" / "commodities_crypto_v2.txt"
+
+
+def test_commodities_crypto_v2_pins_contract():
+    text = CC_V2.read_text()
+    assert '"evidence_quality"' in text
+    assert '"thin"' in text
+    assert "higher is always better" in text.lower()
+    # Einzel-Asset, KEIN Batch (Spec 6): der results-Wrapper darf hier fehlen
+    assert '"results"' not in text
+
+
+def test_commodities_crypto_module_uses_v2():
+    import src.commodities_crypto as cc
+    assert "evidence_quality" in cc.SYSTEM_PROMPT

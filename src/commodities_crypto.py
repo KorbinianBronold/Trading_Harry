@@ -16,7 +16,7 @@ from src.utils import call_claude, extract_json_blob, WEB_SEARCH_TOOL
 log = logging.getLogger("shares_future.commodities_crypto")
 
 SYSTEM_PROMPT = (Path(__file__).resolve().parent.parent
-                 / "prompts" / "commodities_crypto_v1.txt").read_text()
+                 / "prompts" / "commodities_crypto_v2.txt").read_text()
 
 MODEL = "claude-sonnet-4-6"
 MAX_TOKENS = 3584
