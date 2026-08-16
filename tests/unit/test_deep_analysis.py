@@ -345,3 +345,33 @@ def test_build_batches_empty_input():
 def test_build_batches_rejects_zero_batch_size():
     with pytest.raises(ValueError, match="batch_size"):
         build_batches([_std("AAPL", "Technology")], batch_size=0)
+
+
+# ---------- deep_analysis_v2.txt (Sprint 3C / Plan 3a, Task 4) ----------
+
+
+def test_deep_analysis_v2_pins_contract_the_code_relies_on():
+    """Was hier steht, verlaesst sich Code drauf: der results-Schluessel
+    (Task 6 parst ihn), evidence_quality (Task 8 macht die thin-Ausnahme
+    daran fest) und die Polaritaets-Festlegung (Plan 3b zaehlt news_strength
+    danach). Keine Stilpruefung -- nur der Vertrag."""
+    v2 = Path(__file__).parent.parent.parent / "prompts" / "deep_analysis_v2.txt"
+    text = v2.read_text()
+
+    assert '"results"' in text
+    assert '"evidence_quality"' in text
+    assert '"thin"' in text
+    # Polaritaet: die drei Dimensionen, bei denen "hoch = gut" nicht
+    # selbsterklaerend ist, muessen ausdruecklich geregelt sein (Spec 5.2)
+    for dim in ("risk", "policy_risk", "valuation"):
+        assert dim in text
+    assert "higher is always better" in text.lower()
+    # Claude waehlt nicht aus (Spec 4.8)
+    assert "never omit" in text.lower()
+
+
+def test_deep_analysis_v1_untouched():
+    """Regel 10: v1 bleibt auf der Platte, unveraendert."""
+    v1 = Path(__file__).parent.parent.parent / "prompts" / "deep_analysis_v1.txt"
+    assert v1.exists()
+    assert "You receive ONE ticker snapshot" in v1.read_text()
