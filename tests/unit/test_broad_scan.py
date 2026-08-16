@@ -24,15 +24,19 @@ EXCLUDED_TD_FIELDS = (
 )
 
 
-def _fake_sonnet_result(text: str, web_search_calls: int = 4) -> MagicMock:
+def _fake_sonnet_result(
+    text: str, web_search_calls: int = 4,
+    output_tokens: int = 3000, stop_reason: str = "end_turn",
+) -> MagicMock:
     r = MagicMock()
     r.text = text
     r.input_tokens = 8000
-    r.output_tokens = 3000
+    r.output_tokens = output_tokens
     r.cache_read_tokens = 0
     r.cache_creation_tokens = 0
     r.model = config.CLAUDE_MODEL_SONNET
     r.web_search_calls = web_search_calls
+    r.stop_reason = stop_reason
     return r
 
 
@@ -482,6 +486,61 @@ def test_broad_scan_empty_batch_returns_empty_list():
     assert out == []
     assert tracker.input_tokens == 0
     mock_call.assert_not_called()
+
+
+def test_broad_scan_uses_streaming():
+    """Phase 2 laeuft gestreamt -- ein einzelner Call ueber bis zu 500 Ticker
+    mit MAX_TOKENS=32000 ist genau der Fall, fuer den Spec 20.4 den
+    Streaming-Pfad verlangt."""
+    fake = _fake_sonnet_result(FIXTURE_PATH.read_text())
+    tracker = CostTracker(hard_cap_eur=10.0)
+
+    with patch("src.broad_scan.call_claude", return_value=fake) as cc:
+        broad_scan_batch(
+            ticker_datas=[_td("AAPL")], sidecar=_sidecar(),
+            trend_context=_trend_context(), market_context=_market_context(),
+            cost_tracker=tracker,
+        )
+
+    assert cc.call_args.kwargs["stream"] is True
+    assert cc.call_args.kwargs["max_tokens"] == 32000
+
+
+def test_broad_scan_warns_on_stop_reason_max_tokens(caplog):
+    """stop_reason ist das harte Signal -- es warnt auch dann, wenn
+    output_tokens weit unter der Ratio-Schwelle liegen."""
+    fake = _fake_sonnet_result(
+        FIXTURE_PATH.read_text(), output_tokens=100, stop_reason="max_tokens",
+    )
+    tracker = CostTracker(hard_cap_eur=10.0)
+
+    with caplog.at_level("WARNING"), \
+            patch("src.broad_scan.call_claude", return_value=fake):
+        broad_scan_batch(
+            ticker_datas=[_td("AAPL")], sidecar=_sidecar(),
+            trend_context=_trend_context(), market_context=_market_context(),
+            cost_tracker=tracker,
+        )
+
+    assert any("abgeschnitten" in r.message for r in caplog.records)
+
+
+def test_broad_scan_no_warning_when_stop_reason_clean_and_output_small(caplog):
+    """Kein Fehlalarm: sauberes stop_reason und kleine Ausgabe schweigen."""
+    fake = _fake_sonnet_result(
+        FIXTURE_PATH.read_text(), output_tokens=100, stop_reason="end_turn",
+    )
+    tracker = CostTracker(hard_cap_eur=10.0)
+
+    with caplog.at_level("WARNING"), \
+            patch("src.broad_scan.call_claude", return_value=fake):
+        broad_scan_batch(
+            ticker_datas=[_td("AAPL")], sidecar=_sidecar(),
+            trend_context=_trend_context(), market_context=_market_context(),
+            cost_tracker=tracker,
+        )
+
+    assert not any("abgeschnitten" in r.message for r in caplog.records)
 
 
 # ---------- cutoff_candidates() (Sprint 3C / Plan 2, Task 9) ----------

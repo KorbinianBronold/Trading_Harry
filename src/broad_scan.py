@@ -25,29 +25,26 @@ SYSTEM_PROMPT = (Path(__file__).resolve().parent.parent
 
 MODEL = config.CLAUDE_MODEL_SONNET
 
-# R27: 500 Ticker x ein Ergebnisobjekt sprengt quick_filters 4096 deutlich --
-# die Rechnung dazu steht im Task-8-Report. Ein aktiver Nachrichtentag beim
-# vollen 500-Ticker-Ausbau braucht geschaetzt ~15.400 Tokens, ein
-# Sicherheitsfaktor fuer ausfuehrlichere Notizen ergibt ~26.000-32.000.
-# 24000 gibt echten Spielraum ueber der Worst-Case-Schaetzung.
+# R27 / Spec 20.4: 500 Ticker x ein Ergebnisobjekt sprengt quick_filters 4096
+# deutlich -- die Rechnung steht im Task-8-Report. Ein aktiver Nachrichtentag
+# beim vollen 500-Ticker-Ausbau braucht geschaetzt ~15.400 Output-Tokens; mit
+# Sicherheitsfaktor fuer ausfuehrlichere Notizen ~26.000-32.000.
 #
-# Korrektur nach Review-Finding: eine fruehere Fassung dieses Kommentars
-# behauptete, die Anthropic-SDK verweigere nicht gestreamte Requests oberhalb
-# einer Token-Schaetzung mit ValueError. Das stimmt fuer neuere SDK-Versionen,
-# aber NICHT fuer das hier gepinnte anthropic==0.42.0 (requirements.txt) --
-# verifiziert durch Durchsuchen des installierten Pakets, kein solcher Guard
-# vorhanden. Das echte Risiko bei einem nicht gestreamten call_claude()-Call
-# (src/utils.py, kein stream=True) ist der httpx-Default-Timeout des Clients
-# von 600s (DEFAULT_TIMEOUT in anthropic._constants): eine sehr lange
-# Generierung plus mehrere Websuchen koennte ihn reissen; retry_with_backoff
-# versucht es dann zweimal erneut und wirft danach unveraendert weiter --
-# das ist ein anderer Fehlerfall als das R26-Degradieren unten und wird hier
-# bewusst NICHT abgefangen (gleiches Verhalten wie quick_filter/deep_analysis).
-# _warn_if_possibly_truncated() macht eine Kappung im Log sichtbar, statt sie
-# mit einem echten ruhigen Nachrichtentag zu verwechseln -- ClaudeResult
-# traegt keinen stop_reason, output_tokens nahe der Grenze ist das einzige
-# verfuegbare Signal.
-MAX_TOKENS = 24000
+# Korrektur (Plan 3a, Task 2): der Wert stand auf 24.000 und lag damit UNTER
+# der eigenen Sicherheitsspanne, waehrend der Kommentar "echten Spielraum"
+# behauptete. Jetzt 32.000, die Oberkante der Spanne. Das kostet nichts:
+# max_tokens ist eine Obergrenze, abgerechnet werden nur tatsaechlich
+# generierte Tokens.
+#
+# Zum Timeout-Risiko: eine fruehere Fassung dieses Kommentars behauptete, die
+# Anthropic-SDK verweigere nicht gestreamte Requests oberhalb einer
+# Token-Schaetzung mit ValueError. Das stimmt fuer neuere SDK-Versionen, aber
+# NICHT fuer das hier gepinnte anthropic==0.42.0 (requirements.txt) --
+# verifiziert durch Durchsuchen des installierten Pakets. Das echte Risiko war
+# der httpx-Default-Timeout von 600s bei langer Generierung plus mehreren
+# Websuchen. Seit Plan 3a laeuft dieser Call gestreamt (stream=True), womit
+# genau dieses Risiko entfaellt.
+MAX_TOKENS = 32000
 TRUNCATION_WARNING_RATIO = 0.9
 
 # R23: die Nutzlast wird explizit zusammengesetzt (nicht json.dumps(td)) --
@@ -143,23 +140,29 @@ def _apply_note_rule(ticker: str, entry: dict) -> dict:
 
 
 def _warn_if_possibly_truncated(result) -> None:
-    """Loggt eine WARNING, wenn output_tokens nahe MAX_TOKENS liegt (R27-Fix).
+    """Loggt eine WARNING, wenn die Antwort gekappt wurde (R27-Fix).
 
-    ClaudeResult traegt keinen stop_reason -- output_tokens nahe der Grenze
-    ist das einzige verfuegbare Signal fuer eine moeglicherweise abgeschnittene
-    Antwort. Ohne diese Warnung ist ein anschliessend komplett auf
-    news_strength=0 degradierter Batch (siehe _parse_scan_results) im Log
+    Zwei Signale, in dieser Rangfolge: stop_reason == "max_tokens" ist der
+    harte Beweis (seit Plan 3a auf ClaudeResult verfuegbar); output_tokens nahe
+    MAX_TOKENS bleibt als Verdachtsmoment fuer den Fall, dass ein Provider
+    stop_reason nicht liefert. Ohne diese Warnung ist ein anschliessend komplett
+    auf news_strength=0 degradierter Batch (siehe _parse_scan_results) im Log
     nicht von einem echten ruhigen Nachrichtentag zu unterscheiden --
     ausgerechnet an newsreichen Tagen, an denen das Signal am meisten zaehlt."""
-    if result.output_tokens >= MAX_TOKENS * TRUNCATION_WARNING_RATIO:
-        log.warning(
-            f"Phase 2 (broad_scan): output_tokens={result.output_tokens} nahe "
-            f"MAX_TOKENS={MAX_TOKENS} -- die Antwort war moeglicherweise "
-            f"abgeschnitten. Falls dieser Batch auf news_strength=0 "
-            f"degradiert, kann das an einem echten ruhigen Nachrichtentag "
-            f"liegen ODER an dieser Kappung -- MAX_TOKENS pruefen/erhoehen, "
-            f"wenn das haeufiger auftritt."
-        )
+    hard = getattr(result, "stop_reason", None) == "max_tokens"
+    near = result.output_tokens >= MAX_TOKENS * TRUNCATION_WARNING_RATIO
+    if not (hard or near):
+        return
+    grund = "stop_reason=max_tokens" if hard else (
+        f"output_tokens={result.output_tokens} nahe MAX_TOKENS={MAX_TOKENS}"
+    )
+    log.warning(
+        f"Phase 2 (broad_scan): {grund} -- die Antwort war moeglicherweise "
+        f"abgeschnitten. Falls dieser Batch auf news_strength=0 degradiert, "
+        f"kann das an einem echten ruhigen Nachrichtentag liegen ODER an "
+        f"dieser Kappung -- MAX_TOKENS pruefen/erhoehen, wenn das haeufiger "
+        f"auftritt."
+    )
 
 
 def _parse_scan_results(text: str) -> dict[str, dict]:
@@ -208,6 +211,7 @@ def broad_scan_batch(
         user=user_msg,
         max_tokens=MAX_TOKENS,
         tools=[WEB_SEARCH_TOOL],
+        stream=True,
     )
     cost_tracker.add_from_result(result)
     _warn_if_possibly_truncated(result)
