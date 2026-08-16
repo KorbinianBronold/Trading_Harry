@@ -229,6 +229,102 @@ def analyze_batch(
     return analyses, missing
 
 
+def _run_one_batch_with_recovery(
+    batch: list[dict],
+    cutoff_by_ticker: dict[str, dict],
+    trend_context: dict,
+    policy_context: dict,
+    cost_tracker: CostTracker,
+) -> tuple[list[dict], list[str]]:
+    """Spec 10: einmal wiederholen -> einmal halbieren (jede Haelfte genau
+    einmal) -> aufgeben. Bewusst begrenzte Tiefe: ein kaputter Prompt soll
+    nicht endlos retryen, aber ein Fehler soll auch nicht den ganzen Batch
+    kosten.
+
+    Diese Ebene faengt NUR DeepAnalysisError (unbrauchbare Ausgabe).
+    CostCapExceeded laeuft ungehindert durch -- ein Kosten-Abbruch ist fatal,
+    und ihn hier zu wiederholen liesse den Lauf ueber den Deckel hinaus
+    weiterlaufen. Transiente API-Fehler behandelt bereits retry_with_backoff
+    in call_claude(); das ist eine andere Fehlerklasse und eine andere Ebene."""
+    def attempt(tds: list[dict]) -> tuple[list[dict], list[str]]:
+        return analyze_batch(
+            ticker_datas=tds, cutoff_by_ticker=cutoff_by_ticker,
+            trend_context=trend_context, policy_context=policy_context,
+            cost_tracker=cost_tracker,
+        )
+
+    for versuch in (1, 2):
+        try:
+            return attempt(batch)
+        except DeepAnalysisError as e:
+            log.warning(
+                f"Batch-Versuch {versuch}/2 fehlgeschlagen "
+                f"({len(batch)} Ticker): {e}"
+            )
+
+    if len(batch) == 1:
+        t = batch[0]["ticker"]
+        log.warning(f"{t}: Batch der Groesse 1 zweimal fehlgeschlagen, aufgegeben")
+        return [], [t]
+
+    mid = len(batch) // 2
+    log.warning(
+        f"Batch ({len(batch)} Ticker) zweimal fehlgeschlagen, halbiere in "
+        f"{mid} + {len(batch) - mid}"
+    )
+    analyses: list[dict] = []
+    failed: list[str] = []
+    for haelfte in (batch[:mid], batch[mid:]):
+        try:
+            a, m = attempt(haelfte)
+            analyses.extend(a)
+            failed.extend(m)
+        except DeepAnalysisError as e:
+            tickers = [td["ticker"] for td in haelfte]
+            log.warning(
+                f"Haelfte ({', '.join(tickers)}) fehlgeschlagen, aufgegeben: {e}"
+            )
+            failed.extend(tickers)
+    return analyses, failed
+
+
+def analyze_batches(
+    ticker_datas: list[dict],
+    cutoff_by_ticker: dict[str, dict],
+    trend_context: dict,
+    policy_context: dict,
+    cost_tracker: CostTracker,
+    batch_size: int = config.BATCH_SIZE_DEEP,
+) -> tuple[list[dict], list[str]]:
+    """Phase 3: gruppiert die Kandidaten in Sub-Sektor-Batches und analysiert
+    jeden mit der Fehlerpfad-Schale aus Spec 10.
+
+    Rueckgabe: (analyses, failed_tickers). Ersetzt analyze_assets() --
+    CostCapExceeded propagiert weiterhin (der Orchestrator verschickt die
+    Teilergebnis-Mail)."""
+    analyses: list[dict] = []
+    failed: list[str] = []
+    for batch in build_batches(ticker_datas, batch_size=batch_size):
+        a, f = _run_one_batch_with_recovery(
+            batch=batch, cutoff_by_ticker=cutoff_by_ticker,
+            trend_context=trend_context, policy_context=policy_context,
+            cost_tracker=cost_tracker,
+        )
+        analyses.extend(a)
+        failed.extend(f)
+
+    if failed:
+        log.warning(
+            f"Phase 3: {len(failed)} Ticker ohne Analyse "
+            f"({', '.join(sorted(failed))})"
+        )
+    log.info(
+        f"Phase 3 done: {len(analyses)} Analysen aus {len(ticker_datas)} "
+        f"Kandidaten, cost so far: {cost_tracker.total_eur:.3f} EUR"
+    )
+    return analyses, failed
+
+
 def _build_user_message(
     ticker_data: dict,
     quick_filter_result: dict,

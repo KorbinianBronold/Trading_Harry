@@ -7,7 +7,7 @@ from src.cost_tracker import CostTracker
 from src.deep_analysis import (
     run_policy_monitor, analyze_asset, analyze_assets, DeepAnalysisError,
     adapt_cutoff_to_quick_filter, build_batches,
-    analyze_batch, max_tokens_for_batch,
+    analyze_batch, max_tokens_for_batch, analyze_batches,
 )
 
 FIXTURE_DIR = Path(__file__).parent.parent / "fixtures"
@@ -363,6 +363,21 @@ def _cutoff(ticker: str, news_strength: int = 2) -> dict:
     }
 
 
+def _ok_response_for(tickers: list[str]) -> MagicMock:
+    """Baut eine gueltige Batch-Antwort fuer genau diese Ticker."""
+    template = json.loads(BATCH_FIXTURE.read_text())["results"][0]
+    results = []
+    for t in tickers:
+        r = json.loads(json.dumps(template))
+        r["ticker"] = t
+        results.append(r)
+    return _fake_result(json.dumps({"results": results}))
+
+
+def _broken_response() -> MagicMock:
+    return _fake_result("kaputt", web_search_calls=0, output_tokens=10)
+
+
 def test_max_tokens_for_batch_scales_with_size():
     """Abgeleitet statt fest: 4096 war fuer EINEN Ticker ausgelegt."""
     assert max_tokens_for_batch(8) == 9200      # 8 * 900 + 2000
@@ -456,6 +471,102 @@ def test_analyze_batch_payload_does_not_mutate_td():
 
 
 # ---------- deep_analysis_v2.txt (Sprint 3C / Plan 3a, Task 4) ----------
+
+
+# ---------- analyze_batches() (Sprint 3C / Plan 3a, Task 7) ----------
+
+
+def test_analyze_batches_retries_once_then_succeeds():
+    """Erster Versuch kaputt, Wiederholung gut -- kein Halbieren noetig."""
+    tds = [_std("AAPL", "Technology"), _std("MSFT", "Technology")]
+    responses = [_broken_response(), _ok_response_for(["AAPL", "MSFT"])]
+
+    with patch("src.deep_analysis.call_claude", side_effect=responses) as cc:
+        analyses, failed = analyze_batches(
+            ticker_datas=tds,
+            cutoff_by_ticker={t["ticker"]: _cutoff(t["ticker"]) for t in tds},
+            trend_context={}, policy_context={},
+            cost_tracker=CostTracker(hard_cap_eur=10.0), batch_size=8,
+        )
+
+    assert cc.call_count == 2
+    assert sorted(a["ticker"] for a in analyses) == ["AAPL", "MSFT"]
+    assert failed == []
+
+
+def test_analyze_batches_halves_after_two_failures():
+    """Zwei Fehlschlaege -> halbieren, jede Haelfte genau einmal. Eine gute
+    Haelfte wird behalten, die kaputte gibt ihre Ticker auf."""
+    tds = [_std(t, "Technology") for t in ("AAPL", "MSFT", "NVDA", "AVGO")]
+    responses = [
+        _broken_response(),                      # Versuch 1
+        _broken_response(),                      # Versuch 2 (Wiederholung)
+        _ok_response_for(["AAPL", "AVGO"]),      # linke Haelfte (alphabetisch)
+        _broken_response(),                      # rechte Haelfte
+    ]
+
+    with patch("src.deep_analysis.call_claude", side_effect=responses) as cc:
+        analyses, failed = analyze_batches(
+            ticker_datas=tds,
+            cutoff_by_ticker={t["ticker"]: _cutoff(t["ticker"]) for t in tds},
+            trend_context={}, policy_context={},
+            cost_tracker=CostTracker(hard_cap_eur=10.0), batch_size=8,
+        )
+
+    assert cc.call_count == 4
+    assert sorted(a["ticker"] for a in analyses) == ["AAPL", "AVGO"]
+    assert sorted(failed) == ["MSFT", "NVDA"]
+
+
+def test_analyze_batches_gives_up_after_halving():
+    """Begrenzte Tiefe: nach dem Halbieren wird NICHT weiter geviertelt."""
+    tds = [_std(t, "Technology") for t in ("AAPL", "MSFT", "NVDA", "AVGO")]
+    responses = [_broken_response() for _ in range(4)]
+
+    with patch("src.deep_analysis.call_claude", side_effect=responses) as cc:
+        analyses, failed = analyze_batches(
+            ticker_datas=tds,
+            cutoff_by_ticker={t["ticker"]: _cutoff(t["ticker"]) for t in tds},
+            trend_context={}, policy_context={},
+            cost_tracker=CostTracker(hard_cap_eur=10.0), batch_size=8,
+        )
+
+    assert cc.call_count == 4          # 2 Versuche + 2 Haelften, nicht mehr
+    assert analyses == []
+    assert sorted(failed) == ["AAPL", "AVGO", "MSFT", "NVDA"]
+
+
+def test_analyze_batches_single_ticker_batch_does_not_halve():
+    """Ein Batch mit einem Ticker kann nicht halbiert werden -- nach zwei
+    Versuchen aufgeben, nicht in eine Endlosschleife laufen."""
+    tds = [_std("AAPL", "Technology")]
+    responses = [_broken_response(), _broken_response()]
+
+    with patch("src.deep_analysis.call_claude", side_effect=responses) as cc:
+        analyses, failed = analyze_batches(
+            ticker_datas=tds, cutoff_by_ticker={"AAPL": _cutoff("AAPL")},
+            trend_context={}, policy_context={},
+            cost_tracker=CostTracker(hard_cap_eur=10.0), batch_size=8,
+        )
+
+    assert cc.call_count == 2
+    assert analyses == []
+    assert failed == ["AAPL"]
+
+
+def test_analyze_batches_cost_cap_propagates():
+    """CostCapExceeded ist fatal und darf NICHT als Batch-Fehler behandelt und
+    wiederholt werden -- sonst laeuft der Lauf ueber den Deckel hinaus weiter."""
+    from src.cost_tracker import CostCapExceeded
+    tds = [_std("AAPL", "Technology")]
+
+    with patch("src.deep_analysis.call_claude", side_effect=CostCapExceeded("cap")):
+        with pytest.raises(CostCapExceeded):
+            analyze_batches(
+                ticker_datas=tds, cutoff_by_ticker={"AAPL": _cutoff("AAPL")},
+                trend_context={}, policy_context={},
+                cost_tracker=CostTracker(hard_cap_eur=10.0), batch_size=8,
+            )
 
 
 def test_deep_analysis_v2_pins_contract_the_code_relies_on():
