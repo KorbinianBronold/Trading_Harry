@@ -1,6 +1,22 @@
 # PROJECT_STATUS.md — Shares_Future (Trading_Harry)
 
-**Zuletzt aktualisiert:** 2026-08-15 — ✅ **Plan 2 (Trichter) ist abgeschlossen:
+**Zuletzt aktualisiert:** 2026-08-16 — ⚠️ **Plan 3a Task 10: Testlauf gegen echte Daten
+gemessen — `MAX_TOKENS_DEEP` reicht nicht.** Zwei Läufe gegen eine Wegwerf-Kopie von
+`data/tracking.db` (`run_type=pre_market`, 20 MVP-Ticker, echte Capital.com-/Finnhub-/
+Anthropic-Calls, Mailversand über ungültigen `RESEND_API_KEY` unterdrückt): einmal mit
+`BATCH_SIZE_DEEP=8` (Default), einmal mit `BATCH_SIZE_DEEP=4`. **`stop_reason=max_tokens`
+trat in beiden Läufen mehrfach auf — auch nach dem Halbieren, in Lauf 2 sogar bei einem
+auf 2 Ticker halbierten Batch (4096 Tokens).** Lauf 1 verlor 8 von 16 Kandidaten komplett
+(50 %, 1,8501 EUR), Lauf 2 verlor 2 von 16 (12,5 %, 2,3842 EUR) — die kleinere Batchgrösse
+kostete dabei **mehr**, nicht weniger, weil die meisten 4er-Batches erst nach zwei
+gescheiterten Versuchen auf 2er-Hälften halbiert werden mussten. `config.py` ist auf
+`BATCH_SIZE_DEEP=8` zurückgesetzt (Testwert 4 nicht committet). Details, alle sechs
+Prüffragen aus Spec § 12 und Empfehlung: **C.9**. Task 10 ist mit diesem Befund
+abgeschlossen; Task 11 (Doku) folgt erst nach einer Entscheidung über
+`TOKENS_PER_TICKER_DEEP`, weil die Doku sonst einen Wert als „gemessen und gut"
+beschreiben würde, der es nicht ist.
+
+Davor, 2026-08-15 — ✅ **Plan 2 (Trichter) ist abgeschlossen:
 Abschluss-Review über `c978d70..HEAD` durchgeführt, vier Befunde gefunden und behoben.**
 Zwei davon verfehlten den erklärten Zweck ihrer eigenen Task:
 **(R1)** Phase 2b hatte trotz Spec § 4.7 **keinen Produktions-Aufrufer** — Task 7 baute
@@ -2029,6 +2045,95 @@ beschränkt.
 Widerspruch ist rein sprachlich — und Plan 3 ersetzt die Datei ohnehin durch
 `deep_analysis_v2`. Eine v1-Änderung jetzt wäre Arbeit an einem Artefakt mit bekanntem
 Ablaufdatum.
+
+---
+
+### C.9 — Plan 3a Task 10: Testlauf gegen echte Daten ⚠️ (2026-08-16)
+
+Zwei Läufe gegen eine Wegwerf-Kopie von `data/tracking.db` (`cp` vor jedem Lauf erneuert),
+`docker compose run --rm -e RESEND_API_KEY=<ungültig> -v /tmp/plan3a-testlauf:/app/data
+trading-harry --run-type pre_market`. Echte Capital.com-/Finnhub-/Anthropic-Calls, 20
+MVP-Ticker, die Produktions-DB blieb unberührt. Mailversand lief gegen Resend, scheiterte
+mit dem erwarteten 401 (`API key is invalid`), `MailDeliveryError` — Analyse war zu diesem
+Zeitpunkt bereits vollständig persistiert (B-10-Pfad, unverändert korrekt).
+
+| | Lauf 1 (`BATCH_SIZE_DEEP=8`, Default) | Lauf 2 (`BATCH_SIZE_DEEP=4`, temporär) |
+|---|---|---|
+| Kandidaten nach Cutoff | 16 von 20 | 16 von 20 |
+| Batches | 2 × 8 | 4 × 4 |
+| Analysiert | **8 von 16 (50 %)** | **14 von 16 (87,5 %)** |
+| Verloren | ABBV, AMZN, AVGO, GOOGL, HD, META, NVDA, WMT (ein ganzer 8er-Batch) | UNH, XOM |
+| Gesamtkosten | 1,8501 EUR | 2,3842 EUR |
+| Wanduhrzeit gesamt | ~19 min 23 s | ~29 min 14 s |
+| `stop_reason=max_tokens` aufgetreten | 4× (Batch@8 ×2, Hälften@4 ×2) | 6× (Batches@4 ×2 dreimal, Hälfte@2 ×1) |
+
+**Die sechs Prüffragen aus Spec § 12:**
+
+**1. Wie skaliert die Laufzeit mit der Batchgrösse?** Nicht linear, und die kleinere
+Batchgrösse ist **langsamer und teurer** — gegenläufig zur Erwartung. Lauf 2 (Batch 4)
+brauchte 51 % mehr Wanduhrzeit und 29 % mehr Kosten als Lauf 1 (Batch 8), weil kleinere
+Batches das Token-Problem (Frage 4) nicht lösen, sondern nur die Retry-Kaskade verlängern:
+drei von vier 4er-Batches scheiterten erst zweimal bei Batchgrösse 4, bevor sie auf 2+2
+halbiert wurden — jeder gescheiterte Versuch kostet Zeit und Tokens, ohne verwertbares
+Ergebnis.
+
+**2. Recherchiert Claude selektiv?** **Unbeantwortet, mit Nebenbefund.** Jeder einzelne
+Batch-Call in beiden Läufen loggte „0 Websuchen" — `web_search_calls` in `cost_tracking`
+steht für den **gesamten Lauf** auf `0`, obwohl der Policy Monitor „level=high, 6 events"
+lieferte (Zeile, die typischerweise auf frische Websuche hindeutet) und `broad_scan`
+laut eigener Doku ebenfalls websucht. Entweder recherchiert in diesem Universum
+(20 gut bekannte MVP-Ticker) niemand, weil das Modell genug im Trainingswissen hat, oder
+die Zählung selbst hat eine Lücke, die nicht auf Phase 3 begrenzt ist. Ohne Klärung lässt
+sich die eigentliche Frage — nutzt `analyze_batch()` `web_search` gezielt statt pauschal —
+nicht von einer möglichen Zählungslücke trennen.
+
+**3. Bleibt die Qualität bis zum Ende des Batches konstant?** **Nur schwach beantwortbar.**
+Die Rohantworten je Ticker werden nicht separat persistiert; sichtbar sind nur die nach
+Ranking/Guardrails überlebenden `predictions`-Zeilen. Deren Summary-Längen (546–935
+Zeichen) und Scores (3,1–7,6) zeigen in Lauf 2 keinen erkennbaren Abfall zwischen den
+zuerst und zuletzt aufgeführten Tickern eines Batches — aber das ist ein Signal aus einer
+gefilterten Teilmenge (4 von 14 erfolgreichen Analysen wurden überhaupt ge-rankt), keine
+Aussage über alle Ticker.
+
+**4. Reicht `MAX_TOKENS_DEEP`? Darf `stop_reason=max_tokens` nie auftreten?** **Nein —
+klar widerlegt, in beiden Läufen wiederholt.** Nicht nur bei der Zielbatchgrösse: in Lauf 2
+scheiterte sogar ein auf **2** Ticker halbierter Batch (UNH, XOM) am Boden-Budget
+`MAX_TOKENS_DEEP_MIN=4096`. `TOKENS_PER_TICKER_DEEP=900` ist damit als Schätzung
+widerlegt — der reale Bedarf des `deep_analysis_v2`-Prompts (8-Dimensionen-Scoring,
+`evidence_quality`, R/R-Begründung) liegt spürbar höher. Eine grobe Hochrechnung aus den
+beobachteten Ausfällen: verlässlich max_tokens-frei war nur der eine Batch, der auf Anhieb
+durchlief (Lauf 2, Batch 3) — kein Wert, aus dem sich der wahre Bedarf präzise ableiten
+lässt, aber ein starkes Signal, dass 900 zu niedrig ist.
+
+**5. Ist `rank_score` plausibel?** **Nicht anwendbar — existiert noch nicht.**
+`rank_score` ist ausschliesslich Plan-3b-Vokabular (`docs/…/plan3a…md`, „Nach diesem
+Plan"); `grep` über `src/*.py` findet keine Fundstelle ausserhalb des Plan-Dokuments
+selbst. Diese Prüffrage kann erst mit Plan 3b beantwortet werden.
+
+**6. Kosten je Ticker gegen den Plan-2-Referenzwert (3,3551 EUR / 20 Ticker ≈ 0,168
+EUR/Ticker)?** Beide Läufe liegen **darunter** — Lauf 1 bei 0,093 EUR/Ticker (Gesamtlauf ÷
+20), Lauf 2 bei 0,119 EUR/Ticker — trotz der Ausfälle. Isoliert auf Phase 3 (Tiefenanalyse
+allein, Kostenanstieg zwischen Policy-Monitor-Ende und Phase-3b-Start ÷ erfolgreich
+analysierte Ticker): Lauf 1 ≈ 0,079 EUR/erfolgreichem Ticker, Lauf 2 ≈ 0,074
+EUR/erfolgreichem Ticker — beide weit über dem Ziel „~0,034 EUR/Ticker" aus dem
+Plan-Goal. Der Abstand zum Ziel ist grösstenteils der in Frage 4 gefundene Bug: gescheiterte
+Versuche verbrauchen Tokens und werden verworfen, ohne dass ihre Kosten sich in einer
+verwertbaren Analyse niederschlagen. Eine belastbare Kostenmessung ohne diesen Fehler steht
+noch aus.
+
+**Empfehlung:** `BATCH_SIZE_DEEP` **nicht** auf 4 senken — die Messung zeigt, dass eine
+kleinere Batchgrösse das eigentliche Problem (zu knappes Token-Budget je Ticker) nicht löst,
+sondern nur öfter in die (teure) Halbierungs-Kaskade läuft. Der nächste Schritt ist eine
+Neukalibrierung von `TOKENS_PER_TICKER_DEEP` (aktuell 900, vermutlich zu niedrig um
+mindestens den Faktor 2), nicht eine Batchgrössen-Änderung — das ist aber ein Code-Eingriff
+und damit ausserhalb des Scopes von Task 10 („Kein Code — eine Messung"). `config.py` ist
+unverändert (`BATCH_SIZE_DEEP=8`, der Testwert 4 war nie committet).
+
+⚠️ **Ehrlich vermerkt:** von sechs Prüffragen sind zwei (2, 5) nicht abschliessend
+beantwortbar mit den aktuellen Daten — Frage 2 wegen einer möglichen Lücke in der
+Websuche-Zählung, Frage 5 weil `rank_score` erst in Plan 3b entsteht. Frage 3 ist nur
+schwach beantwortbar (gefilterte Stichprobe). Das ist der ehrliche Stand, kein
+Formfehler dieser Messung.
 
 ---
 
