@@ -15,11 +15,18 @@ from src.utils import call_claude, extract_json_blob, WEB_SEARCH_TOOL
 log = logging.getLogger("shares_future.deep_analysis")
 
 PROMPT_DIR = Path(__file__).resolve().parent.parent / "prompts"
-DEEP_SYSTEM_PROMPT = (PROMPT_DIR / "deep_analysis_v1.txt").read_text()
+DEEP_SYSTEM_PROMPT = (PROMPT_DIR / "deep_analysis_v2.txt").read_text()
 POLICY_SYSTEM_PROMPT = (PROMPT_DIR / "policy_monitor_v1.txt").read_text()
 
 MODEL = "claude-sonnet-4-6"
-MAX_TOKENS_DEEP = 4096
+# Spec 4.8: der alte feste Wert 4096 war fuer EINEN Ticker ausgelegt. Neu aus
+# der Batchgroesse abgeleitet -- Richtwert ~900 Output-Tokens je Ticker plus
+# Reserve fuer den JSON-Rahmen. Die Untergrenze 4096 haelt den Einzelfall
+# (Batchgroesse 1) exakt auf dem bisherigen Budget.
+TOKENS_PER_TICKER_DEEP = 900
+BATCH_TOKEN_RESERVE = 2000
+MAX_TOKENS_DEEP_MIN = 4096
+MAX_TOKENS_DEEP = MAX_TOKENS_DEEP_MIN  # Bestand fuer analyze_asset() (Task 6 unangetastet)
 MAX_TOKENS_POLICY = 3072
 
 
@@ -107,6 +114,118 @@ def build_batches(
         f"(Groessen: {[len(b) for b in batches]}, batch_size={batch_size})"
     )
     return batches
+
+
+def max_tokens_for_batch(n: int) -> int:
+    """Output-Token-Budget fuer einen Batch von n Tickern (Spec 4.8)."""
+    return max(MAX_TOKENS_DEEP_MIN, n * TOKENS_PER_TICKER_DEEP + BATCH_TOKEN_RESERVE)
+
+
+def _batch_entry(td: dict, cutoff: dict) -> dict:
+    """Ein Eintrag der Batch-Nutzlast: der td-Schnappschuss unveraendert, daneben
+    der Phase-2-Scan und das deterministische Technik-Signal.
+
+    Sidecar-Invariante: td wird NICHT ergaenzt, der Zusatzkontext liegt in
+    eigenen Schluesseln neben ihm. Wer stattdessen in td schreibt, aendert
+    stillschweigend vier Prompts."""
+    return {
+        "snapshot": td,
+        "news_scan": {"news_strength": cutoff.get("news_strength")},
+        "technical_signal": {
+            "direction": cutoff.get("tech_direction"),
+            "strength": cutoff.get("tech_strength"),
+        },
+    }
+
+
+def _build_batch_user_message(
+    ticker_datas: list[dict],
+    cutoff_by_ticker: dict[str, dict],
+    trend_context: dict,
+    policy_context: dict,
+) -> str:
+    """Komponiert die User-Message fuer einen ganzen Batch: gemeinsamer Trend-
+    und Policy-Kontext einmal, dann je Ticker ein Eintrag."""
+    parts = [
+        "TREND CONTEXT:", json.dumps(trend_context, ensure_ascii=False),
+        "\nPOLICY CONTEXT:", json.dumps(policy_context, ensure_ascii=False),
+        "\nBATCH (one ticker per line, JSON):",
+    ]
+    for td in ticker_datas:
+        entry = _batch_entry(td, cutoff_by_ticker.get(td["ticker"], {}))
+        parts.append(json.dumps(entry, ensure_ascii=False))
+    parts.append(
+        "\nReturn the JSON object defined in your system prompt with one entry "
+        "per ticker above, in the same order."
+    )
+    return "\n".join(parts)
+
+
+def analyze_batch(
+    ticker_datas: list[dict],
+    cutoff_by_ticker: dict[str, dict],
+    trend_context: dict,
+    policy_context: dict,
+    cost_tracker: CostTracker,
+) -> tuple[list[dict], list[str]]:
+    """Analysiert einen ganzen Batch in EINEM gestreamten Sonnet-Call.
+
+    Rueckgabe: (analyses, missing_tickers). Gelieferte Analysen werden IMMER
+    uebernommen, auch wenn Ticker fehlen -- Spec 10: 'zehn gute Analysen
+    schlagen null'. Das unterscheidet die Tiefenanalyse bewusst von
+    quick_filter_batch, das bei fehlenden Tickern warf.
+
+    Wirft DeepAnalysisError, wenn die Antwort als GANZES unbrauchbar ist:
+    unparsebar, ohne results-Liste, oder abgeschnitten (stop_reason ==
+    'max_tokens', Spec 4.8 -- kein akzeptables Ergebnis). Der Aufrufer aus
+    Task 7 faengt das und wiederholt bzw. halbiert."""
+    if not ticker_datas:
+        return [], []
+
+    user_msg = _build_batch_user_message(
+        ticker_datas, cutoff_by_ticker, trend_context, policy_context)
+    max_tokens = max_tokens_for_batch(len(ticker_datas))
+
+    result = call_claude(
+        model=MODEL, system=DEEP_SYSTEM_PROMPT, user=user_msg,
+        max_tokens=max_tokens, tools=[WEB_SEARCH_TOOL], stream=True,
+    )
+    cost_tracker.add_from_result(result)
+
+    if getattr(result, "stop_reason", None) == "max_tokens":
+        raise DeepAnalysisError(
+            f"Batch-Antwort bei max_tokens={max_tokens} abgeschnitten "
+            f"(stop_reason=max_tokens, {len(ticker_datas)} Ticker) -- ein "
+            f"abgeschnittenes Ergebnis wird nicht verwertet (Spec 4.8)"
+        )
+
+    parsed = extract_json_blob(result.text, DeepAnalysisError)
+    results = parsed.get("results")
+    if not isinstance(results, list):
+        raise DeepAnalysisError("Batch-Antwort ohne 'results'-Liste")
+
+    by_ticker = {r.get("ticker"): r for r in results if isinstance(r, dict)}
+
+    analyses, missing = [], []
+    for td in ticker_datas:
+        t = td["ticker"]
+        a = by_ticker.get(t)
+        if a is None:
+            missing.append(t)
+            continue
+        analyses.append(a)
+
+    if missing:
+        log.warning(
+            f"Batch lieferte {len(analyses)}/{len(ticker_datas)} Ticker; "
+            f"fehlend: {', '.join(missing)}"
+        )
+    log.info(
+        f"Batch ({len(ticker_datas)} Ticker) fertig: {len(analyses)} Analysen, "
+        f"{result.web_search_calls} Websuchen, "
+        f"cost so far: {cost_tracker.total_eur:.3f} EUR"
+    )
+    return analyses, missing
 
 
 def _build_user_message(

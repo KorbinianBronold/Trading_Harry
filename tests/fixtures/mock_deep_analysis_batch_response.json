@@ -1,0 +1,44 @@
+{
+  "results": [
+    {
+      "ticker": "AAPL", "asset_class": "stock", "direction": "long",
+      "confidence": "medium", "current_price": 178.5, "tp_price": 182.0,
+      "sl_price": 176.75, "tp_pct": 1.96, "sl_pct": -0.98, "rr_ratio": 2.0,
+      "total_score": 7.2, "probability_pct": 62, "hold_days_recommended": 1,
+      "intraday_range_pct": 1.5, "earnings_warning": false,
+      "summary": "Batch fixture for AAPL.",
+      "sources_used": ["https://a.example", "https://b.example"],
+      "signal_consistency_check": "ok",
+      "scores": {
+        "market_environment": {"value": 7.0, "evidence": ["e1", "e2"], "evidence_quality": "ok"},
+        "company_quality":    {"value": 8.0, "evidence": ["e1", "e2"], "evidence_quality": "ok"},
+        "valuation":          {"value": 5.0, "evidence": ["e1"], "evidence_quality": "thin"},
+        "momentum":           {"value": 7.5, "evidence": ["e1", "e2"], "evidence_quality": "ok"},
+        "risk":               {"value": 6.0, "evidence": ["e1", "e2"], "evidence_quality": "ok"},
+        "sector_trend":       {"value": 7.0, "evidence": ["e1", "e2"], "evidence_quality": "ok"},
+        "catalyst":           {"value": 6.5, "evidence": ["e1", "e2"], "evidence_quality": "ok"},
+        "policy_risk":        {"value": 7.0, "evidence": ["e1", "e2"], "evidence_quality": "ok"}
+      }
+    },
+    {
+      "ticker": "MSFT", "asset_class": "stock", "direction": "none",
+      "confidence": "low", "current_price": 410.0, "tp_price": 410.0,
+      "sl_price": 410.0, "tp_pct": 0.0, "sl_pct": 0.0, "rr_ratio": 0.0,
+      "total_score": 4.0, "probability_pct": 40, "hold_days_recommended": 1,
+      "intraday_range_pct": 1.2, "earnings_warning": false,
+      "summary": "No intraday setup for MSFT.",
+      "sources_used": ["https://a.example", "https://b.example"],
+      "signal_consistency_check": "ok",
+      "scores": {
+        "market_environment": {"value": 5.0, "evidence": ["e1", "e2"], "evidence_quality": "ok"},
+        "company_quality":    {"value": 7.0, "evidence": ["e1", "e2"], "evidence_quality": "ok"},
+        "valuation":          {"value": 5.0, "evidence": ["e1", "e2"], "evidence_quality": "ok"},
+        "momentum":           {"value": 5.0, "evidence": ["e1", "e2"], "evidence_quality": "ok"},
+        "risk":               {"value": 5.0, "evidence": ["e1", "e2"], "evidence_quality": "ok"},
+        "sector_trend":       {"value": 5.0, "evidence": ["e1", "e2"], "evidence_quality": "ok"},
+        "catalyst":           {"value": 4.0, "evidence": ["e1", "e2"], "evidence_quality": "ok"},
+        "policy_risk":        {"value": 6.0, "evidence": ["e1", "e2"], "evidence_quality": "ok"}
+      }
+    }
+  ]
+}

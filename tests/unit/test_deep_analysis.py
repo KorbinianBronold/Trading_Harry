@@ -7,21 +7,24 @@ from src.cost_tracker import CostTracker
 from src.deep_analysis import (
     run_policy_monitor, analyze_asset, analyze_assets, DeepAnalysisError,
     adapt_cutoff_to_quick_filter, build_batches,
+    analyze_batch, max_tokens_for_batch,
 )
 
 FIXTURE_DIR = Path(__file__).parent.parent / "fixtures"
 
 
 def _fake_result(text: str, model: str = "claude-sonnet-4-6",
-                 web_search_calls: int = 3) -> MagicMock:
+                 web_search_calls: int = 3, output_tokens: int = 4000,
+                 stop_reason: str = "end_turn") -> MagicMock:
     r = MagicMock()
     r.text = text
     r.input_tokens = 5000
-    r.output_tokens = 4000
+    r.output_tokens = output_tokens
     r.cache_read_tokens = 0
     r.cache_creation_tokens = 0
     r.model = model
     r.web_search_calls = web_search_calls
+    r.stop_reason = stop_reason
     return r
 
 
@@ -345,6 +348,111 @@ def test_build_batches_empty_input():
 def test_build_batches_rejects_zero_batch_size():
     with pytest.raises(ValueError, match="batch_size"):
         build_batches([_std("AAPL", "Technology")], batch_size=0)
+
+
+# ---------- analyze_batch() (Sprint 3C / Plan 3a, Task 6) ----------
+
+
+BATCH_FIXTURE = FIXTURE_DIR / "mock_deep_analysis_batch_response.json"
+
+
+def _cutoff(ticker: str, news_strength: int = 2) -> dict:
+    return {
+        "ticker": ticker, "news_strength": news_strength,
+        "tech_direction": "long", "tech_strength": 3,
+    }
+
+
+def test_max_tokens_for_batch_scales_with_size():
+    """Abgeleitet statt fest: 4096 war fuer EINEN Ticker ausgelegt."""
+    assert max_tokens_for_batch(8) == 9200      # 8 * 900 + 2000
+    assert max_tokens_for_batch(1) == 4096      # Einzelfall unveraendert
+    assert max_tokens_for_batch(20) == 20000
+
+
+def test_analyze_batch_returns_one_analysis_per_ticker():
+    fake = _fake_result(BATCH_FIXTURE.read_text())
+    tracker = CostTracker(hard_cap_eur=10.0)
+    batch = [_std("AAPL", "Technology"), _std("MSFT", "Technology")]
+
+    with patch("src.deep_analysis.call_claude", return_value=fake) as cc:
+        analyses, missing = analyze_batch(
+            ticker_datas=batch,
+            cutoff_by_ticker={"AAPL": _cutoff("AAPL"), "MSFT": _cutoff("MSFT")},
+            trend_context={}, policy_context={}, cost_tracker=tracker,
+        )
+
+    assert [a["ticker"] for a in analyses] == ["AAPL", "MSFT"]
+    assert missing == []
+    assert cc.call_args.kwargs["stream"] is True
+    assert cc.call_args.kwargs["max_tokens"] == max_tokens_for_batch(2)
+
+
+def test_analyze_batch_keeps_partial_results():
+    """Spec 10: 'zehn gute Analysen schlagen null'. Ein fehlender Ticker wird
+    gemeldet, nicht erfunden -- und kippt nie die gelieferten."""
+    payload = json.loads(BATCH_FIXTURE.read_text())
+    payload["results"] = payload["results"][:1]       # MSFT fehlt
+    fake = _fake_result(json.dumps(payload))
+    tracker = CostTracker(hard_cap_eur=10.0)
+    batch = [_std("AAPL", "Technology"), _std("MSFT", "Technology")]
+
+    with patch("src.deep_analysis.call_claude", return_value=fake):
+        analyses, missing = analyze_batch(
+            ticker_datas=batch,
+            cutoff_by_ticker={"AAPL": _cutoff("AAPL"), "MSFT": _cutoff("MSFT")},
+            trend_context={}, policy_context={}, cost_tracker=tracker,
+        )
+
+    assert [a["ticker"] for a in analyses] == ["AAPL"]
+    assert missing == ["MSFT"]
+
+
+def test_analyze_batch_raises_on_unparseable_response():
+    """Anders als broad_scan (das auf 0 degradiert) wirft die Tiefenanalyse --
+    Task 7 faengt und wiederholt/halbiert."""
+    fake = _fake_result("not json at all", web_search_calls=0, output_tokens=10)
+    tracker = CostTracker(hard_cap_eur=10.0)
+
+    with patch("src.deep_analysis.call_claude", return_value=fake):
+        with pytest.raises(DeepAnalysisError):
+            analyze_batch(
+                ticker_datas=[_std("AAPL", "Technology")],
+                cutoff_by_ticker={"AAPL": _cutoff("AAPL")},
+                trend_context={}, policy_context={}, cost_tracker=tracker,
+            )
+
+
+def test_analyze_batch_raises_when_output_was_truncated():
+    """Spec 4.8: stop_reason == 'max_tokens' ist ein Fehlerfall, kein
+    akzeptables Ergebnis -- auch wenn das Teil-JSON zufaellig parsebar waere."""
+    fake = _fake_result(
+        BATCH_FIXTURE.read_text(), output_tokens=9200, stop_reason="max_tokens")
+    tracker = CostTracker(hard_cap_eur=10.0)
+
+    with patch("src.deep_analysis.call_claude", return_value=fake):
+        with pytest.raises(DeepAnalysisError, match="max_tokens"):
+            analyze_batch(
+                ticker_datas=[_std("AAPL", "Technology"), _std("MSFT", "Technology")],
+                cutoff_by_ticker={"AAPL": _cutoff("AAPL"), "MSFT": _cutoff("MSFT")},
+                trend_context={}, policy_context={}, cost_tracker=tracker,
+            )
+
+
+def test_analyze_batch_payload_does_not_mutate_td():
+    """Sidecar-Invariante: der Batch-Aufbau haengt keine Schluessel an td."""
+    fake = _fake_result(BATCH_FIXTURE.read_text())
+    td = _std("AAPL", "Technology")
+    before = set(td)
+
+    with patch("src.deep_analysis.call_claude", return_value=fake):
+        analyze_batch(
+            ticker_datas=[td], cutoff_by_ticker={"AAPL": _cutoff("AAPL")},
+            trend_context={}, policy_context={},
+            cost_tracker=CostTracker(hard_cap_eur=10.0),
+        )
+
+    assert set(td) == before
 
 
 # ---------- deep_analysis_v2.txt (Sprint 3C / Plan 3a, Task 4) ----------
