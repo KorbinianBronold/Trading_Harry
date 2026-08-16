@@ -15,7 +15,8 @@ from src.utils import call_claude, extract_json_blob, WEB_SEARCH_TOOL
 log = logging.getLogger("shares_future.deep_analysis")
 
 PROMPT_DIR = Path(__file__).resolve().parent.parent / "prompts"
-DEEP_SYSTEM_PROMPT = (PROMPT_DIR / "deep_analysis_v2.txt").read_text()
+DEEP_SYSTEM_PROMPT_V1 = (PROMPT_DIR / "deep_analysis_v1.txt").read_text()
+DEEP_SYSTEM_PROMPT = (PROMPT_DIR / "deep_analysis_v2.txt").read_text()  # fuer analyze_batch(); v1 entfaellt mit Task 9
 POLICY_SYSTEM_PROMPT = (PROMPT_DIR / "policy_monitor_v1.txt").read_text()
 
 MODEL = "claude-sonnet-4-6"
@@ -267,7 +268,7 @@ def analyze_asset(
         policy_context=policy_context,
     )
     result = call_claude(
-        model=MODEL, system=DEEP_SYSTEM_PROMPT, user=user_msg,
+        model=MODEL, system=DEEP_SYSTEM_PROMPT_V1, user=user_msg,
         max_tokens=MAX_TOKENS_DEEP, tools=[WEB_SEARCH_TOOL],
     )
     cost_tracker.add_from_result(result)
