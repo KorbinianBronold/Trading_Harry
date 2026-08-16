@@ -1,17 +1,18 @@
 # Analyse-Pipeline-Umbau — Design
 
-**Status:** 🟡 **Spezifikation gültig, Umsetzung teilweise erfolgt** (Stand 2026-08-15)
+**Status:** 🟡 **Spezifikation gültig, Umsetzung teilweise erfolgt** (Stand 2026-08-16)
 **Erstellt:** 2026-08-11
 
 - **Plan 1 (Fundament)** ✅ abgeschlossen — 17 Indikatoren, Technik-Signal, Schema.
   Keine Verhaltensänderung. PROJECT_STATUS **C.6**
-- **Plan 2 (Trichter)** 🟡 8 von 13 Tasks — § 4.3 (Sammelabruf), § 4.4/4.5 (Phase 1
-  zerlegt, Technik-Signal im Sidecar), § 4.6 (`broad_scan.py`, **nicht verdrahtet**),
-  § 18.1b–d (Fundamentals/Earnings) sind umgesetzt. **Offen:** § 4.7 (Cutoff +
-  `cutoff_log`, `TECH_MIN_FOR_DEEP`), die Verdrahtung, § 8 (Finnhub-Ratenbegrenzung,
-  Wochen-Vorlauf). PROJECT_STATUS **C.7**
-- **Plan 3 (Analyse & Ranking)** ⏳ offen — § 4.8 (Batch-Tiefenanalyse), § 5 (`rank_score`),
-  Prompts v2. **Hier sitzt der Kostenhebel** (§ 13.2: 0,034 statt 0,12 EUR je Ticker)
+- **Plan 2 (Trichter)** ✅ abgeschlossen — 13 von 13 Tasks plus Abschluss-Review mit vier
+  behobenen Befunden. § 4.3 (Sammelabruf), § 4.4/4.5 (Phase 1 zerlegt, Technik-Signal im
+  Sidecar), § 4.6 (`broad_scan.py`, verdrahtet), § 4.7 (Cutoff + `cutoff_log`,
+  `TECH_MIN_FOR_DEEP`), § 8 (Finnhub-Ratenbegrenzung, Wochen-Vorlauf), § 18.1b–d.
+  PROJECT_STATUS **C.7** und **C.8**
+- **Plan 3 (Analyse & Ranking)** ⏳ offen, **in 3a und 3b geteilt** (§ 20.1) —
+  § 4.8 (Batch-Tiefenanalyse), § 5 (`rank_score`), Prompts v2. **Hier sitzt der
+  Kostenhebel** (§ 13.2: 0,034 statt 0,12 EUR je Ticker)
 **Betrifft:** Phasen 1c/2/3 sowie Ranking und Scoring in `pre_market`
 **Nicht betroffen:** Preismodell und Snapshots, `final_close`, Evaluator, Cron-Struktur,
 DB-Persistenz, R/R- und VIX-Logik, CFD-Eignungsregeln, Mail-Versandmechanik
@@ -1024,6 +1025,102 @@ sie werden **immer** tief analysiert. Plan 2 implementiert § 6.1–6.3:
 |---|---|---|
 | ~~1~~ | ~~Akzeptiert `/api/v1/markets` eine `epics=`-Liste?~~ | ✅ **beantwortet 2026-08-12** — ja, Chunks zu 20 (§ 4.3.1) |
 | 1a | Liefert `marketDetails` auch `offer` (Spread)? | ⏳ **nach Task 4 weiterhin offen** — die Sonde prüft es (`probe_epics_batch.py:144-147`), ein Ergebnis ist nirgends protokolliert, `get_premarket_prices_batch()` liest nur `bid`. Lauf mit `--run-live` nachzuholen |
-| 2 | Endgültige Batch-Grösse der **Tiefenanalyse** | nach dem Testlauf |
+| 2 | Endgültige Batch-Grösse der **Tiefenanalyse** | nach dem Testlauf — Startwert `BATCH_SIZE_DEEP = 8` festgelegt in § 20.3 |
 | 3 | `TECH_MIN_FOR_DEEP` | nach dem Testlauf, gegen echte Verteilungen |
 | 4 | Plausibilität von `rank_score` | Testlauf |
+
+---
+
+## 20. Plan-3-Designentscheidungen (Ergänzung zu § 4.8 und § 5)
+
+Wie § 18 für Plan 2: die Spec beschreibt den Zielzustand, diese Entscheidungen
+konkretisieren, was sie offenlässt. Getroffen am 2026-08-16.
+
+### 20.1 Plan 3 zerfällt in 3a und 3b
+
+Plan 3 umfasst Batching, Prompts v2, Streaming, Qualifikation, `rank_score`, Divergenz,
+Mail und die Aggregat-Trennung — zusammen mehr als Plan 2 (13 Tasks). Er wird geteilt,
+und die Grenze liegt **auf dem Testlauf aus § 12**:
+
+| | Inhalt |
+|---|---|
+| **3a — Batch-Tiefenanalyse** | § 4.8 vollständig: Streaming in `call_claude()`, `deep_analysis_v2` + `commodities_crypto_v2`, Batch-Bildung, `MAX_TOKENS_DEEP` aus der Batchgrösse, Fehlerpfade aus § 10, `thin`-Ausnahme in `check_analysis()` |
+| **→ Testlauf § 12** | beantwortet § 19 #2 (Batchgrösse) und liefert die Daten für #4 (`rank_score`) |
+| **3b — Analyse & Ranking** | § 5 vollständig: `news_strength`, Qualifikation, `earnings_in_days`-Check, `rank_score` als Sortierschlüssel, `candidate_class` + `DIVERGENCE_TOP_N`, core/divergence in den Aggregaten, `score_total()`/`DIMENSION_WEIGHTS` raus, Mail-Abschnitt |
+
+**Begründung:** Die Spec verlangt in § 19, die Batchgrösse und die `rank_score`-Formel
+**nach** dem Testlauf festzuschreiben. Läge der Testlauf mitten in einem einzigen Plan,
+könnte sein Ergebnis Tasks rückwirkend ändern, die bereits geschrieben sind. An einer
+Plan-Grenze ist er ein Prüfpunkt statt einer Störung. Zusätzlich landet der Kostenhebel
+früher und unabhängig vom Ranking-Umbau — derselbe Rhythmus wie Plan 1 (kein
+Verhaltenswechsel) gegen Plan 2 (Verhalten).
+
+⚠️ **3a ist *fast*, aber nicht ganz verhaltensneutral.** Der Code-Pfad ändert nichts:
+`evidence_quality` wird erhoben und persistiert, steuert aber nichts, und der
+Sortierschlüssel bleibt bis 3b `probability_pct`. Die v2-Prompts bringen jedoch das
+**R/R-Ziel 1:2 (C.3)** mit, und das verändert TP/SL — also die Analysen selbst. Eine
+dritte Prompt-Version nur für diese eine Zielvorgabe wäre teurer als der Nutzen; die
+Ausnahme wird bewusst in Kauf genommen und hier festgehalten, statt „keine
+Verhaltensänderung" zu behaupten und es dann doch zu tun.
+
+### 20.2 Batch-Bildung: ganze Sub-Sektoren packen
+
+§ 4.8 sagt „Batches nach Sub-Sektor, **wo möglich**". Das „wo möglich" trägt mehr
+Gewicht als es aussieht — gemessen an der echten Datenlage:
+
+> Die 20 MVP-Ticker zerfallen in **13 Sub-Sektoren**, der grösste hat **3** Ticker
+> (Retail: AMZN/WMT/HD). Sieben davon sind Rohstoffe/Krypto ohne Sektor und laufen
+> nach § 6 ohnehin als Einzelcalls. Striktes Sub-Sektor-Batching ergäbe **12 Batches
+> für 13 Aktien** — der Kostenhebel entstünde praktisch gar nicht.
+
+**Regel:** Sub-Sektoren sind **unteilbare Einheiten**, die bis zur Ziel-Batchgrösse
+gepackt werden (grösster zuerst, deterministisch sortiert). Ein Sub-Sektor wird nie über
+zwei Batches zerrissen — **ausser** er überschreitet die Ziel-Grösse allein, dann wird
+er aufgeteilt. Kleine Sub-Sektoren teilen sich einen Batch.
+
+Die Regel braucht beide Richtungen, weil sich die Verteilung mit dem Universum dreht:
+
+| | heute (13 Aktien) | 3F-Ausbau (~500 Ticker) |
+|---|---|---|
+| Sub-Sektoren im Topf | 13, fast alle Einzelstücke | ≤ 21, **konzentriert** — der Cutoff sortiert primär nach `news_strength`, und Nachrichten clustern nach Sektor |
+| Wirksamer Mechanismus | **Zusammenlegen** | **Aufteilen** |
+| Ergebnis bei `BATCH_SIZE_DEEP = 8` | 2 Batches, überwiegend gemischt | ~7 Batches, überwiegend sortenrein |
+
+⚠️ **Phase 3 sieht nie 500 Ticker.** `MAX_DEEP_ANALYSIS = 50` ist seit Plan 2 der harte
+Deckel; die Batch-Bildung arbeitet immer mit ≤ 50 Aktien plus den 7 Rohstoffen/Krypto,
+unabhängig von der Universumsgrösse. Diese wirkt nur auf die *Verteilung*. Das Verfahren
+wandert dadurch von selbst von „gemischt" nach „sortenrein" — dem Zielbild aus § 4.8 —
+ohne dass am Code etwas geändert werden muss.
+
+### 20.3 `BATCH_SIZE_DEEP = 8` als Startwert
+
+Bewusst ein **Startwert**, den der Testlauf bestätigt oder kippt (§ 19 #2), kein
+Endergebnis. Begründung:
+
+- Bei 13 MVP-Aktien: **2 Batches statt 12** — der Kostenhebel ist sofort messbar
+- `MAX_TOKENS_DEEP` landet bei ~8 × 900 + Reserve ≈ **9.000** — deutlich unter der Zone
+  ab ~16.000, in der § 4.8 SDK-Timeouts erwartet, aber weit genug über der heutigen
+  festen 4096, dass die Ableitung aus der Batchgrösse wirklich geprüft wird
+- § 12 verlangt, die Laufzeit bei **zwei** Batchgrössen zu messen. 8 lässt nach oben
+  und unten Raum zum Vergleichen; 13 (alle MVP-Aktien in einen Batch) liesse nur eine
+  Richtung und machte die Sub-Sektor-Semantik bedeutungslos
+
+### 20.4 Streaming entschärft auch den `broad_scan`
+
+§ 4.8 begründet den Streaming-Pfad in `call_claude()` allein mit der Batch-Grösse der
+Tiefenanalyse. Er wirkt aber auf einen zweiten, bereits gebauten Aufrufer:
+`broad_scan_batch()` ist **schon heute ein einziger Call über alle Phase-1-Überlebenden**
+mit `MAX_TOKENS = 24000`, ausgelegt auf den 500-Ticker-Ausbau. Der Kommentar dort
+(`src/broad_scan.py:28-50`) benennt den nicht gestreamten Pfad ausdrücklich als Risiko:
+der httpx-Default-Timeout von 600s kann bei langer Generierung plus mehreren Websuchen
+reissen.
+
+Daraus folgt die Reihenfolge in Plan 3a: **Streaming ist Task 1**, nicht ein Nebenschritt
+der Batch-Arbeit.
+
+⚠️ **Anschlussbefund, in 3a mitzuerledigen:** derselbe Kommentar rechnet einen
+Sicherheitsfaktor auf „~26.000–32.000" hoch und schliesst dann, 24.000 gebe „echten
+Spielraum über der Worst-Case-Schätzung". 24.000 liegt **unter** der eigenen
+Sicherheitsspanne. Beim 500-Ticker-Ausbau kann das kappen;
+`_warn_if_possibly_truncated()` macht es sichtbar, verhindert es aber nicht. Die Rechnung
+ist nachzuziehen und der Wert oder der Kommentar zu korrigieren.
