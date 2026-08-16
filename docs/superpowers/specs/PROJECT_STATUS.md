@@ -2077,15 +2077,26 @@ drei von vier 4er-Batches scheiterten erst zweimal bei Batchgrösse 4, bevor sie
 halbiert wurden — jeder gescheiterte Versuch kostet Zeit und Tokens, ohne verwertbares
 Ergebnis.
 
-**2. Recherchiert Claude selektiv?** **Unbeantwortet, mit Nebenbefund.** Jeder einzelne
-Batch-Call in beiden Läufen loggte „0 Websuchen" — `web_search_calls` in `cost_tracking`
-steht für den **gesamten Lauf** auf `0`, obwohl der Policy Monitor „level=high, 6 events"
-lieferte (Zeile, die typischerweise auf frische Websuche hindeutet) und `broad_scan`
-laut eigener Doku ebenfalls websucht. Entweder recherchiert in diesem Universum
-(20 gut bekannte MVP-Ticker) niemand, weil das Modell genug im Trainingswissen hat, oder
-die Zählung selbst hat eine Lücke, die nicht auf Phase 3 begrenzt ist. Ohne Klärung lässt
-sich die eigentliche Frage — nutzt `analyze_batch()` `web_search` gezielt statt pauschal —
-nicht von einer möglichen Zählungslücke trennen.
+**2. Recherchiert Claude selektiv?** **Weiterhin unbeantwortet, aber die Ursache ist
+geklärt und behoben: `web_search_calls` war ein eigenständiger Zählungsbug, nicht
+batch-spezifisch.** `src/utils.py:_result_from_message()` las
+`getattr(server_tool_use, "web_search_requests", 0)` — aber `response.usage.server_tool_use`
+kommt von der Anthropic-API (`anthropic==0.42.0`) als **plain `dict`** zurück
+(`Usage.model_config` hat `extra="allow"`, Pydantic reicht unbekannte Felder als rohes JSON
+durch, nicht als Objekt mit Attributen). `getattr()` auf einem `dict` liefert immer den
+Default — die Zählung stand seit Einführung von `WEB_SEARCH_TOOL` dauerhaft auf `0`,
+unabhängig davon, ob und wie oft tatsächlich gesucht wurde. Verifiziert mit einem
+Live-Probe-Call gegen die echte API: das Modell rief `web_search` nachweislich auf
+(`content` enthielt `server_tool_use`- und `web_search_tool_result`-Blöcke,
+`resp.usage.server_tool_use == {'web_search_requests': 1, ...}`), der alte Code hätte
+daraus trotzdem `0` gezählt. **Der bestehende Test
+`test_call_claude_extracts_web_search_calls` maskierte den Bug**, weil er
+`server_tool_use` als `MagicMock(web_search_requests=3)` mockte — ein Objekt mit
+Attributen, nicht den tatsächlichen API-Typ. **Behoben:** `.get()` statt `getattr()`
+(`src/utils.py`), Test auf ein `dict`-Mock umgestellt. 770 Tests weiterhin grün.
+Die eigentliche Frage — recherchiert `analyze_batch()` selektiv? — bleibt offen, weil die
+Läufe aus Task 10 mit der kaputten Zählung liefen und **nicht** wiederholt wurden; das
+wäre ein dritter kostenpflichtiger Testlauf und damit ausserhalb des Scopes dieses Fixes.
 
 **3. Bleibt die Qualität bis zum Ende des Batches konstant?** **Nur schwach beantwortbar.**
 Die Rohantworten je Ticker werden nicht separat persistiert; sichtbar sind nur die nach
@@ -2130,10 +2141,18 @@ und damit ausserhalb des Scopes von Task 10 („Kein Code — eine Messung"). `c
 unverändert (`BATCH_SIZE_DEEP=8`, der Testwert 4 war nie committet).
 
 ⚠️ **Ehrlich vermerkt:** von sechs Prüffragen sind zwei (2, 5) nicht abschliessend
-beantwortbar mit den aktuellen Daten — Frage 2 wegen einer möglichen Lücke in der
-Websuche-Zählung, Frage 5 weil `rank_score` erst in Plan 3b entsteht. Frage 3 ist nur
+beantwortbar mit den aktuellen Daten — Frage 2, weil die Zählung selbst zur Laufzeit von
+Task 10 einen eigenständigen Bug hatte (jetzt behoben, s. oben, aber die Läufe wurden
+nicht wiederholt), Frage 5 weil `rank_score` erst in Plan 3b entsteht. Frage 3 ist nur
 schwach beantwortbar (gefilterte Stichprobe). Das ist der ehrliche Stand, kein
 Formfehler dieser Messung.
+
+⚠️ **Nebenbefund beim Auswerten dieses Abschnitts, separat committet:** `web_search_calls`
+stand strukturell immer auf `0` — `src/utils.py:_result_from_message()` las
+`server_tool_use` (ein `dict` von der API) mit `getattr()` statt `.get()`. Betraf jeden
+Aufrufer von `call_claude(tools=[WEB_SEARCH_TOOL])` (`trend_analyzer`, `market_context`,
+`broad_scan`, `deep_analysis`, `commodities_crypto`), nicht nur Phase 3, und war
+unabhängig vom Batching aus diesem Plan. Behoben, Details im Commit.
 
 ---
 

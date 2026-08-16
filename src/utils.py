@@ -71,10 +71,14 @@ def _result_from_message(response, model: str) -> ClaudeResult:
     liefert dieselbe Message-Form wie messages.create()."""
     text_parts = [b.text for b in response.content if hasattr(b, "text") and b.text is not None]
 
+    # server_tool_use kommt als PLAIN DICT zurueck, nicht als Objekt mit
+    # Attributen (Usage.model_config hat extra="allow", Pydantic reicht
+    # unbekannte Felder als rohes JSON durch) -- getattr() liefert auf einem
+    # dict immer den Default und hielt web_search_calls damit dauerhaft auf 0.
     server_tool_use = getattr(response.usage, "server_tool_use", None)
     web_search_calls = 0
     if server_tool_use is not None:
-        web_search_calls = getattr(server_tool_use, "web_search_requests", 0) or 0
+        web_search_calls = server_tool_use.get("web_search_requests", 0) or 0
 
     return ClaudeResult(
         text="\n".join(text_parts),

@@ -93,13 +93,18 @@ def test_call_claude_uses_cache_control_for_system_prompt():
 
 
 def test_call_claude_extracts_web_search_calls():
+    # server_tool_use kommt von der echten API als PLAIN DICT zurueck
+    # (Usage.model_config hat extra="allow", Pydantic reicht unbekannte
+    # Felder als rohes JSON durch, nicht als Objekt mit Attributen) -- ein
+    # MagicMock hier haette den getattr()-Bug maskiert, der in Prod
+    # web_search_calls immer auf 0 hielt (s. C.9-Befund).
     fake_response = MagicMock()
     fake_response.content = [MagicMock(text="ok")]
     fake_response.usage.input_tokens = 100
     fake_response.usage.output_tokens = 50
     fake_response.usage.cache_read_input_tokens = 0
     fake_response.usage.cache_creation_input_tokens = 0
-    fake_response.usage.server_tool_use = MagicMock(web_search_requests=3)
+    fake_response.usage.server_tool_use = {"web_search_requests": 3, "web_fetch_requests": 0}
 
     fake_client = MagicMock()
     fake_client.messages.create.return_value = fake_response
