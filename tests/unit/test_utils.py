@@ -181,3 +181,86 @@ def test_extract_json_blob_ignores_trailing_json_like_content():
     text = '{"a": 1}\n{"b": 2}'
     result = extract_json_blob(text, _DemoError)
     assert result == {"a": 1}  # only first object parsed, second ignored
+
+
+def test_call_claude_streaming_path_uses_messages_stream():
+    """stream=True geht ueber messages.stream(), nicht messages.create()."""
+    fake_message = MagicMock()
+    fake_message.content = [MagicMock(text="streamed answer")]
+    fake_message.usage.input_tokens = 200
+    fake_message.usage.output_tokens = 9000
+    fake_message.usage.cache_read_input_tokens = 0
+    fake_message.usage.cache_creation_input_tokens = 0
+    fake_message.usage.server_tool_use = None
+    fake_message.stop_reason = "end_turn"
+
+    stream_ctx = MagicMock()
+    stream_ctx.__enter__.return_value.get_final_message.return_value = fake_message
+
+    fake_client = MagicMock()
+    fake_client.messages.stream.return_value = stream_ctx
+
+    with patch("src.utils._anthropic_client", fake_client):
+        result = call_claude(
+            model="claude-sonnet-4-6", system="sys", user="usr",
+            max_tokens=9200, stream=True,
+        )
+
+    assert fake_client.messages.create.call_count == 0
+    assert fake_client.messages.stream.call_count == 1
+    assert fake_client.messages.stream.call_args.kwargs["max_tokens"] == 9200
+    assert result.text == "streamed answer"
+    assert result.output_tokens == 9000
+    assert result.stop_reason == "end_turn"
+
+
+def test_call_claude_streaming_passes_tools_and_cache_control():
+    """Der Streaming-Pfad verliert weder tools noch das cache_control des
+    System-Prompts -- beides sind stille Kostenfallen, wenn sie wegfallen."""
+    fake_message = MagicMock()
+    fake_message.content = [MagicMock(text="ok")]
+    fake_message.usage.input_tokens = 10
+    fake_message.usage.output_tokens = 5
+    fake_message.usage.cache_read_input_tokens = 0
+    fake_message.usage.cache_creation_input_tokens = 10
+    fake_message.usage.server_tool_use = None
+    fake_message.stop_reason = "end_turn"
+
+    stream_ctx = MagicMock()
+    stream_ctx.__enter__.return_value.get_final_message.return_value = fake_message
+
+    fake_client = MagicMock()
+    fake_client.messages.stream.return_value = stream_ctx
+
+    with patch("src.utils._anthropic_client", fake_client):
+        call_claude(
+            model="claude-sonnet-4-6", system="long static prompt",
+            user="q", tools=[{"type": "web_search_20250305", "name": "web_search"}],
+            stream=True,
+        )
+
+    kwargs = fake_client.messages.stream.call_args.kwargs
+    assert kwargs["system"][0]["cache_control"] == {"type": "ephemeral"}
+    assert kwargs["tools"][0]["name"] == "web_search"
+
+
+def test_call_claude_non_streaming_still_default_and_carries_stop_reason():
+    """Default bleibt messages.create() -- kein bestehender Aufrufer aendert
+    sein Verhalten. stop_reason wird auch dort durchgereicht."""
+    fake_response = MagicMock()
+    fake_response.content = [MagicMock(text="hi")]
+    fake_response.usage.input_tokens = 1
+    fake_response.usage.output_tokens = 2
+    fake_response.usage.cache_read_input_tokens = 0
+    fake_response.usage.cache_creation_input_tokens = 0
+    fake_response.usage.server_tool_use = None
+    fake_response.stop_reason = "max_tokens"
+
+    fake_client = MagicMock()
+    fake_client.messages.create.return_value = fake_response
+
+    with patch("src.utils._anthropic_client", fake_client):
+        result = call_claude(model="m", system="s", user="u")
+
+    assert fake_client.messages.stream.call_count == 0
+    assert result.stop_reason == "max_tokens"

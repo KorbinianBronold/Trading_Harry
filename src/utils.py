@@ -59,35 +59,16 @@ class ClaudeResult:
     cache_creation_tokens: int
     model: str
     web_search_calls: int = 0
+    # Spec 4.8: stop_reason == "max_tokens" ist ein Fehlerfall, kein
+    # akzeptables Ergebnis. Bis Plan 3a war das Feld nicht verfuegbar und
+    # broad_scan musste output_tokens gegen MAX_TOKENS schaetzen.
+    stop_reason: str | None = None
 
 
-@retry_with_backoff(max_retries=2, base_delay=2.0)
-def call_claude(
-    model: str,
-    system: str,
-    user: str,
-    max_tokens: int = 4096,
-    tools: list | None = None,
-) -> ClaudeResult:
-    """Calls the Anthropic API with the system prompt cached (ephemeral), retries
-    on transient failures, and returns a ClaudeResult with text, token, and
-    web-search-call counts."""
-    if _anthropic_client is None:
-        raise RuntimeError("ANTHROPIC_API_KEY not configured")
-
-    system_blocks = [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}]
-
-    kwargs = dict(
-        model=model,
-        max_tokens=max_tokens,
-        system=system_blocks,
-        messages=[{"role": "user", "content": user}],
-    )
-    if tools:
-        kwargs["tools"] = tools
-
-    response = _anthropic_client.messages.create(**kwargs)
-
+def _result_from_message(response, model: str) -> ClaudeResult:
+    """Baut ClaudeResult aus einer fertigen Anthropic-Message. Gemeinsam fuer
+    den gestreamten und den nicht gestreamten Pfad -- get_final_message()
+    liefert dieselbe Message-Form wie messages.create()."""
     text_parts = [b.text for b in response.content if hasattr(b, "text") and b.text is not None]
 
     server_tool_use = getattr(response.usage, "server_tool_use", None)
@@ -103,7 +84,50 @@ def call_claude(
         cache_creation_tokens=getattr(response.usage, "cache_creation_input_tokens", 0) or 0,
         model=model,
         web_search_calls=web_search_calls,
+        stop_reason=getattr(response, "stop_reason", None),
     )
+
+
+@retry_with_backoff(max_retries=2, base_delay=2.0)
+def call_claude(
+    model: str,
+    system: str,
+    user: str,
+    max_tokens: int = 4096,
+    tools: list | None = None,
+    stream: bool = False,
+) -> ClaudeResult:
+    """Calls the Anthropic API with the system prompt cached (ephemeral), retries
+    on transient failures, and returns a ClaudeResult with text, token, and
+    web-search-call counts.
+
+    stream=True nimmt messages.stream() + get_final_message() statt
+    messages.create(). Noetig, sobald die erwartete Ausgabe gross wird: der
+    nicht gestreamte Pfad haengt am httpx-Default-Timeout von 600s, den eine
+    lange Generierung plus mehrere Websuchen reissen kann (Spec 4.8, 20.4).
+    Default bleibt False -- kein bestehender Aufrufer aendert sein Verhalten,
+    ohne es explizit zu wollen."""
+    if _anthropic_client is None:
+        raise RuntimeError("ANTHROPIC_API_KEY not configured")
+
+    system_blocks = [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}]
+
+    kwargs = dict(
+        model=model,
+        max_tokens=max_tokens,
+        system=system_blocks,
+        messages=[{"role": "user", "content": user}],
+    )
+    if tools:
+        kwargs["tools"] = tools
+
+    if stream:
+        with _anthropic_client.messages.stream(**kwargs) as s:
+            response = s.get_final_message()
+    else:
+        response = _anthropic_client.messages.create(**kwargs)
+
+    return _result_from_message(response, model)
 
 
 import json
