@@ -257,6 +257,17 @@ HOLD_TARGET = "intraday"
 # als ein Call ueber alle Ticker, nie in 30er-Batches.
 MAX_DEEP_ANALYSIS = 50
 
+# Sprint 3C / Analyse-Pipeline-Umbau, Plan 3a (Batch-Tiefenanalyse), Spec 20.3:
+# Ziel-Batchgroesse der Phase-3-Tiefenanalyse. Ganze Sub-Sektoren werden bis zu
+# diesem Wert gepackt (deep_analysis.build_batches()).
+#
+# 8 ist ein begruendeter STARTWERT, kein Ergebnis -- Spec 19.2 schreibt ihn erst
+# nach dem Testlauf fest. Herleitung: bei den 20 MVP-Aktien ergibt 8 genau
+# 3 Batches (8/8/4) statt 20 Einzelcalls, MAX_TOKENS_DEEP landet bei ~9.200 und
+# damit deutlich unter der ~16.000er Zone, in der Spec 4.8 Timeouts erwartet.
+# 20 (alle MVP-Aktien in einem Batch) laege mit ~18.000 bereits darin.
+BATCH_SIZE_DEEP = 8
+
 # Sprint 3C / Analyse-Pipeline-Umbau, Plan 2 (Trichter), Spec 4.7: ein Ticker
 # qualifiziert technisch, sobald eine Richtung entsteht (Mehrheit ab zwei
 # Teilindikatoren) UND der Trend nicht als schwach eingestuft ist (der

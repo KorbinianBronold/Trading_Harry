@@ -8,6 +8,7 @@ import json
 import logging
 from pathlib import Path
 
+import config
 from src.cost_tracker import CostTracker
 from src.utils import call_claude, extract_json_blob, WEB_SEARCH_TOOL
 
@@ -57,6 +58,55 @@ def run_policy_monitor(
         f"events={len(parsed['events'])} cost={cost_tracker.total_eur:.3f} EUR"
     )
     return parsed
+
+
+def build_batches(
+    ticker_datas: list[dict],
+    batch_size: int = config.BATCH_SIZE_DEEP,
+) -> list[list[dict]]:
+    """Gruppiert Ticker fuer die Batch-Tiefenanalyse nach Sub-Sektor (Spec 20.2).
+
+    Sub-Sektoren sind unteilbare Einheiten, die per First-Fit-Decreasing in
+    Batches bis batch_size gepackt werden -- ausser ein Sub-Sektor ueberschreitet
+    batch_size allein, dann wird er vorher aufgeteilt. Ticker ohne Sektor bilden
+    eine eigene Einheit statt still in einen fremden Sub-Sektor zu rutschen.
+
+    Deterministisch: innerhalb einer Einheit alphabetisch nach Ticker, Einheiten
+    nach (Groesse absteigend, erster Ticker). Ohne das waeren weder die Tests
+    noch der 3D-Vergleich zweier Laeufe reproduzierbar.
+
+    Die Regel wirkt in beide Richtungen, weil sich die Verteilung mit der
+    Universumsgroesse dreht: heute (20 Aktien, 12 Sub-Sektoren, groesster 3)
+    dominiert das Zusammenlegen, beim 3F-Ausbau das Aufteilen."""
+    if batch_size < 1:
+        raise ValueError(f"batch_size muss >= 1 sein, war {batch_size}")
+
+    by_sector: dict[str, list[dict]] = {}
+    for td in ticker_datas:
+        by_sector.setdefault(td.get("sector") or "", []).append(td)
+
+    units: list[list[dict]] = []
+    for sector in sorted(by_sector):
+        members = sorted(by_sector[sector], key=lambda t: t["ticker"])
+        for i in range(0, len(members), batch_size):
+            units.append(members[i:i + batch_size])
+
+    units.sort(key=lambda u: (-len(u), u[0]["ticker"]))
+
+    batches: list[list[dict]] = []
+    for unit in units:
+        for b in batches:
+            if len(b) + len(unit) <= batch_size:
+                b.extend(unit)
+                break
+        else:
+            batches.append(list(unit))
+
+    log.info(
+        f"Phase 3: {len(ticker_datas)} Ticker in {len(batches)} Batches "
+        f"(Groessen: {[len(b) for b in batches]}, batch_size={batch_size})"
+    )
+    return batches
 
 
 def _build_user_message(

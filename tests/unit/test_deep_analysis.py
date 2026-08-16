@@ -6,7 +6,7 @@ import pytest
 from src.cost_tracker import CostTracker
 from src.deep_analysis import (
     run_policy_monitor, analyze_asset, analyze_assets, DeepAnalysisError,
-    adapt_cutoff_to_quick_filter,
+    adapt_cutoff_to_quick_filter, build_batches,
 )
 
 FIXTURE_DIR = Path(__file__).parent.parent / "fixtures"
@@ -263,3 +263,85 @@ def test_adapt_cutoff_to_quick_filter_excluded_ticker_skips_deep_analysis():
         )
     assert result is None
     mock_call.assert_not_called()
+
+
+# ---------- build_batches() (Sprint 3C / Plan 3a, Task 3) ----------
+
+
+def _std(ticker: str, sector: str | None) -> dict:
+    return {"ticker": ticker, "sector": sector, "price": 100.0}
+
+
+def test_build_batches_packs_whole_subsectors():
+    """Ganze Sub-Sektoren werden gepackt, nie zerrissen -- die echte
+    MVP-Verteilung (20 Aktien, 12 Sub-Sektoren) ergibt 3 Batches (8/8/4)."""
+    tds = (
+        [_std(t, "Retail") for t in ("AMZN", "WMT", "HD")]
+        + [_std(t, "Financial Services") for t in ("BRK-B", "V", "MA")]
+        + [_std(t, "Technology") for t in ("AAPL", "MSFT")]
+        + [_std(t, "Semiconductors") for t in ("NVDA", "AVGO")]
+        + [_std(t, "Pharmaceuticals") for t in ("JNJ", "LLY")]
+        + [_std(t, "Media") for t in ("GOOGL", "META")]
+        + [_std("UNH", "Health Care"), _std("XOM", "Energy"),
+           _std("PG", "Consumer products"), _std("ABBV", "Biotechnology"),
+           _std("JPM", "Banking"), _std("TSLA", "Automobiles")]
+    )
+
+    batches = build_batches(tds, batch_size=8)
+
+    assert [len(b) for b in batches] == [8, 8, 4]
+    assert sum(len(b) for b in batches) == 20
+    # kein Ticker doppelt, keiner verloren
+    assert sorted(td["ticker"] for b in batches for td in b) == sorted(
+        td["ticker"] for td in tds
+    )
+    # Retail bleibt zusammen
+    for b in batches:
+        retail = [td["ticker"] for td in b if td["sector"] == "Retail"]
+        assert retail in ([], ["AMZN", "HD", "WMT"])
+
+
+def test_build_batches_splits_oversized_subsector():
+    """Ein Sub-Sektor groesser als batch_size wird aufgeteilt -- der Fall, der
+    beim 3F-Ausbau die Regel dominiert (Spec 20.2)."""
+    tds = [_std(f"SEMI{i:02d}", "Semiconductors") for i in range(19)]
+
+    batches = build_batches(tds, batch_size=8)
+
+    assert [len(b) for b in batches] == [8, 8, 3]
+
+
+def test_build_batches_is_deterministic():
+    """Gleiche Eingabe in anderer Reihenfolge -> identische Batches. Ohne das
+    sind Tests und der 3D-Vergleich zweier Laeufe wertlos."""
+    tds = [
+        _std("MSFT", "Technology"), _std("AMZN", "Retail"),
+        _std("AAPL", "Technology"), _std("HD", "Retail"),
+        _std("XOM", "Energy"),
+    ]
+    a = build_batches(tds, batch_size=3)
+    b = build_batches(list(reversed(tds)), batch_size=3)
+
+    assert [[td["ticker"] for td in x] for x in a] == \
+           [[td["ticker"] for td in y] for y in b]
+
+
+def test_build_batches_groups_missing_sector_together():
+    """Ticker ohne Sektor bilden eine eigene Einheit statt still in fremde
+    Sub-Sektoren zu rutschen -- Grundregel des Projekts: lieber ungemappt als
+    falsch gemappt."""
+    tds = [_std("AAPL", "Technology"), _std("A", None), _std("B", "")]
+
+    batches = build_batches(tds, batch_size=8)
+
+    assert len(batches) == 1
+    assert sorted(td["ticker"] for td in batches[0]) == ["A", "AAPL", "B"]
+
+
+def test_build_batches_empty_input():
+    assert build_batches([], batch_size=8) == []
+
+
+def test_build_batches_rejects_zero_batch_size():
+    with pytest.raises(ValueError, match="batch_size"):
+        build_batches([_std("AAPL", "Technology")], batch_size=0)
