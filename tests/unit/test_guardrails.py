@@ -176,3 +176,56 @@ def test_guardrail_accepts_intraday_range_exactly_one_percent():
     c = GuardrailsChecker()
     ok, errs = c.check_analysis(_valid_analysis(intraday_range_pct=1.0))
     assert ok, errs
+
+
+def test_check_analysis_thin_dimension_skips_evidence_requirement():
+    """Eine als thin markierte Dimension darf weniger als zwei Belege haben."""
+    a = _valid_analysis()
+    a["scores"]["valuation"] = {
+        "value": 5.0, "evidence": ["nur eine Zeile"], "evidence_quality": "thin",
+    }
+    passed, errors = GuardrailsChecker().check_analysis(a)
+    assert passed, errors
+
+
+def test_check_analysis_thin_dimension_with_zero_evidence_allowed():
+    """thin heisst 'ich habe nichts gefunden' -- auch leer ist zulaessig.
+    Weglassen der Dimension waere es NICHT (Spec 4.8)."""
+    a = _valid_analysis()
+    a["scores"]["valuation"] = {
+        "value": 5.0, "evidence": [], "evidence_quality": "thin",
+    }
+    passed, errors = GuardrailsChecker().check_analysis(a)
+    assert passed, errors
+
+
+def test_check_analysis_ok_dimension_still_needs_two_evidence():
+    """Keine generelle Aufweichung: ohne thin-Markierung gilt die Pflicht."""
+    a = _valid_analysis()
+    a["scores"]["valuation"] = {
+        "value": 5.0, "evidence": ["nur eine"], "evidence_quality": "ok",
+    }
+    passed, errors = GuardrailsChecker().check_analysis(a)
+    assert not passed
+    assert any("valuation" in e for e in errors)
+
+
+def test_check_analysis_missing_evidence_quality_still_needs_two_evidence():
+    """Ein v1-Ergebnis ohne evidence_quality faellt auf die strenge Regel
+    zurueck -- die Ausnahme greift nur bei ausdruecklichem 'thin'."""
+    a = _valid_analysis()
+    a["scores"]["valuation"] = {"value": 5.0, "evidence": ["nur eine"]}
+    passed, errors = GuardrailsChecker().check_analysis(a)
+    assert not passed
+    assert any("valuation" in e for e in errors)
+
+
+def test_check_analysis_unknown_evidence_quality_is_strict():
+    """Ein unbekannter Wert ist kein Freifahrtschein -- nur exakt 'thin'
+    oeffnet die Ausnahme."""
+    a = _valid_analysis()
+    a["scores"]["valuation"] = {
+        "value": 5.0, "evidence": ["nur eine"], "evidence_quality": "duenn",
+    }
+    passed, errors = GuardrailsChecker().check_analysis(a)
+    assert not passed

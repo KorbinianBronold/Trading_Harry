@@ -42,6 +42,18 @@ class GuardrailsChecker:
 
         scores = a.get("scores", {})
         for dim, sd in scores.items():
+            # Spec 4.8: eine ausdruecklich als "thin" markierte Dimension
+            # umgeht die Zwei-Belege-Pflicht. Sie wird BEHALTEN statt
+            # weggelassen -- stilles Weglassen hat sich in diesem Projekt
+            # wiederholt als Diagnose-Falle erwiesen (vgl. direction='none',
+            # frueher lautlos verworfen). In Plan 3b zaehlt eine thin-Dimension
+            # dafuer nicht in news_strength.
+            #
+            # Bewusst eng: NUR der exakte Wert "thin" oeffnet die Ausnahme.
+            # Ein fehlendes Feld (v1-Ergebnis) oder ein unbekannter Wert faellt
+            # auf die strenge Regel zurueck. Keine generelle Aufweichung.
+            if sd.get("evidence_quality") == "thin":
+                continue
             if len(sd.get("evidence", [])) < self.min_evidence_per_dim:
                 errors.append(
                     f"Dimension {dim}: too few evidence items "
