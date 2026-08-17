@@ -98,6 +98,11 @@ CREATE TABLE IF NOT EXISTS predictions (
     hold_days_recommended INTEGER, intraday_range_pct REAL,
     superseded_by INTEGER REFERENCES predictions(id),
     revision_verdict TEXT,
+    candidate_class TEXT DEFAULT 'core',
+    tech_direction TEXT, tech_agreement INTEGER,
+    tech_adx_band TEXT, tech_strength INTEGER,
+    analysis_strength INTEGER, rank_score INTEGER,
+    news_strength INTEGER,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -400,6 +405,15 @@ def _apply_migrations(conn: sqlite3.Connection) -> None:
         ("price_open",      "REAL"),
         ("price_1610",      "REAL"),
         ("is_premarket",    "INTEGER"),
+        # Sprint 3C / Analyse-Pipeline-Umbau, Plan 3b (Spec 7.2, 20.5):
+        ("candidate_class",   "TEXT DEFAULT 'core'"),
+        ("tech_direction",    "TEXT"),
+        ("tech_agreement",    "INTEGER"),
+        ("tech_adx_band",     "TEXT"),
+        ("tech_strength",     "INTEGER"),
+        ("analysis_strength", "INTEGER"),
+        ("rank_score",        "INTEGER"),
+        ("news_strength",     "INTEGER"),
     ):
         if col not in pred_cols:
             conn.execute(f"ALTER TABLE predictions ADD COLUMN {col} {coltype}")
@@ -670,7 +684,7 @@ def _insert_prediction(conn: sqlite3.Connection, pred: dict) -> int:
     weglaesst: die INSERT-Spaltenliste listet ihn immer explizit auf, ein
     fehlender Wert wuerde sonst NULL statt des Schema-Defaults (DEFAULT 1)
     schreiben — und NULL erfuellt keinen der `learnable = 1`-Filter."""
-    pred = {"learnable": True, **pred}
+    pred = {"learnable": True, "candidate_class": "core", **pred}
     cols = [
         "date", "run_type", "asset_class", "ticker", "direction",
         "entry_price", "tp_price", "tp_pct", "sl_price", "sl_pct", "rr_ratio",
@@ -688,6 +702,10 @@ def _insert_prediction(conn: sqlite3.Connection, pred: dict) -> int:
         # Preismodell 2026-08-06: die drei Entscheidungs-Snapshots. entry_price
         # bleibt daneben unveraendert bestehen.
         "price_premarket", "price_open", "price_1610", "is_premarket",
+        # Sprint 3C / Analyse-Pipeline-Umbau, Plan 3b:
+        "candidate_class", "tech_direction", "tech_agreement",
+        "tech_adx_band", "tech_strength", "analysis_strength",
+        "rank_score", "news_strength",
     ]
     placeholders = ", ".join(["?"] * len(cols))
     values = [pred.get(c) for c in cols]

@@ -1980,3 +1980,73 @@ def test_log_cutoff_upserts_on_rerun(in_memory_db):
     ).fetchall()
     assert len(rows) == 1
     assert rows[0]["news_strength"] == 3
+
+
+PLAN3B_PRED_COLS = (
+    "candidate_class", "tech_direction", "tech_agreement", "tech_adx_band",
+    "tech_strength", "analysis_strength", "rank_score", "news_strength",
+)
+
+
+def test_fresh_schema_has_plan3b_columns(in_memory_db):
+    """Eine frische DB bekommt die acht Spalten aus dem CREATE-TABLE-Block."""
+    conn = in_memory_db
+    db.init_schema(conn)
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(predictions)")}
+    for col in PLAN3B_PRED_COLS:
+        assert col in cols, f"{col} fehlt in predictions"
+
+
+def test_predictions_migration_adds_plan3b_columns_to_an_old_db(in_memory_db):
+    """Der echte Migrationspfad: eine Bestands-DB, deren predictions-Tabelle
+    die acht Spalten NICHT hat, bekommt sie durch _apply_migrations()
+    nachgezogen. Die alte Tabelle wird dafuer von Hand angelegt -- SQLite
+    kennt vor 3.35 kein DROP COLUMN, und auf eine Version zu testen, die der
+    CI-Runner vielleicht hat, waere kein Test, sondern ein Zufall."""
+    conn = in_memory_db
+    conn.execute("""
+        CREATE TABLE predictions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            date TEXT NOT NULL, run_type TEXT NOT NULL, asset_class TEXT,
+            ticker TEXT NOT NULL, direction TEXT NOT NULL,
+            entry_price REAL, tp_price REAL, sl_price REAL, rr_ratio REAL,
+            status TEXT DEFAULT 'open',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    conn.execute(
+        """INSERT INTO predictions (date, run_type, ticker, direction, entry_price)
+           VALUES ('2026-08-01', 'pre_market', 'AAPL', 'long', 100.0)""")
+    conn.commit()
+
+    db.init_schema(conn)
+
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(predictions)")}
+    for col in PLAN3B_PRED_COLS:
+        assert col in cols, f"{col} nicht nachmigriert"
+
+    # Die Altzeile bleibt lesbar und bekommt candidate_class='core'
+    # RUECKWIRKEND: SQLite fuellt bestehende Zeilen beim ADD COLUMN mit dem
+    # DEFAULT (empirisch geprueft gegen sqlite 3.53). Genau das verlangt
+    # Spec 7.4 -- ohne diese Eigenschaft fielen alle Altzeilen aus den
+    # candidate_class-Aggregaten von Task 5/6 heraus, weil NULL weder 'core'
+    # noch 'divergence' matcht.
+    row = conn.execute("SELECT * FROM predictions WHERE ticker='AAPL'").fetchone()
+    assert row["candidate_class"] == "core"
+    assert row["rank_score"] is None
+
+
+def test_insert_prediction_defaults_candidate_class_to_core(in_memory_db):
+    """_insert_prediction() liefert 'core' zurueck, wenn der Aufrufer den
+    Schluessel weglaesst -- derselbe Rueckfall-Mechanismus wie 'learnable'."""
+    conn = in_memory_db
+    db.init_schema(conn)
+    pred = {
+        "date": "2026-08-17", "run_type": "pre_market", "ticker": "AAPL",
+        "direction": "long", "entry_price": 100.0, "tp_price": 105.0,
+        "sl_price": 98.0, "rr_ratio": 2.5,
+    }
+    new_id = db.save_prediction(conn, pred)
+    row = conn.execute("SELECT * FROM predictions WHERE id=?", (new_id,)).fetchone()
+    assert row["candidate_class"] == "core"
+    assert row["rank_score"] is None
