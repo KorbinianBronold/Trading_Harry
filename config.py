@@ -282,6 +282,20 @@ BATCH_SIZE_DEEP = 8
 # nach dem Testlauf gegen echte Verteilungen (Spec 19.3).
 TECH_MIN_FOR_DEEP = 2
 
+# Sprint 3C / Analyse-Pipeline-Umbau, Plan 3b (Spec 5.3): ein Earnings-Termin
+# in <= EARNINGS_WARNING_DAYS ist die einzige fundamentale Tatsache mit
+# unmittelbarer Intraday-Wirkung -- er kann den Kurs springen lassen und
+# entwertet damit das analytisch hergeleitete TP/SL. Fuer Rohstoffe/Krypto ist
+# earnings_in_days immer None (Spec 4.7), der Check dort trivial erfuellt.
+EARNINGS_WARNING_DAYS = 2
+
+# Spec 5.5: Deckel fuer Divergenz-Kandidaten je Richtung, sortiert nach
+# rank_score. UNBESTAETIGTER STARTWERT, kein Messergebnis -- der
+# Verifikationslauf vom 2026-08-17 enthielt null Divergenzfaelle, der Deckel
+# hat also noch nie gebunden (Spec 20.5). Dieselbe Klasse Zahl wie
+# BATCH_SIZE_DEEP vor seiner eigenen Kalibrierung.
+DIVERGENCE_TOP_N = 5
+
 # Ticker-Deaktivierung (Sprint 3B / B.7, Entscheidung D3): ein Ticker, der
 # wiederholt keine brauchbaren Daten liefert, wird nach TICKER_MAX_SKIPS Skips
 # deaktiviert und erst nach TICKER_RETRY_AFTER_DAYS Tagen automatisch erneut
