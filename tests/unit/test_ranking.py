@@ -1,8 +1,9 @@
 from unittest.mock import MagicMock
 import pytest
 
+import config
 from src import db
-from src.ranking import rank_and_persist, score_total
+from src.ranking import rank_and_persist, score_total, _classify, _rank_key
 
 
 def _analysis(ticker: str, direction: str = "long", momentum: float = 7.0,
@@ -440,3 +441,101 @@ def test_no_warning_when_predictions_were_persisted(in_memory_db, caplog):
 
     assert result["top_long"] or result["top_short"], "Testaufbau: es muss etwas durchkommen"
     assert [r for r in caplog.records if r.levelno >= logging.WARNING] == []
+
+
+# ---------- _classify() / _rank_key() (Sprint 3B / Plan 3b, Task 7) ----------
+
+
+def _stock_analysis(direction="long"):
+    return {"ticker": "AAPL", "direction": direction, "scores": {
+        dim: {"value": 7.0 if direction == "long" else 3.0,
+              "evidence": ["a", "b"], "evidence_quality": "ok"}
+        for dim in ["market_environment", "company_quality", "valuation",
+                    "momentum", "risk", "sector_trend", "catalyst", "policy_risk"]
+    }}
+
+
+def test_classify_core_when_tech_matches():
+    a = _stock_analysis("long")
+    ctx = {"tech_direction": "long", "tech_strength": 3}
+    klasse, strength, rank_score = _classify(a, ctx, cc=False)
+    assert klasse == "core"
+    assert strength == 8
+    assert rank_score == 24
+
+
+def test_classify_divergence_when_tech_neutral():
+    a = _stock_analysis("long")
+    ctx = {"tech_direction": "neutral", "tech_strength": 0}
+    klasse, strength, rank_score = _classify(a, ctx, cc=False)
+    assert klasse == "divergence"
+    assert rank_score is None  # tech_strength=0 -> NULL, nie 0 (Spec 20.5 #3)
+
+
+def test_classify_conflict_when_tech_opposes():
+    a = _stock_analysis("long")
+    ctx = {"tech_direction": "short", "tech_strength": 3}
+    klasse, strength, rank_score = _classify(a, ctx, cc=False)
+    assert klasse == "conflict"
+
+
+def test_classify_missing_sidecar_entry_treated_as_divergence():
+    """Kein Sidecar-Eintrag (leeres ctx) -- konservativ wie neutral, nicht
+    blockierend wie ein Konflikt."""
+    a = _stock_analysis("long")
+    klasse, strength, rank_score = _classify(a, {}, cc=False)
+    assert klasse == "divergence"
+
+
+def test_classify_commodity_never_conflicts():
+    """Spec 20.5 #2: Rohstoffe/Krypto werden nie disqualifiziert, auch nicht
+    bei gegenlaeufigem Technik-Signal."""
+    a = _stock_analysis("long")
+    a["ticker"] = "GC=F"
+    ctx = {"tech_direction": "short", "tech_strength": 3}
+    klasse, strength, rank_score = _classify(a, ctx, cc=True)
+    assert klasse == "core"
+    assert rank_score == 24  # trotzdem gebildet, fuer die Sortierung
+
+
+def test_classify_zero_analysis_strength_yields_null_not_zero():
+    """Spec 5.4: rank_score ist NULL, nie 0 -- auch wenn NICHT das
+    Technik-Signal, sondern analysis_strength der Nullfaktor ist. Erreichbar
+    ueber eine Analyse, die die Guardrails besteht (momentum-WERT stimmt), aber
+    keine Dimension zaehlbar belegt (alle thin)."""
+    a = _stock_analysis("long")
+    for dim in a["scores"]:
+        a["scores"][dim]["evidence_quality"] = "thin"
+    ctx = {"tech_direction": "long", "tech_strength": 3}
+    klasse, strength, rank_score = _classify(a, ctx, cc=False)
+    assert klasse == "core"
+    assert strength == 0
+    assert rank_score is None, "0 hiesse 'schlechtester Kandidat', nicht 'nicht rankbar'"
+
+
+def test_classify_commodity_without_tech_signal_gets_null_rank_score():
+    a = _stock_analysis("long")
+    a["ticker"] = "SI=F"
+    klasse, strength, rank_score = _classify(a, {}, cc=True)
+    assert klasse == "core"
+    assert rank_score is None
+
+
+def test_rank_key_sorts_by_rank_score_descending():
+    high = _rank_key(strength=6, rank_score=18, ticker="NVDA")
+    low = _rank_key(strength=4, rank_score=12, ticker="BRK-B")
+    assert high < low  # tuple-Vergleich: kleinerer Schluessel = weiter vorn
+
+
+def test_rank_key_falls_back_to_strength_when_rank_score_is_none():
+    """Zwei Divergenz-Kandidaten (rank_score immer None) sortieren nach
+    analysis_strength, nicht per Zufall gleich (Spec 5.4-Fussnote)."""
+    stronger = _rank_key(strength=6, rank_score=None, ticker="AAPL")
+    weaker = _rank_key(strength=2, rank_score=None, ticker="ZZZZ")
+    assert stronger < weaker
+
+
+def test_rank_key_ticker_breaks_ties_deterministically():
+    a = _rank_key(strength=4, rank_score=12, ticker="AAA")
+    b = _rank_key(strength=4, rank_score=12, ticker="ZZZ")
+    assert a < b

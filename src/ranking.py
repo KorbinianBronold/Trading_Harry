@@ -53,6 +53,66 @@ def _rule_name(error_message: str) -> str:
     return "other"
 
 
+from src.analysis_signal import analysis_strength
+
+
+def _classify(
+    analysis: dict, signal_ctx: dict, *, cc: bool,
+) -> tuple[str, int, int | None]:
+    """Klassifiziert eine guardrail- und B.3-check-bestandene Analyse nach
+    Spec 5.3-5.5. Gibt (candidate_class, analysis_strength, rank_score)
+    zurueck. direction='none' ist hier bereits durch _guardrail_filter()
+    ausgefiltert -- nur long/short erreichen diese Funktion.
+
+    rank_score ist NULL, sobald EINER der beiden Faktoren ausserhalb seines
+    Wertebereichs liegt (Spec 5.4 nennt 1..8 bzw. 1..4, 20.5 #3): ein Produkt
+    mit 0 loescht die Aussage des anderen Faktors, und 0 hiesse 'schlechtester
+    Kandidat', wo 'nicht vergleichbar' gilt.
+
+    BEIDE Nullfaelle sind erreichbar, nicht nur der offensichtliche:
+      * tech_strength == 0 -- technical_signal.compute() liefert das NUR beim
+        neutralen Fall (src/technical_signal.py:103-106), also bei jedem
+        Divergenz-Kandidaten.
+      * analysis_strength == 0 bei GESETZTER Richtung -- seltener, aber
+        moeglich: die Guardrails pruefen den momentum-WERT gegen
+        MOMENTUM_LONG_MIN (src/guardrails.py:84-93), waehrend
+        analysis_strength zusaetzlich >= 2 Belege und evidence_quality != thin
+        verlangt. Eine Analyse mit momentum=7.0, evidence_quality='thin' und
+        acht schwachen Dimensionen besteht die Guardrails und zaehlt trotzdem
+        0. Ohne die Pruefung auf `strength` bekaeme sie rank_score = 0 statt
+        NULL.
+
+    cc=True (Rohstoffe/Krypto, Spec 20.5 #2): die Zwei-Signal-Huerde gilt
+    nicht. Ein fehlendes oder gegenlaeufiges Technik-Signal disqualifiziert
+    nicht -- 'always kept, regardless of score' bleibt bestehen, das
+    Technik-Signal traegt nur noch zum rank_score bei, wenn es da ist."""
+    strength = analysis_strength(analysis)
+    tech_direction = signal_ctx.get("tech_direction")
+    tech_strength = signal_ctx.get("tech_strength")
+    direction = analysis["direction"]
+
+    rank_score = strength * tech_strength if (strength and tech_strength) else None
+
+    if cc:
+        return "core", strength, rank_score
+
+    if tech_direction == direction:
+        return "core", strength, rank_score
+    if tech_direction in ("long", "short"):
+        return "conflict", strength, rank_score
+    # tech_direction ist 'neutral' ODER fehlt (kein Sidecar-Eintrag) --
+    # beides konservativ wie eine Divergenz behandeln, nie wie ein Konflikt.
+    return "divergence", strength, rank_score
+
+
+def _rank_key(strength: int, rank_score: int | None, ticker: str) -> tuple:
+    """Sortierschluessel fuer Top-10 und Divergenz-Listen: rank_score
+    absteigend, faellt bei NULL auf analysis_strength zurueck (Spec 5.4),
+    Ticker alphabetisch als deterministischer Tie-Break (Spec 5.4)."""
+    primary = rank_score if rank_score is not None else strength
+    return (-primary, -strength, ticker)
+
+
 def _guardrail_filter(
     analyses: Iterable[dict], conn, date: str, run_type: str,
 ) -> tuple[list[dict], int]:
