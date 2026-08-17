@@ -879,6 +879,73 @@ def test_confirmed_signal_supersedes_the_morning_row(in_memory_db):
     assert new["probability_pct"] == 71
 
 
+def test_supersession_carries_the_plan3b_signal_columns(in_memory_db):
+    """C2 (Plan-3b-Abschluss-Review): die 16:10-Nachfolgezeile muss den
+    Signalzustand tragen, der sie erzeugt hat -- allen voran candidate_class.
+
+    Vorher fehlten die acht Spalten in der supersede_prediction()-Nutzlast, und
+    db._insert_prediction() stempelte die Nachfolgezeile per Default-Merge auf
+    'core'. Still, aber folgenreich: eine bestaetigte Divergenz-Zeile ist die
+    EINZIGE Divergenz-Zeile, die je ein Outcome bekommt -- sie landete damit im
+    core-Topf, und divergence.confirmed blieb strukturell 0.
+
+    Bewusst durch den Produktionspfad (_persist_revision), nicht ueber eine von
+    Hand gesetzte Zeile: der bestehende db-Test war genau deshalb gruen, obwohl
+    die Pipeline diesen Zustand gar nicht erzeugen konnte."""
+    from src import db
+    from main import _persist_revision
+    db.init_schema(in_memory_db)
+    pid = _pred_row(
+        in_memory_db, candidate_class="divergence", tech_direction="neutral",
+        tech_agreement=0, tech_adx_band="weak", tech_strength=0,
+        analysis_strength=6, rank_score=None, news_strength=3,
+    )
+    pred = in_memory_db.execute("SELECT * FROM predictions WHERE id=?", (pid,)).fetchone()
+    assert pred["candidate_class"] == "divergence", "Testaufbau"
+
+    new_id = _persist_revision(
+        conn=in_memory_db, pred=pred,
+        verdict={"verdict": "bestaetigt", "probability_pct": 71, "reason": "haelt"},
+        snapshot={"price": 101.0}, date="2026-07-30", checks=[],
+        momentum=(None, None),
+    )
+    new = in_memory_db.execute("SELECT * FROM predictions WHERE id=?", (new_id,)).fetchone()
+    assert new["candidate_class"] == "divergence", \
+        "Die Klasse muss die Abloesung ueberleben, sonst kippt der core/divergence-Split"
+    assert new["tech_direction"] == "neutral"
+    assert new["tech_agreement"] == 0
+    assert new["tech_adx_band"] == "weak"
+    assert new["tech_strength"] == 0
+    assert new["analysis_strength"] == 6
+    assert new["rank_score"] is None
+    assert new["news_strength"] == 3
+
+
+def test_confirmed_divergence_lands_in_the_divergence_bucket(in_memory_db):
+    """Die Wirkung von C2 dort, wo sie sichtbar wird: nach einer bestaetigten
+    Divergenz-Zeile muss load_revision_effectiveness() sie im divergence-Topf
+    zaehlen, nicht im core-Topf."""
+    from src import db
+    from main import _persist_revision
+    db.init_schema(in_memory_db)
+    pid = _pred_row(in_memory_db, candidate_class="divergence")
+    pred = in_memory_db.execute("SELECT * FROM predictions WHERE id=?", (pid,)).fetchone()
+    new_id = _persist_revision(
+        conn=in_memory_db, pred=pred,
+        verdict={"verdict": "bestaetigt", "probability_pct": 71, "reason": "haelt"},
+        snapshot={"price": 101.0}, date="2026-07-30", checks=[],
+        momentum=(None, None),
+    )
+    db.save_outcome(in_memory_db, {
+        "prediction_id": new_id, "evaluated_date": "2026-07-31",
+        "price_after_eod": 104.0, "correct_direction_eod": True,
+        "profit_loss_eur": 12.0, "exit_reason": "eod",
+    })
+    eff = db.load_revision_effectiveness(in_memory_db, "2026-07-01")
+    assert eff["divergence"]["confirmed"]["total"] == 1
+    assert eff["core"]["confirmed"]["total"] == 0
+
+
 def test_flipped_signal_creates_no_counter_position(in_memory_db):
     """E5: melden, nicht handeln."""
     from src import db

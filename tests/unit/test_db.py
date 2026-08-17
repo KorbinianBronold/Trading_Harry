@@ -2117,7 +2117,13 @@ def test_load_revision_effectiveness_splits_by_candidate_class(in_memory_db):
     """⚠️ Jede Prediction braucht ein outcomes-Row: _agg() zaehlt ueber
     `FROM outcomes o JOIN predictions p`, eine Prediction ohne Outcome taucht
     dort gar nicht auf. Ohne die Outcomes waeren alle Zaehler 0 und der Test
-    gruen aus dem falschen Grund."""
+    gruen aus dem falschen Grund.
+
+    ⚠️ Dieser Test prueft die SQL, NICHT die Pipeline: die divergence-Zeile mit
+    run_type='trade_proposals' wird hier von Hand gesetzt. Bis C2 (Plan-3b-
+    Abschluss-Review) konnte die Pipeline sie gar nicht erzeugen -- der Test war
+    gruen und der Bug trotzdem da. Der Produktionspfad haengt an
+    test_main.py::test_confirmed_divergence_lands_in_the_divergence_bucket."""
     conn = in_memory_db
     db.init_schema(conn)
     # confirmed core: ein trade_proposals-Lauf, candidate_class core

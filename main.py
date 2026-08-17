@@ -684,6 +684,28 @@ def _persist_revision(
         "hold_days_recommended": pred["hold_days_recommended"],
         "intraday_range_pct": pred["intraday_range_pct"],
         "sector_etf_momentum": etf_mom, "sector_db_momentum": db_mom,
+        # ⚠️ Die acht Plan-3b-Spalten MUESSEN mitwandern (Spec 7.2:
+        # "Persistiert wird, was tatsaechlich entschieden hat"). Die 16:10-Zeile
+        # ist die einzige, die je ein Outcome bekommt — sie muss den
+        # Signalzustand tragen, der sie erzeugt hat.
+        # Ohne sie stempelt db._insert_prediction() die Nachfolgezeile per
+        # Default-Merge auf candidate_class='core', und zwar STILL:
+        #   * divergence_summary in der Weekly-Mail waere strukturell leer,
+        #     ausgerechnet fuer die Divergenz-Kandidaten mit realisiertem Ergebnis;
+        #   * load_revision_effectiveness() filtert seinen 'confirmed'-Topf ueber
+        #     candidate_class -> divergence.confirmed bliebe dauerhaft 0, waehrend
+        #     core.confirmed mit Divergenz-Zeilen aufgeblasen waere.
+        # Das ist genau der Vergleich, fuer den der core/divergence-Split gebaut
+        # wurde. pred kommt aus load_predictions_for_revalidation() (SELECT *),
+        # traegt die Werte also bereits.
+        "candidate_class": pred["candidate_class"],
+        "tech_direction": pred["tech_direction"],
+        "tech_agreement": pred["tech_agreement"],
+        "tech_adx_band": pred["tech_adx_band"],
+        "tech_strength": pred["tech_strength"],
+        "analysis_strength": pred["analysis_strength"],
+        "rank_score": pred["rank_score"],
+        "news_strength": pred["news_strength"],
     }, verdict=verdict["verdict"])
 
 
