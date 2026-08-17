@@ -21,18 +21,53 @@ DEEP_SYSTEM_PROMPT = (PROMPT_DIR / "deep_analysis_v2.txt").read_text()  # fuer a
 POLICY_SYSTEM_PROMPT = (PROMPT_DIR / "policy_monitor_v1.txt").read_text()
 
 MODEL = "claude-sonnet-4-6"
-# Spec 4.8: der alte feste Wert 4096 war fuer EINEN Ticker ausgelegt. Neu aus
-# der Batchgroesse abgeleitet -- Richtwert ~900 Output-Tokens je Ticker plus
-# Reserve fuer den JSON-Rahmen. Die Untergrenze 4096 haelt den Einzelfall
-# (Batchgroesse 1) exakt auf dem bisherigen Budget.
-TOKENS_PER_TICKER_DEEP = 900
-BATCH_TOKEN_RESERVE = 2000
+# Spec 4.8: der alte feste Wert 4096 war fuer EINEN Ticker ausgelegt, das
+# Budget wird deshalb aus der Batchgroesse abgeleitet.
+#
+# ⚠️ Die erste Fassung (900/Ticker + 2000 fest) ist durch den Testlauf aus
+# Plan 3a Task 10 WIDERLEGT -- Details PROJECT_STATUS C.9. Zwei Fehler:
+#
+# 1. 900 lag unter dem echten Bedarf. Der v2-Prompt verlangt je Ticker acht
+#    Dimensionen mit je zwei Belegzeilen plus evidence_quality, eine
+#    600-Zeichen-Summary, ~20 Zahlenfelder und sources_used. Gemessen:
+#    bei ~2048 Tokens/Ticker liefen 5 von 6 Batches durch, bei ~1400 nur
+#    1 von 9. 2500 setzt darueber an, mit Luft fuer den geschwaetzigen Fall.
+# 2. Der FESTE Reserve-Term machte die Formel regressiv: er verwaesserte den
+#    Pro-Ticker-Wert, je groesser der Batch wurde (1150/Ticker bei n=8 gegen
+#    2048 bei n=2). Genau verkehrt herum -- im grossen Batch kann ein einzelner
+#    geschwaetziger Ticker das Budget der anderen aufzehren, der braucht also
+#    MEHR Luft, nicht weniger. Die Reserve deckt nur den JSON-Rahmen
+#    ({"results": [...]}, ~10 Tokens); 200 ist dafuer reichlich.
+#
+# Die Decke kostet fuer sich genommen nichts: abgerechnet wird, was tatsaechlich
+# erzeugt wird. Ein zu knapper Wert dagegen kostet den ganzen Call -- ein
+# gekapptes Ergebnis wird verworfen (s. BatchTruncatedError). Im Testlauf gingen
+# so ~21 % der Laufkosten fuer nichts drauf.
+TOKENS_PER_TICKER_DEEP = 2500
+BATCH_TOKEN_RESERVE = 200
 MAX_TOKENS_DEEP_MIN = 4096
 MAX_TOKENS_POLICY = 3072
+
+# Eine identische Wiederholung nach einer Kappung liefert deterministisch
+# dieselbe Kappung -- im Testlauf fuenfmal beobachtet, je ~2-3 Minuten fuer ein
+# garantiert wertloses Ergebnis. Die Wiederholung bekommt deshalb mehr Platz.
+# Faktor 2 statt eines feineren Werts: wer einmal ueber die Decke laeuft, ist
+# selten knapp darueber, und die Decke kostet nur, was sie auch nutzt.
+TRUNCATION_RETRY_FACTOR = 2
 
 
 class DeepAnalysisError(RuntimeError):
     """Per-asset deep_analysis call produced unparseable output."""
+
+
+class BatchTruncatedError(DeepAnalysisError):
+    """Die Batch-Antwort lief in max_tokens und ist abgeschnitten.
+
+    Eigene Klasse, weil der Fehlerpfad anders reagieren muss als bei einer
+    kaputten Antwort: hier ist die Decke das Problem, also hilft nur mehr
+    Platz -- dieselbe Anfrage nochmal zu stellen liefert dieselbe Kappung.
+    Bleibt ein DeepAnalysisError, damit Aufrufer ausserhalb des Fehlerpfads
+    weiterhin nur eine Fehlerklasse kennen muessen."""
 
 
 class PolicyMonitorError(RuntimeError):
@@ -168,6 +203,7 @@ def analyze_batch(
     trend_context: dict,
     policy_context: dict,
     cost_tracker: CostTracker,
+    max_tokens_override: int | None = None,
 ) -> tuple[list[dict], list[str]]:
     """Analysiert einen ganzen Batch in EINEM gestreamten Sonnet-Call.
 
@@ -176,16 +212,20 @@ def analyze_batch(
     schlagen null'. Das unterscheidet die Tiefenanalyse bewusst von
     quick_filter_batch, das bei fehlenden Tickern warf.
 
+    max_tokens_override hebt die aus der Batchgroesse abgeleitete Decke an.
+    Genutzt vom Fehlerpfad nach einer Kappung -- sonst None.
+
     Wirft DeepAnalysisError, wenn die Antwort als GANZES unbrauchbar ist:
-    unparsebar, ohne results-Liste, oder abgeschnitten (stop_reason ==
-    'max_tokens', Spec 4.8 -- kein akzeptables Ergebnis). Der Aufrufer aus
-    Task 7 faengt das und wiederholt bzw. halbiert."""
+    unparsebar oder ohne results-Liste. Bei einer Kappung (stop_reason ==
+    'max_tokens', Spec 4.8 -- kein akzeptables Ergebnis) wirft sie die
+    Unterklasse BatchTruncatedError, damit der Aufrufer aus Task 7 mit mehr
+    Platz wiederholen kann statt mit derselben Decke."""
     if not ticker_datas:
         return [], []
 
     user_msg = _build_batch_user_message(
         ticker_datas, cutoff_by_ticker, trend_context, policy_context)
-    max_tokens = max_tokens_for_batch(len(ticker_datas))
+    max_tokens = max_tokens_override or max_tokens_for_batch(len(ticker_datas))
 
     result = call_claude(
         model=MODEL, system=DEEP_SYSTEM_PROMPT, user=user_msg,
@@ -194,7 +234,7 @@ def analyze_batch(
     cost_tracker.add_from_result(result)
 
     if getattr(result, "stop_reason", None) == "max_tokens":
-        raise DeepAnalysisError(
+        raise BatchTruncatedError(
             f"Batch-Antwort bei max_tokens={max_tokens} abgeschnitten "
             f"(stop_reason=max_tokens, {len(ticker_datas)} Ticker) -- ein "
             f"abgeschnittenes Ergebnis wird nicht verwertet (Spec 4.8)"
@@ -245,17 +285,36 @@ def _run_one_batch_with_recovery(
     CostCapExceeded laeuft ungehindert durch -- ein Kosten-Abbruch ist fatal,
     und ihn hier zu wiederholen liesse den Lauf ueber den Deckel hinaus
     weiterlaufen. Transiente API-Fehler behandelt bereits retry_with_backoff
-    in call_claude(); das ist eine andere Fehlerklasse und eine andere Ebene."""
+    in call_claude(); das ist eine andere Fehlerklasse und eine andere Ebene.
+
+    ⚠️ Eine KAPPUNG wird anders behandelt als eine kaputte Antwort (C.9):
+    dieselbe Anfrage mit derselben Decke liefert wieder dieselbe Kappung, die
+    Wiederholung bekommt deshalb TRUNCATION_RETRY_FACTOR-fach Platz. Der
+    angehobene Faktor gilt danach auch fuer die Haelften -- seit der
+    Formel-Korrektur aendert Halbieren den Platz PRO TICKER nicht mehr (frueher
+    tat es das nur zufaellig ueber den 4096er-Boden), ein Halbieren mit
+    normaler Decke waere also ein Schlag ins Wasser."""
+    faktor = 1
+
     def attempt(tds: list[dict]) -> tuple[list[dict], list[str]]:
+        override = max_tokens_for_batch(len(tds)) * faktor if faktor > 1 else None
         return analyze_batch(
             ticker_datas=tds, cutoff_by_ticker=cutoff_by_ticker,
             trend_context=trend_context, policy_context=policy_context,
-            cost_tracker=cost_tracker,
+            cost_tracker=cost_tracker, max_tokens_override=override,
         )
 
     for versuch in (1, 2):
         try:
             return attempt(batch)
+        except BatchTruncatedError as e:
+            # Muss VOR dem DeepAnalysisError-Zweig stehen (Unterklasse).
+            faktor = TRUNCATION_RETRY_FACTOR
+            log.warning(
+                f"Batch-Versuch {versuch}/2 abgeschnitten ({len(batch)} Ticker): "
+                f"{e}. Naechster Versuch mit {TRUNCATION_RETRY_FACTOR}-facher "
+                f"Decke -- eine identische Wiederholung kaeme identisch zurueck."
+            )
         except DeepAnalysisError as e:
             log.warning(
                 f"Batch-Versuch {versuch}/2 fehlgeschlagen "

@@ -1,6 +1,13 @@
 # Shares_Future – SP500 CFD Research Tool
 
-**Zuletzt aktualisiert:** 2026-08-17 — ⚠️ **Plan 3a (Batch-Tiefenanalyse) ist
+**Zuletzt aktualisiert:** 2026-08-17 — **Token-Budget der Batch-Tiefenanalyse neu
+kalibriert (PROJECT_STATUS C.10).** `TOKENS_PER_TICKER_DEEP` 900 → 2500,
+`BATCH_TOKEN_RESERVE` 2000 → 200, und nach einer Kappung wird nicht mehr identisch
+wiederholt, sondern mit doppelter Decke. **775 Tests grün, 91,52 % Coverage.**
+⏳ **Nur gegen Unit-Tests belegt, nicht gegen die echte API** — der Verifikationslauf
+steht aus. Bis dahin bleibt der Eintrag darunter gültig: Plan 3a ist nicht produktionsreif.
+
+Davor, 2026-08-17 — ⚠️ **Plan 3a (Batch-Tiefenanalyse) ist
 code-vollständig (11/11 Tasks), aber NICHT produktionsreif.** Phase 3 läuft gebatcht nach
 Sub-Sektor, `deep_analysis_v2` + `commodities_crypto_v2` sind aktiv, `call_claude()` kann
 streamen. **Der Testlauf (Task 10) hat `MAX_TOKENS_DEEP` widerlegt:** `stop_reason=max_tokens`
@@ -123,11 +130,21 @@ Die Pipeline-Phasen lassen sich an `main.py:run_pipeline()` ablesen.
   `BATCH_SIZE_DEEP` gepackt wird — zerrissen wird er nur, wenn er den Wert allein
   überschreitet. Grund: die Vergleichbarkeit innerhalb eines Prompts ist der Punkt der
   Übung; ein halber Sub-Sektor in zwei Calls verliert genau die.
-  ⚠️ **`BATCH_SIZE_DEEP = 8` ist ein unbestätigter Startwert, kein Messergebnis** — und
-  `TOKENS_PER_TICKER_DEEP = 900` ist durch den Testlauf **widerlegt** (s. Kopf und
-  PROJECT_STATUS C.9). Ein abgeschnittener Batch (`stop_reason == "max_tokens"`) gilt
-  als Fehler und wird **nie** teilverwertet; der Fehlerpfad ist einmal wiederholen →
-  einmal halbieren → aufgeben.
+  ⚠️ **`BATCH_SIZE_DEEP = 8` ist ein unbestätigter Startwert, kein Messergebnis.**
+  Ein abgeschnittener Batch (`stop_reason == "max_tokens"`) gilt als Fehler und wird
+  **nie** teilverwertet; der Fehlerpfad ist einmal wiederholen → einmal halbieren →
+  aufgeben.
+  ⚠️ **Die Ausgabe-Decke (`max_tokens`) kostet für sich genommen nichts** — abgerechnet
+  wird, was erzeugt wird. Ein zu knapper Wert kostet dagegen den **ganzen** Call. Deshalb
+  ist der Pro-Ticker-Wert grosszügig und die Reserve klein: ein **fester** Reserve-Term
+  macht die Formel regressiv (er verwässert den Pro-Ticker-Wert, je grösser der Batch),
+  und genau das war der C.9-Befund. Ein Test pinnt die Eigenschaft:
+  `max_tokens_for_batch(n) / n >= TOKENS_PER_TICKER_DEEP` für alle n.
+  ⚠️ **Nach einer Kappung nie identisch wiederholen** — gleiche Eingabe plus gleiche
+  Decke ergibt dieselbe Kappung. Dafür gibt es `BatchTruncatedError`; die Wiederholung
+  und die Hälften laufen mit angehobener Decke. Seit der Formel-Korrektur ändert
+  Halbieren den Platz **pro Ticker** nicht mehr (früher tat es das nur zufällig über den
+  4096er-Boden), es wäre ohne diesen Punkt wirkungslos.
 - ⚠️ `evidence_quality: "thin"` umgeht die Zwei-Belege-Pflicht der Guardrails — aber
   **nur bei exakt diesem Wert**. Ein fehlendes Feld (v1-Ergebnis) oder ein unbekannter
   Wert fällt auf die strenge Regel zurück. Eine thin-Dimension wird **behalten**, nicht

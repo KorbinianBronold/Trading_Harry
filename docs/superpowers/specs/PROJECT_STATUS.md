@@ -1,6 +1,19 @@
 # PROJECT_STATUS.md — Shares_Future (Trading_Harry)
 
-**Zuletzt aktualisiert:** 2026-08-16 — ⚠️ **Plan 3a Task 10: Testlauf gegen echte Daten
+**Zuletzt aktualisiert:** 2026-08-17 — **Token-Budget neu kalibriert (C.10).**
+`TOKENS_PER_TICKER_DEEP` 900 → 2500, `BATCH_TOKEN_RESERVE` 2000 → 200 (der feste
+Reserve-Term machte die Formel regressiv: 1150 Tokens/Ticker bei n=8 gegen 2048 bei n=2 —
+grosse Batches bekamen am wenigsten Luft, genau verkehrt herum), und nach einer Kappung
+wird nicht mehr identisch wiederholt, sondern mit doppelter Decke
+(`BatchTruncatedError`). Das allein war in beiden Messläufen ~21 % der Laufkosten für
+garantiert wertlose Ergebnisse. **775 Tests grün, 91,52 % Coverage.**
+⏳ **Nur gegen Unit-Tests belegt, nicht gegen die echte API** — der Verifikationslauf
+gegen eine Wegwerf-DB steht aus und ist der nächste Schritt. Details: **C.10**.
+Dabei gefunden, bewusst offen: `cost_tracker.MODEL_PRICING` kennt kein Claude-5-Modell
+und würde bei einem Modellwechsel `ValueError` werfen — relevant, weil Sonnet 5 ($2/$10)
+rund ein Drittel billiger ist als das genutzte Sonnet 4.6 ($3/$15).
+
+Davor, 2026-08-16 — ⚠️ **Plan 3a Task 10: Testlauf gegen echte Daten
 gemessen — `MAX_TOKENS_DEEP` reicht nicht.** Zwei Läufe gegen eine Wegwerf-Kopie von
 `data/tracking.db` (`run_type=pre_market`, 20 MVP-Ticker, echte Capital.com-/Finnhub-/
 Anthropic-Calls, Mailversand über ungültigen `RESEND_API_KEY` unterdrückt): einmal mit
@@ -2161,6 +2174,66 @@ stand strukturell immer auf `0` — `src/utils.py:_result_from_message()` las
 Aufrufer von `call_claude(tools=[WEB_SEARCH_TOOL])` (`trend_analyzer`, `market_context`,
 `broad_scan`, `deep_analysis`, `commodities_crypto`), nicht nur Phase 3, und war
 unabhängig vom Batching aus diesem Plan. Behoben, Details im Commit.
+
+---
+
+### C.10 — Token-Budget neu kalibriert (2026-08-17) ⏳ noch nicht live verifiziert
+
+Antwort auf den Befund aus **C.9**. Drei Änderungen in `src/deep_analysis.py`,
+**775 Tests grün, 91,52 % Coverage**.
+
+**1. `TOKENS_PER_TICKER_DEEP` 900 → 2500.** Die Messung aus C.9 liefert die Belege:
+bei ~2048 Tokens/Ticker liefen 5 von 6 Batches durch, bei ~1400 nur 1 von 9. 2500 setzt
+darüber an. ⚠️ Die Decke kostet für sich genommen **nichts** — abgerechnet wird, was
+erzeugt wird. Ein zu knapper Wert kostet dagegen den **ganzen** Call, weil ein gekapptes
+Ergebnis verworfen wird.
+
+**2. `BATCH_TOKEN_RESERVE` 2000 → 200 — der eigentliche Konstruktionsfehler.** Der feste
+Reserve-Term machte die Formel **regressiv**: er verwässerte den Pro-Ticker-Wert, je
+grösser der Batch wurde. Genau verkehrt herum — im grossen Batch kann ein einzelner
+geschwätziger Ticker das Budget der anderen aufzehren, der braucht also mehr Luft, nicht
+weniger. Die Reserve deckt nur den JSON-Rahmen `{"results": [...]}` (~10 Tokens).
+
+| n | alt | alt /Ticker | neu | neu /Ticker |
+|---|---|---|---|---|
+| 2 | 4096 | 2048 | 5200 | 2600 |
+| 4 | 5600 | **1400** | 10200 | 2550 |
+| 8 | 9200 | **1150** | 20200 | 2525 |
+
+Ein Test pinnt die Eigenschaft statt nur die Zahlen:
+`max_tokens_for_batch(n) / n >= TOKENS_PER_TICKER_DEEP` für alle n.
+
+**3. Nach einer Kappung wird nicht mehr identisch wiederholt.** Neue Fehlerklasse
+`BatchTruncatedError` (Unterklasse von `DeepAnalysisError`, Aufrufer draussen merken
+nichts); die Wiederholung bekommt `TRUNCATION_RETRY_FACTOR = 2`-fach Platz. Der Faktor
+wandert in die Halbierung mit — **seit Fix 2 ändert Halbieren den Platz pro Ticker nicht
+mehr.** Vorher tat es das nur zufällig über den 4096er-Boden (4→2 Ticker hob das Budget
+von 1400 auf 2048), was nie so entworfen war. Ohne diesen Punkt wäre das Halbieren nach
+der Formel-Korrektur ein Schlag ins Wasser gewesen.
+Der bisherige Weg war messbare Verschwendung: identische Eingabe + identische Decke =
+identische Kappung, in beiden Läufen **fünfmal** beobachtet, je ~2–3 Minuten. Ein
+gekappter Call erzeugt exakt `max_tokens` Ausgabe-Tokens, die Kosten sind also exakt:
+
+| | verworfene Ausgabe-Tokens | ≈ Kosten für nichts |
+|---|---|---|
+| Lauf 1 | 29 600 | ~0,40 EUR von 1,85 (**22 %**) |
+| Lauf 2 | 37 696 | ~0,51 EUR von 2,38 (**21 %**) |
+
+⏳ **Offen und ausdrücklich nicht behauptet:** Diese Werte sind **gegen Unit-Tests**
+belegt, **nicht gegen die echte API**. Ob `max_tokens` damit verschwindet und was ein
+Lauf dann wirklich kostet, weiss erst ein Wiederholungslauf gegen eine Wegwerf-DB — der
+ist bewusst als eigener Schritt vorgesehen. Erst er beantwortet auch die in C.9 offenen
+Prüffragen 2, 3 und 6, und erst dann ist Spec § 13.2 (0,034 EUR/Ticker) überhaupt prüfbar.
+
+⚠️ **Latenter Blocker, dabei gefunden, bewusst NICHT behoben:**
+`cost_tracker.MODEL_PRICING` kennt **kein Claude-5-Modell**, und `add_call()` wirft
+`ValueError("Unknown model pricing")` bei unbekanntem Modell — ein Modellwechsel würde den
+Lauf also sofort abstürzen lassen. Für das aktuell genutzte `claude-sonnet-4-6` stimmen
+die Preise ($3/$15/$0,30/$3,75). Relevant, weil **Sonnet 5 mit $2/$10 rund ein Drittel
+billiger ist** als Sonnet 4.6 und Phase 3 ausgabedominiert ist — der grösste bekannte
+Kostenhebel liegt damit im Modellwechsel, nicht in dieser Kalibrierung. Der Eintrag
+`claude-opus-4-7` ($15/$75) ist ausserdem veraltet. Gehört zusammen entschieden, nicht
+nebenbei: ein anderes Modell ändert das Antwortverhalten und entwertet die Messbasis.
 
 ---
 

@@ -7,10 +7,13 @@ beschrieben — `build_batches()` / `analyze_batch()` / `analyze_batches()`,
 `analyze_asset()` und `analyze_assets()` sind ersatzlos entfallen), die beiden
 **v2-Prompts** in der Prompt-Tabelle, und die Test-Baseline auf 770.
 ⚠️ **Der Testlauf hat `MAX_TOKENS_DEEP` widerlegt** — `stop_reason=max_tokens` trat
-wiederholt auf, bis hinunter zu 2-Ticker-Batches. `TOKENS_PER_TICKER_DEEP = 900` muss vor
-dem nächsten echten Lauf neu kalibriert werden; `BATCH_SIZE_DEEP = 8` bleibt ein
-unbestätigter Startwert. Ebenfalls behoben: `web_search_calls` zählte strukturell immer 0
-(`server_tool_use` ist ein `dict`, wurde mit `getattr()` gelesen).
+wiederholt auf, bis hinunter zu 2-Ticker-Batches. **Inzwischen neu kalibriert
+(PROJECT_STATUS C.10):** `TOKENS_PER_TICKER_DEEP` 900 → 2500, `BATCH_TOKEN_RESERVE`
+2000 → 200, und nach einer Kappung wird mit doppelter Decke wiederholt statt identisch.
+⏳ Das ist gegen Unit-Tests belegt, **nicht gegen die echte API** — der Verifikationslauf
+steht aus, `BATCH_SIZE_DEEP = 8` bleibt ein unbestätigter Startwert. Ebenfalls behoben:
+`web_search_calls` zählte strukturell immer 0 (`server_tool_use` ist ein `dict`, wurde
+mit `getattr()` gelesen).
 
 Davor, 2026-08-15 — **Sprint 3C / Plan 2 (Trichter) abgeschlossen
 inkl. Abschluss-Review (13/13 Tasks, vier behobene Review-Befunde — PROJECT_STATUS C.8).**
@@ -572,11 +575,15 @@ def build_batches(ticker_datas, batch_size=config.BATCH_SIZE_DEEP) -> list[list[
     """
 
 def max_tokens_for_batch(n) -> int:
-    """max(4096, n * TOKENS_PER_TICKER_DEEP + BATCH_TOKEN_RESERVE).
-    ⚠️ TOKENS_PER_TICKER_DEEP = 900 ist durch den Testlauf WIDERLEGT."""
+    """max(4096, n * TOKENS_PER_TICKER_DEEP + BATCH_TOKEN_RESERVE)
+    = max(4096, n * 2500 + 200), seit C.10 neu kalibriert.
+    ⚠️ Die Reserve ist BEWUSST klein: ein grosser fester Term verwaessert
+    den Pro-Ticker-Wert, je groesser der Batch wird (das war der C.9-Bug --
+    1150 Tokens/Ticker bei n=8 gegen 2048 bei n=2)."""
 
 def analyze_batch(
     ticker_datas, cutoff_by_ticker, trend_context, policy_context, cost_tracker,
+    max_tokens_override=None,
 ) -> tuple[list[dict], list[str]]:
     """
     EIN gestreamter Sonnet+web_search-Call fuer den ganzen Batch.
@@ -585,9 +592,9 @@ def analyze_batch(
 
     Returns: (analyses, missing_tickers) — Teilergebnisse werden
     uebernommen, fehlende Ticker gemeldet statt still verschluckt.
-    Raises DeepAnalysisError bei stop_reason == "max_tokens" oder
-    unparsebarer Antwort. Ein abgeschnittenes Ergebnis wird NIE
-    teilverwertet (Spec 4.8).
+    Raises BatchTruncatedError bei stop_reason == "max_tokens",
+    DeepAnalysisError bei unparsebarer Antwort. Ein abgeschnittenes
+    Ergebnis wird NIE teilverwertet (Spec 4.8).
     """
 
 def analyze_batches(...) -> tuple[list[dict], list[str]]:
@@ -598,6 +605,12 @@ def analyze_batches(...) -> tuple[list[dict], list[str]]:
     durch — ihn hier zu wiederholen liesse den Lauf ueber den Deckel
     hinaus weiterlaufen. Transiente API-Fehler behandelt bereits
     retry_with_backoff() in call_claude(); andere Fehlerklasse, andere Ebene.
+
+    ⚠️ Eine KAPPUNG wird anders behandelt als eine kaputte Antwort:
+    dieselbe Anfrage mit derselben Decke kaeme identisch zurueck, also
+    laeuft die Wiederholung mit TRUNCATION_RETRY_FACTOR-facher Decke —
+    und die Haelften ebenfalls, weil Halbieren seit C.10 den Platz PRO
+    TICKER nicht mehr aendert.
     """
 ```
 
@@ -606,11 +619,14 @@ def analyze_batches(...) -> tuple[list[dict], list[str]]:
 
 **Billing:** `cost_tracker.add_from_result(result)` **VOR** JSON parse.
 
-⚠️ **Testlauf-Befund (2026-08-16, PROJECT_STATUS C.9):** Das Token-Budget reicht nicht.
+⚠️ **Testlauf-Befund (2026-08-16, PROJECT_STATUS C.9):** Das Token-Budget reichte nicht.
 Lauf mit `BATCH_SIZE_DEEP=8` verlor einen kompletten 8er-Batch (beide Versuche **und**
 beide 4er-Hälften an `max_tokens`), Lauf mit `BATCH_SIZE_DEEP=4` verlor zwei Ticker an
 einer gescheiterten 2er-Hälfte. Eine **kleinere** Batchgrösse war dabei teurer und
 langsamer, weil sie nur öfter in die Halbierungs-Kaskade läuft.
+✅ **Neu kalibriert am 2026-08-17 (C.10):** 2500 statt 900 Tokens je Ticker, Reserve 200
+statt 2000, Wiederholung nach Kappung mit doppelter Decke. ⏳ Gegen Unit-Tests belegt,
+**noch nicht gegen die echte API** — der Verifikationslauf ist der nächste Schritt.
 
 ---
 
@@ -1297,10 +1313,10 @@ TOTAL: ~3.50 EUR
 
 - **Unit Tests**: isolierte Module, Mock-Claude, Fixtures
 - **Integration Tests** (4): volle Pipeline + E2E-HTML-Render + trade_proposals-Flow
-- **Coverage Gate**: 80 % Minimum (aktuell 91,50 %)
+- **Coverage Gate**: 80 % Minimum (aktuell 91,52 %)
 - **Baseline**: `pytest tests/ --cov=src --cov=main --cov-fail-under=80 -q` →
-  **770 passed, 14 skipped**, 0 failures (Stand 2026-08-17, Plan 3a zu 11 von 11 Tasks —
-  s. PROJECT_STATUS C.9). Die übersprungenen sind die Live-Tests unter `tests/live/`; sie
+  **775 passed, 14 skipped**, 0 failures (Stand 2026-08-17, nach der
+  Token-Neukalibrierung — s. PROJECT_STATUS C.9 und C.10). Die übersprungenen sind die Live-Tests unter `tests/live/`; sie
   laufen nur mit `--run-live` und sprechen dann echte APIs an (inkl. echtem Mailversand).
   ⚠️ **Grüne Tests sind hier kein Reifezeugnis:** der `max_tokens`-Befund aus C.9 ist
   gegen die echte API entstanden, nicht im Testlauf — die Unit-Tests mocken `call_claude()`

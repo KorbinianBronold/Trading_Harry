@@ -5,8 +5,9 @@ import pytest
 
 from src.cost_tracker import CostTracker
 from src.deep_analysis import (
-    run_policy_monitor, DeepAnalysisError,
+    run_policy_monitor, DeepAnalysisError, BatchTruncatedError,
     build_batches, analyze_batch, analyze_batches, max_tokens_for_batch,
+    TOKENS_PER_TICKER_DEEP,
 )
 
 FIXTURE_DIR = Path(__file__).parent.parent / "fixtures"
@@ -177,9 +178,21 @@ def _broken_response() -> MagicMock:
 
 def test_max_tokens_for_batch_scales_with_size():
     """Abgeleitet statt fest: 4096 war fuer EINEN Ticker ausgelegt."""
-    assert max_tokens_for_batch(8) == 9200      # 8 * 900 + 2000
-    assert max_tokens_for_batch(1) == 4096      # Einzelfall unveraendert
-    assert max_tokens_for_batch(20) == 20000
+    assert max_tokens_for_batch(8) == 20200     # 8 * 2500 + 200
+    assert max_tokens_for_batch(1) == 4096      # Boden greift
+    assert max_tokens_for_batch(20) == 50200
+
+
+def test_max_tokens_per_ticker_never_falls_below_the_per_ticker_value():
+    """Der Kern des C.9-Befunds. Die alte Formel (900/Ticker + 2000 FEST) gab
+    grossen Batches WENIGER Platz pro Ticker als kleinen -- 1150 bei n=8 gegen
+    2048 bei n=2 -- und kappte damit genau dort, wo gebatcht werden soll.
+    Der feste Reserve-Term darf den Pro-Ticker-Wert nie verwaessern."""
+    for n in range(1, 21):
+        pro_ticker = max_tokens_for_batch(n) / n
+        assert pro_ticker >= TOKENS_PER_TICKER_DEEP, (
+            f"n={n}: nur {pro_ticker:.0f} Tokens pro Ticker"
+        )
 
 
 def test_analyze_batch_returns_one_analysis_per_ticker():
@@ -349,6 +362,88 @@ def test_analyze_batches_single_ticker_batch_does_not_halve():
     assert cc.call_count == 2
     assert analyses == []
     assert failed == ["AAPL"]
+
+
+def test_truncated_batch_is_retried_with_a_larger_ceiling():
+    """C.9-Befund: eine IDENTISCHE Wiederholung nach max_tokens liefert
+    deterministisch dieselbe Kappung -- im Testlauf fuenfmal beobachtet, je
+    ~2-3 Minuten und echtes Geld fuer ein garantiert wertloses Ergebnis.
+    Nach einer Kappung bekommt die Wiederholung deshalb mehr Platz statt
+    derselben Decke."""
+    tds = [_std("AAPL", "Technology"), _std("MSFT", "Technology")]
+    responses = [
+        _fake_result(BATCH_FIXTURE.read_text(), stop_reason="max_tokens"),
+        _ok_response_for(["AAPL", "MSFT"]),
+    ]
+
+    with patch("src.deep_analysis.call_claude", side_effect=responses) as cc:
+        analyses, failed = analyze_batches(
+            ticker_datas=tds,
+            cutoff_by_ticker={t["ticker"]: _cutoff(t["ticker"]) for t in tds},
+            trend_context={}, policy_context={},
+            cost_tracker=CostTracker(hard_cap_eur=10.0), batch_size=8,
+        )
+
+    assert cc.call_count == 2
+    erster, zweiter = cc.call_args_list
+    assert zweiter.kwargs["max_tokens"] > erster.kwargs["max_tokens"]
+    assert sorted(a["ticker"] for a in analyses) == ["AAPL", "MSFT"]
+    assert failed == []
+
+
+def test_unparseable_batch_is_retried_with_the_same_ceiling():
+    """Gegenprobe: nur eine Kappung rechtfertigt mehr Platz. Bei unparsebarer
+    Antwort ist die Decke nicht das Problem -- sie trotzdem anzuheben waere
+    teuer ohne Grund."""
+    tds = [_std("AAPL", "Technology"), _std("MSFT", "Technology")]
+    responses = [_broken_response(), _ok_response_for(["AAPL", "MSFT"])]
+
+    with patch("src.deep_analysis.call_claude", side_effect=responses) as cc:
+        analyze_batches(
+            ticker_datas=tds,
+            cutoff_by_ticker={t["ticker"]: _cutoff(t["ticker"]) for t in tds},
+            trend_context={}, policy_context={},
+            cost_tracker=CostTracker(hard_cap_eur=10.0), batch_size=8,
+        )
+
+    erster, zweiter = cc.call_args_list
+    assert zweiter.kwargs["max_tokens"] == erster.kwargs["max_tokens"]
+
+
+def test_halves_keep_the_larger_ceiling_after_a_truncation():
+    """Wenn schon der ganze Batch gekappt wurde, sind seine Haelften mit dem
+    NORMALEN Budget genauso gefaehrdet: seit der Formel-Korrektur aendert
+    Halbieren den Platz pro Ticker nicht mehr (frueher tat es das nur
+    zufaellig ueber den 4096er-Boden). Die angehobene Decke muss also
+    mitwandern, sonst ist das Halbieren ein Schlag ins Wasser."""
+    tds = [_std(t, "Technology") for t in ("AAPL", "MSFT", "NVDA", "AVGO")]
+    truncated = lambda: _fake_result(
+        BATCH_FIXTURE.read_text(), stop_reason="max_tokens")
+    responses = [
+        truncated(),                        # Versuch 1 (normale Decke)
+        truncated(),                        # Versuch 2 (angehobene Decke)
+        _ok_response_for(["AAPL", "AVGO"]),  # linke Haelfte
+        _ok_response_for(["MSFT", "NVDA"]),  # rechte Haelfte
+    ]
+
+    with patch("src.deep_analysis.call_claude", side_effect=responses) as cc:
+        analyses, failed = analyze_batches(
+            ticker_datas=tds,
+            cutoff_by_ticker={t["ticker"]: _cutoff(t["ticker"]) for t in tds},
+            trend_context={}, policy_context={},
+            cost_tracker=CostTracker(hard_cap_eur=10.0), batch_size=8,
+        )
+
+    assert cc.call_count == 4
+    haelfte = cc.call_args_list[2].kwargs["max_tokens"]
+    assert haelfte > max_tokens_for_batch(2)
+    assert failed == []
+
+
+def test_batch_truncated_error_is_a_deep_analysis_error():
+    """Der Fehlerpfad unterscheidet die Kappung von einer kaputten Antwort,
+    aber die Aufrufer draussen sollen weiter nur DeepAnalysisError kennen."""
+    assert issubclass(BatchTruncatedError, DeepAnalysisError)
 
 
 def test_analyze_batches_cost_cap_propagates():
