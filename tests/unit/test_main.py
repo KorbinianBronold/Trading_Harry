@@ -105,7 +105,11 @@ def test_run_pipeline_calls_phases_in_order(mocker):
     (B.5) laeuft Phase 4 (Ranking) vor Phase 4a (Portfolio-Check), damit Letzterer
     auf den fertigen Phase-3-Analysen arbeiten kann statt auf Rohsnapshots."""
     call_log = _mock_all_other_phases(mocker)
-    fake_ranking = {"top_long": [], "top_short": [], "commodities_crypto": []}
+    fake_ranking = {
+        "top_long": [], "top_short": [], "commodities_crypto": [],
+        "divergence": [], "divergence_stats": {
+            "tech_only_abstentions": 0, "conflicts": 0, "overflow": 0},
+    }
     mocker.patch("main.rank_and_persist",
                  side_effect=lambda **kw: call_log.append("ranking") or fake_ranking)
     mocker.patch("main.check_open_positions",
@@ -125,7 +129,9 @@ def test_ranking_runs_before_portfolio_check(mocker):
     order: list[str] = []
     mocker.patch("main.rank_and_persist",
                  side_effect=lambda **kw: order.append("ranking") or
-                 {"top_long": [], "top_short": [], "commodities_crypto": []})
+                 {"top_long": [], "top_short": [], "commodities_crypto": [],
+                  "divergence": [], "divergence_stats": {
+                      "tech_only_abstentions": 0, "conflicts": 0, "overflow": 0}})
     mocker.patch("main.check_open_positions",
                  side_effect=lambda **kw: order.append("portfolio") or [])
     # uebrige Phasen wie in test_run_pipeline_calls_phases_in_order mocken
@@ -317,6 +323,8 @@ def test_pipeline_persists_market_context_and_passes_it_to_ranking(tmp_db_path, 
     mocker.patch("main.fetch_market_context", return_value=dict(_CTX))
     mock_rank = mocker.patch("main.rank_and_persist", return_value={
         "top_long": [], "top_short": [], "commodities_crypto": [],
+        "divergence": [], "divergence_stats": {
+            "tech_only_abstentions": 0, "conflicts": 0, "overflow": 0},
     })
 
     from main import run_pipeline
@@ -341,6 +349,8 @@ def test_pipeline_puts_market_context_into_the_mail_payload(tmp_db_path, mocker)
     mocker.patch("main.fetch_market_context", return_value=dict(_CTX))
     mocker.patch("main.rank_and_persist", return_value={
         "top_long": [], "top_short": [], "commodities_crypto": [],
+        "divergence": [], "divergence_stats": {
+            "tech_only_abstentions": 0, "conflicts": 0, "overflow": 0},
     })
     mock_mail = mocker.patch("main.send_daily_email")
 
@@ -359,6 +369,8 @@ def test_market_context_is_called_with_the_price_provider(tmp_db_path, mocker):
     mock_ctx = mocker.patch("main.fetch_market_context", return_value=dict(_CTX))
     mocker.patch("main.rank_and_persist", return_value={
         "top_long": [], "top_short": [], "commodities_crypto": [],
+        "divergence": [], "divergence_stats": {
+            "tech_only_abstentions": 0, "conflicts": 0, "overflow": 0},
     })
 
     from main import run_pipeline
@@ -374,6 +386,8 @@ def test_pipeline_survives_market_context_failure(tmp_db_path, mocker):
                  side_effect=MarketContextError("no json"))
     mock_rank = mocker.patch("main.rank_and_persist", return_value={
         "top_long": [], "top_short": [], "commodities_crypto": [],
+        "divergence": [], "divergence_stats": {
+            "tech_only_abstentions": 0, "conflicts": 0, "overflow": 0},
     })
     mock_mail = mocker.patch("main.send_daily_email")
 
@@ -442,6 +456,8 @@ def test_every_phase_reports_itself_on_cost_cap(tmp_db_path, mocker, phase_fn, e
     mocker.patch("main.fetch_market_context", return_value=dict(_CTX))
     mocker.patch("main.rank_and_persist", return_value={
         "top_long": [], "top_short": [], "commodities_crypto": [],
+        "divergence": [], "divergence_stats": {
+            "tech_only_abstentions": 0, "conflicts": 0, "overflow": 0},
     })
     mocker.patch(phase_fn, side_effect=CostCapExceeded("cap hit"))
 
@@ -461,6 +477,8 @@ def test_successful_run_reports_no_aborted_phase(tmp_db_path, mocker):
     mocker.patch("main.fetch_market_context", return_value=dict(_CTX))
     mocker.patch("main.rank_and_persist", return_value={
         "top_long": [], "top_short": [], "commodities_crypto": [],
+        "divergence": [], "divergence_stats": {
+            "tech_only_abstentions": 0, "conflicts": 0, "overflow": 0},
     })
 
     from main import run_pipeline
@@ -489,6 +507,8 @@ def test_mail_failure_does_not_discard_the_run(tmp_db_path, mocker):
     mocker.patch("main.fetch_market_context", return_value=dict(_CTX))
     mocker.patch("main.rank_and_persist", return_value={
         "top_long": [], "top_short": [], "commodities_crypto": [],
+        "divergence": [], "divergence_stats": {
+            "tech_only_abstentions": 0, "conflicts": 0, "overflow": 0},
     })
     mocker.patch("main.send_daily_email",
                  side_effect=RuntimeError("HTTP Error 401: Unauthorized"))
@@ -516,6 +536,8 @@ def test_mail_failure_still_fails_the_run(tmp_db_path, mocker):
     mocker.patch("main.fetch_market_context", return_value=dict(_CTX))
     mocker.patch("main.rank_and_persist", return_value={
         "top_long": [], "top_short": [], "commodities_crypto": [],
+        "divergence": [], "divergence_stats": {
+            "tech_only_abstentions": 0, "conflicts": 0, "overflow": 0},
     })
     mocker.patch("main.send_daily_email",
                  side_effect=RuntimeError("HTTP Error 401: Unauthorized"))
@@ -535,6 +557,8 @@ def test_mail_failure_message_names_the_analysis_as_complete(tmp_db_path, mocker
     mocker.patch("main.fetch_market_context", return_value=dict(_CTX))
     mocker.patch("main.rank_and_persist", return_value={
         "top_long": [], "top_short": [], "commodities_crypto": [],
+        "divergence": [], "divergence_stats": {
+            "tech_only_abstentions": 0, "conflicts": 0, "overflow": 0},
     })
     mocker.patch("main.send_daily_email",
                  side_effect=RuntimeError("HTTP Error 401: Unauthorized"))
@@ -553,6 +577,8 @@ def test_successful_mail_leaves_no_error(tmp_db_path, mocker):
     mocker.patch("main.fetch_market_context", return_value=dict(_CTX))
     mocker.patch("main.rank_and_persist", return_value={
         "top_long": [], "top_short": [], "commodities_crypto": [],
+        "divergence": [], "divergence_stats": {
+            "tech_only_abstentions": 0, "conflicts": 0, "overflow": 0},
     })
     from main import run_pipeline
     run_pipeline(run_type="pre_market", date="2026-07-27",
@@ -645,6 +671,8 @@ def test_forced_candidate_reaches_deep_analysis(tmp_db_path, mocker):
     mocker.patch("main.fetch_market_context", return_value=dict(_CTX))
     mocker.patch("main.rank_and_persist", return_value={
         "top_long": [], "top_short": [], "commodities_crypto": [],
+        "divergence": [], "divergence_stats": {
+            "tech_only_abstentions": 0, "conflicts": 0, "overflow": 0},
     })
     mocker.patch("main.collect", return_value=(
         [{"ticker": "AAPL", "intraday_range_pct": 1.5, "price": 178.0}], 0, {}))
@@ -677,6 +705,8 @@ def test_phase_2b_runs_for_the_cutoff_candidates(tmp_db_path, mocker):
     mocker.patch("main.fetch_market_context", return_value=dict(_CTX))
     mocker.patch("main.rank_and_persist", return_value={
         "top_long": [], "top_short": [], "commodities_crypto": [],
+        "divergence": [], "divergence_stats": {
+            "tech_only_abstentions": 0, "conflicts": 0, "overflow": 0},
     })
     mocker.patch("main.collect", return_value=(
         [{"ticker": "AAPL", "intraday_range_pct": 1.5, "price": 178.0},
@@ -703,6 +733,8 @@ def test_phase_2b_failure_does_not_abort_the_run(tmp_db_path, mocker):
     mocker.patch("main.fetch_market_context", return_value=dict(_CTX))
     mocker.patch("main.rank_and_persist", return_value={
         "top_long": [], "top_short": [], "commodities_crypto": [],
+        "divergence": [], "divergence_stats": {
+            "tech_only_abstentions": 0, "conflicts": 0, "overflow": 0},
     })
     mocker.patch("main.collect", return_value=(
         [{"ticker": "AAPL", "intraday_range_pct": 1.5, "price": 178.0}], 0, {}))
@@ -729,6 +761,8 @@ def test_run_pipeline_deep_analysis_only_receives_selected_tickers(tmp_db_path, 
     mocker.patch("main.fetch_market_context", return_value=dict(_CTX))
     mocker.patch("main.rank_and_persist", return_value={
         "top_long": [], "top_short": [], "commodities_crypto": [],
+        "divergence": [], "divergence_stats": {
+            "tech_only_abstentions": 0, "conflicts": 0, "overflow": 0},
     })
     mocker.patch("main.collect", return_value=(
         [{"ticker": "AAPL", "intraday_range_pct": 1.5, "price": 178.0},
@@ -1545,3 +1579,40 @@ def test_guard_exempts_run_types_that_do_not_need_history(run_type):
     nur; beide sollen auch bei duenner Historie laufen."""
     from main import _RUN_TYPES_NEEDING_HISTORY
     assert run_type not in _RUN_TYPES_NEEDING_HISTORY
+
+
+def test_signal_context_bundles_tech_signal_and_c1_indicators():
+    from main import _signal_context
+    tds = [{"ticker": "AAPL", "atr_pct": 2.5, "rsi_14": 55.0,
+            "volume_ratio": 0.9, "earnings_in_days": 3}]
+    sidecar = {"AAPL": {"tech_direction": "long", "tech_agreement": 2,
+                        "tech_adx_band": "normal", "tech_strength": 3}}
+    ctx = _signal_context(tds, sidecar, news_strength_by_ticker={"AAPL": 2})
+    assert ctx["AAPL"] == {
+        "tech_direction": "long", "tech_agreement": 2,
+        "tech_adx_band": "normal", "tech_strength": 3,
+        "atr_pct": 2.5, "rsi_14": 55.0, "volume_ratio": 0.9,
+        "earnings_in_days": 3, "news_strength": 2,
+    }
+
+
+def test_signal_context_defaults_news_strength_to_none_without_a_map():
+    from main import _signal_context
+    tds = [{"ticker": "GC=F", "atr_pct": None, "rsi_14": None,
+            "volume_ratio": None, "earnings_in_days": None}]
+    ctx = _signal_context(tds, {})
+    assert ctx["GC=F"]["news_strength"] is None
+    assert ctx["GC=F"]["tech_direction"] is None
+
+
+def test_run_pipeline_passes_signal_context_to_ranking(tmp_db_path, mocker):
+    _stub_pipeline(mocker)
+    mocker.patch("main.fetch_market_context", return_value=dict(_CTX))
+    mock_rank = mocker.patch("main.rank_and_persist", return_value={
+        "top_long": [], "top_short": [], "commodities_crypto": [],
+        "divergence": [], "divergence_stats": {
+            "tech_only_abstentions": 0, "conflicts": 0, "overflow": 0},
+    })
+    from main import run_pipeline
+    run_pipeline(run_type="pre_market", date="2026-07-27", db_path=str(tmp_db_path))
+    assert "signal_context" in mock_rank.call_args.kwargs

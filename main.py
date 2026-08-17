@@ -125,6 +125,36 @@ def _aggregate_yesterday_outcomes(conn, today: str) -> dict:
     return agg
 
 
+def _signal_context(
+    tds: list[dict], sidecar: dict[str, dict],
+    news_strength_by_ticker: dict[str, int] | None = None,
+) -> dict[str, dict]:
+    """Buendelt je Ticker die Werte, die Phase 4 (Ranking) braucht, aber weder
+    im Claude-Analyse-Dict noch im td-Snapshot allein stehen: das
+    Technik-Signal aus dem Sidecar, die drei C.1-Indikatoren, und (nur bei
+    Aktien, ueber news_strength_by_ticker) den Phase-2-Scan-Wert.
+
+    Getrennt von td gehalten aus demselben Grund wie der Sidecar selbst (R1):
+    kein zusaetzlicher Key landet in einem der Claude-Prompts."""
+    news_strength_by_ticker = news_strength_by_ticker or {}
+    out: dict[str, dict] = {}
+    for td in tds:
+        t = td["ticker"]
+        side = sidecar.get(t, {})
+        out[t] = {
+            "tech_direction": side.get("tech_direction"),
+            "tech_agreement": side.get("tech_agreement"),
+            "tech_adx_band":  side.get("tech_adx_band"),
+            "tech_strength":  side.get("tech_strength"),
+            "atr_pct":        td.get("atr_pct"),
+            "rsi_14":         td.get("rsi_14"),
+            "volume_ratio":   td.get("volume_ratio"),
+            "earnings_in_days": td.get("earnings_in_days"),
+            "news_strength":  news_strength_by_ticker.get(t),
+        }
+    return out
+
+
 def load_recent_outcomes_aggregate(conn, today: str) -> dict:
     """7-day window for the weekly mail."""
     since = (date_cls.fromisoformat(today) - timedelta(days=7)).isoformat()
@@ -320,7 +350,7 @@ def run_pipeline(run_type: str, date: str, db_path: str) -> None:
         # Phase 1b — Commodities + Crypto data (separate collect for asset_class tagging)
         cc_inputs = build_commodity_crypto_inputs()
         cc_tickers = [d["ticker"] for d in cc_inputs]
-        cc_tds_raw, skipped_cc, _cc_sidecar = collect(
+        cc_tds_raw, skipped_cc, cc_sidecar = collect(
             tickers=cc_tickers,
             price_provider=price_provider,
             earnings_provider=earnings_provider,
@@ -455,17 +485,32 @@ def run_pipeline(run_type: str, date: str, db_path: str) -> None:
             _a["is_premarket"] = _pm
 
         current_phase = "ranking"
-        # Phase 4 — Ranking + persist predictions (market_ctx kommt aus Phase 0b)
+        # Phase 4 — Ranking + persist predictions (market_ctx kommt aus Phase 0b).
+        # signal_context buendelt Technik-Signal, C.1-Indikatoren und den
+        # Phase-2-Scan-Wert je Ticker (Spec 20.5) -- weder im Claude-Dict noch
+        # in td allein vorhanden.
+        signal_context = {
+            **_signal_context(
+                sp500_tds, sp500_sidecar,
+                news_strength_by_ticker={
+                    c["ticker"]: c["news_strength"] for c in selected
+                },
+            ),
+            **_signal_context(cc_tds, cc_sidecar),
+        }
         ranked = rank_and_persist(
             conn=conn, date=date, run_type=run_type,
             stock_analyses=deep_stocks,
             commodity_crypto_analyses=deep_cc,
             market_context=market_ctx,
+            signal_context=signal_context,
             sector_momentum=sector_mom,
         )
         payload["top_long"]            = ranked["top_long"]
         payload["top_short"]           = ranked["top_short"]
         payload["commodities_crypto"]  = ranked["commodities_crypto"]
+        payload["divergence"]          = ranked["divergence"]
+        payload["divergence_stats"]    = ranked["divergence_stats"]
 
         current_phase = "portfolio_check"
         # Phase 4a — Portfolio-Check auf den FERTIGEN Phase-3-Analysen (B.5).
