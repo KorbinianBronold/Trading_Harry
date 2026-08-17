@@ -2050,3 +2050,61 @@ def test_insert_prediction_defaults_candidate_class_to_core(in_memory_db):
     row = conn.execute("SELECT * FROM predictions WHERE id=?", (new_id,)).fetchone()
     assert row["candidate_class"] == "core"
     assert row["rank_score"] is None
+
+
+def _seed_prediction_with_outcome(
+    conn, ticker, direction, candidate_class, pl_eur, evaluated_date="2026-08-17",
+    revision_verdict=None, run_type="pre_market",
+):
+    """Legt eine Prediction plus zugehoeriges Outcome an, fuer Aggregat-Tests.
+
+    ⚠️ revision_verdict wird per UPDATE nachgesetzt, NICHT ueber save_prediction():
+    _insert_prediction() fuehrt die Spalte nicht in seiner cols-Liste
+    (src/db.py:674-691, dort stehen auch status und closed_date nicht drin --
+    die setzt der Evaluator bzw. supersede_prediction() spaeter). Im dict
+    uebergeben wuerde der Wert stillschweigend verschluckt, und der Test
+    scheiterte an einer leeren Ergebnismenge statt an der Logik."""
+    pred_id = db.save_prediction(conn, {
+        "date": "2026-08-16", "run_type": run_type, "ticker": ticker,
+        "direction": direction, "entry_price": 100.0, "tp_price": 105.0,
+        "sl_price": 98.0, "rr_ratio": 2.5, "candidate_class": candidate_class,
+    })
+    if revision_verdict is not None:
+        conn.execute("UPDATE predictions SET revision_verdict=? WHERE id=?",
+                     (revision_verdict, pred_id))
+    conn.execute(
+        """INSERT INTO outcomes
+           (prediction_id, direction, evaluated_date, correct_direction_eod, profit_loss_eur)
+           VALUES (?, ?, ?, ?, ?)""",
+        (pred_id, direction, evaluated_date, pl_eur > 0, pl_eur),
+    )
+    conn.commit()
+    return pred_id
+
+
+def test_load_recent_outcomes_carries_candidate_class(in_memory_db):
+    conn = in_memory_db
+    db.init_schema(conn)
+    _seed_prediction_with_outcome(conn, "AAPL", "long", "core", 10.0)
+    _seed_prediction_with_outcome(conn, "GC=F", "long", "divergence", -5.0)
+    rows = db.load_recent_outcomes(conn, "2026-08-01")
+    classes = {r["ticker"]: r["candidate_class"] for r in rows}
+    assert classes == {"AAPL": "core", "GC=F": "divergence"}
+
+
+def test_load_revision_verdict_stats_groups_by_candidate_class(in_memory_db):
+    """Eine core- und eine divergence-Zeile mit demselben revision_verdict duerfen
+    sich nicht zu einer Gruppe vermischen (Spec 5.6)."""
+    conn = in_memory_db
+    db.init_schema(conn)
+    _seed_prediction_with_outcome(
+        conn, "AAPL", "long", "core", 10.0, revision_verdict="bestaetigt")
+    _seed_prediction_with_outcome(
+        conn, "GC=F", "long", "divergence", -20.0, revision_verdict="bestaetigt")
+    rows = db.load_revision_verdict_stats(conn, "2026-08-01")
+    by_class = {(r["revision_verdict"], r["candidate_class"]): r for r in rows}
+    assert by_class[("bestaetigt", "core")]["n"] == 1
+    assert by_class[("bestaetigt", "divergence")]["n"] == 1
+    # Kein vermischter avg_pl ueber beide Klassen:
+    assert by_class[("bestaetigt", "core")]["avg_pl"] != \
+           by_class[("bestaetigt", "divergence")]["avg_pl"]

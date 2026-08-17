@@ -1266,10 +1266,12 @@ def load_recent_outcomes(
     conn: sqlite3.Connection, since_date: str,
 ) -> list[sqlite3.Row]:
     """Returns outcomes evaluated on/after since_date, joined with their
-    prediction's ticker/direction/score/entry price, newest first."""
+    prediction's ticker/direction/score/entry price/candidate_class, newest
+    first. candidate_class ist dabei (Spec 5.6): core und divergence duerfen
+    sich in keiner Auswertung stromabwaerts vermischen."""
     return conn.execute(
         """SELECT o.*, p.ticker, p.direction AS pred_direction,
-                  p.total_score, p.entry_price
+                  p.total_score, p.entry_price, p.candidate_class
            FROM outcomes o
            JOIN predictions p ON p.id = o.prediction_id
            WHERE o.evaluated_date >= ?
@@ -1461,7 +1463,9 @@ def load_revision_verdict_stats(
     conn: sqlite3.Connection, since_date: str,
 ) -> list[sqlite3.Row]:
     """B.9/Block 2: wie oft wurde bestaetigt / geschwaecht / gedreht / verworfen,
-    und wie liefen die Gruppen danach.
+    und wie liefen die Gruppen danach -- getrennt nach candidate_class (Spec
+    5.6, 20.5 #4), damit eine core- und eine divergence-Zeile mit demselben
+    Verdikt nicht in einer gemeinsamen avg_pl verschwinden.
 
     Der Join laeuft ueber COALESCE(superseded_by, id), nicht ueber id allein: eine
     bestaetigte pre_market-Zeile ist status='superseded' und bekommt damit per
@@ -1475,14 +1479,16 @@ def load_revision_verdict_stats(
     machte aus 'noch kein Outcome' eine Null, die von einem echten Nullergebnis
     nicht zu unterscheiden waere. n_evaluated sagt, worauf der Schnitt beruht."""
     return conn.execute(
-        """SELECT p.revision_verdict AS revision_verdict, COUNT(*) AS n,
+        """SELECT p.revision_verdict AS revision_verdict,
+                  p.candidate_class AS candidate_class,
+                  COUNT(*) AS n,
                   COUNT(o.id) AS n_evaluated,
                   ROUND(AVG(o.profit_loss_eur), 2) AS avg_pl
            FROM predictions p
            LEFT JOIN outcomes o
                   ON o.prediction_id = COALESCE(p.superseded_by, p.id)
            WHERE p.date >= ? AND p.revision_verdict IS NOT NULL
-           GROUP BY p.revision_verdict
+           GROUP BY p.revision_verdict, p.candidate_class
            ORDER BY n DESC""",
         (since_date,),
     ).fetchall()
