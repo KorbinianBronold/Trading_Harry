@@ -10,7 +10,12 @@ ist B.3.1 woertlich: "keines vorhanden -> kein Check, kein Log-Eintrag".
 
 Ob ein anschlagender Check das Signal auch blockiert, entscheidet NICHT dieses
 Modul, sondern der Aufrufer ueber den enforce-Parameter (Entscheidung E4):
-run_pipeline() uebergibt False, run_trade_proposals() uebergibt True."""
+der Morgenlauf (run_pipeline -> ranking._run_checks) uebergibt False, der
+16:10-Lauf (run_trade_proposals -> main._revalidate_all) uebergibt True.
+⚠️ Die beiden Aufrufstellen sind getrennter Code, keine gemeinsame Funktion mit
+umgeschaltetem Flag — ein neuer Check muss in BEIDE Listen eingetragen werden,
+sonst wird er nur erhoben oder nur durchgesetzt. Genau daran fehlte
+check_earnings bis zum Plan-3b-Abschluss-Review (Befund I1)."""
 import logging
 import sqlite3
 from dataclasses import dataclass

@@ -262,8 +262,14 @@ def rank_and_persist(
     _signal_context()). Fehlt ein Ticker darin, verhaelt sich das wie ein
     fehlendes Technik-Signal (_classify() faellt auf 'divergence').
 
-    enforce_checks steuert Entscheidung E4: run_pipeline() uebergibt False
-    (erheben und warnen), run_trade_proposals() uebergibt True (durchsetzen).
+    enforce_checks steuert Entscheidung E4. ⚠️ Faktisch uebergibt HEUTE kein
+    Aufrufer True: rank_and_persist() laeuft nur im Morgenlauf (run_pipeline),
+    und der erhebt die Checks bewusst weich — um 15:00 ist die US-Boerse zu, die
+    Morgenmail ist ein Research-Briefing. Die Durchsetzung sitzt im 16:10-Lauf,
+    aber nicht hier: run_trade_proposals() geht ueber main._revalidate_all(),
+    das die Checks selbst mit enforce=True aufruft. Der Parameter bleibt als
+    Schalter bestehen, ist aber derzeit unbenutzt — wer ihn liest, soll nicht
+    glauben, irgendwo laufe rank_and_persist() scharf.
 
     Klassifikation (Spec 5.3-5.5): core -> Top-10 nach rank_score, divergence
     -> eigene, auf DIVERGENCE_TOP_N je Richtung gedeckelte Liste, conflict ->

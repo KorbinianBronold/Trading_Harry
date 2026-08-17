@@ -921,6 +921,20 @@ def _revalidate_all(
                                                 enforce=True),
             signal_checks.check_cluster(sector_name,
                                         counts.get(sector_name or "", 0)),
+            # Spec 5.3: "erhoben in beiden Laeufen, durchgesetzt um 16:10" --
+            # das ist DIESE Stelle. Der Morgenlauf erhebt denselben Check in
+            # ranking._run_checks() mit enforce=False; ohne die Zeile hier waere
+            # er ueberall weich und koennte nie etwas blockieren -- also genau
+            # das, was er laut Spec ersetzen sollte (das folgenlose
+            # Modell-Attribut earnings_warning).
+            # earnings_in_days steht direkt im Snapshot: collect() rechnet es in
+            # _apply_fundamentals_to_td() aus dem gecachten ISO-Datum, jedes Mal
+            # frisch (Spec 18.1d, ein gecachter Countdown waere nach vier Tagen
+            # falsch). Fuer Rohstoffe/Krypto ist es None, der Check dort trivial
+            # erfuellt.
+            signal_checks.check_earnings(
+                pred["direction"], snapshot.get("earnings_in_days"),
+                enforce=True),
             signal_checks.check_opening_gap(
                 pred["entry_price"], snapshot.get("price")),
         ) if c is not None]

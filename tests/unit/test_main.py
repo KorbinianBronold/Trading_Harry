@@ -1336,6 +1336,68 @@ def test_opening_gap_reaches_the_revalidation_prompt(tmp_db_path, mocker):
     assert "opening_gap" in fired
 
 
+# ---------- I1 (Plan-3b-Abschluss-Review): earnings-Check um 16:10 ----------
+
+
+def test_imminent_earnings_blocks_the_signal_at_1610(in_memory_db, mocker):
+    """Spec 5.3: der earnings-Check wird um 16:10 DURCHGESETZT.
+
+    Er hatte bis zum Abschluss-Review genau eine Aufrufstelle -- ranking, und
+    dort nur mit enforce=False. Er konnte damit nie etwas blockieren, also genau
+    das nicht leisten, wofuer er das folgenlose Modell-Attribut earnings_warning
+    ersetzen sollte."""
+    from src import db
+    from src.cost_tracker import CostTracker
+    db.init_schema(in_memory_db)
+    _pred_row(in_memory_db)
+    reval = mocker.patch("main.revalidate_one", return_value={
+        "verdict": "bestaetigt", "probability_pct": 71, "reason": "haelt"})
+
+    from main import _revalidate_all
+    out: list[dict] = []
+    _revalidate_all(
+        conn=in_memory_db, date="2026-07-30",
+        snapshots={"AAPL": {"price": 101.0, "earnings_in_days": 1}},
+        sector_mom={}, market_ctx={"vix_level": 18.0}, policy_context={},
+        cost_tracker=CostTracker(), out=out,
+    )
+
+    fired = {c.rule: c for c in reval.call_args.kwargs["checks"]}
+    assert "earnings_imminent" in fired, "Check laeuft um 16:10 gar nicht mit"
+    assert fired["earnings_imminent"].enforced is True, \
+        "erhoben, aber weich -- dann blockiert er weiterhin nichts"
+    # Und er wirkt: keine Nachfolgezeile, die Morgenzeile traegt 'verworfen'.
+    assert out[0]["verdict"] == "verworfen"
+    rows = in_memory_db.execute(
+        "SELECT run_type, status, revision_verdict FROM predictions").fetchall()
+    assert len(rows) == 1, "keine trade_proposals-Nachfolgezeile"
+    assert rows[0]["revision_verdict"] == "verworfen"
+    assert rows[0]["status"] == "open", "bleibt offen, damit die Ablehnung messbar ist"
+
+
+def test_distant_earnings_does_not_block_at_1610(in_memory_db, mocker):
+    """Gegenprobe: der Check darf den Normalfall nicht anfassen -- sonst waere
+    der Test oben auch mit einem immer-anschlagenden Check gruen."""
+    from src import db
+    from src.cost_tracker import CostTracker
+    db.init_schema(in_memory_db)
+    _pred_row(in_memory_db)
+    reval = mocker.patch("main.revalidate_one", return_value={
+        "verdict": "bestaetigt", "probability_pct": 71, "reason": "haelt"})
+
+    from main import _revalidate_all
+    out: list[dict] = []
+    _revalidate_all(
+        conn=in_memory_db, date="2026-07-30",
+        snapshots={"AAPL": {"price": 101.0, "earnings_in_days": 30}},
+        sector_mom={}, market_ctx={"vix_level": 18.0}, policy_context={},
+        cost_tracker=CostTracker(), out=out,
+    )
+    assert "earnings_imminent" not in {
+        c.rule for c in reval.call_args.kwargs["checks"]}
+    assert out[0]["verdict"] == "bestaetigt"
+
+
 # ---------- Task 5 (Preismodell): final_close ----------
 
 
