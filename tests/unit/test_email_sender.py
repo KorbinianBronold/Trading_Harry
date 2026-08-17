@@ -403,10 +403,18 @@ WEEKLY_PAYLOAD = {
     "total_pl_eur": 28.0, "trades": [],
     "cost_summary": {"total_eur": 18.4},
     "revision_effectiveness": {
-        "confirmed": {"total": 6, "correct": 4, "pl_eur": 55.0},
-        "rejected":  {"total": 3, "correct": 0, "pl_eur": -41.0},
-        "unchecked": {"total": 1, "correct": 1, "pl_eur": 9.0},
-        "since": "2026-07-25"},
+        "core": {
+            "confirmed": {"total": 6, "correct": 4, "pl_eur": 55.0},
+            "rejected":  {"total": 3, "correct": 0, "pl_eur": -41.0},
+            "unchecked": {"total": 1, "correct": 1, "pl_eur": 9.0},
+        },
+        "divergence": {
+            "confirmed": {"total": 0, "correct": 0, "pl_eur": 0.0},
+            "rejected":  {"total": 0, "correct": 0, "pl_eur": 0.0},
+            "unchecked": {"total": 0, "correct": 0, "pl_eur": 0.0},
+        },
+        "since": "2026-07-25",
+    },
     "verdict_stats": [{"revision_verdict": "bestaetigt", "n": 6, "avg_pl": 9.2},
                       {"revision_verdict": "gedreht", "n": 3, "avg_pl": -13.7}],
     "guardrail_stats": [{"rule": "vix_no_new_longs", "enforced": 1, "n": 2},
@@ -441,3 +449,62 @@ def test_weekly_survives_a_week_without_any_1610_run():
                "sector_coverage": None}
     html = render_weekly_html(payload)
     assert "KW31" in html          # kein Absturz, Grundgeruest steht
+
+
+def test_daily_mail_has_a_divergence_section_when_present():
+    from src.email_sender import render_daily_html
+    payload = {
+        "date": "2026-08-17", "run_type": "pre_market",
+        "divergence": [{
+            "ticker": "AAPL", "direction": "long", "current_price": 230.0,
+            "tp_price": 235.0, "sl_price": 228.0, "rr_ratio": 2.5,
+            "_analysis_strength": 6, "summary": "Strong news, neutral technicals",
+        }],
+        "divergence_stats": {"tech_only_abstentions": 3, "conflicts": 1, "overflow": 0},
+    }
+    html = render_daily_html(payload)
+    assert "Divergenz-Kandidaten" in html
+    assert "AAPL" in html
+    # Die Kennzahlen muessen als Zahl NEBEN ihrem Label stehen. Ein blankes
+    # `"3" in html` waere wertlos -- die 3 steckt auch in "235.0".
+    assert "Enthaltungen mit Technik-Richtung: 3" in html
+    assert "Technik-Konflikte verworfen: 1" in html
+
+
+def test_daily_mail_divergence_section_handles_empty_list():
+    from src.email_sender import render_daily_html
+    payload = {
+        "date": "2026-08-17", "run_type": "pre_market",
+        "divergence": [], "divergence_stats": {
+            "tech_only_abstentions": 0, "conflicts": 0, "overflow": 0},
+    }
+    html = render_daily_html(payload)
+    assert "Divergenz" in html
+
+
+def test_weekly_revision_block_reads_the_split_shape():
+    from src.email_sender import render_weekly_html
+    empty_group = {"total": 0, "correct": 0, "pl_eur": 0.0}
+    payload = {
+        "week_label": "KW34",
+        "revision_effectiveness": {
+            "core": {"confirmed": dict(empty_group), "rejected": dict(empty_group),
+                     "unchecked": dict(empty_group)},
+            "divergence": {"confirmed": dict(empty_group), "rejected": dict(empty_group),
+                           "unchecked": dict(empty_group)},
+            "since": "2026-08-10",
+        },
+        "verdict_stats": [], "guardrail_stats": [], "skipped_stats": [],
+        "sector_coverage": [],
+        "long_total": 0, "long_correct": 0, "long_avg_pl": 0.0,
+        "short_total": 0, "short_correct": 0, "short_avg_pl": 0.0,
+        "total_pl_eur": 0.0, "trades": [],
+        "divergence_summary": {"long_total": 0, "long_correct": 0, "long_avg_pl": 0.0,
+                               "short_total": 0, "short_correct": 0, "short_avg_pl": 0.0,
+                               "total_pl_eur": 0.0, "trades": []},
+        "cost_summary": {"total_eur": 0.0, "cache_hit_rate": 0.0,
+                         "input_tokens": 0, "output_tokens": 0,
+                         "web_search_calls": 0, "aborted_at_phase": None},
+    }
+    html = render_weekly_html(payload)  # darf nicht werfen
+    assert "KW34" in html

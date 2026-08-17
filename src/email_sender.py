@@ -156,6 +156,51 @@ def _section_stocks(top_long: list[dict], top_short: list[dict]) -> str:
     )
 
 
+def _row_for_divergence(a: dict) -> str:
+    """Renders one <tr> for a divergence candidate -- dieselben Kernspalten wie
+    _row_for_setup(), aber ohne Rang (die Liste ist nicht nach Top-N sortiert
+    im selben Sinn) und ohne rank_score (der ist per Konstruktion immer NULL
+    fuer Divergenz-Kandidaten, s. Spec 5.4-Fussnote)."""
+    return (
+        f'<tr><td>{_h(a["ticker"])}</td><td>{_h(a["direction"])}</td>'
+        f'<td>{_h(a.get("_analysis_strength"))}</td>'
+        f'<td>{_h(a.get("current_price"))}</td>'
+        f'<td>{_h(a.get("tp_price"))}</td>'
+        f'<td>{_h(a.get("sl_price"))}</td>'
+        f'<td>{_h(a.get("rr_ratio"))}</td>'
+        f'<td>{_h(a.get("summary", ""))[:160]}</td></tr>'
+    )
+
+
+def _section_divergence(divergence: list[dict], stats: dict) -> str:
+    """Spec 5.5: eigener, klar getrennter Abschnitt -- niemals vermischt mit
+    den Top-10-Listen. Die Zaehler stehen daneben, damit 'nichts gefunden' von
+    'vieles verworfen' unterscheidbar bleibt (der dominierende Fall laut dem
+    Verifikationslauf vom 2026-08-17: 16 von 19 Analysen enthielten sich)."""
+    stats = stats or {}
+    counters = (
+        f'<p><i>Enthaltungen mit Technik-Richtung: '
+        f'{_h(stats.get("tech_only_abstentions", 0))} · '
+        f'Technik-Konflikte verworfen: {_h(stats.get("conflicts", 0))} · '
+        f'Deckel-Ueberlauf: {_h(stats.get("overflow", 0))}</i></p>'
+    )
+    if not divergence:
+        return ('<h2>Divergenz-Kandidaten</h2>'
+                '<p><i>Keine.</i></p>' + counters)
+    head = (
+        '<tr><th>Ticker</th><th>Richtung</th><th>Analysis-Strength</th>'
+        '<th>Kurs</th><th>TP</th><th>SL</th><th>R/R</th><th>Begründung</th></tr>'
+    )
+    rows = "".join(_row_for_divergence(a) for a in divergence)
+    return (
+        '<h2>Divergenz-Kandidaten</h2>'
+        '<p><i>Starkes Signal in einer Dimension, noch keine Bestätigung in '
+        'der anderen.</i></p>'
+        '<table border="1" cellpadding="4" cellspacing="0">' + head + rows +
+        '</table>' + counters
+    )
+
+
 def _section_trends(trends: list[dict]) -> str:
     """Renders the dark-card trends section (megatrends + sector rotation)."""
     if not trends:
@@ -252,7 +297,7 @@ def _section_footer(payload: dict) -> str:
 
 
 def render_daily_html(payload: dict) -> str:
-    """Build the 4-section daily e-mail body."""
+    """Build the 5-section daily e-mail body."""
     return (
         '<html><body style="font-family:sans-serif;font-size:14px;">'
         f'<h1>Shares_Future — {_h(payload.get("date"))} '
@@ -261,6 +306,9 @@ def render_daily_html(payload: dict) -> str:
         + _section_portfolio(payload.get("portfolio_recs") or [])
         + _section_stocks(
             payload.get("top_long") or [], payload.get("top_short") or [],
+        )
+        + _section_divergence(
+            payload.get("divergence") or [], payload.get("divergence_stats"),
         )
         + _section_trends(payload.get("trends") or [])
         + _section_commodities_crypto(payload.get("commodities_crypto") or [])
@@ -273,23 +321,46 @@ def render_daily_html(payload: dict) -> str:
 
 def _weekly_revision_block(eff: dict | None) -> str:
     """B.9/Block 1: verdient der 16:10-Lauf seine Kosten? Liegt die Trefferquote
-    der abgelehnten Signale unter der der bestaetigten, filtert er richtig."""
-    if not eff or not (eff["confirmed"]["total"] or eff["rejected"]["total"]):
+    der abgelehnten Signale unter der der bestaetigten, filtert er richtig.
+
+    Seit Plan 3b (Spec 5.6) liefert load_revision_effectiveness() core und
+    divergence getrennt -- ein Unterblock je Klasse, nie eine gemeinsame
+    Zahl, damit eine schwache Divergenz-Trefferquote keine starke Core-Quote
+    verwaessert oder umgekehrt."""
+    if not eff:
         return ('<h2>16:10-Prüfung</h2>'
                 '<p><i>Noch keine ausgewerteten Signale seit dem Umbau.</i></p>')
 
     def _line(label: str, g: dict) -> str:
         return (f'<tr><td>{label}</td><td>{g["correct"]}/{g["total"]}</td>'
                 f'<td>{g["pl_eur"]} EUR</td></tr>')
+
+    empty = {"total": 0, "correct": 0, "pl_eur": 0.0}
+    blocks = []
+    for cls, cls_label in (("core", "Core"), ("divergence", "Divergenz")):
+        group = eff.get(cls, {})
+        confirmed = group.get("confirmed", empty)
+        rejected  = group.get("rejected", empty)
+        unchecked = group.get("unchecked", empty)
+        if not (confirmed["total"] or rejected["total"]):
+            blocks.append(
+                f'<h3>{cls_label}</h3>'
+                '<p><i>Noch keine ausgewerteten Signale seit dem Umbau.</i></p>'
+            )
+            continue
+        blocks.append(
+            f'<h3>{cls_label}</h3>'
+            '<table border="1" cellpadding="4" cellspacing="0">'
+            '<tr><th>Gruppe</th><th>Treffer</th><th>P/L</th></tr>'
+            + _line("um 16:10 bestätigt", confirmed)
+            + _line("um 16:10 abgelehnt", rejected)
+            + _line("nie geprüft", unchecked)
+            + '</table>'
+        )
     return (
         '<h2>16:10-Prüfung</h2>'
-        '<table border="1" cellpadding="4" cellspacing="0">'
-        '<tr><th>Gruppe</th><th>Treffer</th><th>P/L</th></tr>'
-        + _line("um 16:10 bestätigt", eff["confirmed"])
-        + _line("um 16:10 abgelehnt", eff["rejected"])
-        + _line("nie geprüft", eff["unchecked"])
-        + '</table>'
-        f'<p><small>ausgewertet ab {_h(eff.get("since"))}</small></p>'
+        + "".join(blocks)
+        + f'<p><small>ausgewertet ab {_h(eff.get("since"))}</small></p>'
     )
 
 
