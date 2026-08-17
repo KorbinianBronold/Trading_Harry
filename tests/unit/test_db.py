@@ -1555,10 +1555,11 @@ def test_revision_effectiveness_splits_confirmed_from_rejected(in_memory_db):
     _outcome(in_memory_db, bad, correct=False, pl=-30.0)
 
     out = db.load_revision_effectiveness(in_memory_db, since_date="2026-07-01")
-    assert out["confirmed"]["total"] == 1 and out["confirmed"]["correct"] == 1
-    assert out["rejected"]["total"] == 1 and out["rejected"]["correct"] == 0
-    assert out["confirmed"]["pl_eur"] == 25.0
-    assert out["rejected"]["pl_eur"] == -30.0
+    # candidate_class ist nicht gesetzt -> default 'core' (Plan 3b, Spec 5.6)
+    assert out["core"]["confirmed"]["total"] == 1 and out["core"]["confirmed"]["correct"] == 1
+    assert out["core"]["rejected"]["total"] == 1 and out["core"]["rejected"]["correct"] == 0
+    assert out["core"]["confirmed"]["pl_eur"] == 25.0
+    assert out["core"]["rejected"]["pl_eur"] == -30.0
 
 
 def test_revision_effectiveness_excludes_rows_before_the_first_1610_run(in_memory_db):
@@ -1573,7 +1574,8 @@ def test_revision_effectiveness_excludes_rows_before_the_first_1610_run(in_memor
         "ticker": "AAPL", "direction": "long"})
 
     out = db.load_revision_effectiveness(in_memory_db, since_date="2026-06-01")
-    assert out["unchecked"]["total"] == 0, "Altlast vor dem ersten 16:10-Lauf"
+    # candidate_class ist nicht gesetzt -> default 'core' (Plan 3b, Spec 5.6)
+    assert out["core"]["unchecked"]["total"] == 0, "Altlast vor dem ersten 16:10-Lauf"
 
 
 def test_revision_effectiveness_is_empty_without_any_1610_run(in_memory_db):
@@ -1582,8 +1584,9 @@ def test_revision_effectiveness_is_empty_without_any_1610_run(in_memory_db):
         "date": "2026-07-30", "run_type": "pre_market",
         "ticker": "AAPL", "direction": "long"})
     out = db.load_revision_effectiveness(in_memory_db, since_date="2026-07-01")
-    assert out["confirmed"]["total"] == 0
-    assert out["rejected"]["total"] == 0
+    # candidate_class ist nicht gesetzt -> default 'core' (Plan 3b, Spec 5.6)
+    assert out["core"]["confirmed"]["total"] == 0
+    assert out["core"]["rejected"]["total"] == 0
 
 
 def test_revision_verdict_stats_group_by_verdict(in_memory_db):
@@ -2108,3 +2111,33 @@ def test_load_revision_verdict_stats_groups_by_candidate_class(in_memory_db):
     # Kein vermischter avg_pl ueber beide Klassen:
     assert by_class[("bestaetigt", "core")]["avg_pl"] != \
            by_class[("bestaetigt", "divergence")]["avg_pl"]
+
+
+def test_load_revision_effectiveness_splits_by_candidate_class(in_memory_db):
+    """⚠️ Jede Prediction braucht ein outcomes-Row: _agg() zaehlt ueber
+    `FROM outcomes o JOIN predictions p`, eine Prediction ohne Outcome taucht
+    dort gar nicht auf. Ohne die Outcomes waeren alle Zaehler 0 und der Test
+    gruen aus dem falschen Grund."""
+    conn = in_memory_db
+    db.init_schema(conn)
+    # confirmed core: ein trade_proposals-Lauf, candidate_class core
+    _seed_prediction_with_outcome(
+        conn, "AAPL", "long", "core", 10.0, run_type="trade_proposals")
+    # confirmed divergence: derselbe Lauftyp, aber divergence
+    _seed_prediction_with_outcome(
+        conn, "GC=F", "long", "divergence", -20.0, run_type="trade_proposals")
+    result = db.load_revision_effectiveness(conn, "2026-08-01")
+    assert set(result.keys()) >= {"core", "divergence", "since"}
+    assert result["core"]["confirmed"]["total"] == 1
+    assert result["divergence"]["confirmed"]["total"] == 1
+    # core und divergence sind unabhaengige Zaehler, keine gemeinsame Summe:
+    assert result["core"]["rejected"]["total"] == 0
+    assert result["divergence"]["rejected"]["total"] == 0
+
+
+def test_load_revision_effectiveness_empty_before_any_trade_proposals_run(in_memory_db):
+    conn = in_memory_db
+    db.init_schema(conn)
+    result = db.load_revision_effectiveness(conn, "2026-08-01")
+    for cls in ("core", "divergence"):
+        assert result[cls]["confirmed"] == {"total": 0, "correct": 0, "pl_eur": 0.0}

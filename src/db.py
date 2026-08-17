@@ -1427,36 +1427,45 @@ def load_revision_effectiveness(
       rejected  — vom 16:10-Lauf abgelehnte (revision_verdict gedreht/verworfen)
       unchecked — nie geprueft (z.B. weil der Lauf ausfiel)
 
-    Liegt die Trefferquote der abgelehnten unter der der bestaetigten, filtert der
-    Lauf richtig."""
+    Seit Plan 3b (Spec 5.6, 20.5 #4) getrennt nach candidate_class: eine
+    core- und eine divergence-Trefferquote in einer gemeinsamen Zahl wuerde
+    genau die Frage verdecken, die die Klassentrennung beantworten soll --
+    schlaegt die Zwei-Signal-Huerde tatsaechlich an. Rueckgabe:
+    {'core': {...}, 'divergence': {...}, 'since': str}, je Klasse dieselben
+    drei Gruppen wie zuvor auf oberster Ebene."""
     start = _first_trade_proposals_date(conn)
     empty = {"total": 0, "correct": 0, "pl_eur": 0.0}
     if start is None:
-        return {"confirmed": dict(empty), "rejected": dict(empty),
-                "unchecked": dict(empty), "since": since_date}
+        return {
+            cls: {"confirmed": dict(empty), "rejected": dict(empty),
+                  "unchecked": dict(empty)}
+            for cls in ("core", "divergence")
+        } | {"since": since_date}
     floor = max(since_date, start)
 
-    def _agg(where: str) -> dict:
+    def _agg(where: str, candidate_class: str) -> dict:
         r = conn.execute(
             f"""SELECT COUNT(*) AS total,
                        COALESCE(SUM(CASE WHEN o.correct_direction_eod
                                          THEN 1 ELSE 0 END), 0) AS correct,
                        COALESCE(SUM(o.profit_loss_eur), 0) AS pl
                 FROM outcomes o JOIN predictions p ON p.id = o.prediction_id
-                WHERE p.date >= ? AND {where}""",
-            (floor,),
+                WHERE p.date >= ? AND p.candidate_class = ? AND {where}""",
+            (floor, candidate_class),
         ).fetchone()
         return {"total": int(r["total"]), "correct": int(r["correct"]),
                 "pl_eur": round(float(r["pl"]), 2)}
 
     return {
-        "confirmed": _agg("p.run_type = 'trade_proposals'"),
-        "rejected":  _agg("p.run_type = 'pre_market' AND "
-                          "p.revision_verdict IN ('gedreht', 'verworfen')"),
-        "unchecked": _agg("p.run_type = 'pre_market' AND "
-                          "p.revision_verdict IS NULL"),
-        "since": floor,
-    }
+        cls: {
+            "confirmed": _agg("p.run_type = 'trade_proposals'", cls),
+            "rejected":  _agg("p.run_type = 'pre_market' AND "
+                              "p.revision_verdict IN ('gedreht', 'verworfen')", cls),
+            "unchecked": _agg("p.run_type = 'pre_market' AND "
+                              "p.revision_verdict IS NULL", cls),
+        }
+        for cls in ("core", "divergence")
+    } | {"since": floor}
 
 
 def load_revision_verdict_stats(
