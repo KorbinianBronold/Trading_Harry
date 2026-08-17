@@ -513,14 +513,22 @@ rank_score = analysis_strength (1..8) × tech_strength (1..4)      →  1..32
 verlangt, dass beide Signale beitragen — die These des Zwei-Signal-Designs.
 
 ⚠️ **Ausserhalb der angegebenen Wertebereiche ist `rank_score` `NULL`, niemals 0.**
-Bei Aktien kann der Fall nicht eintreten: Qualifikation setzt eine Richtung voraus, und
-eine Richtung setzt `tech_strength ≥ 1`. Bei Rohstoffen und Krypto kann er es sehr wohl,
-seit ein neutrales Signal sie nicht mehr disqualifiziert (§ 5.3) — `tech_strength` ist dann
-0. Das Produkt wäre 0 und machte SI=F mit `analysis_strength` 6 von GC=F mit 5
-ununterscheidbar: die Zahl, die etwas aussagt, würde von der Zahl gelöscht, die nichts
-aussagt. `NULL` heisst „nicht rankbar", `0` hiesse „schlechtester Kandidat" — und das wäre
-schlicht falsch aufgezeichnet. Die Rangfolge in der Rohstoff-Sektion der Mail fällt in
-diesem Fall auf `analysis_strength` zurück.
+Das gilt für **beide** Faktoren, und zwar unabhängig voneinander. Ein Produkt mit 0 löscht
+die Aussage des jeweils anderen: SI=F mit `analysis_strength` 6 wäre von GC=F mit 5 nicht
+mehr zu unterscheiden — die Zahl, die etwas aussagt, verschwände hinter der, die nichts
+aussagt. `NULL` heisst „nicht rankbar", `0` hiesse „schlechtester Kandidat", und das wäre
+schlicht falsch aufgezeichnet. Die Rangfolge fällt in diesem Fall auf `analysis_strength`
+zurück.
+
+| Nullfaktor | Wann erreichbar |
+|---|---|
+| `tech_strength = 0` | Bei Rohstoffen und Krypto, seit ein neutrales Signal sie nicht mehr disqualifiziert (§ 5.3), sowie bei **jedem** Divergenz-Kandidaten — dort ist das Technik-Signal per Definition neutral. |
+| `analysis_strength = 0` | Auch bei einer **qualifizierten Aktie**. Die Guardrails prüfen den `momentum`-**Wert** gegen `MOMENTUM_LONG_MIN`, § 5.2 verlangt zusätzlich ≥ 2 Belege und `evidence_quality != "thin"`. Eine Analyse mit `momentum = 7.0`, `evidence_quality = "thin"` und acht schwachen Dimensionen besteht die Guardrails und zählt trotzdem 0. |
+
+⚠️ Die zweite Zeile stand hier zunächst falsch — sie behauptete, der Fall könne bei Aktien
+nicht eintreten, weil eine Richtung `tech_strength ≥ 1` erzwinge. Das stimmt für den
+**technischen** Faktor, sagt aber nichts über den analytischen. Gefunden beim Review des
+Plans 3b gegen den echten Guardrail-Code, bevor eine Zeile davon geschrieben war.
 
 ⚠️ `tech_strength` kann auch bei einem **qualifizierten** Kandidaten 1 betragen: die
 Qualifikation verlangt nur eine Richtung (Mehrheit, also ≥ 2 übereinstimmende

@@ -291,23 +291,58 @@ Add to `tests/unit/test_db.py` (append near other migration tests — search the
 `_apply_migrations` or `"ALTER TABLE predictions"` to place it next to its siblings):
 
 ```python
-def test_predictions_migration_adds_plan3b_columns(in_memory_db):
-    """Eine Bestands-DB ohne die Plan-3b-Spalten bekommt sie beim naechsten
-    init_schema()-Lauf nachgezogen, candidate_class faellt auf 'core' zurueck."""
+PLAN3B_PRED_COLS = (
+    "candidate_class", "tech_direction", "tech_agreement", "tech_adx_band",
+    "tech_strength", "analysis_strength", "rank_score", "news_strength",
+)
+
+
+def test_fresh_schema_has_plan3b_columns(in_memory_db):
+    """Eine frische DB bekommt die acht Spalten aus dem CREATE-TABLE-Block."""
     conn = in_memory_db
     db.init_schema(conn)
-    conn.execute("ALTER TABLE predictions DROP COLUMN candidate_class") \
-        if False else None  # SQLite < 3.35 kennt kein DROP COLUMN -- stattdessen:
     cols = {r["name"] for r in conn.execute("PRAGMA table_info(predictions)")}
-    for col in ("candidate_class", "tech_direction", "tech_agreement",
-                "tech_adx_band", "tech_strength", "analysis_strength",
-                "rank_score", "news_strength"):
+    for col in PLAN3B_PRED_COLS:
         assert col in cols, f"{col} fehlt in predictions"
 
-    # init_schema() auf derselben Connection ein zweites Mal ist idempotent
+
+def test_predictions_migration_adds_plan3b_columns_to_an_old_db(in_memory_db):
+    """Der echte Migrationspfad: eine Bestands-DB, deren predictions-Tabelle
+    die acht Spalten NICHT hat, bekommt sie durch _apply_migrations()
+    nachgezogen. Die alte Tabelle wird dafuer von Hand angelegt -- SQLite
+    kennt vor 3.35 kein DROP COLUMN, und auf eine Version zu testen, die der
+    CI-Runner vielleicht hat, waere kein Test, sondern ein Zufall."""
+    conn = in_memory_db
+    conn.execute("""
+        CREATE TABLE predictions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            date TEXT NOT NULL, run_type TEXT NOT NULL, asset_class TEXT,
+            ticker TEXT NOT NULL, direction TEXT NOT NULL,
+            entry_price REAL, tp_price REAL, sl_price REAL, rr_ratio REAL,
+            status TEXT DEFAULT 'open',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    conn.execute(
+        """INSERT INTO predictions (date, run_type, ticker, direction, entry_price)
+           VALUES ('2026-08-01', 'pre_market', 'AAPL', 'long', 100.0)""")
+    conn.commit()
+
     db.init_schema(conn)
-    cols_again = {r["name"] for r in conn.execute("PRAGMA table_info(predictions)")}
-    assert cols_again == cols
+
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(predictions)")}
+    for col in PLAN3B_PRED_COLS:
+        assert col in cols, f"{col} nicht nachmigriert"
+
+    # Die Altzeile bleibt lesbar und bekommt candidate_class='core'
+    # RUECKWIRKEND: SQLite fuellt bestehende Zeilen beim ADD COLUMN mit dem
+    # DEFAULT (empirisch geprueft gegen sqlite 3.53). Genau das verlangt
+    # Spec 7.4 -- ohne diese Eigenschaft fielen alle Altzeilen aus den
+    # candidate_class-Aggregaten von Task 5/6 heraus, weil NULL weder 'core'
+    # noch 'divergence' matcht.
+    row = conn.execute("SELECT * FROM predictions WHERE ticker='AAPL'").fetchone()
+    assert row["candidate_class"] == "core"
+    assert row["rank_score"] is None
 
 
 def test_insert_prediction_defaults_candidate_class_to_core(in_memory_db):
@@ -575,13 +610,22 @@ def _seed_prediction_with_outcome(
     conn, ticker, direction, candidate_class, pl_eur, evaluated_date="2026-08-17",
     revision_verdict=None, run_type="pre_market",
 ):
-    """Legt eine Prediction plus zugehoeriges Outcome an, fuer Aggregat-Tests."""
+    """Legt eine Prediction plus zugehoeriges Outcome an, fuer Aggregat-Tests.
+
+    ⚠️ revision_verdict wird per UPDATE nachgesetzt, NICHT ueber save_prediction():
+    _insert_prediction() fuehrt die Spalte nicht in seiner cols-Liste
+    (src/db.py:674-691, dort stehen auch status und closed_date nicht drin --
+    die setzt der Evaluator bzw. supersede_prediction() spaeter). Im dict
+    uebergeben wuerde der Wert stillschweigend verschluckt, und der Test
+    scheiterte an einer leeren Ergebnismenge statt an der Logik."""
     pred_id = db.save_prediction(conn, {
         "date": "2026-08-16", "run_type": run_type, "ticker": ticker,
         "direction": direction, "entry_price": 100.0, "tp_price": 105.0,
         "sl_price": 98.0, "rr_ratio": 2.5, "candidate_class": candidate_class,
-        "revision_verdict": revision_verdict,
     })
+    if revision_verdict is not None:
+        conn.execute("UPDATE predictions SET revision_verdict=? WHERE id=?",
+                     (revision_verdict, pred_id))
     conn.execute(
         """INSERT INTO outcomes
            (prediction_id, direction, evaluated_date, correct_direction_eod, profit_loss_eur)
@@ -710,7 +754,9 @@ git commit -m "feat: candidate_class in load_recent_outcomes/load_revision_verdi
 - Test: `tests/unit/test_db.py`
 
 **Interfaces:**
-- Consumes: `candidate_class` column (Task 3).
+- Consumes: `candidate_class` column (Task 3); the `_seed_prediction_with_outcome()` test
+  helper added to `tests/unit/test_db.py` by **Task 5** — this task's test reuses it rather
+  than defining a second seeder.
 - Produces: `load_revision_effectiveness()` now returns
   `{"core": {...}, "divergence": {...}, "since": ...}` instead of the flat
   `{"confirmed": ..., "rejected": ..., "unchecked": ..., "since": ...}`. **Breaking change** —
@@ -727,20 +773,18 @@ Add to `tests/unit/test_db.py`:
 
 ```python
 def test_load_revision_effectiveness_splits_by_candidate_class(in_memory_db):
+    """⚠️ Jede Prediction braucht ein outcomes-Row: _agg() zaehlt ueber
+    `FROM outcomes o JOIN predictions p`, eine Prediction ohne Outcome taucht
+    dort gar nicht auf. Ohne die Outcomes waeren alle Zaehler 0 und der Test
+    gruen aus dem falschen Grund."""
     conn = in_memory_db
     db.init_schema(conn)
     # confirmed core: ein trade_proposals-Lauf, candidate_class core
-    db.save_prediction(conn, {
-        "date": "2026-08-17", "run_type": "trade_proposals", "ticker": "AAPL",
-        "direction": "long", "entry_price": 100.0, "tp_price": 105.0,
-        "sl_price": 98.0, "rr_ratio": 2.5, "candidate_class": "core",
-    })
+    _seed_prediction_with_outcome(
+        conn, "AAPL", "long", "core", 10.0, run_type="trade_proposals")
     # confirmed divergence: derselbe Lauftyp, aber divergence
-    db.save_prediction(conn, {
-        "date": "2026-08-17", "run_type": "trade_proposals", "ticker": "GC=F",
-        "direction": "long", "entry_price": 2000.0, "tp_price": 2050.0,
-        "sl_price": 1980.0, "rr_ratio": 2.5, "candidate_class": "divergence",
-    })
+    _seed_prediction_with_outcome(
+        conn, "GC=F", "long", "divergence", -20.0, run_type="trade_proposals")
     result = db.load_revision_effectiveness(conn, "2026-08-01")
     assert set(result.keys()) >= {"core", "divergence", "since"}
     assert result["core"]["confirmed"]["total"] == 1
@@ -869,9 +913,28 @@ exemption (§ 20.5 #2) and the `NULL`-fallback (§ 20.5 #3).
 
 - [ ] **Step 1: Write the failing tests**
 
-Add to `tests/unit/test_ranking.py` (near the top, after imports — add
-`from src.ranking import _classify, _rank_key` to the existing `from src.ranking import
-rank_and_persist, score_total` line, which Task 9 will later strip `score_total` from):
+Add to `tests/unit/test_ranking.py`. Two import changes are needed at the top of the file
+first — the current header is:
+
+```python
+from unittest.mock import MagicMock
+import pytest
+
+from src import db
+from src.ranking import rank_and_persist, score_total
+```
+
+Change it to (adding `config`, which the file does **not** import today but which Task 8's
+tests need, and the two new helpers; `score_total` stays for now and is removed in Task 8):
+
+```python
+from unittest.mock import MagicMock
+import pytest
+
+import config
+from src import db
+from src.ranking import rank_and_persist, score_total, _classify, _rank_key
+```
 
 ```python
 def _stock_analysis(direction="long"):
@@ -915,7 +978,7 @@ def test_classify_missing_sidecar_entry_treated_as_divergence():
     assert klasse == "divergence"
 
 
-def test_classify_commodity_never_conflicts(cc=True):
+def test_classify_commodity_never_conflicts():
     """Spec 20.5 #2: Rohstoffe/Krypto werden nie disqualifiziert, auch nicht
     bei gegenlaeufigem Technik-Signal."""
     a = _stock_analysis("long")
@@ -924,6 +987,21 @@ def test_classify_commodity_never_conflicts(cc=True):
     klasse, strength, rank_score = _classify(a, ctx, cc=True)
     assert klasse == "core"
     assert rank_score == 24  # trotzdem gebildet, fuer die Sortierung
+
+
+def test_classify_zero_analysis_strength_yields_null_not_zero():
+    """Spec 5.4: rank_score ist NULL, nie 0 -- auch wenn NICHT das
+    Technik-Signal, sondern analysis_strength der Nullfaktor ist. Erreichbar
+    ueber eine Analyse, die die Guardrails besteht (momentum-WERT stimmt), aber
+    keine Dimension zaehlbar belegt (alle thin)."""
+    a = _stock_analysis("long")
+    for dim in a["scores"]:
+        a["scores"][dim]["evidence_quality"] = "thin"
+    ctx = {"tech_direction": "long", "tech_strength": 3}
+    klasse, strength, rank_score = _classify(a, ctx, cc=False)
+    assert klasse == "core"
+    assert strength == 0
+    assert rank_score is None, "0 hiesse 'schlechtester Kandidat', nicht 'nicht rankbar'"
 
 
 def test_classify_commodity_without_tech_signal_gets_null_rank_score():
@@ -975,13 +1053,23 @@ def _classify(
     zurueck. direction='none' ist hier bereits durch _guardrail_filter()
     ausgefiltert -- nur long/short erreichen diese Funktion.
 
-    rank_score ist NULL, wenn tech_strength 0 oder unbekannt ist (Spec 5.4,
-    20.5 #3): sonst loescht der Faktor 0 die Aussage von analysis_strength.
-    technical_signal.compute() liefert strength=0 NUR beim neutralen Fall
-    (src/technical_signal.py:103-106) -- ein echtes long/short-Technik-Signal
-    hat immer staerke >= 1. rank_score ist deshalb fuer STOCK-'core' immer
-    gesetzt und fuer jeden Divergenz-Fall (tech_direction='neutral') immer
-    NULL; die Sortierung faellt dort auf analysis_strength zurueck (_rank_key).
+    rank_score ist NULL, sobald EINER der beiden Faktoren ausserhalb seines
+    Wertebereichs liegt (Spec 5.4 nennt 1..8 bzw. 1..4, 20.5 #3): ein Produkt
+    mit 0 loescht die Aussage des anderen Faktors, und 0 hiesse 'schlechtester
+    Kandidat', wo 'nicht vergleichbar' gilt.
+
+    BEIDE Nullfaelle sind erreichbar, nicht nur der offensichtliche:
+      * tech_strength == 0 -- technical_signal.compute() liefert das NUR beim
+        neutralen Fall (src/technical_signal.py:103-106), also bei jedem
+        Divergenz-Kandidaten.
+      * analysis_strength == 0 bei GESETZTER Richtung -- seltener, aber
+        moeglich: die Guardrails pruefen den momentum-WERT gegen
+        MOMENTUM_LONG_MIN (src/guardrails.py:84-93), waehrend
+        analysis_strength zusaetzlich >= 2 Belege und evidence_quality != thin
+        verlangt. Eine Analyse mit momentum=7.0, evidence_quality='thin' und
+        acht schwachen Dimensionen besteht die Guardrails und zaehlt trotzdem
+        0. Ohne die Pruefung auf `strength` bekaeme sie rank_score = 0 statt
+        NULL.
 
     cc=True (Rohstoffe/Krypto, Spec 20.5 #2): die Zwei-Signal-Huerde gilt
     nicht. Ein fehlendes oder gegenlaeufiges Technik-Signal disqualifiziert
@@ -992,7 +1080,7 @@ def _classify(
     tech_strength = signal_ctx.get("tech_strength")
     direction = analysis["direction"]
 
-    rank_score = strength * tech_strength if tech_strength else None
+    rank_score = strength * tech_strength if (strength and tech_strength) else None
 
     if cc:
         return "core", strength, rank_score
@@ -1216,6 +1304,33 @@ def test_score_total_and_dimension_weights_are_gone():
     import src.ranking as ranking_module
     assert not hasattr(ranking_module, "score_total")
     assert not hasattr(config, "DIMENSION_WEIGHTS")
+
+
+def test_ranking_does_not_mutate_the_input_analyses(in_memory_db):
+    """Die Analyse-Dicts gehen nach dem Ranking unveraendert an
+    check_open_positions() weiter, das sie in seinen Prompt json.dumps't
+    (src/portfolio_check.py:53). Ein hier angehefteter Schluessel landete
+    unbemerkt in einem bezahlten Claude-Call -- der Vorfall aus C.6.
+
+    Pinnt die Schluesselmenge, nicht nur die drei neuen Namen: jeder kuenftige
+    Zusatz faellt damit auf."""
+    conn = in_memory_db
+    db.init_schema(conn)
+    a = _analysis("AAPL", momentum=8.0)
+    cc = _analysis("GC=F", momentum=8.0, asset_class="commodity")
+    keys_before = (set(a.keys()), set(cc.keys()))
+
+    rank_and_persist(
+        conn=conn, date="2026-08-17", run_type="pre_market",
+        stock_analyses=[a], commodity_crypto_analyses=[cc],
+        market_context=_market_ctx(),
+        signal_context={
+            "AAPL": _ctx(tech_direction="long", tech_strength=3),
+            "GC=F": _ctx(tech_direction="long", tech_strength=2),
+        },
+    )
+
+    assert (set(a.keys()), set(cc.keys())) == keys_before
 ```
 
 - [ ] **Step 1b: Update the existing top-10 test for the new sort key**
@@ -1420,19 +1535,30 @@ def rank_and_persist(
             continue
         surviving_stocks.append(a)
 
+    # ⚠️ KOPIE, NICHT MUTATION -- das ist keine Stilfrage. Die Analyse-Dicts in
+    # stock_analyses/commodity_crypto_analyses sind DIESELBEN Objekte, die
+    # main.py danach als analyses_by_ticker an check_open_positions() gibt, und
+    # portfolio_check serialisiert sie ungefiltert in seinen Prompt
+    # (src/portfolio_check.py:53, current_snapshot -> json.dumps). Wer hier
+    # a["_candidate_class"] = ... schreibt, schickt drei neue Schluessel in
+    # einen live laufenden Claude-Prompt -- genau der Vorfall aus
+    # PROJECT_STATUS C.6, wo 29 Plan-1-Werte unbemerkt in vier Prompts liefen.
+    # Die angereicherten Kopien wandern in den Rueckgabewert und damit in die
+    # Mail; die Originale bleiben unberuehrt.
+    def _enrich(a: dict, klasse: str, strength: int, rank_score: int | None) -> dict:
+        return {**a, "_candidate_class": klasse,
+                "_analysis_strength": strength, "_rank_score": rank_score}
+
     core: list[dict] = []
     divergence: list[dict] = []
     conflicts = 0
     for a in surviving_stocks:
         ctx = signal_context.get(a["ticker"], {})
         klasse, strength, rank_score = _classify(a, ctx, cc=False)
-        a["_candidate_class"] = klasse
-        a["_analysis_strength"] = strength
-        a["_rank_score"] = rank_score
         if klasse == "core":
-            core.append(a)
+            core.append(_enrich(a, klasse, strength, rank_score))
         elif klasse == "divergence":
-            divergence.append(a)
+            divergence.append(_enrich(a, klasse, strength, rank_score))
         else:  # conflict
             conflicts += 1
             db.log_guardrail_reject(conn, {
@@ -1447,10 +1573,7 @@ def rank_and_persist(
     for a in kept_cc:
         ctx = signal_context.get(a["ticker"], {})
         klasse, strength, rank_score = _classify(a, ctx, cc=True)
-        a["_candidate_class"] = klasse
-        a["_analysis_strength"] = strength
-        a["_rank_score"] = rank_score
-        cc_classified.append(a)
+        cc_classified.append(_enrich(a, klasse, strength, rank_score))
 
     def _key(a: dict) -> tuple:
         return _rank_key(a["_analysis_strength"], a["_rank_score"], a["ticker"])
@@ -1903,9 +2026,12 @@ def test_daily_mail_has_a_divergence_section_when_present():
         "divergence_stats": {"tech_only_abstentions": 3, "conflicts": 1, "overflow": 0},
     }
     html = render_daily_html(payload)
-    assert "Divergenz" in html
+    assert "Divergenz-Kandidaten" in html
     assert "AAPL" in html
-    assert "3" in html  # tech_only_abstentions sichtbar
+    # Die Kennzahlen muessen als Zahl NEBEN ihrem Label stehen. Ein blankes
+    # `"3" in html` waere wertlos -- die 3 steckt auch in "235.0".
+    assert "Enthaltungen mit Technik-Richtung: 3" in html
+    assert "Technik-Konflikte verworfen: 1" in html
 
 
 def test_daily_mail_divergence_section_handles_empty_list():
