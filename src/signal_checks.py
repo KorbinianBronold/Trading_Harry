@@ -127,6 +127,29 @@ def check_vix(
     return None
 
 
+def check_earnings(
+    direction: str, earnings_in_days: int | None, *, enforce: bool,
+) -> CheckResult | None:
+    """Spec 5.3: ein Earnings-Termin in <= EARNINGS_WARNING_DAYS ist die
+    einzige fundamentale Tatsache mit unmittelbarer Intraday-Wirkung -- er
+    kann den Kurs springen lassen und entwertet damit das analytisch
+    hergeleitete TP/SL. Ersetzt das reine Modell-Attribut 'earnings_warning'
+    (das blockierte nichts) durch einen echten Check.
+
+    earnings_in_days ist fuer Rohstoffe/Krypto immer None -- der Check ist
+    dort trivial erfuellt, kein Sonderfall im Code noetig."""
+    if earnings_in_days is None:
+        return None
+    if earnings_in_days > config.EARNINGS_WARNING_DAYS:
+        return None
+    return CheckResult(
+        rule="earnings_imminent",
+        detail=f"Earnings in {earnings_in_days} Tag(en) "
+               f"(<= {config.EARNINGS_WARNING_DAYS}) — TP/SL-Basis unsicher",
+        enforced=enforce,
+    )
+
+
 def _supports(direction: str, momentum: float) -> bool:
     """True, wenn das Sektor-Momentum in dieselbe Richtung zeigt wie der Trade."""
     return momentum > 0 if direction == "long" else momentum < 0

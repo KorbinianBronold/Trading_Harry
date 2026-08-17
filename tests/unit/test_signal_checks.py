@@ -256,3 +256,43 @@ def test_opening_gap_is_silent_without_data():
     assert check_opening_gap(None, 103.0) is None
     assert check_opening_gap(100.0, None) is None
     assert check_opening_gap(0.0, 103.0) is None
+
+
+# ---------- check_earnings (Task 4, Spec 5.3) ----------
+
+def test_check_earnings_none_when_no_earnings_date():
+    """Rohstoffe/Krypto: earnings_in_days ist immer None (Spec 4.7) -- trivial erfuellt."""
+    from src.signal_checks import check_earnings
+    assert check_earnings("long", None, enforce=True) is None
+
+
+def test_check_earnings_none_when_far_out():
+    from src.signal_checks import check_earnings
+    assert check_earnings("long", 5, enforce=True) is None
+
+
+def test_check_earnings_fires_at_the_threshold():
+    from src.signal_checks import check_earnings
+    result = check_earnings("long", 2, enforce=True)
+    assert result is not None
+    assert result.rule == "earnings_imminent"
+    assert result.enforced is True
+
+
+def test_check_earnings_fires_when_imminent():
+    from src.signal_checks import check_earnings
+    result = check_earnings("short", 0, enforce=True)
+    assert result is not None
+    assert result.enforced is True
+
+
+def test_check_earnings_respects_enforce_false():
+    from src.signal_checks import check_earnings
+    result = check_earnings("long", 1, enforce=False)
+    assert result is not None
+    assert result.enforced is False
+
+
+def test_check_earnings_just_outside_threshold_does_not_fire():
+    from src.signal_checks import check_earnings
+    assert check_earnings("long", 3, enforce=True) is None
