@@ -119,6 +119,78 @@ def test_call_claude_extracts_web_search_calls():
     assert result.web_search_calls == 3
 
 
+def test_web_search_calls_counted_from_blocks_when_usage_field_is_missing():
+    """Gestreamte Antworten tragen KEIN usage.server_tool_use -- verifiziert
+    gegen die echte API: beide Pfade liefern server_tool_use-Content-Bloecke,
+    aber get_final_message() laesst das usage-Feld leer. Ohne diesen Fallback
+    zaehlen genau die beiden gestreamten Aufrufer (broad_scan, deep_analysis)
+    dauerhaft 0 Websuchen, und ihre Kosten sind zu niedrig ausgewiesen."""
+    def _block(btype, name=None, text=None):
+        b = MagicMock()
+        b.type = btype
+        b.name = name
+        b.text = text
+        return b
+
+    fake_response = MagicMock()
+    fake_response.content = [
+        _block("server_tool_use", name="web_search"),
+        _block("web_search_tool_result"),
+        _block("server_tool_use", name="web_search"),
+        _block("web_search_tool_result"),
+        _block("text", text="ok"),
+    ]
+    fake_response.usage.input_tokens = 100
+    fake_response.usage.output_tokens = 50
+    fake_response.usage.cache_read_input_tokens = 0
+    fake_response.usage.cache_creation_input_tokens = 0
+    del fake_response.usage.server_tool_use          # wie im Streaming-Pfad
+
+    fake_client = MagicMock()
+    fake_stream = MagicMock()
+    fake_stream.__enter__ = lambda s: s
+    fake_stream.__exit__ = lambda s, *a: False
+    fake_stream.get_final_message.return_value = fake_response
+    fake_client.messages.stream.return_value = fake_stream
+
+    with patch("src.utils._anthropic_client", fake_client):
+        result = call_claude(
+            model="claude-sonnet-4-6", system="s", user="u", stream=True,
+            tools=[{"type": "web_search_20250305", "name": "web_search"}],
+        )
+
+    assert result.web_search_calls == 2
+    assert result.text == "ok"
+
+
+def test_usage_field_wins_over_block_count_when_present():
+    """Wo die API zaehlt, gilt ihre Zahl -- der Block-Fallback ist nur fuer den
+    Fall gedacht, dass das Feld fehlt."""
+    def _block(btype, name=None, text=None):
+        b = MagicMock()
+        b.type = btype
+        b.name = name
+        b.text = text
+        return b
+
+    fake_response = MagicMock()
+    fake_response.content = [_block("server_tool_use", name="web_search"),
+                             _block("text", text="ok")]
+    fake_response.usage.input_tokens = 10
+    fake_response.usage.output_tokens = 5
+    fake_response.usage.cache_read_input_tokens = 0
+    fake_response.usage.cache_creation_input_tokens = 0
+    fake_response.usage.server_tool_use = {"web_search_requests": 7}
+
+    fake_client = MagicMock()
+    fake_client.messages.create.return_value = fake_response
+
+    with patch("src.utils._anthropic_client", fake_client):
+        result = call_claude(model="claude-sonnet-4-6", system="s", user="u")
+
+    assert result.web_search_calls == 7
+
+
 def test_call_claude_web_search_calls_zero_when_absent():
     fake_response = MagicMock()
     fake_response.content = [MagicMock(text="ok")]

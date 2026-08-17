@@ -75,10 +75,23 @@ def _result_from_message(response, model: str) -> ClaudeResult:
     # Attributen (Usage.model_config hat extra="allow", Pydantic reicht
     # unbekannte Felder als rohes JSON durch) -- getattr() liefert auf einem
     # dict immer den Default und hielt web_search_calls damit dauerhaft auf 0.
+    #
+    # ⚠️ Im GESTREAMTEN Pfad fehlt das Feld ganz: get_final_message() liefert
+    # usage.server_tool_use == None, obwohl dieselbe Antwort sehr wohl
+    # server_tool_use-Content-Bloecke traegt (gegen die echte API verifiziert).
+    # Ohne den Fallback zaehlen genau die beiden gestreamten Aufrufer --
+    # broad_scan und die Batch-Tiefenanalyse -- dauerhaft 0 Websuchen, und ihre
+    # Kosten sind zu niedrig ausgewiesen. Die Bloecke sind ohnehin die Wahrheit;
+    # das usage-Feld hat trotzdem Vorrang, wo es existiert.
     server_tool_use = getattr(response.usage, "server_tool_use", None)
-    web_search_calls = 0
     if server_tool_use is not None:
         web_search_calls = server_tool_use.get("web_search_requests", 0) or 0
+    else:
+        web_search_calls = sum(
+            1 for b in response.content
+            if getattr(b, "type", None) == "server_tool_use"
+            and getattr(b, "name", "web_search") == "web_search"
+        )
 
     return ClaudeResult(
         text="\n".join(text_parts),

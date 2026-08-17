@@ -1,6 +1,17 @@
 # PROJECT_STATUS.md — Shares_Future (Trading_Harry)
 
-**Zuletzt aktualisiert:** 2026-08-17 — **Token-Budget neu kalibriert (C.10).**
+**Zuletzt aktualisiert:** 2026-08-17 — ✅ **Verifikationslauf bestanden (C.11): der
+Token-Fix wirkt, das Kostenziel ist unterboten.** `stop_reason=max_tokens` trat **kein
+einziges Mal** auf, **12 von 12 Kandidaten analysiert** (vorher 8 bzw. 14 von 16), Budget
+zu 47–54 % genutzt, Phase 3 bei **0,0204 EUR je Ticker** gegen ein Ziel von 0,034 und
+~0,12 im alten Weg. Gesamtlauf 1,9072 EUR in 14,6 min. ⚠️ Wie knapp der alte Wert war:
+der 8er-Batch brauchte 9 409 Tokens bei einem alten Budget von 9 200 — **2,3 % daneben**,
+nicht grob falsch. Dabei ein **zweiter** `web_search_calls`-Zählfehler gefunden und
+behoben (gestreamte Antworten tragen kein `usage.server_tool_use`; gezählt werden jetzt
+ersatzweise die Content-Blöcke) — und ein eigener Fehlalarm korrigiert, der aus der
+kaputten Zählung eine erfundene Recherche gelesen hatte. **777 Tests grün, 91,52 %.**
+
+Davor, 2026-08-17 — **Token-Budget neu kalibriert (C.10).**
 `TOKENS_PER_TICKER_DEEP` 900 → 2500, `BATCH_TOKEN_RESERVE` 2000 → 200 (der feste
 Reserve-Term machte die Formel regressiv: 1150 Tokens/Ticker bei n=8 gegen 2048 bei n=2 —
 grosse Batches bekamen am wenigsten Luft, genau verkehrt herum), und nach einer Kappung
@@ -2234,6 +2245,72 @@ billiger ist** als Sonnet 4.6 und Phase 3 ausgabedominiert ist — der grösste 
 Kostenhebel liegt damit im Modellwechsel, nicht in dieser Kalibrierung. Der Eintrag
 `claude-opus-4-7` ($15/$75) ist ausserdem veraltet. Gehört zusammen entschieden, nicht
 nebenbei: ein anderes Modell ändert das Antwortverhalten und entwertet die Messbasis.
+
+---
+
+### C.11 — Verifikationslauf ✅ (2026-08-17): der Token-Fix wirkt, Kostenziel unterboten
+
+Lauf gegen eine Wegwerf-Kopie (`_verify_run/tracking.db`), echte APIs, `pre_market`,
+20 MVP-Ticker, Mail über einen gepatchten `_send` abgefangen statt verschickt. Die
+Produktions-DB blieb unberührt. Protokolliert wurde je Phase eine eigene Datei mit
+**vollem Request und voller Response** je Call — reine Instrumentierung von aussen, es
+wurde kein Produktionscode angefasst.
+
+**1. `stop_reason=max_tokens` ist verschwunden.**
+
+| Batch | Ticker | Budget | genutzt | Auslastung | Ergebnis |
+|---|---|---|---|---|---|
+| 1 | 8 | 20 200 | 9 409 | 46,6 % | `end_turn`, 8 Analysen |
+| 2 | 4 | 10 200 | 5 548 | 54,4 % | `end_turn`, 4 Analysen |
+
+**12 von 12 Kandidaten analysiert, 0 verloren, 0 Wiederholungen, 0 Halbierungen** (C.9:
+8 von 16 bzw. 14 von 16 verloren, mit fünf sinnlosen Retries).
+
+⚠️ **Wie knapp es war:** Der 8er-Batch brauchte **9 409** Tokens — das alte Budget war
+**9 200**. Er verfehlte es um 209 Tokens, also **2,3 %**. Das erklärt die Streuung aus C.9
+exakt: der alte Wert lag nicht grob daneben, sondern haarscharf an der Grenze, weshalb
+manche Batches durchliefen und manche nicht. Ein Wert „knapp richtig" ist hier
+schlimmer als deutlich zu hoch — die Decke kostet nichts, die Kappung den ganzen Call.
+
+**2. Das Kostenziel aus Spec § 13.2 ist unterboten.** Phase 3 kostete 0,245 EUR für
+12 Ticker = **0,0204 EUR je Ticker**, gegen ein Ziel von 0,034 und ~0,12 im alten
+Ein-Call-je-Ticker-Weg — rund **6× billiger**. Gesamtlauf **1,9072 EUR**, Laufzeit
+**14,6 min** (C.9: 19,4 und 29,2 min). ⚠️ Die 0,245 EUR sind eine **Untergrenze**: die
+Websuchen der gestreamten Phasen waren zu diesem Zeitpunkt noch nicht gezählt (Punkt 3).
+
+**3. Zweiter, eigenständiger Zählfehler bei `web_search_calls` — gefunden, weil der erste
+behoben war.** Der Lauf wies 32 Websuchen aus (vorher strukturell 0), aber verteilt:
+`trend` 5, `market_context` 3, `policy_monitor` 5, `commodities` 19 — und ausgerechnet
+`broad_scan` **0** und `deep_analysis` **0**. Exakte Korrelation: **jeder Call mit
+`stream=True` zählte 0, jeder mit `stream=False` zählte.**
+Zwei Proben gegen die echte API haben das aufgeklärt: **die Suche findet in beiden Pfaden
+statt** — beide Antworten tragen `server_tool_use`- und `web_search_tool_result`-Blöcke —
+aber `get_final_message()` liefert `usage.server_tool_use == None`. Es fehlte also nur die
+**Zählung**, nicht die Recherche. **Behoben:** fehlt das usage-Feld, werden die
+`server_tool_use`-Content-Blöcke gezählt; wo das Feld existiert, behält es Vorrang. Gegen
+die echte API verifiziert (beide Pfade melden jetzt 1). **777 Tests grün, 91,52 %.**
+
+⚠️ **Zwischendurch ein Fehlalarm, der hier festgehalten gehört.** Aus „0 Websuchen" plus
+konkreten, datierten Nachrichten in der Antwort (AVGO/VMware-Lücke, ABBV-Guidance
+67,6 Mrd., dazu URLs, die im Input nicht vorkamen) hatte ich geschlossen, das Modell
+**erfinde** Nachrichten und Quellen — ein schwerer Vorwurf, und er war **falsch**. Die
+Inhalte waren echt recherchiert; nur der Zähler log. Die Lehre: eine kaputte Messung
+sieht einem kaputten Verhalten zum Verwechseln ähnlich. Erst die Content-Blöcke als
+unabhängige Wahrheitsquelle haben es entschieden — nicht die Plausibilität der Geschichte.
+
+**Beantwortet damit aus C.9:**
+- **Prüffrage 4 (reicht `MAX_TOKENS_DEEP`?)** — ✅ ja, mit ~2× Reserve.
+- **Prüffrage 6 (Kosten)** — ✅ 0,0204 EUR/Ticker, Ziel unterboten (Untergrenze, s. o.).
+- **Prüffrage 1 (Laufzeit)** — ✅ 14,6 min, deutlich schneller ohne die Retry-Kaskade.
+- **Prüffrage 2 (selektive Recherche)** — ⏳ **weiterhin offen**, jetzt aber aus einem
+  präzise bekannten Grund: dieser Lauf lief noch mit der kaputten Streaming-Zählung. Der
+  nächste Lauf misst es erstmals belastbar.
+- **Prüffrage 3 (Qualität am Batch-Ende)** und **5 (`rank_score`)** — unverändert offen;
+  5 gehört zu Plan 3b.
+
+⏳ **Offen:** `BATCH_SIZE_DEEP = 8` bleibt ein Startwert — bei 46,6 % Auslastung wäre ein
+grösserer Batch denkbar, gemessen ist er nicht. Danach der Abschluss-Review über die
+Plan-3a-Commits, dann Plan 3b.
 
 ---
 

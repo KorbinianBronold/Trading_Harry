@@ -1,11 +1,15 @@
 # Shares_Future – SP500 CFD Research Tool
 
-**Zuletzt aktualisiert:** 2026-08-17 — **Token-Budget der Batch-Tiefenanalyse neu
-kalibriert (PROJECT_STATUS C.10).** `TOKENS_PER_TICKER_DEEP` 900 → 2500,
-`BATCH_TOKEN_RESERVE` 2000 → 200, und nach einer Kappung wird nicht mehr identisch
-wiederholt, sondern mit doppelter Decke. **775 Tests grün, 91,52 % Coverage.**
-⏳ **Nur gegen Unit-Tests belegt, nicht gegen die echte API** — der Verifikationslauf
-steht aus. Bis dahin bleibt der Eintrag darunter gültig: Plan 3a ist nicht produktionsreif.
+**Zuletzt aktualisiert:** 2026-08-17 — ✅ **Verifikationslauf bestanden
+(PROJECT_STATUS C.11).** Nach der Neukalibrierung (`TOKENS_PER_TICKER_DEEP` 900 → 2500,
+`BATCH_TOKEN_RESERVE` 2000 → 200, Wiederholung nach Kappung mit doppelter Decke) trat
+`stop_reason=max_tokens` **kein einziges Mal** auf: 12 von 12 Kandidaten analysiert,
+Budget zu 47–54 % genutzt, Phase 3 bei **0,0204 EUR je Ticker** (Ziel war 0,034, alter
+Weg ~0,12). Gesamtlauf 1,9072 EUR in 14,6 min. Dabei ein **zweiter**
+`web_search_calls`-Zählfehler gefunden und behoben (gestreamte Antworten tragen kein
+`usage.server_tool_use`). **777 Tests grün, 91,52 % Coverage.**
+⏳ Offen: `BATCH_SIZE_DEEP = 8` ist weiter ein Startwert (bei 47 % Auslastung wäre mehr
+denkbar), dann der Abschluss-Review über die Plan-3a-Commits, dann Plan 3b.
 
 Davor, 2026-08-17 — ⚠️ **Plan 3a (Batch-Tiefenanalyse) ist
 code-vollständig (11/11 Tasks), aber NICHT produktionsreif.** Phase 3 läuft gebatcht nach
@@ -149,12 +153,20 @@ Die Pipeline-Phasen lassen sich an `main.py:run_pipeline()` ablesen.
   **nur bei exakt diesem Wert**. Ein fehlendes Feld (v1-Ergebnis) oder ein unbekannter
   Wert fällt auf die strenge Regel zurück. Eine thin-Dimension wird **behalten**, nicht
   weggelassen: stilles Weglassen war in diesem Projekt wiederholt eine Diagnose-Falle.
-- ⚠️ **`server_tool_use` aus der Anthropic-Antwort ist ein `dict`, kein Objekt.**
-  `Usage.model_config` hat `extra="allow"`, Pydantic reicht unbekannte Felder als rohes
-  JSON durch. `getattr()` darauf liefert **immer** den Default und hielt
-  `web_search_calls` seit Einführung des Websuche-Tools dauerhaft auf 0 — alle vor dem
-  2026-08-17 ausgewiesenen `web_search_eur`-Werte sind zu niedrig. Gilt sinngemäss für
-  jedes künftige `usage`-Feld, das das SDK nicht selbst modelliert.
+- ⚠️ **`usage`-Felder, die das SDK nicht selbst modelliert, sind zweimal eine Falle** —
+  beide Male hat es dieselbe Zahl still auf 0 gehalten:
+  1. `server_tool_use` ist ein **`dict`**, kein Objekt (`Usage.model_config` hat
+     `extra="allow"`, Pydantic reicht rohes JSON durch). `getattr()` darauf liefert immer
+     den Default.
+  2. Im **gestreamten** Pfad fehlt das Feld ganz — `get_final_message()` liefert
+     `usage.server_tool_use == None`, obwohl dieselbe Antwort `server_tool_use`-Content-
+     Blöcke trägt. Die **Blöcke sind die Wahrheit**, das usage-Feld nur die Zählung.
+  Alle vor dem 2026-08-17 ausgewiesenen `web_search_eur`-Werte sind dadurch zu niedrig.
+  ⚠️ Lehre über den Einzelfall hinaus: **eine kaputte Messung sieht einem kaputten
+  Verhalten zum Verwechseln ähnlich.** Aus „0 Websuchen" plus konkreten Nachrichten in
+  der Antwort war der naheliegende Schluss „das Modell erfindet Quellen" — und er war
+  falsch. Entschieden hat es erst eine unabhängige Wahrheitsquelle (die Content-Blöcke),
+  nicht die Plausibilität der Geschichte.
 - `SECTOR_ALIASES` normalisiert Finnhubs `finnhubIndustry` auf 21 **Sub-Sektoren**
   (feiner als GICS: Halbleiter gegen SOXX statt gegen den breiten XLK). Unbekannte
   Rohwerte werden mit WARN geloggt und bleiben ungemappt — nie stillschweigend

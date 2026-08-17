@@ -624,9 +624,12 @@ Lauf mit `BATCH_SIZE_DEEP=8` verlor einen kompletten 8er-Batch (beide Versuche *
 beide 4er-Hälften an `max_tokens`), Lauf mit `BATCH_SIZE_DEEP=4` verlor zwei Ticker an
 einer gescheiterten 2er-Hälfte. Eine **kleinere** Batchgrösse war dabei teurer und
 langsamer, weil sie nur öfter in die Halbierungs-Kaskade läuft.
-✅ **Neu kalibriert am 2026-08-17 (C.10):** 2500 statt 900 Tokens je Ticker, Reserve 200
-statt 2000, Wiederholung nach Kappung mit doppelter Decke. ⏳ Gegen Unit-Tests belegt,
-**noch nicht gegen die echte API** — der Verifikationslauf ist der nächste Schritt.
+✅ **Neu kalibriert am 2026-08-17 (C.10) und live verifiziert (C.11):** 2500 statt 900
+Tokens je Ticker, Reserve 200 statt 2000, Wiederholung nach Kappung mit doppelter Decke.
+Im Verifikationslauf trat `max_tokens` **kein einziges Mal** auf, 12 von 12 Kandidaten
+wurden analysiert (Budget zu 47–54 % genutzt), Phase 3 kostete **0,0204 EUR je Ticker**
+gegen ein Ziel von 0,034. ⚠️ Wie knapp der alte Wert war: der 8er-Batch brauchte 9 409
+Tokens bei 9 200 Budget — 2,3 % daneben, nicht grob falsch.
 
 ---
 
@@ -1088,12 +1091,18 @@ liefert wie `messages.create()`; beide Pfade teilen sich `_result_from_message()
 JSON-Block ist nicht teilverwertbar. Vor Plan 3a trug `ClaudeResult` das Feld nicht und
 `broad_scan` musste `output_tokens` gegen `MAX_TOKENS` schätzen.
 
-⚠️ **Felder, die das SDK nicht selbst modelliert, kommen als `dict` — nicht als Objekt.**
-`response.usage.server_tool_use` ist so ein Fall (`Usage.model_config` hat
-`extra="allow"`, Pydantic reicht rohes JSON durch). `getattr()` darauf liefert **immer**
-den Default; `web_search_calls` stand dadurch seit Einführung des Websuche-Tools
-dauerhaft auf 0 und alle bis 2026-08-17 ausgewiesenen `web_search_eur`-Werte sind zu
-niedrig. Gelesen wird jetzt mit `.get()`.
+⚠️ **`web_search_calls` hatte ZWEI unabhängige Zählfehler, beide seit 2026-08-17 behoben
+— und beide hielten dieselbe Zahl still auf 0.**
+1. `response.usage.server_tool_use` kommt als **`dict`**, nicht als Objekt
+   (`Usage.model_config` hat `extra="allow"`, Pydantic reicht rohes JSON durch);
+   `getattr()` darauf liefert immer den Default. Gelesen wird jetzt mit `.get()`.
+2. Im **gestreamten** Pfad fehlt das Feld ganz: `get_final_message()` liefert
+   `usage.server_tool_use == None`, obwohl dieselbe Antwort `server_tool_use`-Content-
+   Blöcke trägt (gegen die echte API verifiziert). Genau die beiden gestreamten Aufrufer
+   — `broad_scan` und `analyze_batch()` — zählten dadurch dauerhaft 0. Fehlt das Feld,
+   werden jetzt ersatzweise die Content-Blöcke gezählt; wo es existiert, behält es Vorrang.
+
+Alle bis 2026-08-17 ausgewiesenen `web_search_eur`-Werte sind dadurch zu niedrig.
 
 ⚠️ **Reihenfolge-Invariante:** `cost_tracker.add_from_result()` läuft **vor** der
 JSON-Extraktion. Sonst kostet eine unparsebare Antwort Geld, das nie erfasst wird.
@@ -1315,7 +1324,7 @@ TOTAL: ~3.50 EUR
 - **Integration Tests** (4): volle Pipeline + E2E-HTML-Render + trade_proposals-Flow
 - **Coverage Gate**: 80 % Minimum (aktuell 91,52 %)
 - **Baseline**: `pytest tests/ --cov=src --cov=main --cov-fail-under=80 -q` →
-  **775 passed, 14 skipped**, 0 failures (Stand 2026-08-17, nach der
+  **777 passed, 14 skipped**, 0 failures (Stand 2026-08-17, nach der
   Token-Neukalibrierung — s. PROJECT_STATUS C.9 und C.10). Die übersprungenen sind die Live-Tests unter `tests/live/`; sie
   laufen nur mit `--run-live` und sprechen dann echte APIs an (inkl. echtem Mailversand).
   ⚠️ **Grüne Tests sind hier kein Reifezeugnis:** der `max_tokens`-Befund aus C.9 ist
