@@ -4,7 +4,7 @@
 > (recommended) or superpowers:executing-plans to implement this plan task-by-task.
 > Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Status:** ⚠️ **11/11 Tasks umgesetzt — code-vollständig, aber NICHT produktionsreif**
+**Status:** ✅ **11/11 Tasks umgesetzt, live verifiziert, Abschluss-Review durchgeführt**
 **Erstellt:** 2026-08-16
 **Abgeschlossen:** 2026-08-17
 
@@ -19,22 +19,37 @@
 | 7 — Fehlerpfade (wiederholen/halbieren/aufgeben) | `9cecc22` | ✅ |
 | 8 — schmale `thin`-Ausnahme in `check_analysis()` | `72a3fbe` | ✅ |
 | 9 — `run_pipeline()` auf Batch-Phase-3, Adapter raus | `1c0de04` | ✅ |
-| 10 — Testlauf gegen echte Daten | `ae2f138` | ⚠️ **Befund: `MAX_TOKENS_DEEP` widerlegt** |
-| — Nebenbefund aus der Auswertung | `f074860` | `web_search_calls` zählte immer 0 (behoben) |
-| 11 — Doku nachziehen | dieser Commit | ✅ |
+| 10 — Testlauf gegen echte Daten | `ae2f138` | ⚠️ Befund: `MAX_TOKENS_DEEP` widerlegt |
+| — Nebenbefund aus der Auswertung | `f074860` | `web_search_calls` zählte immer 0 (dict-statt-Objekt) |
+| 11 — Doku nachziehen | `0a92d44` | ✅ |
+| — Token-Budget neu kalibriert | `7aae691` | ✅ **`max_tokens` behoben** (C.10) |
+| — zweiter `web_search_calls`-Fund + Verifikationslauf | `61557a1` | ✅ **live bestätigt** (C.11) |
+| — Abschluss-Review, vier Doku-/Prompt-Konsistenzpunkte | dieser Commit | ✅ |
 
-⚠️ **Warum „nicht produktionsreif":** Task 10 hat gemessen, dass `stop_reason=max_tokens`
-in beiden Läufen wiederholt auftritt — bis hinunter zu einem auf 2 Ticker halbierten
-Batch. `TOKENS_PER_TICKER_DEEP = 900` ist damit widerlegt und muss neu kalibriert werden,
-**bevor** die Pipeline wieder echt läuft. Der in „Goal" genannte Kostenhebel (~0,034 statt
-~0,12 EUR je Ticker) ist entsprechend **nicht belegt**: gemessen wurden ~0,074–0,079 EUR
-je erfolgreich analysiertem Ticker. Details: PROJECT_STATUS **C.9**.
+✅ **Kostenhebel nicht nur belegt, sondern übertroffen.** Der Verifikationslauf nach der
+Neukalibrierung zeigte **kein einziges** `stop_reason=max_tokens` mehr (vorher: in beiden
+Läufen wiederholt, bis hinunter zu einem auf 2 Ticker halbierten Batch), 12 von 12
+Kandidaten analysiert, Phase 3 bei **0,0204 EUR je Ticker** — der in „Goal" genannte
+Zielwert (0,034 EUR) ist damit **unterboten**, nicht nur erreicht. Details, inklusive wie
+knapp das alte Budget war (9 409 gegen 9 200 = 2,3 % daneben) und des dabei gefundenen
+zweiten `web_search_calls`-Zählfehlers (fehlendes `usage`-Feld im Streaming-Pfad):
+PROJECT_STATUS **C.10** und **C.11**.
 
-⏳ **Offen aus diesem Plan:** die Neukalibrierung selbst (Code-Änderung, gehört nicht in
-Task 10 „kein Code — eine Messung"), danach ein Wiederholungslauf, der die Prüffragen 2
-(selektive Recherche — die erste Messung lief mit kaputter `web_search_calls`-Zählung),
-3 (Qualität am Batch-Ende) und 6 (Kosten) belastbar beantwortet. Danach der
-Abschluss-Review über die Plan-3a-Commits.
+✅ **Abschluss-Review über `e3dc5a7..HEAD` (16 Commits) durchgeführt** (analog zu Plan 2):
+keine kritischen Befunde. Vier Important-Punkte, alle Doku-/Prompt-Konsistenz, alle
+behoben: Sprint-Stand in CLAUDE.md und Dateikopf in ARCHITECTURE.md hatten die beiden
+Fix-Commits nicht nachgezogen; der `config.py`-Kommentar zu `BATCH_SIZE_DEEP` rechnete
+noch mit der alten 900er-Formel; `commodities_crypto_v2.txt` widersprach sich selbst
+(eine Hard-Rule verlangte weiterhin "&gt;= 2 evidence lines" direkt unter dem neuen
+`thin`-Mechanismus, der explizit weniger erlaubt) — aus `v1` unverändert übernommen und
+beim v2-Umschalten nicht mitgeprüft.
+
+⏳ **Weiterhin offen, bewusst nicht Teil dieses Plans:** Prüffrage 2 aus Spec § 12
+(recherchiert Claude selektiv?) — der Verifikationslauf lief noch mit der kaputten
+Streaming-Zählung, ein dritter, günstiger Messlauf mit korrekter Zählung würde das klären.
+`BATCH_SIZE_DEEP = 8` bleibt ein Startwert (47–54 % Auslastung gemessen, nicht auf
+Optimalität getestet). Beides kann parallel zu Plan 3b nachgeholt werden, blockiert es
+aber nicht.
 
 **Goal:** Phase 3 analysiert Aktien in Batches nach Sub-Sektor statt einzeln — der
 Kostenhebel des Umbaus (~0,034 statt ~0,12 EUR je Ticker) — und `call_claude()` bekommt

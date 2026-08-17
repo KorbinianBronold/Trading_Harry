@@ -83,5 +83,7 @@ Hard rules:
 - intraday_range_pct echoes the snapshot verbatim.
 - For commodities, evaluate via macro lens (rates, USD for gold/silver; OPEC + geopolitics
   for oil); for crypto via Fear & Greed + BTC dominance + relevant on-chain news.
-- Every dimension needs >= 2 evidence lines; sources_used >= 2 distinct domains.
+- sources_used >= 2 distinct domains. Evidence count per dimension follows the
+  EVIDENCE QUALITY rule above — "thin" is an honest, allowed outcome, not a rule
+  violation to route around.
 - If evidence is thin or contradictory, return direction='none'.

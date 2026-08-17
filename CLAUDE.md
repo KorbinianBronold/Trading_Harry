@@ -407,14 +407,18 @@ und der getroffenen Entscheidungen. Kurzfassung:
   - **Plan 3 (Analyse & Ranking)** — in **3a** und **3b** geteilt:
     - **Plan 3a (Batch-Tiefenanalyse)** —
       `…/plans/2026-08-16-analyse-pipeline-plan3a-batch-tiefenanalyse.md`,
-      ⚠️ **11/11 Tasks umgesetzt, aber nicht produktionsreif**: Phase 3 batcht nach
-      Sub-Sektor, v2-Prompts sind aktiv, `call_claude()` streamt — der Testlauf hat
-      aber `MAX_TOKENS_DEEP` widerlegt (s. Kopf). Der angezielte Kostenhebel
-      (~0,034 statt ~0,12 EUR je Ticker) ist damit **nicht belegt**: gemessen wurden
-      ~0,074–0,079 EUR je erfolgreich analysiertem Ticker, mit Batch-Ausfällen.
-      Stand: PROJECT_STATUS **C.9**.
+      ✅ **11/11 Tasks umgesetzt und live verifiziert.** Phase 3 batcht nach
+      Sub-Sektor, v2-Prompts sind aktiv, `call_claude()` streamt. Der erste Testlauf
+      hatte `MAX_TOKENS_DEEP` widerlegt (C.9); nach der Neukalibrierung
+      (`TOKENS_PER_TICKER_DEEP` 900 → 2500, `BATCH_TOKEN_RESERVE` 2000 → 200) trat
+      im Verifikationslauf **kein einziges** `max_tokens` mehr auf, 12 von 12
+      Kandidaten analysiert, Phase 3 bei **0,0204 EUR je Ticker** — der angezielte
+      Kostenhebel (Ziel 0,034 EUR) ist damit **unterboten**, nicht nur erreicht.
+      Abschluss-Review über `e3dc5a7..HEAD` durchgeführt: keine kritischen Befunde,
+      vier Doku-/Prompt-Konsistenzpunkte behoben. Stand: PROJECT_STATUS
+      **C.9–C.11**.
     - **Plan 3b (Ranking)** — offen, noch keine Plan-Datei; bringt `rank_score`,
-      `candidate_class` und den Mail-Abschnitt. Wartet auf den Token-Fix aus C.9.
+      `candidate_class` und den Mail-Abschnitt.
 - **3D / 3E / 3F** sind ⚠️ **Platzhalter** — bei Erreichen aktiv nachfragen und den
   Sprint gemeinsam ausarbeiten, **bevor** Code entsteht. Die Stichpunkte dort sind
   keine Spezifikation.

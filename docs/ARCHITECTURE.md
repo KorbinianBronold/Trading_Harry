@@ -1,19 +1,21 @@
 # Shares_Future – Architektur & Design
 
-**Zuletzt aktualisiert:** 2026-08-17 — **Sprint 3C / Plan 3a (Batch-Tiefenanalyse)
-code-vollständig, 11/11 Tasks — aber ⚠️ nicht produktionsreif (PROJECT_STATUS C.9).**
-Neu in diesem Dokument: **Phase 3 ist eine Batch-Phase** (Grafik + Modul 4 neu
-beschrieben — `build_batches()` / `analyze_batch()` / `analyze_batches()`,
-`analyze_asset()` und `analyze_assets()` sind ersatzlos entfallen), die beiden
-**v2-Prompts** in der Prompt-Tabelle, und die Test-Baseline auf 770.
-⚠️ **Der Testlauf hat `MAX_TOKENS_DEEP` widerlegt** — `stop_reason=max_tokens` trat
-wiederholt auf, bis hinunter zu 2-Ticker-Batches. **Inzwischen neu kalibriert
-(PROJECT_STATUS C.10):** `TOKENS_PER_TICKER_DEEP` 900 → 2500, `BATCH_TOKEN_RESERVE`
-2000 → 200, und nach einer Kappung wird mit doppelter Decke wiederholt statt identisch.
-⏳ Das ist gegen Unit-Tests belegt, **nicht gegen die echte API** — der Verifikationslauf
-steht aus, `BATCH_SIZE_DEEP = 8` bleibt ein unbestätigter Startwert. Ebenfalls behoben:
-`web_search_calls` zählte strukturell immer 0 (`server_tool_use` ist ein `dict`, wurde
-mit `getattr()` gelesen).
+**Zuletzt aktualisiert:** 2026-08-17 — ✅ **Sprint 3C / Plan 3a (Batch-Tiefenanalyse)
+abgeschlossen: 11/11 Tasks, live verifiziert, Abschluss-Review durchgeführt
+(PROJECT_STATUS C.9–C.11).** Neu in diesem Dokument: **Phase 3 ist eine Batch-Phase**
+(Grafik + Modul 4 neu beschrieben — `build_batches()` / `analyze_batch()` /
+`analyze_batches()`, `analyze_asset()` und `analyze_assets()` sind ersatzlos entfallen),
+die beiden **v2-Prompts** in der Prompt-Tabelle, und die Test-Baseline auf 777.
+Der erste Testlauf hatte `MAX_TOKENS_DEEP` widerlegt — `stop_reason=max_tokens` trat
+wiederholt auf, bis hinunter zu 2-Ticker-Batches. **Nach der Neukalibrierung**
+(`TOKENS_PER_TICKER_DEEP` 900 → 2500, `BATCH_TOKEN_RESERVE` 2000 → 200, Wiederholung
+nach Kappung mit doppelter Decke) trat im Verifikationslauf **kein einziges**
+`max_tokens` mehr auf: 12 von 12 Kandidaten analysiert, Phase 3 bei **0,0204 EUR je
+Ticker** — der angezielte Kostenhebel (Ziel 0,034 EUR) ist damit **unterboten**.
+`BATCH_SIZE_DEEP = 8` bleibt trotzdem ein unbestätigter Startwert (47–54 % Auslastung
+gemessen, nicht auf Optimalität getestet). Ebenfalls behoben: `web_search_calls` hatte
+**zwei** unabhängige Zählfehler (dict-statt-Objekt und fehlendes `usage`-Feld im
+Streaming-Pfad) und stand dadurch strukturell immer auf 0.
 
 Davor, 2026-08-15 — **Sprint 3C / Plan 2 (Trichter) abgeschlossen
 inkl. Abschluss-Review (13/13 Tasks, vier behobene Review-Befunde — PROJECT_STATUS C.8).**

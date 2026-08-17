@@ -261,11 +261,18 @@ MAX_DEEP_ANALYSIS = 50
 # Ziel-Batchgroesse der Phase-3-Tiefenanalyse. Ganze Sub-Sektoren werden bis zu
 # diesem Wert gepackt (deep_analysis.build_batches()).
 #
-# 8 ist ein begruendeter STARTWERT, kein Ergebnis -- Spec 19.2 schreibt ihn erst
-# nach dem Testlauf fest. Herleitung: bei den 20 MVP-Aktien ergibt 8 genau
-# 3 Batches (8/8/4) statt 20 Einzelcalls, MAX_TOKENS_DEEP landet bei ~9.200 und
-# damit deutlich unter der ~16.000er Zone, in der Spec 4.8 Timeouts erwartet.
-# 20 (alle MVP-Aktien in einem Batch) laege mit ~18.000 bereits darin.
+# 8 ist ein begruendeter STARTWERT, kein final getunter Wert -- Spec 19.2 wollte
+# ihn erst nach dem Testlauf festschreiben. Herleitung: bei den 20 MVP-Aktien
+# ergibt 8 genau 3 Batches (8/8/4) statt 20 Einzelcalls.
+#
+# ⚠️ Die max_tokens-Rechnung hier war urspruenglich mit TOKENS_PER_TICKER_DEEP=900
+# gemacht (~9.200 bei n=8) und ist seit der C.10-Kalibrierung veraltet: mit dem
+# jetzigen Wert (2500, s. deep_analysis.py) liefert max_tokens_for_batch(8)
+# tatsaechlich 20.200 -- ueber der hier frueher genannten "~16.000er Zone", aber
+# unkritisch, weil der Call ohnehin gestreamt laeuft (Spec 4.8/20.4). Verifiziert
+# gegen die echte API (PROJECT_STATUS C.11): 0 Kappungen bei 47-54 % Auslastung.
+# Ob 8 die beste Batchgroesse ist, bleibt weiterhin ungemessen -- nur EIN Wert
+# lief im Verifikationslauf.
 BATCH_SIZE_DEEP = 8
 
 # Sprint 3C / Analyse-Pipeline-Umbau, Plan 2 (Trichter), Spec 4.7: ein Ticker

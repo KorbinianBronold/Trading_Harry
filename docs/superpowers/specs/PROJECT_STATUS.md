@@ -1,6 +1,16 @@
 # PROJECT_STATUS.md — Shares_Future (Trading_Harry)
 
-**Zuletzt aktualisiert:** 2026-08-17 — ✅ **Verifikationslauf bestanden (C.11): der
+**Zuletzt aktualisiert:** 2026-08-17 — ✅ **Plan 3a (Batch-Tiefenanalyse) abgeschlossen:
+Abschluss-Review über `e3dc5a7..HEAD` durchgeführt (C.12), keine kritischen Befunde.**
+Vier Important-Befunde, alle behoben — anders als bei Plan 2 keine fehlenden
+Produktions-Aufrufer, ausschliesslich Doku-/Prompt-Konsistenz: CLAUDE.md und
+ARCHITECTURE.md widersprachen sich intern (Kopf sagte „live verifiziert", Sprint-Stand
+bzw. Dateikopf weiter unten noch „nicht produktionsreif"), der `BATCH_SIZE_DEEP`-Kommentar
+in `config.py` rechnete mit der alten 900er-Formel, `commodities_crypto_v2.txt` widersprach
+im selben Prompt dem eigenen `thin`-Mechanismus, und die Plan-Datei selbst hatte die beiden
+Fix-Commits nicht nachgezogen. **Offen bleibt nur noch Plan 3b** (Ranking). Details: **C.12**.
+
+Davor, 2026-08-17 — ✅ **Verifikationslauf bestanden (C.11): der
 Token-Fix wirkt, das Kostenziel ist unterboten.** `stop_reason=max_tokens` trat **kein
 einziges Mal** auf, **12 von 12 Kandidaten analysiert** (vorher 8 bzw. 14 von 16), Budget
 zu 47–54 % genutzt, Phase 3 bei **0,0204 EUR je Ticker** gegen ein Ziel von 0,034 und
@@ -2311,6 +2321,65 @@ unabhängige Wahrheitsquelle haben es entschieden — nicht die Plausibilität d
 ⏳ **Offen:** `BATCH_SIZE_DEEP = 8` bleibt ein Startwert — bei 46,6 % Auslastung wäre ein
 grösserer Batch denkbar, gemessen ist er nicht. Danach der Abschluss-Review über die
 Plan-3a-Commits, dann Plan 3b.
+
+---
+
+### C.12 — Abschluss-Review Plan 3a ✅ (2026-08-17), keine kritischen Befunde
+
+Review über `e3dc5a7..61557a1` (16 Commits, 23 Dateien, +4143/-409 Zeilen), analog zum
+Plan-2-Review aus **C.8**. Geprüft: Plan-Abgleich, Fehlerpfad-Korrektheit von Hand
+nachverfolgt (`BatchTruncatedError`-Reihenfolge, Faktor-Weitergabe durch Halbierung,
+`CostCapExceeded`-Propagation), Sidecar-Invariante, Mock-Treue der Tests gegen die
+echten API-Antwortformen, Token-Budget-Arithmetik von Hand nachgerechnet, Testsuite
+ausgeführt (777 grün, 91,52 %). **Keine Critical-Befunde.** Vier Important-Befunde, alle
+noch am selben Tag behoben — anders als bei Plan 2 keine Funktion ohne Produktions-
+Aufrufer, keine falsch dimensionierte Ratenbegrenzung; hier ausschliesslich Doku- und
+Prompt-Konsistenz, die den vorangegangenen Fix-Commits hinterherhinkte.
+
+**1. CLAUDE.md und ARCHITECTURE.md widersprachen sich selbst.** Die Fix-Commits `7aae691`
+(C.10) und `61557a1` (C.11) hatten in beiden Dateien nur den Kopfeintrag aktualisiert,
+nicht aber den weiter unten stehenden Sprint-Stand-Abschnitt (CLAUDE.md) bzw. den
+Dateikopf (ARCHITECTURE.md) — beide sagten dort weiterhin „nicht produktionsreif" nach
+dem C.9-Stand, während der jeweils andere Teil derselben Datei schon „live verifiziert"
+sagte. **Behoben:** beide Stellen auf C.10/C.11 gezogen.
+
+**2. `config.py:264-269` — der `BATCH_SIZE_DEEP`-Kommentar rechnete mit der alten
+900er-Formel.** Er behauptete weiterhin „MAX_TOKENS_DEEP landet bei ~9.200", nach der
+Kalibrierung liefert `max_tokens_for_batch(8)` tatsächlich 20.200 — über der im selben
+Kommentar genannten „~16.000er Zone", in der laut Spec 4.8 Timeouts drohen. Praktisch
+folgenlos (der Call läuft gestreamt), aber ein künftiger Leser hätte mit falschen Zahlen
+gerechnet. **Behoben**, inklusive Verweis auf die C.11-Verifikation.
+
+**3. `prompts/commodities_crypto_v2.txt:86` widersprach dem eigenen `thin`-Mechanismus.**
+Eine unveraendert aus v1 übernommene Hard-Rule verlangte weiterhin „every dimension needs
+&gt;= 2 evidence lines", direkt unter dem neuen EVIDENCE-QUALITY-Block, der ausdrücklich
+erlaubt, eine Dimension als `"thin"` mit weniger zu markieren, und explizit vor dem
+Auffüllen warnt. Der Prompt sagte dem Modell an zwei Stellen das Gegenteil — genau die
+Auffüll-Versuchung, die `thin` verhindern soll. `deep_analysis_v2.txt` hatte diese Zeile
+nicht; der Fehler war spezifisch auf die Rohstoff/Krypto-Variante beschränkt, weil Task 5
+den v1→v2-Abgleich dieser einen Zeile nicht in der Diff-Liste hatte. **Behoben:** Zeile
+umgeschrieben, verweist jetzt auf die EVIDENCE-QUALITY-Regel statt sie zu widersprechen.
+Kein Test pinnte den alten Wortlaut, keine Testkorrektur nötig.
+
+**4. Die Plan-Datei selbst blieb auf dem Task-11-Stand.** `git log` zeigt: letzter
+berührender Commit war `0a92d44` (Task 11); die beiden folgenden Fix-Commits (`7aae691`,
+`61557a1`) haben die Plan-Datei nicht angefasst, ihr Status-Kopf sagte weiterhin „NICHT
+produktionsreif". Unschädlich in Richtung Sicherheit (untertreibt statt zu übertreiben),
+aber dieselbe Kategorie Befund wie bei Plan 2 — nur diesmal nicht weil eine Task ohne
+Wirkung committet wurde, sondern weil der finale Stand nach Post-hoc-Fixes nirgends im
+Plan-Dokument selbst reflektiert war. **Behoben:** Task-Tabelle um die drei Fix-Commits
+ergänzt, Status auf „live verifiziert, Abschluss-Review durchgeführt" gezogen.
+
+⏳ **Minor, bewusst nicht behoben:** zwei Codezeilen in `deep_analysis.py`
+(Leerlisten-Kurzschluss in `analyze_batch()`, der Zweig „valides JSON ohne `results`-Liste
+im Batch-Fall") sind testtechnisch ungedeckt — bei 98 % Modul-Coverage nicht dringend.
+`TRUNCATION_RETRY_FACTOR` eskaliert bewusst nur einmal (1→2), nie weiter (Spec 10: begrenzte
+Tiefe) — im Verifikationslauf bei 46–54 % Auslastung kein beobachtetes Problem.
+
+**Fazit des Reviews:** Kern der Implementierung — Fehlerpfad, Token-Formel, Sidecar-
+Invariante, Verdrahtung in `run_pipeline()` — korrekt, gegen echte API-Läufe verifiziert,
+durch Tests abgesichert, die tatsächlich die relevanten Werte prüfen statt nur „es gab
+einen Retry". Plan 3a ist damit **abgeschlossen**. Nächster Schritt: Plan 3b.
 
 ---
 
