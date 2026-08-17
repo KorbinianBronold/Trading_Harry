@@ -482,6 +482,48 @@ def test_daily_mail_divergence_section_handles_empty_list():
     assert "Divergenz" in html
 
 
+def test_weekly_renders_core_and_divergence_performance_separately():
+    """I2 (Plan-3b-Abschluss-Review): divergence_summary wurde gebaut und in die
+    Nutzlast gelegt, aber nie gerendert. Der P/L eines Divergenz-Trades fiel
+    damit ersatzlos aus der Wochenmail -- und die kleinere Zahl las sich wie
+    eine ruhige Woche, nicht wie ein fehlender Zweig."""
+    from src.email_sender import render_weekly_html
+    payload = {
+        **WEEKLY_PAYLOAD,
+        "trades": [{"date": "2026-08-12", "ticker": "MSFT", "direction": "long",
+                    "entry_price": 400.0, "exit_price": 410.0,
+                    "exit_reason": "tp_hit", "profit_loss_eur": 31.0}],
+        "divergence_summary": {
+            "long_total": 2, "long_correct": 1, "long_avg_pl": -7.5,
+            "short_total": 0, "short_correct": 0, "short_avg_pl": 0.0,
+            "total_pl_eur": -15.0,
+            "trades": [{"date": "2026-08-13", "ticker": "GC=F",
+                        "direction": "long", "entry_price": 2400.0,
+                        "exit_price": 2385.0, "exit_reason": "sl_hit",
+                        "profit_loss_eur": -15.0}],
+        },
+    }
+    html = render_weekly_html(payload)
+    # Beide Gruppen sind benannt, sonst kann der Leser die Zahlen nicht zuordnen.
+    assert "Core" in html and "Divergenz" in html
+    # Beide P/L-Summen stehen da -- und getrennt, nicht addiert.
+    assert "28.0" in html, "core-Gesamt-P/L fehlt"
+    assert "-15.0" in html, "divergence-Gesamt-P/L fehlt"
+    assert "13.0" not in html, "core und divergence duerfen nie summiert werden"
+    # Beide Trade-Listen sind da.
+    assert "MSFT" in html and "GC=F" in html
+
+
+def test_weekly_divergence_block_is_visible_even_when_empty():
+    """Ein leerer Block ist eine Aussage ('keine Divergenz-Trades'), ein
+    fehlender ist eine stille Luecke."""
+    from src.email_sender import render_weekly_html
+    html = render_weekly_html({**WEEKLY_PAYLOAD, "divergence_summary": None})
+    # Auf das VOLLE Label pruefen: "Divergenz" allein steht auch im
+    # 16:10-Block, der Test waere sonst aus dem falschen Grund gruen.
+    assert "Divergenz (nur Analyse-Signal)" in html
+
+
 def test_weekly_revision_block_reads_the_split_shape():
     from src.email_sender import render_weekly_html
     empty_group = {"total": 0, "correct": 0, "pl_eur": 0.0}

@@ -364,6 +364,50 @@ def _weekly_revision_block(eff: dict | None) -> str:
     )
 
 
+def _weekly_performance_block(label: str, data: dict | None) -> str:
+    """Performance-Zahlen und Trade-Liste EINER candidate_class (Spec 5.6).
+
+    Zwei Bloecke nebeneinander, nie eine gemeinsame Summe -- dasselbe Muster wie
+    in _weekly_revision_block(). Der Grund ist derselbe wie dort: der Split
+    existiert, um core gegen divergence MESSEN zu koennen; eine vermischte Zahl
+    beantwortet die Frage nicht mehr.
+
+    ⚠️ Der Divergenz-Block muss sichtbar sein, auch wenn er leer ist. Seit Plan
+    3b traegt der Core-Block nur noch die core-Zeilen — ohne den zweiten Block
+    faellt das P/L eines Divergenz-Trades ersatzlos aus der Mail, und die
+    kleinere Gesamtzahl liest sich wie eine ruhige Woche statt wie ein fehlender
+    Zweig. Genau diese Verwechslung (kaputte Messung gegen kaputtes Verhalten)
+    hat dieses Projekt schon zweimal Zeit gekostet."""
+    if not data:
+        return (f'<h3>{label}</h3>'
+                '<p><i>Keine Daten für diese Gruppe.</i></p>')
+    trades = data.get("trades") or []
+    trades_rows = "".join(
+        f'<tr><td>{_h(t["date"])}</td><td>{_h(t["ticker"])}</td>'
+        f'<td>{_h(t["direction"])}</td>'
+        f'<td>{_h(t.get("entry_price"))}</td>'
+        f'<td>{_h(t.get("exit_price"))}</td>'
+        f'<td>{_h(t.get("exit_reason"))}</td>'
+        f'<td>{_h(t.get("profit_loss_eur"))}</td></tr>'
+        for t in trades
+    )
+    table = (
+        '<table border="1" cellpadding="4" cellspacing="0">'
+        '<tr><th>Datum</th><th>Ticker</th><th>Dir</th>'
+        '<th>Entry</th><th>Exit</th><th>Reason</th><th>P/L EUR</th></tr>'
+        + trades_rows + '</table>'
+    ) if trades_rows else '<p><i>Keine Trades.</i></p>'
+    return (
+        f'<h3>{label}</h3>'
+        f'<p>Long: {_h(data.get("long_correct"))}/{_h(data.get("long_total"))} | '
+        f'Ø P/L {_h(data.get("long_avg_pl"))} EUR</p>'
+        f'<p>Short: {_h(data.get("short_correct"))}/{_h(data.get("short_total"))} | '
+        f'Ø P/L {_h(data.get("short_avg_pl"))} EUR</p>'
+        f'<p><b>Sim. P/L {label}:</b> {_h(data.get("total_pl_eur"))} EUR</p>'
+        + table
+    )
+
+
 def _weekly_simple_table(title: str, headers: list[str],
                          rows: list[dict], keys: list[str]) -> str:
     """Generische Tabelle fuer die Weekly-Bloecke 2-4."""
@@ -381,34 +425,21 @@ def _weekly_simple_table(title: str, headers: list[str],
 
 
 def render_weekly_html(payload: dict) -> str:
-    """Reduced weekly e-mail. No learnings/prompt-optimizer in Sprint 1."""
-    trades_rows = "".join(
-        f'<tr><td>{_h(t["date"])}</td><td>{_h(t["ticker"])}</td>'
-        f'<td>{_h(t["direction"])}</td>'
-        f'<td>{_h(t.get("entry_price"))}</td>'
-        f'<td>{_h(t.get("exit_price"))}</td>'
-        f'<td>{_h(t.get("exit_reason"))}</td>'
-        f'<td>{_h(t.get("profit_loss_eur"))}</td></tr>'
-        for t in (payload.get("trades") or [])
-    )
+    """Reduced weekly e-mail. No learnings/prompt-optimizer in Sprint 1.
+
+    ⚠️ Die Performance-Zahlen auf der obersten payload-Ebene sind seit Plan 3b
+    NUR die core-Zeilen (main.load_recent_outcomes_aggregate). Die
+    Divergenz-Kandidaten stehen in payload['divergence_summary'] und bekommen
+    einen eigenen, gleich aufgebauten Block -- s. _weekly_performance_block()."""
     cost = payload.get("cost_summary") or {}
     return (
         '<html><body style="font-family:sans-serif;font-size:14px;">'
         f'<h1>Shares_Future Wochen-Summary — {_h(payload.get("week_label"))}</h1>'
-        '<h2>Performance</h2>'
-        f'<p>Long: {_h(payload.get("long_correct"))}/'
-        f'{_h(payload.get("long_total"))} | '
-        f'Ø P/L {_h(payload.get("long_avg_pl"))} EUR</p>'
-        f'<p>Short: {_h(payload.get("short_correct"))}/'
-        f'{_h(payload.get("short_total"))} | '
-        f'Ø P/L {_h(payload.get("short_avg_pl"))} EUR</p>'
-        f'<p><b>Sim. Gesamt-P/L:</b> {_h(payload.get("total_pl_eur"))} EUR</p>'
-        '<h2>Trades</h2>'
-        '<table border="1" cellpadding="4" cellspacing="0">'
-        '<tr><th>Datum</th><th>Ticker</th><th>Dir</th>'
-        '<th>Entry</th><th>Exit</th><th>Reason</th><th>P/L EUR</th></tr>'
-        + trades_rows + '</table>'
-        f'<p><b>Run-Kosten Woche:</b> {_h(cost.get("total_eur"))} EUR</p>'
+        '<h2>Performance &amp; Trades</h2>'
+        + _weekly_performance_block("Core (Technik bestätigt)", payload)
+        + _weekly_performance_block(
+            "Divergenz (nur Analyse-Signal)", payload.get("divergence_summary"))
+        + f'<p><b>Run-Kosten Woche:</b> {_h(cost.get("total_eur"))} EUR</p>'
         + _weekly_revision_block(payload.get("revision_effectiveness"))
         + _weekly_simple_table(
             "Signal-Veränderungen", ["Urteil", "Anzahl", "ausgewertet", "Ø P/L"],
