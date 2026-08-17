@@ -283,7 +283,7 @@ def rank_and_persist(
     # Mail-Kennzahl. Nicht persistierbar (Claude hat sich enthalten, es gibt
     # kein TP/SL), deshalb ausschliesslich ein Zaehler.
     tech_only_abstentions = sum(
-        1 for a in stock_analyses
+        1 for a in (*stock_analyses, *commodity_crypto_analyses)
         if a.get("direction") == "none"
         and signal_context.get(a.get("ticker", ""), {}).get("tech_direction")
             in ("long", "short")

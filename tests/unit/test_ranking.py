@@ -701,6 +701,25 @@ def test_rank_and_persist_counts_tech_only_abstentions(in_memory_db):
     assert result["divergence_stats"]["tech_only_abstentions"] == 1
 
 
+def test_rank_and_persist_counts_tech_only_abstentions_for_commodities_too(in_memory_db):
+    """Spec 5.5, mittlere Zeile ist NICHT auf Aktien beschraenkt: Commodities/
+    Krypto bekommen ebenfalls ein Technik-Signal (technical_signal.compute()
+    laeuft universumsweit) und eine Claude-Richtung (commodities_crypto_v2 kann
+    ebenfalls direction='none' liefern) -- die Enthaltungs-Kennzahl muss beide
+    Quellen zaehlen, nicht nur stock_analyses."""
+    conn = in_memory_db
+    db.init_schema(conn)
+    abstained = _analysis("GC=F", momentum=8.0, asset_class="commodity")
+    abstained["direction"] = "none"
+    result = rank_and_persist(
+        conn=conn, date="2026-08-17", run_type="pre_market",
+        stock_analyses=[], commodity_crypto_analyses=[abstained],
+        market_context=_market_ctx(),
+        signal_context={"GC=F": _ctx(tech_direction="long", tech_strength=2)},
+    )
+    assert result["divergence_stats"]["tech_only_abstentions"] == 1
+
+
 def test_score_total_and_dimension_weights_are_gone():
     """score_total()/config.DIMENSION_WEIGHTS entfallen (Spec 5.7)."""
     import src.ranking as ranking_module
