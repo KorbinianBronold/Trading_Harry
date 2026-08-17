@@ -415,8 +415,16 @@ WEEKLY_PAYLOAD = {
         },
         "since": "2026-07-25",
     },
-    "verdict_stats": [{"revision_verdict": "bestaetigt", "n": 6, "avg_pl": 9.2},
-                      {"revision_verdict": "gedreht", "n": 3, "avg_pl": -13.7}],
+    # Wie db.load_revision_verdict_stats() seit Plan 3b liefert: nach
+    # (revision_verdict, candidate_class) gruppiert, also zwei Zeilen je Urteil.
+    "verdict_stats": [
+        {"revision_verdict": "bestaetigt", "candidate_class": "core",
+         "n": 6, "n_evaluated": 5, "avg_pl": 9.2},
+        {"revision_verdict": "bestaetigt", "candidate_class": "divergence",
+         "n": 2, "n_evaluated": 2, "avg_pl": -3.4},
+        {"revision_verdict": "gedreht", "candidate_class": "core",
+         "n": 3, "n_evaluated": 3, "avg_pl": -13.7},
+    ],
     "guardrail_stats": [{"rule": "vix_no_new_longs", "enforced": 1, "n": 2},
                         {"rule": "sector_momentum_partial", "enforced": 0, "n": 9}],
     "skipped_stats": [{"ticker": "FAKE", "n_week": 4, "reasons": "no data",
@@ -480,6 +488,20 @@ def test_daily_mail_divergence_section_handles_empty_list():
     }
     html = render_daily_html(payload)
     assert "Divergenz" in html
+
+
+def test_weekly_verdict_table_distinguishes_the_two_candidate_classes():
+    """I3 (Plan-3b-Abschluss-Review): load_revision_verdict_stats() gruppiert
+    seit Plan 3b nach (revision_verdict, candidate_class), die Tabelle rendert
+    aber nur das Urteil -- zwei Zeilen 'bestaetigt' mit verschiedenen Zahlen und
+    nichts, was sie unterscheidet."""
+    from src.email_sender import render_weekly_html
+    html = render_weekly_html(WEEKLY_PAYLOAD)
+    section = html.split("Signal-Veränderungen", 1)[1].split("<h2>", 1)[0]
+    assert "Klasse" in section, "Spaltenueberschrift fehlt"
+    # Beide bestaetigt-Zeilen sind vollstaendig und zuordenbar:
+    assert "<td>bestaetigt</td><td>core</td><td>6</td>" in section
+    assert "<td>bestaetigt</td><td>divergence</td><td>2</td>" in section
 
 
 def test_weekly_renders_core_and_divergence_performance_separately():
