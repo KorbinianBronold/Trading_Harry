@@ -155,18 +155,20 @@ def _signal_context(
     return out
 
 
-def load_recent_outcomes_aggregate(conn, today: str) -> dict:
-    """7-day window for the weekly mail."""
-    since = (date_cls.fromisoformat(today) - timedelta(days=7)).isoformat()
-    rows = db.load_recent_outcomes(conn, since)
+def _direction_split(rows: list) -> dict:
+    """Baut die long/short-Zusammenfassung fuer eine Zeilenmenge -- extrahiert
+    aus load_recent_outcomes_aggregate(), damit core und divergence dieselbe
+    Rechnung nutzen, ohne sich zu vermischen (Spec 5.6)."""
     long_t = [r for r in rows if r["pred_direction"] == "long"]
     short_t = [r for r in rows if r["pred_direction"] == "short"]
+
     def _agg(items):
         n = len(items)
         correct = sum(1 for r in items if r["correct_direction_eod"])
         pl = sum(r["profit_loss_eur"] or 0.0 for r in items)
         avg = round(pl / n, 2) if n else 0.0
         return n, correct, avg, pl
+
     ln, lc, la, lp = _agg(long_t)
     sn, sc, sa, sp = _agg(short_t)
     return {
@@ -181,6 +183,21 @@ def load_recent_outcomes_aggregate(conn, today: str) -> dict:
             "profit_loss_eur": r["profit_loss_eur"],
         } for r in rows],
     }
+
+
+def load_recent_outcomes_aggregate(conn, today: str) -> dict:
+    """7-day window for the weekly mail. Seit Plan 3b (Spec 5.6) getrennt nach
+    candidate_class: die Top-Level-Kennzahlen bleiben 'core' (unveraendertes
+    Verhalten fuer bestehende Mail-Konsumenten), 'divergence_summary' traegt
+    dieselbe Struktur fuer die Divergenz-Kandidaten -- nie vermischt in einer
+    gemeinsamen Zahl."""
+    since = (date_cls.fromisoformat(today) - timedelta(days=7)).isoformat()
+    rows = db.load_recent_outcomes(conn, since)
+    core_rows = [r for r in rows if r["candidate_class"] == "core"]
+    div_rows  = [r for r in rows if r["candidate_class"] == "divergence"]
+    result = _direction_split(core_rows)
+    result["divergence_summary"] = _direction_split(div_rows)
+    return result
 
 
 def _premarket_flag(date: str, now_utc: str | None = None) -> int:

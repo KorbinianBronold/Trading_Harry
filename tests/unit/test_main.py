@@ -1616,3 +1616,36 @@ def test_run_pipeline_passes_signal_context_to_ranking(tmp_db_path, mocker):
     from main import run_pipeline
     run_pipeline(run_type="pre_market", date="2026-07-27", db_path=str(tmp_db_path))
     assert "signal_context" in mock_rank.call_args.kwargs
+
+
+def test_load_recent_outcomes_aggregate_separates_divergence(tmp_db_path):
+    from main import load_recent_outcomes_aggregate
+    from src import db
+    conn = db.connect(str(tmp_db_path))
+    db.init_schema(conn)
+    core_id = db.save_prediction(conn, {
+        "date": "2026-08-16", "run_type": "pre_market", "ticker": "AAPL",
+        "direction": "long", "entry_price": 100.0, "tp_price": 105.0,
+        "sl_price": 98.0, "rr_ratio": 2.5, "candidate_class": "core",
+    })
+    conn.execute(
+        """INSERT INTO outcomes (prediction_id, direction, evaluated_date,
+                                  correct_direction_eod, profit_loss_eur)
+           VALUES (?, 'long', '2026-08-17', 1, 15.0)""", (core_id,))
+    div_id = db.save_prediction(conn, {
+        "date": "2026-08-16", "run_type": "pre_market", "ticker": "GC=F",
+        "direction": "long", "entry_price": 2000.0, "tp_price": 2050.0,
+        "sl_price": 1980.0, "rr_ratio": 2.5, "candidate_class": "divergence",
+    })
+    conn.execute(
+        """INSERT INTO outcomes (prediction_id, direction, evaluated_date,
+                                  correct_direction_eod, profit_loss_eur)
+           VALUES (?, 'long', '2026-08-17', 0, -20.0)""", (div_id,))
+    conn.commit()
+
+    agg = load_recent_outcomes_aggregate(conn, today="2026-08-17")
+    assert agg["long_total"] == 1
+    assert agg["total_pl_eur"] == 15.0
+    assert agg["divergence_summary"]["long_total"] == 1
+    assert agg["divergence_summary"]["total_pl_eur"] == -20.0
+    conn.close()
