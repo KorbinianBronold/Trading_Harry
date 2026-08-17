@@ -17,17 +17,6 @@ log = logging.getLogger("shares_future.ranking")
 TOP_N = 10
 
 
-def score_total(analysis: dict) -> float:
-    """Weighted sum of the 8 score dimensions using config.DIMENSION_WEIGHTS."""
-    s = analysis.get("scores", {})
-    total = 0.0
-    for dim, weight in config.DIMENSION_WEIGHTS.items():
-        v = s.get(dim, {}).get("value")
-        if v is not None:
-            total += float(v) * weight
-    return round(total, 3)
-
-
 def _rule_name(error_message: str) -> str:
     """Leitet aus einer Guardrail-Fehlermeldung einen kurzen, gruppierbaren
     Regelnamen ab, damit die Weekly-Mail nach Regel aggregieren kann."""
@@ -149,12 +138,18 @@ def _guardrail_filter(
 
 def _to_prediction_row(
     analysis: dict, date: str, run_type: str, market_context: dict, conn,
+    signal_ctx: dict,
     etf_momentum: float | None = None, db_momentum: float | None = None,
 ) -> dict:
-    """Maps one guardrail-passing analysis dict onto the flat column layout
-    expected by db.save_prediction(). Der Sektor kommt aus ticker_sectors
-    (Sprint 3B / B.10), nicht mehr aus dem marktweiten market_context-Dict —
-    dort stand nie ein Wert, weshalb predictions.sector bisher immer NULL war."""
+    """Maps one classified analysis dict onto the flat column layout expected
+    by db.save_prediction(). Der Sektor kommt aus ticker_sectors, nicht mehr
+    aus dem marktweiten market_context-Dict.
+
+    signal_ctx traegt (Spec 20.5, Task 7/8): das Technik-Signal zum
+    Entscheidungszeitpunkt, die drei C.1-Indikatoren (vorher hart auf None),
+    den Phase-2-Scan-Wert. analysis traegt zusaetzlich die drei Schluessel
+    _candidate_class/_analysis_strength/_rank_score, die rank_and_persist()
+    beim Klassifizieren aufklebt (s. dort)."""
     scores = analysis.get("scores", {})
     sector_row = db.get_ticker_sector(conn, analysis["ticker"])
     return {
@@ -167,7 +162,7 @@ def _to_prediction_row(
         "tp_price": analysis["tp_price"], "tp_pct": analysis.get("tp_pct"),
         "sl_price": analysis["sl_price"], "sl_pct": analysis.get("sl_pct"),
         "rr_ratio": analysis["rr_ratio"],
-        "total_score": analysis.get("total_score") or score_total(analysis),
+        "total_score": analysis.get("total_score"),
         "probability_pct": analysis.get("probability_pct"),
         "confidence": analysis.get("confidence"),
         "score_market_env": scores.get("market_environment", {}).get("value"),
@@ -178,7 +173,12 @@ def _to_prediction_row(
         "score_sector":     scores.get("sector_trend", {}).get("value"),
         "score_catalyst":   scores.get("catalyst", {}).get("value"),
         "score_policy":     scores.get("policy_risk", {}).get("value"),
-        "atr_pct": None, "rsi_at_entry": None, "volume_ratio": None,
+        # C.1-Fix (Abschluss-Review Sprint 3C): standen hart auf None, obwohl
+        # laengst berechnet -- Voraussetzung dafuer, dass 3D auf diesen drei
+        # Dimensionen ueberhaupt lernen kann.
+        "atr_pct": signal_ctx.get("atr_pct"),
+        "rsi_at_entry": signal_ctx.get("rsi_14"),
+        "volume_ratio": signal_ctx.get("volume_ratio"),
         "market_regime": market_context.get("market_regime"),
         "vix_at_prediction": market_context.get("vix_level"),
         "sector": sector_row["name"] if sector_row else None,
@@ -190,6 +190,14 @@ def _to_prediction_row(
         "learnable": True,
         "hold_days_recommended": analysis.get("hold_days_recommended"),
         "intraday_range_pct": analysis.get("intraday_range_pct"),
+        "candidate_class": analysis.get("_candidate_class", "core"),
+        "tech_direction": signal_ctx.get("tech_direction"),
+        "tech_agreement": signal_ctx.get("tech_agreement"),
+        "tech_adx_band": signal_ctx.get("tech_adx_band"),
+        "tech_strength": signal_ctx.get("tech_strength"),
+        "analysis_strength": analysis.get("_analysis_strength"),
+        "rank_score": analysis.get("_rank_score"),
+        "news_strength": signal_ctx.get("news_strength"),
     }
 
 
@@ -197,6 +205,7 @@ def _run_checks(
     analysis: dict, conn, date: str, run_type: str,
     market_context: dict, sector_momentum: dict[int, dict],
     cluster_counts: dict[str, int], enforce: bool,
+    earnings_in_days: int | None = None,
 ) -> list[signal_checks.CheckResult]:
     """Fuehrt die B.3-Checks fuer EINE Analyse aus und persistiert jeden
     angeschlagenen Check als guardrail_rejects-Zeile — mit dem Momentum-Snapshot,
@@ -219,6 +228,8 @@ def _run_checks(
                 direction, etf_mom, db_mom, enforce=enforce),
             signal_checks.check_cluster(
                 sector_name, cluster_counts.get(sector_name or "", 0)),
+            signal_checks.check_earnings(
+                direction, earnings_in_days, enforce=enforce),
         ) if r is not None
     ]
 
@@ -239,14 +250,26 @@ def rank_and_persist(
     stock_analyses: list[dict],
     commodity_crypto_analyses: list[dict],
     market_context: dict,
+    signal_context: dict[str, dict],
     sector_momentum: dict[int, dict] | None = None,
     enforce_checks: bool = False,
 ) -> dict:
-    """Returns {top_long, top_short, commodities_crypto} und schreibt je Auswahl
-    eine predictions-Zeile.
+    """Returns {top_long, top_short, commodities_crypto, divergence,
+    divergence_stats} und schreibt je Auswahl eine predictions-Zeile.
 
-    `enforce_checks` steuert Entscheidung E4: run_pipeline() uebergibt False
-    (erheben und warnen), run_trade_proposals() uebergibt True (durchsetzen)."""
+    signal_context: dict[ticker -> dict] mit dem Technik-Signal, den drei
+    C.1-Indikatoren und dem Phase-2-Scan-Wert je Ticker (main.py baut das ueber
+    _signal_context()). Fehlt ein Ticker darin, verhaelt sich das wie ein
+    fehlendes Technik-Signal (_classify() faellt auf 'divergence').
+
+    enforce_checks steuert Entscheidung E4: run_pipeline() uebergibt False
+    (erheben und warnen), run_trade_proposals() uebergibt True (durchsetzen).
+
+    Klassifikation (Spec 5.3-5.5): core -> Top-10 nach rank_score, divergence
+    -> eigene, auf DIVERGENCE_TOP_N je Richtung gedeckelte Liste, conflict ->
+    verworfen als guardrail_reject (rule='tech_news_conflict'). Rohstoffe/
+    Krypto (cc=True in _classify) werden nie als conflict verworfen (Spec
+    20.5 #2)."""
     sector_momentum = sector_momentum or {}
     kept_stocks, abstained_stocks = _guardrail_filter(
         stock_analyses, conn, date, run_type)
@@ -254,56 +277,119 @@ def rank_and_persist(
         commodity_crypto_analyses, conn, date, run_type)
     abstained = abstained_stocks + abstained_cc
 
+    # Spec 5.5, mittlere Tabellenzeile: Technik hat Richtung, Analyse enthielt
+    # sich. _guardrail_filter() hat direction='none' oben bereits verworfen --
+    # hier nur zaehlen, wie viele davon eine Technik-Richtung hatten, fuer die
+    # Mail-Kennzahl. Nicht persistierbar (Claude hat sich enthalten, es gibt
+    # kein TP/SL), deshalb ausschliesslich ein Zaehler.
+    tech_only_abstentions = sum(
+        1 for a in stock_analyses
+        if a.get("direction") == "none"
+        and signal_context.get(a.get("ticker", ""), {}).get("tech_direction")
+            in ("long", "short")
+    )
+
     counts = cluster_counts(conn, [a["ticker"] for a in kept_stocks])
-    surviving: list[dict] = []
+    surviving_stocks: list[dict] = []
     for a in kept_stocks:
+        ctx = signal_context.get(a["ticker"], {})
         results = _run_checks(
             a, conn, date, run_type, market_context, sector_momentum,
             counts, enforce_checks,
+            earnings_in_days=ctx.get("earnings_in_days"),
         )
         if signal_checks.blocks(results):
             log.info(f"{a['ticker']}: durch B.3-Check verworfen "
                      f"({', '.join(r.rule for r in results if r.enforced)})")
             continue
-        surviving.append(a)
+        surviving_stocks.append(a)
 
-    longs  = sorted(
-        [a for a in surviving if a["direction"] == "long"],
-        key=lambda a: a.get("probability_pct") or 0, reverse=True,
-    )[:TOP_N]
-    shorts = sorted(
-        [a for a in surviving if a["direction"] == "short"],
-        key=lambda a: a.get("probability_pct") or 0, reverse=True,
-    )[:TOP_N]
+    # ⚠️ KOPIE, NICHT MUTATION -- das ist keine Stilfrage. Die Analyse-Dicts in
+    # stock_analyses/commodity_crypto_analyses sind DIESELBEN Objekte, die
+    # main.py danach als analyses_by_ticker an check_open_positions() gibt, und
+    # portfolio_check serialisiert sie ungefiltert in seinen Prompt
+    # (src/portfolio_check.py:53, current_snapshot -> json.dumps). Wer hier
+    # a["_candidate_class"] = ... schreibt, schickt drei neue Schluessel in
+    # einen live laufenden Claude-Prompt -- genau der Vorfall aus
+    # PROJECT_STATUS C.6, wo 29 Plan-1-Werte unbemerkt in vier Prompts liefen.
+    # Die angereicherten Kopien wandern in den Rueckgabewert und damit in die
+    # Mail; die Originale bleiben unberuehrt.
+    def _enrich(a: dict, klasse: str, strength: int, rank_score: int | None) -> dict:
+        return {**a, "_candidate_class": klasse,
+                "_analysis_strength": strength, "_rank_score": rank_score}
 
-    for a in (*longs, *shorts, *kept_cc):
+    core: list[dict] = []
+    divergence: list[dict] = []
+    conflicts = 0
+    for a in surviving_stocks:
+        ctx = signal_context.get(a["ticker"], {})
+        klasse, strength, rank_score = _classify(a, ctx, cc=False)
+        if klasse == "core":
+            core.append(_enrich(a, klasse, strength, rank_score))
+        elif klasse == "divergence":
+            divergence.append(_enrich(a, klasse, strength, rank_score))
+        else:  # conflict
+            conflicts += 1
+            db.log_guardrail_reject(conn, {
+                "date": date, "run_type": run_type, "ticker": a["ticker"],
+                "direction": a["direction"], "rule": "tech_news_conflict",
+                "detail": f"Analyse={a['direction']}, "
+                          f"Technik={ctx.get('tech_direction')}",
+                "enforced": 1,
+            })
+
+    cc_classified: list[dict] = []
+    for a in kept_cc:
+        ctx = signal_context.get(a["ticker"], {})
+        klasse, strength, rank_score = _classify(a, ctx, cc=True)
+        cc_classified.append(_enrich(a, klasse, strength, rank_score))
+
+    def _key(a: dict) -> tuple:
+        return _rank_key(a["_analysis_strength"], a["_rank_score"], a["ticker"])
+
+    longs  = sorted((a for a in core if a["direction"] == "long"),  key=_key)[:TOP_N]
+    shorts = sorted((a for a in core if a["direction"] == "short"), key=_key)[:TOP_N]
+
+    div_long  = sorted((a for a in divergence if a["direction"] == "long"),  key=_key)
+    div_short = sorted((a for a in divergence if a["direction"] == "short"), key=_key)
+    overflow = (max(0, len(div_long) - config.DIVERGENCE_TOP_N)
+               + max(0, len(div_short) - config.DIVERGENCE_TOP_N))
+    div_long  = div_long[:config.DIVERGENCE_TOP_N]
+    div_short = div_short[:config.DIVERGENCE_TOP_N]
+    divergence_kept = div_long + div_short
+
+    cc_sorted = sorted(cc_classified, key=_key)
+
+    for a in (*longs, *shorts, *divergence_kept, *cc_sorted):
+        ctx = signal_context.get(a["ticker"], {})
         etf_mom, db_mom = momentum_for(conn, a["ticker"], sector_momentum)
         db.save_prediction(conn, _to_prediction_row(
             a, date=date, run_type=run_type, market_context=market_context,
-            conn=conn, etf_momentum=etf_mom, db_momentum=db_mom,
+            conn=conn, signal_ctx=ctx, etf_momentum=etf_mom, db_momentum=db_mom,
         ))
 
-    # Die Zahl der Eingaben gehoert dazu: ohne sie ist nicht zu sehen, ob "0
-    # persistiert" aus null Kandidaten entstand oder aus neun, die alle
-    # weggefiltert wurden. Genau diese Luecke machte den 2026-08-04-Lauf
-    # unerklaerbar.
     n_in = len(list(stock_analyses)) + len(list(commodity_crypto_analyses))
-    n_out = len(longs) + len(shorts) + len(kept_cc)
+    n_out = len(longs) + len(shorts) + len(divergence_kept) + len(cc_sorted)
     log.info(
         f"Phase 4 done: {len(longs)} long, {len(shorts)} short, "
-        f"{len(kept_cc)} commodity/crypto persisted "
-        f"(aus {n_in} Analysen, davon {abstained} enthalten)"
+        f"{len(divergence_kept)} divergence, {len(cc_sorted)} commodity/crypto "
+        f"persisted (aus {n_in} Analysen, davon {abstained} enthalten, "
+        f"{conflicts} Technik-Konflikte, {overflow} Divergenz-Deckel-Ueberlauf)"
     )
 
-    # Unabhaengig von der Ursache: ein Lauf, der nichts persistiert, hat sein
-    # Ziel verfehlt und darf nicht als gruener Job durchrutschen. Am 2026-08-04
-    # endeten drei Laeufe genau so -- technisch erfolgreich, inhaltlich leer,
-    # ohne ein einziges WARNING. Die Diagnose kostete den Umweg ueber die
-    # heruntergeladene CI-Datenbank.
     if n_out == 0:
         log.warning(
             f"Phase 4: KEINE Prediction persistiert (aus {n_in} Analysen, "
             f"{abstained} Enthaltungen). Der Lauf bleibt ohne Ergebnis — "
             f"Ursache pruefen: zu wenig Historie, Guardrails oder Enthaltungen."
         )
-    return {"top_long": longs, "top_short": shorts, "commodities_crypto": kept_cc}
+    return {
+        "top_long": longs, "top_short": shorts,
+        "commodities_crypto": cc_sorted,
+        "divergence": divergence_kept,
+        "divergence_stats": {
+            "tech_only_abstentions": tech_only_abstentions,
+            "conflicts": conflicts,
+            "overflow": overflow,
+        },
+    }

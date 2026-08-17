@@ -3,7 +3,7 @@ import pytest
 
 import config
 from src import db
-from src.ranking import rank_and_persist, score_total, _classify, _rank_key
+from src.ranking import rank_and_persist, _classify, _rank_key
 
 
 def _analysis(ticker: str, direction: str = "long", momentum: float = 7.0,
@@ -44,6 +44,17 @@ def _market_ctx() -> dict:
     return {"vix_level": 14.0, "market_regime": "risk_on"}
 
 
+def _ctx(tech_direction="long", tech_strength=3, **overrides):
+    base = {
+        "tech_direction": tech_direction, "tech_agreement": 2,
+        "tech_adx_band": "normal", "tech_strength": tech_strength,
+        "atr_pct": 2.5, "rsi_14": 55.0, "volume_ratio": 0.9,
+        "earnings_in_days": None, "news_strength": 2,
+    }
+    base.update(overrides)
+    return base
+
+
 @pytest.fixture
 def valid_analysis() -> dict:
     """Guardrail-taugliches Analyse-Dict fuer AAPL long — mehrere Ranking-Tests
@@ -62,27 +73,30 @@ def _seed_sector_for(conn, ticker="AAPL", sector="Technology Hardware"):
     return sid
 
 
-def test_score_total_uses_dimension_weights(valid_analysis):
-    t = score_total(valid_analysis)
-    assert 6.0 < t < 8.5
-
-
 def test_rank_and_persist_top_10_long_and_short(in_memory_db):
+    """rank_score ersetzt probability_pct als Sortierschluessel (Spec 5.4):
+    alle 15 Long- bzw. Short-Kandidaten teilen dieselbe analysis_strength (nur
+    momentum unterscheidet sie ueberhaupt qualitativ von den Guardrails her,
+    nicht rankingseitig), die Reihenfolge kommt hier ausschliesslich aus dem
+    variierenden tech_strength je Ticker im signal_context."""
     db.init_schema(in_memory_db)
     stocks = (
-        [_analysis(f"L{i}", direction="long", momentum=8.0, prob=70 - i)
-         for i in range(15)]
-        + [_analysis(f"S{i}", direction="short", momentum=3.0, prob=70 - i)
-           for i in range(15)]
+        [_analysis(f"L{i}", direction="long", momentum=8.0) for i in range(15)]
+        + [_analysis(f"S{i}", direction="short", momentum=3.0) for i in range(15)]
     )
+    signal_context = {}
+    for i in range(15):
+        signal_context[f"L{i}"] = _ctx(tech_direction="long", tech_strength=(i % 4) + 1)
+        signal_context[f"S{i}"] = _ctx(tech_direction="short", tech_strength=(i % 4) + 1)
     out = rank_and_persist(
         conn=in_memory_db, date="2026-05-19", run_type="close",
         stock_analyses=stocks, commodity_crypto_analyses=[],
-        market_context=_market_ctx(),
+        market_context=_market_ctx(), signal_context=signal_context,
     )
     assert len(out["top_long"]) == 10
     assert len(out["top_short"]) == 10
-    assert out["top_long"][0]["probability_pct"] >= out["top_long"][-1]["probability_pct"]
+    assert out["top_long"][0]["_rank_score"] >= out["top_long"][-1]["_rank_score"]
+    assert out["top_short"][0]["_rank_score"] >= out["top_short"][-1]["_rank_score"]
     rows = in_memory_db.execute(
         "SELECT direction, COUNT(*) AS n FROM predictions GROUP BY direction"
     ).fetchall()
@@ -102,6 +116,7 @@ def test_rank_drops_guardrail_failures(in_memory_db, valid_analysis):
         stock_analyses=[good, bad_hold, bad_range, bad_momentum],
         commodity_crypto_analyses=[],
         market_context=_market_ctx(),
+        signal_context={"AAPL": _ctx(tech_direction="long", tech_strength=3)},
     )
     tickers = [p["ticker"] for p in out["top_long"]]
     assert tickers == ["AAPL"]
@@ -113,7 +128,7 @@ def test_rank_drops_direction_none(in_memory_db, valid_analysis):
     out = rank_and_persist(
         conn=in_memory_db, date="2026-05-19", run_type="close",
         stock_analyses=[valid_analysis], commodity_crypto_analyses=[],
-        market_context=_market_ctx(),
+        market_context=_market_ctx(), signal_context={},
     )
     assert out["top_long"] == []
     assert out["top_short"] == []
@@ -129,7 +144,7 @@ def test_rank_keeps_all_commodities_crypto(in_memory_db):
     out = rank_and_persist(
         conn=in_memory_db, date="2026-05-19", run_type="close",
         stock_analyses=[], commodity_crypto_analyses=cc,
-        market_context=_market_ctx(),
+        market_context=_market_ctx(), signal_context={},
     )
     assert {a["ticker"] for a in out["commodities_crypto"]} == {"GC=F", "SI=F", "BTC-USD"}
 
@@ -139,7 +154,7 @@ def test_rank_persists_predictions_with_score_dimensions(in_memory_db, valid_ana
     rank_and_persist(
         conn=in_memory_db, date="2026-05-19", run_type="close",
         stock_analyses=[valid_analysis], commodity_crypto_analyses=[],
-        market_context=_market_ctx(),
+        market_context=_market_ctx(), signal_context={},
     )
     row = in_memory_db.execute(
         "SELECT score_momentum, score_company, hold_days_recommended, "
@@ -160,6 +175,7 @@ def test_guardrail_reject_is_persisted(in_memory_db):
         conn=in_memory_db, date="2026-07-27", run_type="pre_market",
         stock_analyses=[_analysis("BAD", momentum=8.0, rr=1.0)],
         commodity_crypto_analyses=[], market_context=_market_ctx(),
+        signal_context={},
     )
     rows = db.load_guardrail_rejects_since(in_memory_db, since="2026-07-27")
     assert len(rows) == 1
@@ -178,6 +194,7 @@ def test_rejected_analysis_is_not_persisted_as_prediction(in_memory_db):
         conn=in_memory_db, date="2026-07-27", run_type="pre_market",
         stock_analyses=[_analysis("BAD", momentum=8.0, rr=1.0)],
         commodity_crypto_analyses=[], market_context=_market_ctx(),
+        signal_context={},
     )
     n = in_memory_db.execute(
         "SELECT COUNT(*) AS n FROM predictions").fetchone()["n"]
@@ -192,7 +209,7 @@ def test_direction_none_is_not_logged_as_guardrail_reject(in_memory_db):
     rank_and_persist(
         conn=in_memory_db, date="2026-07-27", run_type="pre_market",
         stock_analyses=[a], commodity_crypto_analyses=[],
-        market_context=_market_ctx(),
+        market_context=_market_ctx(), signal_context={},
     )
     assert db.load_guardrail_rejects_since(in_memory_db, since="2026-07-27") == []
 
@@ -215,7 +232,7 @@ def test_abstentions_are_counted_in_the_phase_4_summary(in_memory_db, caplog):
         rank_and_persist(
             conn=in_memory_db, date="2026-07-27", run_type="pre_market",
             stock_analyses=[abstain], commodity_crypto_analyses=[cc_abstain],
-            market_context=_market_ctx(),
+            market_context=_market_ctx(), signal_context={},
         )
 
     assert "2" in caplog.text and "enthalten" in caplog.text.lower()
@@ -234,7 +251,7 @@ def test_abstentions_stay_out_of_guardrail_rejects(in_memory_db, caplog):
         rank_and_persist(
             conn=in_memory_db, date="2026-07-27", run_type="pre_market",
             stock_analyses=[a], commodity_crypto_analyses=[],
-            market_context=_market_ctx(),
+            market_context=_market_ctx(), signal_context={},
         )
 
     assert db.load_guardrail_rejects_since(in_memory_db, since="2026-07-27") == []
@@ -249,7 +266,7 @@ def test_commodity_crypto_rejects_are_persisted_too(in_memory_db):
         commodity_crypto_analyses=[
             _analysis("GC=F", asset_class="commodity", intraday=0.2),
         ],
-        market_context=_market_ctx(),
+        market_context=_market_ctx(), signal_context={},
     )
     rows = db.load_guardrail_rejects_since(in_memory_db, since="2026-07-27")
     assert [r["ticker"] for r in rows] == ["GC=F"]
@@ -269,6 +286,7 @@ def test_guardrail_reject_rule_names_are_grouped_per_violation(in_memory_db):
             _analysis("M", direction="long", momentum=2.0),
         ],
         commodity_crypto_analyses=[], market_context=_market_ctx(),
+        signal_context={},
     )
     rows = db.load_guardrail_rejects_since(in_memory_db, since="2026-07-27")
     by_ticker = {r["ticker"]: r["rule"] for r in rows}
@@ -287,7 +305,7 @@ def test_guardrail_reject_rule_name_for_missing_field(in_memory_db):
     rank_and_persist(
         conn=in_memory_db, date="2026-07-27", run_type="pre_market",
         stock_analyses=[a], commodity_crypto_analyses=[],
-        market_context=_market_ctx(),
+        market_context=_market_ctx(), signal_context={},
     )
     rows = db.load_guardrail_rejects_since(in_memory_db, since="2026-07-27")
     assert rows[0]["rule"] == "required_field"
@@ -302,6 +320,7 @@ def test_prediction_row_takes_sector_from_ticker_sectors(in_memory_db):
         conn=in_memory_db, date="2026-07-27", run_type="pre_market",
         stock_analyses=[_analysis("NVDA", momentum=8.0)],
         commodity_crypto_analyses=[], market_context=_market_ctx(),
+        signal_context={},
     )
     row = in_memory_db.execute(
         "SELECT sector, vix_at_prediction, market_regime "
@@ -318,6 +337,7 @@ def test_prediction_row_sector_is_none_when_unmapped(in_memory_db):
         conn=in_memory_db, date="2026-07-27", run_type="pre_market",
         stock_analyses=[_analysis("UNMAPPED", momentum=8.0)],
         commodity_crypto_analyses=[], market_context=_market_ctx(),
+        signal_context={},
     )
     row = in_memory_db.execute(
         "SELECT sector FROM predictions WHERE ticker='UNMAPPED'"
@@ -340,6 +360,7 @@ def test_ranking_writes_sector_momentum_onto_the_prediction(in_memory_db, valid_
         market_context={}, sector_momentum={sid: {"etf_momentum": 1.2,
                                                   "db_momentum": 0.8,
                                                   "ticker_count": 4}},
+        signal_context={},
     )
     row = in_memory_db.execute(
         "SELECT sector_etf_momentum, sector_db_momentum FROM predictions").fetchone()
@@ -359,6 +380,7 @@ def test_soft_check_writes_reject_row_but_keeps_the_signal(in_memory_db, valid_a
         sector_momentum={sid: {"etf_momentum": -1.2, "db_momentum": None,
                                "ticker_count": 1}},
         enforce_checks=False,
+        signal_context={"AAPL": _ctx(tech_direction="long", tech_strength=3)},
     )
     assert len(out["top_long"]) == 1, "weicher Check darf nicht blockieren"
     rejects = in_memory_db.execute(
@@ -376,7 +398,7 @@ def test_no_reject_row_when_no_check_fires(in_memory_db, valid_analysis):
     rank_and_persist(
         conn=in_memory_db, date="2026-07-30", run_type="pre_market",
         stock_analyses=[valid_analysis], commodity_crypto_analyses=[],
-        market_context={}, sector_momentum={},
+        market_context={}, sector_momentum={}, signal_context={},
     )
     n = in_memory_db.execute(
         "SELECT COUNT(*) AS n FROM guardrail_rejects").fetchone()["n"]
@@ -418,7 +440,7 @@ def test_zero_persisted_predictions_raises_a_warning(in_memory_db, caplog):
         rank_and_persist(
             conn=in_memory_db, date="2026-07-27", run_type="pre_market",
             stock_analyses=[a], commodity_crypto_analyses=[],
-            market_context=_market_ctx(),
+            market_context=_market_ctx(), signal_context={},
         )
 
     warnings = [r for r in caplog.records if r.levelno >= logging.WARNING]
@@ -437,6 +459,7 @@ def test_no_warning_when_predictions_were_persisted(in_memory_db, caplog):
             stock_analyses=[_analysis("AAPL", momentum=8.0)],
             commodity_crypto_analyses=[],
             market_context=_market_ctx(),
+            signal_context={"AAPL": _ctx(tech_direction="long", tech_strength=3)},
         )
 
     assert result["top_long"] or result["top_short"], "Testaufbau: es muss etwas durchkommen"
@@ -539,3 +562,174 @@ def test_rank_key_ticker_breaks_ties_deterministically():
     a = _rank_key(strength=4, rank_score=12, ticker="AAA")
     b = _rank_key(strength=4, rank_score=12, ticker="ZZZ")
     assert a < b
+
+
+# ---------- rank_and_persist() Rewrite (Sprint 3B / Plan 3b, Task 8) ----------
+
+
+def test_rank_and_persist_sorts_by_rank_score_not_probability(in_memory_db):
+    """Ein Ticker mit niedrigerem probability_pct aber hoeherem rank_score
+    (mehr belegte Dimensionen * staerkerem Technik-Signal) landet vorn."""
+    conn = in_memory_db
+    db.init_schema(conn)
+    weak_evidence = _analysis("AAA", momentum=9.0, prob=90)
+    for dim in ("company_quality", "valuation", "risk"):
+        weak_evidence["scores"][dim]["evidence_quality"] = "thin"
+    strong_evidence = _analysis("ZZZ", momentum=8.0, prob=50)
+    signal_context = {
+        "AAA": _ctx(tech_strength=1),   # analysis_strength=5, rank_score=5
+        "ZZZ": _ctx(tech_strength=4),   # analysis_strength=8, rank_score=32
+    }
+    result = rank_and_persist(
+        conn=conn, date="2026-08-17", run_type="pre_market",
+        stock_analyses=[weak_evidence, strong_evidence],
+        commodity_crypto_analyses=[], market_context=_market_ctx(),
+        signal_context=signal_context,
+    )
+    assert [a["ticker"] for a in result["top_long"]] == ["ZZZ", "AAA"]
+
+
+def test_rank_and_persist_persists_rank_score_and_candidate_class(in_memory_db):
+    conn = in_memory_db
+    db.init_schema(conn)
+    a = _analysis("AAPL", momentum=8.0)
+    result = rank_and_persist(
+        conn=conn, date="2026-08-17", run_type="pre_market",
+        stock_analyses=[a], commodity_crypto_analyses=[],
+        market_context=_market_ctx(),
+        signal_context={"AAPL": _ctx(tech_direction="long", tech_strength=3)},
+    )
+    assert len(result["top_long"]) == 1
+    row = conn.execute(
+        "SELECT * FROM predictions WHERE ticker='AAPL'").fetchone()
+    assert row["candidate_class"] == "core"
+    assert row["tech_direction"] == "long"
+    assert row["tech_strength"] == 3
+    assert row["rank_score"] == row["analysis_strength"] * 3
+    # C.1-Fix: standen vorher hart auf None
+    assert row["atr_pct"] == 2.5
+    assert row["rsi_at_entry"] == 55.0
+    assert row["volume_ratio"] == 0.9
+
+
+def test_rank_and_persist_drops_conflicting_signals_as_guardrail_reject(in_memory_db):
+    conn = in_memory_db
+    db.init_schema(conn)
+    a = _analysis("AAPL", momentum=8.0)
+    result = rank_and_persist(
+        conn=conn, date="2026-08-17", run_type="pre_market",
+        stock_analyses=[a], commodity_crypto_analyses=[],
+        market_context=_market_ctx(),
+        signal_context={"AAPL": _ctx(tech_direction="short", tech_strength=3)},
+    )
+    assert result["top_long"] == []
+    row = conn.execute(
+        "SELECT * FROM predictions WHERE ticker='AAPL'").fetchone()
+    assert row is None
+    # Nach der Regel filtern, nicht blind die erste Zeile nehmen: die weichen
+    # B.3-Checks schreiben in denselben Topf, und ein kuenftiger Default (etwa
+    # ein gesetztes Sektor-Momentum im Fixture) legte sonst eine zweite Zeile
+    # davor -- der Test schluege dann mit einer irrefuehrenden Meldung fehl.
+    rejects = conn.execute(
+        "SELECT rule FROM guardrail_rejects WHERE ticker='AAPL'").fetchall()
+    assert "tech_news_conflict" in {r["rule"] for r in rejects}
+
+
+def test_rank_and_persist_puts_divergent_signals_in_their_own_list(in_memory_db):
+    conn = in_memory_db
+    db.init_schema(conn)
+    a = _analysis("AAPL", momentum=8.0)
+    result = rank_and_persist(
+        conn=conn, date="2026-08-17", run_type="pre_market",
+        stock_analyses=[a], commodity_crypto_analyses=[],
+        market_context=_market_ctx(),
+        signal_context={"AAPL": _ctx(tech_direction="neutral", tech_strength=0)},
+    )
+    assert result["top_long"] == []
+    assert [d["ticker"] for d in result["divergence"]] == ["AAPL"]
+    row = conn.execute(
+        "SELECT * FROM predictions WHERE ticker='AAPL'").fetchone()
+    assert row is not None
+    assert row["candidate_class"] == "divergence"
+    assert row["rank_score"] is None
+
+
+def test_rank_and_persist_caps_divergence_at_divergence_top_n(in_memory_db, monkeypatch):
+    conn = in_memory_db
+    db.init_schema(conn)
+    monkeypatch.setattr(config, "DIVERGENCE_TOP_N", 2)
+    analyses = [_analysis(f"T{i}", momentum=8.0) for i in range(4)]
+    signal_context = {f"T{i}": _ctx(tech_direction="neutral", tech_strength=0)
+                      for i in range(4)}
+    result = rank_and_persist(
+        conn=conn, date="2026-08-17", run_type="pre_market",
+        stock_analyses=analyses, commodity_crypto_analyses=[],
+        market_context=_market_ctx(), signal_context=signal_context,
+    )
+    assert len(result["divergence"]) == 2
+    assert result["divergence_stats"]["overflow"] == 2
+
+
+def test_rank_and_persist_commodity_survives_opposing_tech_signal(in_memory_db):
+    """Spec 20.5 #2: Rohstoffe/Krypto werden vom Technik-Signal nie verworfen."""
+    conn = in_memory_db
+    db.init_schema(conn)
+    cc = _analysis("GC=F", momentum=8.0, asset_class="commodity")
+    result = rank_and_persist(
+        conn=conn, date="2026-08-17", run_type="pre_market",
+        stock_analyses=[], commodity_crypto_analyses=[cc],
+        market_context=_market_ctx(),
+        signal_context={"GC=F": _ctx(tech_direction="short", tech_strength=2)},
+    )
+    assert [a["ticker"] for a in result["commodities_crypto"]] == ["GC=F"]
+    row = conn.execute("SELECT * FROM predictions WHERE ticker='GC=F'").fetchone()
+    assert row["candidate_class"] == "core"
+
+
+def test_rank_and_persist_counts_tech_only_abstentions(in_memory_db):
+    """Spec 5.5, mittlere Zeile: Technik hat Richtung, Analyse enthaelt sich."""
+    conn = in_memory_db
+    db.init_schema(conn)
+    abstained = _analysis("AAPL", momentum=8.0)
+    abstained["direction"] = "none"
+    result = rank_and_persist(
+        conn=conn, date="2026-08-17", run_type="pre_market",
+        stock_analyses=[abstained], commodity_crypto_analyses=[],
+        market_context=_market_ctx(),
+        signal_context={"AAPL": _ctx(tech_direction="long", tech_strength=2)},
+    )
+    assert result["divergence_stats"]["tech_only_abstentions"] == 1
+
+
+def test_score_total_and_dimension_weights_are_gone():
+    """score_total()/config.DIMENSION_WEIGHTS entfallen (Spec 5.7)."""
+    import src.ranking as ranking_module
+    assert not hasattr(ranking_module, "score_total")
+    assert not hasattr(config, "DIMENSION_WEIGHTS")
+
+
+def test_ranking_does_not_mutate_the_input_analyses(in_memory_db):
+    """Die Analyse-Dicts gehen nach dem Ranking unveraendert an
+    check_open_positions() weiter, das sie in seinen Prompt json.dumps't
+    (src/portfolio_check.py:53). Ein hier angehefteter Schluessel landete
+    unbemerkt in einem bezahlten Claude-Call -- der Vorfall aus C.6.
+
+    Pinnt die Schluesselmenge, nicht nur die drei neuen Namen: jeder kuenftige
+    Zusatz faellt damit auf."""
+    conn = in_memory_db
+    db.init_schema(conn)
+    a = _analysis("AAPL", momentum=8.0)
+    cc = _analysis("GC=F", momentum=8.0, asset_class="commodity")
+    keys_before = (set(a.keys()), set(cc.keys()))
+
+    rank_and_persist(
+        conn=conn, date="2026-08-17", run_type="pre_market",
+        stock_analyses=[a], commodity_crypto_analyses=[cc],
+        market_context=_market_ctx(),
+        signal_context={
+            "AAPL": _ctx(tech_direction="long", tech_strength=3),
+            "GC=F": _ctx(tech_direction="long", tech_strength=2),
+        },
+    )
+
+    assert (set(a.keys()), set(cc.keys())) == keys_before

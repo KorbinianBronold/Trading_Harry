@@ -332,17 +332,6 @@ CAPITAL_COM_IDENTIFIER = os.getenv("CAPITAL_COM_IDENTIFIER")  # account email/lo
 CAPITAL_COM_PASSWORD   = os.getenv("CAPITAL_COM_PASSWORD")
 CAPITAL_COM_BASE_URL   = "https://demo-api-capital.backend-capital.com"
 
-DIMENSION_WEIGHTS = {
-    "market_environment": 0.10,
-    "company_quality":    0.18,
-    "valuation":          0.12,
-    "momentum":           0.22,
-    "risk":               0.10,
-    "sector_trend":       0.10,
-    "catalyst":           0.10,
-    "policy_risk":        0.08,
-}
-
 USE_FULL_SP500 = os.getenv("USE_FULL_SP500", "false").lower() == "true"
 
 # Full S&P 500 ticker list. Replace with complete 500-symbol list before enabling USE_FULL_SP500.
