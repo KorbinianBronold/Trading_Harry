@@ -1,6 +1,6 @@
 # Analyse-Pipeline-Umbau — Design
 
-**Status:** 🟡 **Spezifikation gültig, Umsetzung teilweise erfolgt** (Stand 2026-08-16)
+**Status:** 🟡 **Spezifikation gültig, Umsetzung teilweise erfolgt** (Stand 2026-08-17)
 **Erstellt:** 2026-08-11
 
 - **Plan 1 (Fundament)** ✅ abgeschlossen — 17 Indikatoren, Technik-Signal, Schema.
@@ -10,9 +10,18 @@
   Sidecar), § 4.6 (`broad_scan.py`, verdrahtet), § 4.7 (Cutoff + `cutoff_log`,
   `TECH_MIN_FOR_DEEP`), § 8 (Finnhub-Ratenbegrenzung, Wochen-Vorlauf), § 18.1b–d.
   PROJECT_STATUS **C.7** und **C.8**
-- **Plan 3 (Analyse & Ranking)** ⏳ offen, **in 3a und 3b geteilt** (§ 20.1) —
-  § 4.8 (Batch-Tiefenanalyse), § 5 (`rank_score`), Prompts v2. **Hier sitzt der
-  Kostenhebel** (§ 13.2: 0,034 statt 0,12 EUR je Ticker)
+- **Plan 3a (Batch-Tiefenanalyse)** ⚠️ **code-vollständig (11/11 Tasks), nicht
+  produktionsreif** — § 4.8 (Batch nach Sub-Sektor, Streaming), § 5.2 (`thin`, Polarität),
+  § 9 (Prompts v2), § 10 (Fehlerpfad) sind umgesetzt. **Der Kostenhebel aus § 13.2
+  (0,034 statt 0,12 EUR je Ticker) ist NICHT belegt:** der Testlauf nach § 12 hat
+  `MAX_TOKENS_DEEP` widerlegt — `stop_reason=max_tokens` bis hinunter zu
+  2-Ticker-Batches, gemessen wurden ~0,074–0,079 EUR je erfolgreich analysiertem Ticker.
+  `TOKENS_PER_TICKER_DEEP` braucht eine Neukalibrierung, bevor § 13.2 überhaupt prüfbar
+  ist. PROJECT_STATUS **C.9**
+- **Plan 3b (Ranking)** ⏳ offen, noch keine Plan-Datei — § 5 (`rank_score`,
+  `candidate_class`), Mail-Abschnitt. Wartet bewusst auf den Token-Fix: `rank_score` soll
+  gegen echte Beispieldaten entstehen, und die liefert erst ein Lauf ohne abgeschnittene
+  Batches
 **Betrifft:** Phasen 1c/2/3 sowie Ranking und Scoring in `pre_market`
 **Nicht betroffen:** Preismodell und Snapshots, `final_close`, Evaluator, Cron-Struktur,
 DB-Persistenz, R/R- und VIX-Logik, CFD-Eignungsregeln, Mail-Versandmechanik

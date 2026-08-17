@@ -1,6 +1,22 @@
 # Shares_Future – SP500 CFD Research Tool
 
-**Zuletzt aktualisiert:** 2026-08-15 — ✅ **Plan 2 (Trichter) abgeschlossen inkl.
+**Zuletzt aktualisiert:** 2026-08-17 — ⚠️ **Plan 3a (Batch-Tiefenanalyse) ist
+code-vollständig (11/11 Tasks), aber NICHT produktionsreif.** Phase 3 läuft gebatcht nach
+Sub-Sektor, `deep_analysis_v2` + `commodities_crypto_v2` sind aktiv, `call_claude()` kann
+streamen. **Der Testlauf (Task 10) hat `MAX_TOKENS_DEEP` widerlegt:** `stop_reason=max_tokens`
+trat in beiden Messläufen mehrfach auf, in einem Fall sogar bei einem auf **2 Ticker**
+halbierten Batch — `TOKENS_PER_TICKER_DEEP = 900` ist zu niedrig für den v2-Prompt. Lauf 1
+(Batch 8) verlor dadurch 8 von 16 Kandidaten, Lauf 2 (Batch 4) zwei — und war dabei
+**teurer und langsamer**, weil kleinere Batches nur öfter in die Halbierungs-Kaskade
+laufen. **Vor dem nächsten echten Lauf muss `TOKENS_PER_TICKER_DEEP` neu kalibriert
+werden.** `BATCH_SIZE_DEEP = 8` ist unverändert ein unbestätigter Startwert, kein
+Messergebnis. Details: PROJECT_STATUS **C.9**.
+Nebenbefund, separat behoben: `web_search_calls` stand **strukturell immer auf 0** —
+`server_tool_use` kommt als `dict`, wurde aber mit `getattr()` gelesen. Betraf jeden
+Websuche-Aufrufer seit Einführung des Tools; alle bisher ausgewiesenen
+`web_search_eur`-Werte sind dadurch zu niedrig. **770 Tests grün, 91,50 % Coverage.**
+
+Davor, 2026-08-15 — ✅ **Plan 2 (Trichter) abgeschlossen inkl.
 Abschluss-Review** über `c978d70..HEAD`: vier Befunde, alle behoben. Zwei verfehlten den
 Zweck ihrer eigenen Task — **Phase 2b hatte keinen Produktions-Aufrufer** (Task 7 baute
 `fetch_missing_fundamentals()`, Task 10 verdrahtete sie entgegen der eigenen Notiz nicht;
@@ -94,11 +110,34 @@ Die Pipeline-Phasen lassen sich an `main.py:run_pipeline()` ablesen.
 - ATR-Mindest: SP500_MIN_ATR_PCT = 2.0
 - MAX_HOLD_DAYS = 5, HOLD_TARGET = "intraday"
 - Timezone: TZ="Europe/Berlin" in Bash, ZoneInfo("Europe/Berlin") in Python
-- ⚠️ Prompts sind **nur über den Dateinamen** versioniert (`deep_analysis_v1.txt`), und die
+- ⚠️ Prompts sind **nur über den Dateinamen** versioniert (`deep_analysis_v2.txt`), und die
   Version steht fest im Modul-Import. **A/B-Testing gibt es nicht** — die Tabelle
   `prompt_versions` wird von `init_schema()` angelegt und nirgends gelesen oder
   geschrieben (verifiziert 2026-08-09). Ein Wechsel ist eine Code-Änderung, kein
   Datenbank-Eintrag. Gehört zu Sprint 3D.
+  ⚠️ Seit Plan 3a sind **`deep_analysis_v2` und `commodities_crypto_v2` aktiv**; die
+  v1-Dateien liegen unangetastet daneben (Regel 10: Prompts werden nie überschrieben,
+  neue Versionen sind neue Dateien). Wer eine v1-Datei ändert, ändert nichts am Verhalten.
+- **Phase 3 analysiert gebatcht nach Sub-Sektor, nicht je Ticker.** Ein Sub-Sektor ist
+  eine **unteilbare Einheit**, die per First-Fit-Decreasing in Batches bis
+  `BATCH_SIZE_DEEP` gepackt wird — zerrissen wird er nur, wenn er den Wert allein
+  überschreitet. Grund: die Vergleichbarkeit innerhalb eines Prompts ist der Punkt der
+  Übung; ein halber Sub-Sektor in zwei Calls verliert genau die.
+  ⚠️ **`BATCH_SIZE_DEEP = 8` ist ein unbestätigter Startwert, kein Messergebnis** — und
+  `TOKENS_PER_TICKER_DEEP = 900` ist durch den Testlauf **widerlegt** (s. Kopf und
+  PROJECT_STATUS C.9). Ein abgeschnittener Batch (`stop_reason == "max_tokens"`) gilt
+  als Fehler und wird **nie** teilverwertet; der Fehlerpfad ist einmal wiederholen →
+  einmal halbieren → aufgeben.
+- ⚠️ `evidence_quality: "thin"` umgeht die Zwei-Belege-Pflicht der Guardrails — aber
+  **nur bei exakt diesem Wert**. Ein fehlendes Feld (v1-Ergebnis) oder ein unbekannter
+  Wert fällt auf die strenge Regel zurück. Eine thin-Dimension wird **behalten**, nicht
+  weggelassen: stilles Weglassen war in diesem Projekt wiederholt eine Diagnose-Falle.
+- ⚠️ **`server_tool_use` aus der Anthropic-Antwort ist ein `dict`, kein Objekt.**
+  `Usage.model_config` hat `extra="allow"`, Pydantic reicht unbekannte Felder als rohes
+  JSON durch. `getattr()` darauf liefert **immer** den Default und hielt
+  `web_search_calls` seit Einführung des Websuche-Tools dauerhaft auf 0 — alle vor dem
+  2026-08-17 ausgewiesenen `web_search_eur`-Werte sind zu niedrig. Gilt sinngemäss für
+  jedes künftige `usage`-Feld, das das SDK nicht selbst modelliert.
 - `SECTOR_ALIASES` normalisiert Finnhubs `finnhubIndustry` auf 21 **Sub-Sektoren**
   (feiner als GICS: Halbleiter gegen SOXX statt gegen den breiten XLK). Unbekannte
   Rohwerte werden mit WARN geloggt und bleiben ungemappt — nie stillschweigend
@@ -115,10 +154,14 @@ Die Pipeline-Phasen lassen sich an `main.py:run_pipeline()` ablesen.
 - `technical_indicators` trägt 17 Indikatoren, von denen zunächst nur vier etwas
   steuern. Der Rest läuft mit, damit 3D später Historie hat statt bei null zu beginnen.
 - ⚠️ **Sidecar-Invariante: neue Werte laufen *neben* `td`, nie darin.** Das `td`-Dict aus
-  `_process_ticker()` wird in **vier** Claude-Prompts `json.dumps`'t (`quick_filter`,
-  `deep_analysis`, `commodities_crypto` und über `main.py`s `snapshots` auch
-  `portfolio_check`). Wer dort einen Schlüssel hinzufügt, ändert stillschweigend vier
-  Prompts. Deshalb reist `collect()` mit einem dritten Rückgabewert: dem **Sidecar**
+  `_process_ticker()` wird in **drei live laufenden** Claude-Prompts `json.dumps`'t:
+  `deep_analysis` (seit Plan 3a als `snapshot` im Batch-Eintrag), `commodities_crypto`
+  und über `main.py`s `snapshots` auch `portfolio_check`. Wer dort einen Schlüssel
+  hinzufügt, ändert stillschweigend alle drei.
+  ⚠️ Zwei Module sind **bewusst nicht** in dieser Liste: `broad_scan` setzt seine Nutzlast
+  über `_payload_for_ticker()` explizit zusammen statt `td` durchzureichen (R23), und
+  `quick_filter` ist seit Plan 2 toter Code — im Repo, aber nicht in der Pipeline.
+  Deshalb reist `collect()` mit einem dritten Rückgabewert: dem **Sidecar**
   (`premarket_change_pct` + die vier Technik-Signal-Werte), und die 29 Plan-1-Indikatoren
   liegen in einem separaten `extra_indicators`-Dict, das erst unmittelbar vor
   `_persist_indicators()` dazukommt. Anlass war ein echter Vorfall: Plan 1 schickte 29
@@ -332,8 +375,17 @@ und der getroffenen Entscheidungen. Kurzfassung:
     der alte Weg. `run_weekly()` füllt `fundamentals_cache` + `earnings_next_date` fürs
     ganze Universum, `FinnhubProvider` drosselt sich auf 60 **Requests**/Minute.
     Stand: PROJECT_STATUS **C.7** (zwölf Umsetzungs-Befunde) und **C.8** (Review).
-  - **Plan 3 (Analyse & Ranking)** — offen; bringt Phase-3-Batching (der eigentliche
-    Kostenhebel: ~0,034 statt ~0,12 EUR je Ticker), `deep_analysis_v2` und `rank_score`.
+  - **Plan 3 (Analyse & Ranking)** — in **3a** und **3b** geteilt:
+    - **Plan 3a (Batch-Tiefenanalyse)** —
+      `…/plans/2026-08-16-analyse-pipeline-plan3a-batch-tiefenanalyse.md`,
+      ⚠️ **11/11 Tasks umgesetzt, aber nicht produktionsreif**: Phase 3 batcht nach
+      Sub-Sektor, v2-Prompts sind aktiv, `call_claude()` streamt — der Testlauf hat
+      aber `MAX_TOKENS_DEEP` widerlegt (s. Kopf). Der angezielte Kostenhebel
+      (~0,034 statt ~0,12 EUR je Ticker) ist damit **nicht belegt**: gemessen wurden
+      ~0,074–0,079 EUR je erfolgreich analysiertem Ticker, mit Batch-Ausfällen.
+      Stand: PROJECT_STATUS **C.9**.
+    - **Plan 3b (Ranking)** — offen, noch keine Plan-Datei; bringt `rank_score`,
+      `candidate_class` und den Mail-Abschnitt. Wartet auf den Token-Fix aus C.9.
 - **3D / 3E / 3F** sind ⚠️ **Platzhalter** — bei Erreichen aktiv nachfragen und den
   Sprint gemeinsam ausarbeiten, **bevor** Code entsteht. Die Stichpunkte dort sind
   keine Spezifikation.

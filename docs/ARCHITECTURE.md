@@ -1,6 +1,18 @@
 # Shares_Future – Architektur & Design
 
-**Zuletzt aktualisiert:** 2026-08-15 — **Sprint 3C / Plan 2 (Trichter) abgeschlossen
+**Zuletzt aktualisiert:** 2026-08-17 — **Sprint 3C / Plan 3a (Batch-Tiefenanalyse)
+code-vollständig, 11/11 Tasks — aber ⚠️ nicht produktionsreif (PROJECT_STATUS C.9).**
+Neu in diesem Dokument: **Phase 3 ist eine Batch-Phase** (Grafik + Modul 4 neu
+beschrieben — `build_batches()` / `analyze_batch()` / `analyze_batches()`,
+`analyze_asset()` und `analyze_assets()` sind ersatzlos entfallen), die beiden
+**v2-Prompts** in der Prompt-Tabelle, und die Test-Baseline auf 770.
+⚠️ **Der Testlauf hat `MAX_TOKENS_DEEP` widerlegt** — `stop_reason=max_tokens` trat
+wiederholt auf, bis hinunter zu 2-Ticker-Batches. `TOKENS_PER_TICKER_DEEP = 900` muss vor
+dem nächsten echten Lauf neu kalibriert werden; `BATCH_SIZE_DEEP = 8` bleibt ein
+unbestätigter Startwert. Ebenfalls behoben: `web_search_calls` zählte strukturell immer 0
+(`server_tool_use` ist ein `dict`, wurde mit `getattr()` gelesen).
+
+Davor, 2026-08-15 — **Sprint 3C / Plan 2 (Trichter) abgeschlossen
 inkl. Abschluss-Review (13/13 Tasks, vier behobene Review-Befunde — PROJECT_STATUS C.8).**
 Neu daraus in diesem Dokument: **Phase 2b** als eigene Box in der Pipeline-Grafik (sie war
 nie verdrahtet), die Klarstellung, dass die Finnhub-Drosselung je **Request** zählt statt
@@ -180,17 +192,25 @@ DB-Close.
 └─────────────────────────────────────────────────────────────────┘
                               ↓
 ┌─────────────────────────────────────────────────────────────────┐
-│          PHASE 3: DEEP-ANALYSIS (≤ MAX_DEEP_ANALYSIS Ticker)     │
-│  Input: adapt_cutoff_to_quick_filter(all_evaluated),             │
-│         trend_context, policy_context (Interim-Adapter bis       │
-│         Plan 3 deep_analysis_v2 einführt)                        │
-│  Claude: Sonnet × ≤50 Calls (1 Ticker pro Call) + web_search    │
-│  Output: list[{ticker, direction, scores{8}, hold_days, ...}]   │
+│      PHASE 3: BATCH-TIEFENANALYSE (≤ MAX_DEEP_ANALYSIS Ticker)   │
+│  Input: selected (nur die Cutoff-Auswahl!), cutoff_by_ticker,    │
+│         trend_context, policy_context                            │
+│  Batching: build_batches() gruppiert nach SUB-SEKTOR, packt      │
+│    ganze Sub-Sektoren per First-Fit-Decreasing bis               │
+│    BATCH_SIZE_DEEP (8); zerrissen nur, wenn einer allein         │
+│    darueber liegt. Deterministisch sortiert (3D-Vergleichbarkeit)│
+│  Claude: Sonnet × 1 Call PRO BATCH + web_search, gestreamt       │
+│  max_tokens: n × TOKENS_PER_TICKER_DEEP + Reserve, min 4096      │
+│  Output: (analyses[], failed_tickers[])                          │
 │  8-Dim Score: market_env, company_quality, valuation, momentum, │
 │              risk, sector_trend, catalyst, policy_risk           │
-│  Cost: ~2.50 EUR (biggest cost)                                  │
-│  Guardrails: R/R ≥ 1.5, hold_days ≤ 5, intraday_range ≥ 1%    │
-│  Fail: ✅ Skip Ticker, continue                                   │
+│  Fail: stop_reason=max_tokens ODER unparsebar → DeepAnalysisError│
+│    → 1× wiederholen → 1× halbieren → aufgeben (Ticker in failed) │
+│    ⚠️ Ein abgeschnittener Batch wird NIE teilverwertet           │
+│  Guardrails: R/R ≥ 1.5, hold_days ≤ 5, intraday_range ≥ 1%,   │
+│    Zwei-Belege-Pflicht — ausser evidence_quality == "thin"       │
+│  ⚠️ NICHT PRODUKTIONSREIF: max_tokens trat im Testlauf bis       │
+│     hinunter zu 2-Ticker-Batches auf (PROJECT_STATUS C.9)        │
 │  Order: Sequential (nicht parallel) für deterministisches Cost-Tracking│
 └─────────────────────────────────────────────────────────────────┘
                               ↓
@@ -511,8 +531,9 @@ def broad_scan_batch(ticker_datas, sidecar, trend_context, market_context,
 (Task 10):** Kandidat = `news_strength ≥ 1 ODER tech_strength ≥ TECH_MIN_FOR_DEEP` (= 2),
 Sortierung `(news_strength, |premarket_change_pct|, tech_strength, ticker)`, Schnitt bei
 `MAX_DEEP_ANALYSIS` (50, seit Task 10 gelesen — vorher 80 und tot). Die ausgewählten
-Kandidaten laufen über `deep_analysis.adapt_cutoff_to_quick_filter()` (Interim-Adapter,
-bis Plan 3 `deep_analysis_v2` einführt) an `analyze_assets()` weiter; **jeder** bewertete
+Kandidaten laufen seit Plan 3a **direkt** an `analyze_batches()` weiter — der
+Interim-Adapter `adapt_cutoff_to_quick_filter()` ist entfallen, und Phase 3 sieht
+ausschliesslich `selected` statt aller Ticker plus Exclude-Flag; **jeder** bewertete
 Ticker (nicht nur die ausgewählten) landet über `db.log_cutoff()` in der Tabelle
 `cutoff_log` — 3D braucht die volle Liste, um den 51. mit dem 50. zu vergleichen. Die
 Rohstoffe/Krypto umgehen Scan, Cutoff und 2b komplett (§ 18.3), Pflicht-Kandidaten aus
@@ -525,9 +546,11 @@ kein `CostCapExceeded` — günstiger als der alte Weg über `quick_filter` (3,9
 
 ---
 
-### 4. **`src/deep_analysis.py`** (Phase 3)
+### 4. **`src/deep_analysis.py`** (Phase 3) — ⚠️ Batch-Phase seit Plan 3a
 
-Tiefenanalyse mit Web-Search (8-dimensionales Scoring).
+Tiefenanalyse mit Web-Search (8-dimensionales Scoring), **gebatcht nach Sub-Sektor**.
+`analyze_asset()` und `analyze_assets()` (1 Call je Ticker) sind **ersatzlos entfallen** —
+ein Test pinnt ihre Abwesenheit, damit sie nicht versehentlich zurückkehren.
 
 ```python
 def run_policy_monitor(date, run_type, cost_tracker) -> dict:
@@ -536,42 +559,58 @@ def run_policy_monitor(date, run_type, cost_tracker) -> dict:
     Returns: {policy_risk_level:0-10, events:[], summary:str}
     """
 
-def analyze_asset(
-    ticker_data: dict,
-    quick_filter_result: dict,
-    trend_context: dict,
-    policy_context: dict,
-    cost_tracker: CostTracker,
-) -> dict | None:
+def build_batches(ticker_datas, batch_size=config.BATCH_SIZE_DEEP) -> list[list[dict]]:
     """
-    Sonnet + web_search.
-    Skip ohne Claude-Call wenn quick_filter_result['exclude']=True.
-    
-    Returns: {
-        ticker, direction: "long"|"short"|"none",
-        probability_pct: 0-100,
-        scores: {
-            market_environment: {value, evidence[]},
-            company_quality: {value, evidence[]},
-            ...  (8 dimensions)
-        },
-        hold_days_recommended: 1-5,
-        intraday_range_pct: 1.0+,
-        technical_indicators: {...},
-        sources_used: []
-    }
-    
-    Guardrails (nach dieser Funktion geprüft):
-    - hold_days > 5 → reject
-    - intraday_range < 1.0 → reject
-    - R/R < 1.5 → reject
-    - direction = "none" → reject (beide Scores gleich)
+    Reine Gruppierung, kein Claude-Call.
+    Sub-Sektoren sind UNTEILBARE Einheiten, per First-Fit-Decreasing
+    gepackt — ausser eine Einheit ueberschreitet batch_size allein,
+    dann wird sie vorher aufgeteilt. Ticker ohne Sektor bilden eine
+    eigene Einheit statt still in einen fremden zu rutschen.
+    Deterministisch: innerhalb einer Einheit alphabetisch, Einheiten
+    nach (Groesse absteigend, erster Ticker) — ohne das waere weder
+    der Test noch ein 3D-Vergleich zweier Laeufe reproduzierbar.
+    """
+
+def max_tokens_for_batch(n) -> int:
+    """max(4096, n * TOKENS_PER_TICKER_DEEP + BATCH_TOKEN_RESERVE).
+    ⚠️ TOKENS_PER_TICKER_DEEP = 900 ist durch den Testlauf WIDERLEGT."""
+
+def analyze_batch(
+    ticker_datas, cutoff_by_ticker, trend_context, policy_context, cost_tracker,
+) -> tuple[list[dict], list[str]]:
+    """
+    EIN gestreamter Sonnet+web_search-Call fuer den ganzen Batch.
+    Nutzlast je Ticker (Sidecar-Invariante!): {snapshot: td,
+    news_scan: {...}, technical_signal: {...}} — td selbst unveraendert.
+
+    Returns: (analyses, missing_tickers) — Teilergebnisse werden
+    uebernommen, fehlende Ticker gemeldet statt still verschluckt.
+    Raises DeepAnalysisError bei stop_reason == "max_tokens" oder
+    unparsebarer Antwort. Ein abgeschnittenes Ergebnis wird NIE
+    teilverwertet (Spec 4.8).
+    """
+
+def analyze_batches(...) -> tuple[list[dict], list[str]]:
+    """
+    Umschliesst analyze_batch() mit dem Fehlerpfad aus Spec 10:
+    1× wiederholen → 1× halbieren (jede Haelfte genau einmal) → aufgeben.
+    Faengt NUR DeepAnalysisError. CostCapExceeded laeuft ungehindert
+    durch — ihn hier zu wiederholen liesse den Lauf ueber den Deckel
+    hinaus weiterlaufen. Transiente API-Fehler behandelt bereits
+    retry_with_backoff() in call_claude(); andere Fehlerklasse, andere Ebene.
     """
 ```
 
-**Fail-Verhalten:** `DeepAnalysisError` → skip Ticker, continue.
+**Fail-Verhalten:** `DeepAnalysisError` → Retry/Halbierung, danach landen die Ticker in
+`failed` und `run_pipeline()` loggt sie als WARNING. Kein stiller Verlust.
 
 **Billing:** `cost_tracker.add_from_result(result)` **VOR** JSON parse.
+
+⚠️ **Testlauf-Befund (2026-08-16, PROJECT_STATUS C.9):** Das Token-Budget reicht nicht.
+Lauf mit `BATCH_SIZE_DEEP=8` verlor einen kompletten 8er-Batch (beide Versuche **und**
+beide 4er-Hälften an `max_tokens`), Lauf mit `BATCH_SIZE_DEEP=4` verlor zwei Ticker an
+einer gescheiterten 2er-Hälfte. Eine **kleinere** Batchgrösse war dabei teurer und
+langsamer, weil sie nur öfter in die Halbierungs-Kaskade läuft.
 
 ---
 
@@ -1014,12 +1053,31 @@ Querschnitts-Helfer, die jedes Claude-aufrufende Modul benutzt.
 | Baustein | Zweck |
 |---|---|
 | `retry_with_backoff(...)` | Dekorator für transiente API-Fehler |
-| `ClaudeResult` | Ergebnis-Objekt inkl. Token-Zahlen — Grundlage der Kostenerfassung |
-| `call_claude(...)` | Anthropic-Wrapper mit Prompt-Caching |
+| `ClaudeResult` | Ergebnis-Objekt inkl. Token-Zahlen **und `stop_reason`** — Grundlage der Kostenerfassung |
+| `call_claude(..., stream=False)` | Anthropic-Wrapper mit Prompt-Caching, optional gestreamt |
 | `extract_json_blob(text, error_cls)` | toleranter JSON-Auszug aus Claudes Antwort |
 
 ⚠️ `extract_json_blob` nutzt `raw_decode`, weil Claude gelegentlich Fliesstext hinter das
 JSON hängt. Ein striktes `json.loads` scheiterte daran.
+
+⚠️ **`stream=True` ist nötig, sobald die erwartete Ausgabe gross wird** (Plan 3a):
+der nicht gestreamte Pfad hängt am httpx-Default-Timeout von 600 s, den eine lange
+Generierung plus mehrere Websuchen reisst. Genutzt von `broad_scan` und `analyze_batch()`.
+Default bleibt `False` — kein bestehender Aufrufer ändert sein Verhalten ungewollt.
+`stream=True` nimmt `messages.stream()` + `get_final_message()`, was dieselbe Message-Form
+liefert wie `messages.create()`; beide Pfade teilen sich `_result_from_message()`.
+
+⚠️ **`stop_reason == "max_tokens"` ist ein Fehlerfall, kein Ergebnis.** `broad_scan` und
+`analyze_batch()` werten ihn aus und verwerfen die Antwort komplett — ein abgeschnittener
+JSON-Block ist nicht teilverwertbar. Vor Plan 3a trug `ClaudeResult` das Feld nicht und
+`broad_scan` musste `output_tokens` gegen `MAX_TOKENS` schätzen.
+
+⚠️ **Felder, die das SDK nicht selbst modelliert, kommen als `dict` — nicht als Objekt.**
+`response.usage.server_tool_use` ist so ein Fall (`Usage.model_config` hat
+`extra="allow"`, Pydantic reicht rohes JSON durch). `getattr()` darauf liefert **immer**
+den Default; `web_search_calls` stand dadurch seit Einführung des Websuche-Tools
+dauerhaft auf 0 und alle bis 2026-08-17 ausgewiesenen `web_search_eur`-Werte sind zu
+niedrig. Gelesen wird jetzt mit `.get()`.
 
 ⚠️ **Reihenfolge-Invariante:** `cost_tracker.add_from_result()` läuft **vor** der
 JSON-Extraktion. Sonst kostet eine unparsebare Antwort Geld, das nie erfasst wird.
@@ -1061,8 +1119,8 @@ Versionssuffix:
 | `trend_analyzer` | `trend_analyzer_v1.txt` |
 | `market_context` | `market_context_v1.txt` |
 | `broad_scan` | `broad_scan_v1.txt` — ✅ live, ersetzt `quick_filter` seit Task 10 |
-| `deep_analysis` | `deep_analysis_v1.txt`, `policy_monitor_v1.txt` |
-| `commodities_crypto` | `commodities_crypto_v1.txt` |
+| `deep_analysis` | **`deep_analysis_v2.txt`** (Batch, `thin`, Polarität, R/R 1:2), `policy_monitor_v1.txt` |
+| `commodities_crypto` | **`commodities_crypto_v2.txt`** |
 | `portfolio_check` | **`portfolio_check_v2.txt`** |
 | `revalidation` | `trade_proposals_v1.txt` |
 
@@ -1070,7 +1128,10 @@ Versionssuffix:
 Modul fest verdrahtet; ein Wechsel ist eine Code-Änderung. Die Tabelle `prompt_versions`
 wird angelegt und **nie benutzt** — sie gehört zu Sprint 3D.
 
-⚠️ `prompts/portfolio_check_v1.txt` ist verwaist: genutzt wird v2.
+⚠️ `prompts/portfolio_check_v1.txt` ist verwaist: genutzt wird v2. Dasselbe gilt seit
+Plan 3a für `deep_analysis_v1.txt` und `commodities_crypto_v1.txt` — sie liegen
+**absichtlich unangetastet** daneben (Regel 10: Prompts werden nie überschrieben, eine
+neue Version ist eine neue Datei). Ein Test pinnt, dass v1 unverändert bleibt.
 
 ⚠️ Die Prompts werden **auf Modulebene** gelesen, nicht je Aufruf. Eine geänderte
 Prompt-Datei wirkt erst nach einem Neustart des Prozesses.
@@ -1150,10 +1211,13 @@ heute = 2026-05-20, run_type = "close"
   ✓ costs ~0.10 EUR
 
   ↓
-[Phase 3] analyze_assets()
-  → Sonnet × 80 Calls + web_search (sequential!)
-  ← 72 OK, 8 skipped (error/guardrail)
-  ✓ costs ~2.50 EUR
+[Phase 3] analyze_batches()          # seit Plan 3a: Batch statt 1 Call/Ticker
+  → build_batches() gruppiert nach Sub-Sektor (BATCH_SIZE_DEEP = 8)
+  → Sonnet × 1 Call PRO BATCH + web_search, gestreamt (sequential!)
+  ← (analyses, failed) — failed = Ticker, deren Batch auch nach
+    Wiederholung und Halbierung nichts lieferte
+  ⚠️ Kosten hier NICHT belastbar: der Testlauf lief mit zu knappem
+    Token-Budget, s. PROJECT_STATUS C.9
 
   ↓
 [Phase 3b] analyze_commodities_and_crypto()
@@ -1233,11 +1297,16 @@ TOTAL: ~3.50 EUR
 
 - **Unit Tests**: isolierte Module, Mock-Claude, Fixtures
 - **Integration Tests** (4): volle Pipeline + E2E-HTML-Render + trade_proposals-Flow
-- **Coverage Gate**: 80 % Minimum (aktuell 91,52 %)
-- **Baseline**: `pytest tests/ --cov=src --cov-fail-under=80 -q` → **733 passed, 14 skipped**,
-  0 failures (Stand 2026-08-15, Plan 2 / Trichter zu 12 von 13 Tasks — s. PROJECT_STATUS
-  C.7). Die übersprungenen sind die Live-Tests unter `tests/live/`; sie laufen nur mit
-  `--run-live` und sprechen dann echte APIs an (inkl. echtem Mailversand).
+- **Coverage Gate**: 80 % Minimum (aktuell 91,50 %)
+- **Baseline**: `pytest tests/ --cov=src --cov=main --cov-fail-under=80 -q` →
+  **770 passed, 14 skipped**, 0 failures (Stand 2026-08-17, Plan 3a zu 11 von 11 Tasks —
+  s. PROJECT_STATUS C.9). Die übersprungenen sind die Live-Tests unter `tests/live/`; sie
+  laufen nur mit `--run-live` und sprechen dann echte APIs an (inkl. echtem Mailversand).
+  ⚠️ **Grüne Tests sind hier kein Reifezeugnis:** der `max_tokens`-Befund aus C.9 ist
+  gegen die echte API entstanden, nicht im Testlauf — die Unit-Tests mocken `call_claude()`
+  und können ein zu knappes Token-Budget grundsätzlich nicht sehen. Dieselbe Lücke hatte
+  der `web_search_calls`-Bug: ein grüner Test mockte `server_tool_use` als Objekt, während
+  die echte API ein `dict` liefert.
 
 ---
 

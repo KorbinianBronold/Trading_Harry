@@ -4,8 +4,37 @@
 > (recommended) or superpowers:executing-plans to implement this plan task-by-task.
 > Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Status:** ⏳ offen
+**Status:** ⚠️ **11/11 Tasks umgesetzt — code-vollständig, aber NICHT produktionsreif**
 **Erstellt:** 2026-08-16
+**Abgeschlossen:** 2026-08-17
+
+| Task | Commit | Ergebnis |
+|---|---|---|
+| 1 — `stop_reason` + Streaming | `f022205` | ✅ |
+| 2 — `broad_scan` gestreamt, MAX_TOKENS 24000→32000 | `e9d2a41` | ✅ |
+| 3 — `BATCH_SIZE_DEEP` + `build_batches()` | `df46d1d` | ✅ |
+| 4 — `deep_analysis_v2.txt` | `f1d8366` | ✅ |
+| 5 — `commodities_crypto_v2.txt` + Umschaltung | `b59c66d` | ✅ |
+| 6 — `analyze_batch()`, MAX_TOKENS aus Batchgrösse | `39aa9f3`, `7d09d3b` | ✅ |
+| 7 — Fehlerpfade (wiederholen/halbieren/aufgeben) | `9cecc22` | ✅ |
+| 8 — schmale `thin`-Ausnahme in `check_analysis()` | `72a3fbe` | ✅ |
+| 9 — `run_pipeline()` auf Batch-Phase-3, Adapter raus | `1c0de04` | ✅ |
+| 10 — Testlauf gegen echte Daten | `ae2f138` | ⚠️ **Befund: `MAX_TOKENS_DEEP` widerlegt** |
+| — Nebenbefund aus der Auswertung | `f074860` | `web_search_calls` zählte immer 0 (behoben) |
+| 11 — Doku nachziehen | dieser Commit | ✅ |
+
+⚠️ **Warum „nicht produktionsreif":** Task 10 hat gemessen, dass `stop_reason=max_tokens`
+in beiden Läufen wiederholt auftritt — bis hinunter zu einem auf 2 Ticker halbierten
+Batch. `TOKENS_PER_TICKER_DEEP = 900` ist damit widerlegt und muss neu kalibriert werden,
+**bevor** die Pipeline wieder echt läuft. Der in „Goal" genannte Kostenhebel (~0,034 statt
+~0,12 EUR je Ticker) ist entsprechend **nicht belegt**: gemessen wurden ~0,074–0,079 EUR
+je erfolgreich analysiertem Ticker. Details: PROJECT_STATUS **C.9**.
+
+⏳ **Offen aus diesem Plan:** die Neukalibrierung selbst (Code-Änderung, gehört nicht in
+Task 10 „kein Code — eine Messung"), danach ein Wiederholungslauf, der die Prüffragen 2
+(selektive Recherche — die erste Messung lief mit kaputter `web_search_calls`-Zählung),
+3 (Qualität am Batch-Ende) und 6 (Kosten) belastbar beantwortet. Danach der
+Abschluss-Review über die Plan-3a-Commits.
 
 **Goal:** Phase 3 analysiert Aktien in Batches nach Sub-Sektor statt einzeln — der
 Kostenhebel des Umbaus (~0,034 statt ~0,12 EUR je Ticker) — und `call_claude()` bekommt

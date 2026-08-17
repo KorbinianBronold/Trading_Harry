@@ -1663,7 +1663,15 @@ die zwei Signale und das Ranking gemeinsam neu fasst:
 - **Plan 1 (Fundament):** `docs/superpowers/plans/2026-08-11-analyse-pipeline-plan1-fundament.md`
 - **Plan 2 (Trichter):** `docs/superpowers/plans/2026-08-13-analyse-pipeline-plan2-trichter.md`
   — 13 von 13 Tasks umgesetzt, s. **C.7**
-- **Plan 3 (Analyse & Ranking):** offen, noch keine Plan-Datei
+- **Plan 3 (Analyse & Ranking):** in **3a** und **3b** geteilt (Spec § 20.1)
+  - **Plan 3a (Batch-Tiefenanalyse):**
+    `docs/superpowers/plans/2026-08-16-analyse-pipeline-plan3a-batch-tiefenanalyse.md`
+    — 11 von 11 Tasks umgesetzt, aber **mit offenem Befund**: der Testlauf (Task 10)
+    hat `MAX_TOKENS_DEEP` widerlegt, s. **C.9**. Code-vollständig, nicht produktionsreif.
+  - **Plan 3b (Ranking):** offen, noch keine Plan-Datei. Bekommt sie erst, wenn der
+    Token-Befund aus C.9 geschlossen ist — `rank_score` sollte laut Plan-3a-Abschluss
+    gegen echte Beispieldaten entworfen werden, und die liefert erst ein Lauf ohne
+    abgeschnittene Batches.
 
 Die Spec ersetzt C.1 (fehlende Indikator-Werte — jetzt Teil des `predictions`-Umbaus),
 C.2 (kombinierter Score — jetzt `rank_score` aus zwei zählbaren Signalen), C.3
