@@ -1228,9 +1228,13 @@ def test_rank_and_persist_drops_conflicting_signals_as_guardrail_reject(in_memor
     row = conn.execute(
         "SELECT * FROM predictions WHERE ticker='AAPL'").fetchone()
     assert row is None
-    reject = conn.execute(
-        "SELECT * FROM guardrail_rejects WHERE ticker='AAPL'").fetchone()
-    assert reject["rule"] == "tech_news_conflict"
+    # Nach der Regel filtern, nicht blind die erste Zeile nehmen: die weichen
+    # B.3-Checks schreiben in denselben Topf, und ein kuenftiger Default (etwa
+    # ein gesetztes Sektor-Momentum im Fixture) legte sonst eine zweite Zeile
+    # davor -- der Test schluege dann mit einer irrefuehrenden Meldung fehl.
+    rejects = conn.execute(
+        "SELECT rule FROM guardrail_rejects WHERE ticker='AAPL'").fetchall()
+    assert "tech_news_conflict" in {r["rule"] for r in rejects}
 
 
 def test_rank_and_persist_puts_divergent_signals_in_their_own_list(in_memory_db):
