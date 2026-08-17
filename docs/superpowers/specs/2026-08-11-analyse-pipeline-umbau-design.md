@@ -10,18 +10,18 @@
   Sidecar), § 4.6 (`broad_scan.py`, verdrahtet), § 4.7 (Cutoff + `cutoff_log`,
   `TECH_MIN_FOR_DEEP`), § 8 (Finnhub-Ratenbegrenzung, Wochen-Vorlauf), § 18.1b–d.
   PROJECT_STATUS **C.7** und **C.8**
-- **Plan 3a (Batch-Tiefenanalyse)** ⚠️ **code-vollständig (11/11 Tasks), nicht
-  produktionsreif** — § 4.8 (Batch nach Sub-Sektor, Streaming), § 5.2 (`thin`, Polarität),
-  § 9 (Prompts v2), § 10 (Fehlerpfad) sind umgesetzt. **Der Kostenhebel aus § 13.2
-  (0,034 statt 0,12 EUR je Ticker) ist NICHT belegt:** der Testlauf nach § 12 hat
-  `MAX_TOKENS_DEEP` widerlegt — `stop_reason=max_tokens` bis hinunter zu
-  2-Ticker-Batches, gemessen wurden ~0,074–0,079 EUR je erfolgreich analysiertem Ticker.
-  `TOKENS_PER_TICKER_DEEP` braucht eine Neukalibrierung, bevor § 13.2 überhaupt prüfbar
-  ist. PROJECT_STATUS **C.9**
-- **Plan 3b (Ranking)** ⏳ offen, noch keine Plan-Datei — § 5 (`rank_score`,
-  `candidate_class`), Mail-Abschnitt. Wartet bewusst auf den Token-Fix: `rank_score` soll
-  gegen echte Beispieldaten entstehen, und die liefert erst ein Lauf ohne abgeschnittene
-  Batches
+- **Plan 3a (Batch-Tiefenanalyse)** ✅ **abgeschlossen** — 11/11 Tasks, live verifiziert,
+  Abschluss-Review durchgeführt. § 4.8 (Batch nach Sub-Sektor, Streaming), § 5.2 (`thin`,
+  Polarität), § 9 (Prompts v2), § 10 (Fehlerpfad) sind umgesetzt. Der erste Testlauf hatte
+  `MAX_TOKENS_DEEP` widerlegt (C.9); nach der Neukalibrierung (`TOKENS_PER_TICKER_DEEP`
+  900 → 2500, `BATCH_TOKEN_RESERVE` 2000 → 200) trat `stop_reason=max_tokens` **kein
+  einziges Mal** mehr auf, 12 von 12 Kandidaten analysiert. **Der Kostenhebel aus § 13.2
+  ist unterboten:** 0,0204 EUR je Ticker gegen ein Ziel von 0,034 und ~0,12 im alten Weg.
+  PROJECT_STATUS **C.9–C.12**
+- **Plan 3b (Ranking)** ⏳ offen, Plan-Datei in Arbeit — § 5 (`rank_score`,
+  `candidate_class`), Mail-Abschnitt. Die Designentscheidungen dazu stehen in **§ 20.5**;
+  sie sind am Verifikationslauf des 3a-Abschlusses gemessen, nicht am Schreibtisch
+  gewählt
 **Betrifft:** Phasen 1c/2/3 sowie Ranking und Scoring in `pre_market`
 **Nicht betroffen:** Preismodell und Snapshots, `final_close`, Evaluator, Cron-Struktur,
 DB-Persistenz, R/R- und VIX-Logik, CFD-Eignungsregeln, Mail-Versandmechanik
@@ -405,7 +405,8 @@ Richtung und Stärke aus § 4.5.
 ### 5.2 News-/Fundamental-Signal
 
 **Richtung** = `direction` der Tiefenanalyse.
-**Stärke** = Zahl der acht Dimensionen mit belegter, richtungsübereinstimmender Evidenz:
+**Stärke** = `analysis_strength`, die Zahl der acht Dimensionen mit belegter,
+richtungsübereinstimmender Evidenz:
 
 ```
 zählt ⟺ evidence_quality != "thin"
@@ -417,12 +418,25 @@ zählt ⟺ evidence_quality != "thin"
 Die Schwellen sind die **bereits existierenden** aus `config.py` — keine neuen erfundenen
 Konstanten.
 
+⚠️ **Der Wert heisst `analysis_strength`, nicht `news_strength`** — und das ist keine
+Kosmetik. `news_strength` ist seit Plan 2 vergeben: es ist der **Nachrichten-Scan** aus
+Phase 2 auf einer Skala von **0–3** (`broad_scan.py`, `cutoff_log`, und als
+`news_scan.news_strength` in der Phase-3-Nutzlast). Der Wert hier ist eine andere Zahl auf
+einer anderen Skala (**0–8**) aus einer anderen Phase. Beide unter demselben Namen zu
+führen hiesse, in `predictions` eine Spalte zu haben, deren Bedeutung von der Tabelle
+abhängt, in der man sie liest.
+
+**`predictions` trägt beide Zahlen nebeneinander.** Das ist der eigentliche Grund für die
+Trennung: nur so kann 3D die Frage stellen, ob der **billige Scan die teure Analyse
+vorhersagt** — also ob sich der Cutoff überhaupt auf die richtige Grösse stützt. Mit einem
+gemeinsamen Namen wäre genau diese Gegenüberstellung nicht formulierbar.
+
 ⚠️ **Polarität muss im Prompt festgeschrieben werden.** Bei `risk`, `policy_risk` und
 `valuation` ist nirgends definiert, ob ein hoher Wert gut oder schlecht ist.
 `DIMENSION_WEIGHTS` behandelte alle acht als positive Beiträge — die Konvention ist also
 **höher = besser für den Trade**, sie steht aber in keinem Prompt. Ohne die ausdrückliche
 Festlegung in `deep_analysis_v2.txt` und `commodities_crypto_v2.txt` zählt
-`news_strength` bei drei von acht Dimensionen das Gegenteil.
+`analysis_strength` bei drei von acht Dimensionen das Gegenteil.
 
 ⚠️ **Bekannte Schwäche:** `market_environment`, `policy_risk` und `sector_trend` sind
 innerhalb eines Batches nahezu identisch und trennen kaum. Dafür wird **kein Sonderweg**
@@ -432,12 +446,40 @@ nachrechnen.
 ### 5.3 Qualifikation
 
 ```
-qualifiziert ⟺ tech_direction == news_direction ∈ {long, short}
+qualifiziert ⟺ tech_direction == news_direction ∈ {long, short}     # nur Aktien
 ```
 
 Ein neutrales technisches Signal disqualifiziert automatisch. Danach unverändert: die
 bestehenden Guardrails (R/R ≥ `RR_RATIO_MIN_HARD`, Beleg-Pflicht, TP/SL-Richtung,
 Haltedauer, Intraday-Range) und die B.3-Checks (VIX, Sektor-Momentum, Klumpenrisiko).
+
+⚠️ **Die Zwei-Signal-Hürde gilt nur für Aktien. Rohstoffe und Krypto werden nicht
+disqualifiziert** — sie bekommen das Technik-Signal, aber es filtert bei ihnen nicht.
+
+Der Grund ist eine Tatsache, keine Vorliebe: Rohstoffe und Krypto haben heute **gar kein
+Technik-Signal**. `collect()` rechnet den Sidecar zwar auch für sie, `main.py` verwirft ihn
+aber (`_cc_sidecar`), und `commodities_crypto.py` trägt kein `technical_signal` in seine
+Nutzlast. Wörtlich angewandt fiele damit **jeder** Rohstoff und **jede** Kryptowährung
+durch, weil `tech_direction` schlicht fehlt — im Verifikationslauf hätte das SI=F und GC=F
+getroffen, die mit `analysis_strength` 6 und 5 die **stärksten Nachrichtensignale des
+ganzen Laufs** trugen. Ein Filter, der die besten Signale wegen einer nicht verdrahteten
+Datenleitung verwirft, misst die Datenleitung, nicht den Markt.
+
+Daraus folgt für Plan 3b:
+
+| | Aktien | Rohstoffe / Krypto |
+|---|---|---|
+| Technik-Signal berechnet und persistiert | ja | **ja** — `_cc_sidecar` wird verdrahtet |
+| `rank_score` gebildet | ja | ja |
+| fehlendes/neutrales Technik-Signal disqualifiziert | **ja** | **nein** — es rankt nur tiefer |
+| bisheriges „always kept, regardless of score" | entfällt | **bleibt** |
+
+Das Technik-Signal läuft bei ihnen also mit, ohne zu steuern — derselbe Rhythmus wie bei
+den 29 Indikatoren aus § 7.5: **sein Wert entsteht dadurch, dass es ab heute mitläuft.**
+Ob die Zwei-Signal-Regel auch für Rohstoffe trägt, ist eine 3D-Frage an die
+Outcome-Historie, und die Historie entsteht nur, wenn die Zahl von jetzt an geschrieben
+wird. `tech_strength` fliesst dabei in `rank_score` ein — ein Rohstoff ohne Technik-Bestätigung
+landet damit korrekt weiter unten, statt zu verschwinden.
 
 **Neu: `earnings_in_days` wird ein echter Check statt eines Modell-Attributs.** Heute
 berechnet Claude `earnings_warning: true` selbst aus dem Snapshot, und es blockiert
@@ -464,11 +506,21 @@ Schreibtisch.
 ### 5.4 Ranking der Qualifizierten
 
 ```
-rank_score = news_strength (1..8) × tech_strength (1..4)      →  1..32
+rank_score = analysis_strength (1..8) × tech_strength (1..4)      →  1..32
 ```
 
 **Produkt, nicht Summe.** Eine Summe liesse eine Seite die andere tragen; das Produkt
 verlangt, dass beide Signale beitragen — die These des Zwei-Signal-Designs.
+
+⚠️ **Ausserhalb der angegebenen Wertebereiche ist `rank_score` `NULL`, niemals 0.**
+Bei Aktien kann der Fall nicht eintreten: Qualifikation setzt eine Richtung voraus, und
+eine Richtung setzt `tech_strength ≥ 1`. Bei Rohstoffen und Krypto kann er es sehr wohl,
+seit ein neutrales Signal sie nicht mehr disqualifiziert (§ 5.3) — `tech_strength` ist dann
+0. Das Produkt wäre 0 und machte SI=F mit `analysis_strength` 6 von GC=F mit 5
+ununterscheidbar: die Zahl, die etwas aussagt, würde von der Zahl gelöscht, die nichts
+aussagt. `NULL` heisst „nicht rankbar", `0` hiesse „schlechtester Kandidat" — und das wäre
+schlicht falsch aufgezeichnet. Die Rangfolge in der Rohstoff-Sektion der Mail fällt in
+diesem Fall auf `analysis_strength` zurück.
 
 ⚠️ `tech_strength` kann auch bei einem **qualifizierten** Kandidaten 1 betragen: die
 Qualifikation verlangt nur eine Richtung (Mehrheit, also ≥ 2 übereinstimmende
@@ -476,16 +528,36 @@ Teilindikatoren), während schwacher ADX die Stärke auf 1 deckelt. Ein Kandidat
 Richtung in einem trendlosen Markt landet damit korrekt weit unten, ohne ausgeschlossen zu
 werden — ADX bleibt Verstärkungsfaktor, nicht Filter.
 
-Gleichstand: `news_strength` → `tech_strength` → Ticker alphabetisch. Deterministisch,
+Gleichstand: `analysis_strength` → `tech_strength` → Ticker alphabetisch. Deterministisch,
 damit Tests reproduzierbar sind.
 
 **R/R bleibt harte Guardrail, niemals Sortierkriterium** — sonst entsteht der Anreiz, TP
 und SL für ein hübsches Verhältnis zu verbiegen.
 
-⚠️ **Die Formel ist die aktuell beste Vermutung, bewusst ohne Datengrundlage gewählt** —
-genau wie die Cutoff-Reihenfolge in § 4.7. **Beide** sind in 3D datengetrieben aus der
-Outcome-Historie zu ersetzen. Die Formel wird im Testlauf gegen echte Beispieldaten auf
-Plausibilität geprüft, bevor sie festgeschrieben wird.
+⚠️ **Die Formel bleibt eine Vermutung — aber keine ungeprüfte mehr.** Sie ist wie die
+Cutoff-Reihenfolge in § 4.7 ohne Datengrundlage *gewählt* worden, und **beide** sind in 3D
+datengetrieben aus der Outcome-Historie zu ersetzen. Die von § 19 #4 geforderte
+Plausibilitätsprüfung ist jedoch erfolgt, **bevor** die Formel hier festgeschrieben wurde:
+
+> **Nachgerechnet am Verifikationslauf vom 2026-08-17** (C.11, 19 Analysen), § 5.2–5.5
+> rückwirkend über die Phase-3-Logs:
+>
+> | Ticker | analysis_strength | tech_strength | **rank_score** | `probability_pct` |
+> |---|---|---|---|---|
+> | XOM | 8 | 3 | **24** | 60 |
+> | NVDA | 6 | 3 | **18** | 55 |
+> | BRK-B | 4 | 3 | **12** | 38 |
+>
+> Die Formel trennt sauber, erzeugt keinen Gleichstand, und ihre Reihenfolge ist
+> **deckungsgleich mit `probability_pct`** — sie widerspricht Claudes Selbsteinschätzung
+> also nicht, spreizt aber deutlich schärfer (24/18/12 gegen 60/55/38). Genau die
+> Vergleichsgruppe, die § 5.7 für 3D aufheben will.
+
+⚠️ **Die Stichprobe ist klein und die Ursache dafür ist selbst ein Befund:** von 19
+Analysen kamen **16 mit `direction='none'`** zurück. Der dominierende Filter ist die
+**Enthaltung der Tiefenanalyse**, nicht die Zwei-Signal-Hürde — die hatte überhaupt nur
+drei Kandidaten zu bewerten. Die Erwartungstabelle in § 5.3 („Tage mit null qualifizierten
+Kandidaten sind erwartbar") gilt damit verschärft: sie wird nicht die Ausnahme sein.
 
 ### 5.5 Divergenz-Kandidaten
 
@@ -502,6 +574,20 @@ gehandelt).
 
 **Deckel:** `DIVERGENCE_TOP_N = 5` je Richtung, sortiert nach demselben `rank_score`. Der
 Rest wird gezählt, nicht persistiert.
+
+⚠️ **`DIVERGENCE_TOP_N = 5` ist ein unbestätigter Startwert, kein Messergebnis** — dieselbe
+Klasse Zahl wie `BATCH_SIZE_DEEP = 8` vor § 20.3. Der Verifikationslauf vom 2026-08-17
+enthielt **null** Divergenzfälle: die drei Ticker mit neutraler Technik (AAPL, ABBV, GOOGL)
+hatten allesamt auch eine Enthaltung der Analyse und fielen damit in die untere Zeile der
+Tabelle, nicht in die obere. Der Deckel hat also noch nie gebunden und ist unbeobachtet.
+Das ist kein Grund, ihn wegzulassen — ein fehlender Deckel fällt erst auf, wenn er fehlt —
+wohl aber einer, ihn nicht für gemessen zu halten. Ob 5 zu eng oder zu weit ist, beantwortet
+erst ein Lauf, in dem Divergenzen überhaupt auftreten.
+
+⚠️ Ebenfalls beobachtet und **erwartungsgemäss**: der mittlere Fall der Tabelle (Technik
+hat Richtung, Analyse enthält sich) traf **6 der 19** Ticker — er ist der häufigste
+Sonderfall, nicht der seltene. Die Zahl gehört deshalb sichtbar in die Mail, sonst sieht
+ein Leser an sechs von neunzehn Tickern vorbei.
 
 **In der Mail** erscheinen sie in einem **eigenen, klar getrennten Abschnitt** —
 „Divergenz-Kandidaten: starkes Signal in einer Dimension, noch keine Bestätigung in der
@@ -524,10 +610,24 @@ messen, ob die Ablehnung richtig lag.*
 ### 5.6 Trennung in den Auswertungsfunktionen
 
 ⚠️ **Die core/divergence-Trennung sitzt in den Abfragen, nicht im Mail-Template.**
-`load_recent_outcomes_aggregate()` und alle fünf Weekly-Aggregate gruppieren nach
-`candidate_class`. Der Weekly-Block-2-Join, der `superseded`-Zeilen auf `p.id` jointe und
-„Bestätigen" dadurch als wertlos auswies (P2.8), ist die Lehre: eine falsche Gruppierung
-in der Abfrage bleibt lange unbemerkt.
+Der Weekly-Block-2-Join, der `superseded`-Zeilen auf `p.id` jointe und „Bestätigen"
+dadurch als wertlos auswies (P2.8), ist die Lehre: eine falsche Gruppierung in der Abfrage
+bleibt lange unbemerkt.
+
+**Betroffen sind genau die Abfragen, die `predictions` lesen** — das sind drei, nicht
+„alle fünf Weekly-Aggregate", wie es hier zuvor stand:
+
+| Funktion | wo | gruppiert nach `candidate_class`? |
+|---|---|---|
+| `load_recent_outcomes_aggregate()` | `main.py` | **ja** |
+| `db.load_revision_effectiveness()` | `src/db.py` | **ja** |
+| `db.load_revision_verdict_stats()` | `src/db.py` | **ja** |
+| `db.load_guardrail_reject_stats()` | `src/db.py` | nein — liest `guardrail_rejects`; eine verworfene Analyse wurde nie eine Prediction und hat folglich keine Klasse |
+| `db.load_skipped_ticker_stats()` | `src/db.py` | nein — Datenqualitäts-Skips aus Phase 1, vor jeder Analyse |
+| `db.load_sector_mapping_coverage()` | `src/db.py` | nein — Stammdaten, kein Lauf-Ereignis |
+
+Die drei rechten Zeilen sind **nicht** vergessen worden: sie haben keine Spalte, nach der
+sie gruppieren könnten. Sie hier aufzuführen ist billiger, als sie später erneut zu prüfen.
 
 Ein Test hält das fest: eine `core`- und eine `divergence`-Zeile mit **gegenläufigem**
 Ergebnis und die Zusicherung, dass keine Kennzahl sie vermischt.
@@ -647,7 +747,8 @@ Spalten, Ichimoku fünf, Bollinger und Donchian je drei, PSAR, Stochastik und TR
 |---|---|
 | `candidate_class` TEXT DEFAULT `'core'` | `'core'` \| `'divergence'` |
 | `tech_direction`, `tech_agreement`, `tech_adx_band`, `tech_strength` | das Technik-Signal zum Entscheidungszeitpunkt |
-| `news_strength`, `rank_score` | die zwei Zahlen, nach denen sortiert wurde |
+| `analysis_strength`, `rank_score` | die zwei Zahlen, nach denen sortiert wurde (0–8 bzw. 1–32, `rank_score` `NULL`-fähig, s. § 5.4) |
+| `news_strength` | der **Scan**-Wert aus Phase 2 (0–3) — die andere Zahl, s. § 5.2. Steht daneben, damit 3D den billigen Scan gegen die teure Analyse messen kann |
 
 Persistiert wird, **was tatsächlich entschieden hat** — auch wo es ableitbar wäre
 (`tech_strength` aus Agreement und ADX-Band, `rank_score` aus beiden Stärken). Eine
@@ -750,7 +851,9 @@ Coverage-Ziel unverändert ≥ 80 %. Keine bestehenden Tests löschen oder absch
 | `technical_signal.py` | tabellengetrieben über alle Kombinationen der drei Teilindikatoren × drei ADX-Bänder, **inklusive Degradation bei fehlendem SMA200** |
 | Cutoff | Sortierung, Deckel, Pflicht-Kandidaten, `None`-Behandlung von `premarket_change_pct` (muss **hinter** jeden gemessenen Wert fallen, nicht als 0 gelten) |
 | Qualifikation / Divergenz | vollständige Wahrheitstabelle: qualifiziert, divergent, Konflikt, Enthaltung |
-| `rank_score` | Monotonie und Determinismus des Gleichstands |
+| `rank_score` | Monotonie und Determinismus des Gleichstands; **`NULL` statt 0**, wenn `tech_strength` 0 oder fehlend ist (§ 5.4) |
+| `analysis_strength` | tabellengetrieben über die drei Zählbedingungen aus § 5.2 — ausdrücklich `thin`, `< 2` Belege und die Richtungsschwellen je einzeln |
+| Rohstoffe/Krypto im Ranking | Zusicherung, dass ein neutrales **und** ein fehlendes Technik-Signal sie **nicht** disqualifiziert (§ 5.3) |
 | **core/divergence-Trennung** | eine `core`- und eine `divergence`-Zeile mit gegenläufigem Ergebnis; Zusicherung, dass keine der Aggregatfunktionen sie vermischt |
 | Batch-Parsing | vollständig, unvollständig, unparsebar |
 | Rohstoffe/Krypto | Zusicherung, dass sie Phase 2 und Cutoff **nicht** durchlaufen und von der Deaktivierung ausgenommen sind |
@@ -1036,7 +1139,8 @@ sie werden **immer** tief analysiert. Plan 2 implementiert § 6.1–6.3:
 | 1a | Liefert `marketDetails` auch `offer` (Spread)? | ⏳ **nach Task 4 weiterhin offen** — die Sonde prüft es (`probe_epics_batch.py:144-147`), ein Ergebnis ist nirgends protokolliert, `get_premarket_prices_batch()` liest nur `bid`. Lauf mit `--run-live` nachzuholen |
 | 2 | Endgültige Batch-Grösse der **Tiefenanalyse** | nach dem Testlauf — Startwert `BATCH_SIZE_DEEP = 8` festgelegt in § 20.3 |
 | 3 | `TECH_MIN_FOR_DEEP` | nach dem Testlauf, gegen echte Verteilungen |
-| 4 | Plausibilität von `rank_score` | Testlauf |
+| ~~4~~ | ~~Plausibilität von `rank_score`~~ | ✅ **beantwortet 2026-08-17** — am C.11-Lauf rückwirkend nachgerechnet: 24/18/12, gleichstandsfrei, deckungsgleich sortiert mit `probability_pct` (§ 5.4). Stichprobe klein (3 von 19), weil 16 Analysen sich enthielten |
+| 5 | `DIVERGENCE_TOP_N = 5` | offen — der Deckel hat noch nie gebunden, null Divergenzfälle im C.11-Lauf (§ 5.5) |
 
 ---
 
@@ -1055,7 +1159,7 @@ und die Grenze liegt **auf dem Testlauf aus § 12**:
 |---|---|
 | **3a — Batch-Tiefenanalyse** | § 4.8 vollständig: Streaming in `call_claude()`, `deep_analysis_v2` + `commodities_crypto_v2`, Batch-Bildung, `MAX_TOKENS_DEEP` aus der Batchgrösse, Fehlerpfade aus § 10, `thin`-Ausnahme in `check_analysis()` |
 | **→ Testlauf § 12** | beantwortet § 19 #2 (Batchgrösse) und liefert die Daten für #4 (`rank_score`) |
-| **3b — Analyse & Ranking** | § 5 vollständig: `news_strength`, Qualifikation, `earnings_in_days`-Check, `rank_score` als Sortierschlüssel, `candidate_class` + `DIVERGENCE_TOP_N`, core/divergence in den Aggregaten, `score_total()`/`DIMENSION_WEIGHTS` raus, Mail-Abschnitt |
+| **3b — Analyse & Ranking** | § 5 vollständig: `analysis_strength`, Qualifikation, `earnings_in_days`-Check, `rank_score` als Sortierschlüssel, `candidate_class` + `DIVERGENCE_TOP_N`, core/divergence in den Aggregaten, `score_total()`/`DIMENSION_WEIGHTS` raus, Mail-Abschnitt. Entscheidungen: **§ 20.5** |
 
 **Begründung:** Die Spec verlangt in § 19, die Batchgrösse und die `rank_score`-Formel
 **nach** dem Testlauf festzuschreiben. Läge der Testlauf mitten in einem einzigen Plan,
@@ -1137,3 +1241,30 @@ Spielraum über der Worst-Case-Schätzung". 24.000 liegt **unter** der eigenen
 Sicherheitsspanne. Beim 500-Ticker-Ausbau kann das kappen;
 `_warn_if_possibly_truncated()` macht es sichtbar, verhindert es aber nicht. Die Rechnung
 ist nachzuziehen und der Wert oder der Kommentar zu korrigieren.
+
+### 20.5 Plan-3b-Entscheidungen
+
+Getroffen am 2026-08-17, **nachdem** § 5 rückwirkend über die Logs des
+C.11-Verifikationslaufs gerechnet wurde (19 Analysen). Alle vier Punkte sind Lücken oder
+Fehler in § 5, die erst an echten Daten sichtbar wurden — keine nachträgliche
+Geschmacksfrage.
+
+| # | Entscheidung | Was sie behebt |
+|---|---|---|
+| 1 | Der gezählte Wert heisst **`analysis_strength`** (0–8); `news_strength` bleibt der Scan-Wert (0–3). `predictions` trägt **beide**. | § 5.2 vergab einen Namen, der seit Plan 2 belegt ist. Zwei Skalen unter einem Namen hätten eine Spalte erzeugt, deren Bedeutung von der Tabelle abhängt — und die 3D-Frage „sagt der billige Scan die teure Analyse vorher?" unformulierbar gemacht. |
+| 2 | Die Zwei-Signal-Hürde gilt **nur für Aktien**. Rohstoffe/Krypto bekommen Technik-Signal und `rank_score`, werden davon aber nicht disqualifiziert. `_cc_sidecar` wird verdrahtet. | § 5.3 wörtlich angewandt hätte **jeden** Rohstoff verworfen, weil ihr Technik-Signal nie in die Nutzlast verdrahtet wurde — darunter die zwei stärksten Nachrichtensignale des Laufs. Der Filter hätte eine fehlende Datenleitung gemessen, nicht den Markt. |
+| 3 | `rank_score` ist **`NULL`, nie 0**, wenn `tech_strength` 0 oder unbekannt ist. | Folgt zwingend aus #2: sobald ein neutrales Signal nicht mehr disqualifiziert, erreicht `tech_strength = 0` das Produkt und löscht `analysis_strength` aus. `0` behauptete „schlechtester Kandidat", wo „nicht vergleichbar" gilt. |
+| 4 | Nach `candidate_class` gruppieren genau **drei** Abfragen, nicht „alle fünf Weekly-Aggregate". | § 5.6 verlangte die Gruppierung von drei Funktionen, die gar keine Predictions lesen. Die Tabelle in § 5.6 führt jetzt auch die nicht betroffenen auf — mit Begründung, damit sie nicht erneut geprüft werden. |
+
+**Was der Lauf ausserdem gezeigt hat, ohne eine Entscheidung zu erzwingen:**
+
+- **`rank_score` ist plausibel** (§ 19 #4 abgehakt): 24/18/12, gleichstandsfrei, gleiche
+  Reihenfolge wie `probability_pct`, aber schärfer gespreizt.
+- **Der dominierende Filter ist die Enthaltung, nicht die Zwei-Signal-Regel** — 16 von 19
+  Analysen kamen mit `direction='none'`. Tage ohne jeden qualifizierten Kandidaten sind
+  danach der Normalfall, nicht die Ausnahme. Das ist die wichtigste Erwartung, die der
+  Mail-Abschnitt bedienen muss: „nichts gefunden" braucht eine Darstellung, die nicht wie
+  ein Fehler aussieht.
+- **`DIVERGENCE_TOP_N = 5` ist unbeobachtet** — null Divergenzfälle. Dieselbe Klasse
+  unbestätigter Startwert wie `BATCH_SIZE_DEEP = 8` vor § 20.3, und genauso zu behandeln:
+  eingebaut, aber nicht für gemessen gehalten.
