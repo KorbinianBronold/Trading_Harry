@@ -411,12 +411,43 @@ richtungsübereinstimmender Evidenz:
 ```
 zählt ⟺ evidence_quality != "thin"
      ∧ len(evidence) >= 2
-     ∧ (direction == "long"  → value >= MOMENTUM_LONG_MIN)     # 6.0
-     ∧ (direction == "short" → value <= MOMENTUM_SHORT_MAX)    # 4.0
+     ∧ (dim == "momentum"                                      # absolut abgelesen
+          ? (direction == "long"  → value >= MOMENTUM_LONG_MIN)   # 6.0
+          ∧ (direction == "short" → value <= MOMENTUM_SHORT_MAX)  # 4.0
+        : value >= MOMENTUM_LONG_MIN)                          # trade-relativ,
+                                                               # richtungsunabhängig
 ```
 
 Die Schwellen sind die **bereits existierenden** aus `config.py` — keine neuen erfundenen
 Konstanten.
+
+⚠️ **`momentum` ist die eine Ausnahme, die anderen sieben zählen richtungsunabhängig.**
+Das ist keine Vereinfachung, sondern folgt aus zwei Konventionen, die im selben Umbau
+entstanden sind und nur bei `direction == "short"` auseinanderlaufen:
+
+| | Lesart | starker Short hat hier … |
+|---|---|---|
+| `momentum` | **absolut** — eine Kursbewegung, hoch = bullisch | einen **tiefen** Wert |
+| die anderen sieben | **trade-relativ** — die v2-Prompts legen fest: „HIGHER IS ALWAYS BETTER FOR THE PROPOSED TRADE, in the direction you chose"; ausbuchstabiert an `valuation`: 10 = „günstig für einen Long" **und** „überdehnt für einen Short" | **hohe** Werte |
+
+Für `long` fallen beide zusammen, für `short` sind sie gegenläufig. Die ursprüngliche
+Fassung dieses Abschnitts wandte das Momentum-Schwellenpaar auf **alle acht** an — damit
+zählte ein gut belegter Short (`momentum` 2.0, die übrigen sieben auf 9.0) **1**, und ein
+Short, gegen den alle acht Dimensionen sprechen (alle auf 2.0), **8**. Die Guardrails
+fangen das nicht: sie prüfen ausschliesslich `scores.momentum`
+(`src/guardrails.py:84-93`).
+
+`momentum` bleibt bewusst absolut, statt die Konvention zu vereinheitlichen: an dieser
+Lesart hängen die Guardrails **und** die harte Prompt-Regel `direction='short'` ⇒
+`momentum <= 4.0`. Der Satz „EVERY one of the eight" im Polaritäts-Absatz der v2-Prompts
+widerspricht dem — eine bekannte, bewusst stehengelassene Inkonsistenz der Prompt-Ebene
+(Regel 10: Prompts werden nie überschrieben, neue Versionen sind neue Dateien). Aufgelöst
+wird sie im Code, auf der Seite, an der die Guardrails hängen.
+
+> **Herkunft:** Befund **C1** des Plan-3b-Abschluss-Reviews (2026-08-17). Die Kollision
+> entstand, weil § 5.2 (Plan 3b) und die Polaritäts-Festlegung der v2-Prompts (Plan 3a)
+> unabhängig voneinander formuliert wurden — jede für sich stimmig, zusammen invertierten
+> sie jeden Short.
 
 ⚠️ **Der Wert heisst `analysis_strength`, nicht `news_strength`** — und das ist keine
 Kosmetik. `news_strength` ist seit Plan 2 vergeben: es ist der **Nachrichten-Scan** aus
@@ -437,6 +468,10 @@ gemeinsamen Namen wäre genau diese Gegenüberstellung nicht formulierbar.
 **höher = besser für den Trade**, sie steht aber in keinem Prompt. Ohne die ausdrückliche
 Festlegung in `deep_analysis_v2.txt` und `commodities_crypto_v2.txt` zählt
 `analysis_strength` bei drei von acht Dimensionen das Gegenteil.
+
+> **Nachtrag (Plan-3b-Abschluss-Review):** Plan 3a hat die Festlegung getroffen — und zwar
+> **trade-relativ**, nicht absolut. Genau daraus entstand die Kollision, die die Zähl-Regel
+> oben jetzt auflöst. Die Forderung ist damit erfüllt, aber nicht folgenlos geblieben.
 
 ⚠️ **Bekannte Schwäche:** `market_environment`, `policy_risk` und `sector_trend` sind
 innerhalb eines Batches nahezu identisch und trennen kaum. Dafür wird **kein Sonderweg**

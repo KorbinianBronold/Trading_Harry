@@ -103,6 +103,14 @@ def test_rank_and_persist_top_10_long_and_short(in_memory_db):
     counts = {r["direction"]: r["n"] for r in rows}
     assert counts["long"] == 10
     assert counts["short"] == 10
+    # C1: Longs und Shorts sind hier gleich gut belegt und muessen deshalb
+    # dieselbe analysis_strength tragen. Bis zum Plan-3b-Abschluss-Review kam
+    # jeder Short auf 1, weil die absolute Momentum-Schwelle auf alle acht
+    # Dimensionen angewandt wurde -- Shorts rankten damit strukturell hinten.
+    strengths = {r["direction"]: r["s"] for r in in_memory_db.execute(
+        "SELECT direction, MIN(analysis_strength) AS s FROM predictions "
+        "GROUP BY direction").fetchall()}
+    assert strengths == {"long": 8, "short": 8}
 
 
 def test_rank_drops_guardrail_failures(in_memory_db, valid_analysis):
@@ -469,18 +477,42 @@ def test_no_warning_when_predictions_were_persisted(in_memory_db, caplog):
 # ---------- _classify() / _rank_key() (Sprint 3B / Plan 3b, Task 7) ----------
 
 
+_OTHER_DIMS = ["market_environment", "company_quality", "valuation",
+               "risk", "sector_trend", "catalyst", "policy_risk"]
+
+
 def _stock_analysis(direction="long"):
-    return {"ticker": "AAPL", "direction": direction, "scores": {
-        dim: {"value": 7.0 if direction == "long" else 3.0,
-              "evidence": ["a", "b"], "evidence_quality": "ok"}
-        for dim in ["market_environment", "company_quality", "valuation",
-                    "momentum", "risk", "sector_trend", "catalyst", "policy_risk"]
-    }}
+    """⚠️ Die Short-Variante ist NICHT die Long-Variante mit gespiegelten Werten.
+
+    Die aktiven v2-Prompts erheben sieben der acht Dimensionen trade-relativ
+    ('hoch = spricht fuer DIESEN Trade'), nur `momentum` absolut. Ein starker
+    Short hat deshalb ein TIEFES momentum und sieben HOHE Werte daneben. Die
+    frueher hier stehende Spiegelung (alle acht auf 3.0) beschrieb einen Short,
+    gegen den alles spricht -- s. C1 im Plan-3b-Abschluss-Review."""
+    scores = {dim: {"value": 7.0 if direction == "long" else 9.0,
+                    "evidence": ["a", "b"], "evidence_quality": "ok"}
+              for dim in _OTHER_DIMS}
+    scores["momentum"] = {"value": 7.0 if direction == "long" else 2.0,
+                          "evidence": ["a", "b"], "evidence_quality": "ok"}
+    return {"ticker": "AAPL", "direction": direction, "scores": scores}
 
 
 def test_classify_core_when_tech_matches():
     a = _stock_analysis("long")
     ctx = {"tech_direction": "long", "tech_strength": 3}
+    klasse, strength, rank_score = _classify(a, ctx, cc=False)
+    assert klasse == "core"
+    assert strength == 8
+    assert rank_score == 24
+
+
+def test_classify_short_counts_all_eight_dimensions():
+    """C1: ein gut belegter Short muss dieselbe volle Staerke erreichen koennen
+    wie ein gut belegter Long. Vor dem Fix kam _classify() hier auf 1 und damit
+    auf rank_score 3 statt 24 -- Shorts waeren strukturell hinter jedem Long
+    einsortiert worden."""
+    a = _stock_analysis("short")
+    ctx = {"tech_direction": "short", "tech_strength": 3}
     klasse, strength, rank_score = _classify(a, ctx, cc=False)
     assert klasse == "core"
     assert strength == 8
