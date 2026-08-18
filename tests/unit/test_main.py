@@ -219,12 +219,10 @@ def test_close_run_does_not_call_claude(tmp_db_path, mocker):
     mocker.patch("main.collect", return_value=([], 0, {}))
     mock_claude = mocker.patch("src.utils.call_claude")
     mocker.patch("src.email_sender._send")
-    mock_evaluate = mocker.patch("main.evaluate_open_predictions", return_value=0)
 
     run_close(date="2026-05-21", db_path=str(tmp_db_path))
 
     mock_claude.assert_not_called()
-    mock_evaluate.assert_called_once()
 
 
 def test_close_pulls_closing_prices_for_all_tickers(tmp_db_path, mocker):
@@ -232,7 +230,6 @@ def test_close_pulls_closing_prices_for_all_tickers(tmp_db_path, mocker):
     und damit die Basis fuer db_momentum und relative Staerke am Folgetag."""
     mocker.patch("main.CapitalComProvider", return_value=MagicMock())
     mocker.patch("main.FinnhubProvider", return_value=MagicMock())
-    mocker.patch("main.evaluate_open_predictions", return_value=0)
     collect_mock = mocker.patch("main.collect", return_value=([], 0, {}))
 
     from main import run_close
@@ -245,9 +242,24 @@ def test_close_pulls_closing_prices_for_all_tickers(tmp_db_path, mocker):
     assert cc in passed, "auch Rohstoffe und Krypto brauchen ihre Schlusskurse"
 
 
-def test_close_still_evaluates_open_predictions(tmp_db_path, mocker):
-    """B.6/Punkt 2: bis 3D das Lernmodul uebernimmt, ist close die EINZIGE
-    Stelle, die outcomes-Zeilen schreibt."""
+def test_close_does_not_evaluate_open_predictions(tmp_db_path, mocker):
+    """final_close ist die EINZIGE Auswertungsstelle (Preismodell-Design,
+    Option 1: "Bewertung wandert in den 00:00-Job").
+
+    Vorher stand hier das Gegenteil (`test_close_still_evaluates_open_predictions`,
+    B.6/Punkt 2) — mit der damals zutreffenden Begruendung, close sei die
+    einzige Stelle, die outcomes-Zeilen schreibt. Seit es final_close gibt,
+    ist diese Praemisse falsch: der 22:30-Aufruf war ein liegen gebliebenes
+    Duplikat aus der Zeit davor, kein bewusster Zweitpfad.
+
+    Warum das nicht nur Redundanz ist, sondern schaedlich: um 22:30 Berlin ist
+    die Tagesbar noch NICHT final (sie schliesst laut openingHours um 00:00
+    UTC). TP-/SL-Treffer werden aber gegen das Tages-High/Low geprueft, und das
+    kann sich bis zum Schluss nur ausweiten. Eine Auswertung um 22:30 sieht
+    also ein zu enges Fenster und kann einen Treffer uebersehen, den
+    final_close 105 Minuten spaeter sieht. Die frueher geschriebene Zeile
+    gewinnt trotzdem: evaluate_open_predictions() ueberspringt bereits
+    geschlossene Predictions."""
     mocker.patch("main.CapitalComProvider", return_value=MagicMock())
     mocker.patch("main.FinnhubProvider", return_value=MagicMock())
     mocker.patch("main.collect", return_value=([], 0, {}))
@@ -255,6 +267,29 @@ def test_close_still_evaluates_open_predictions(tmp_db_path, mocker):
 
     from main import run_close
     run_close(date="2026-07-30", db_path=str(tmp_db_path))
+    ev.assert_not_called()
+
+
+def test_final_close_evaluates_open_predictions(tmp_db_path, mocker):
+    """Die Gegenseite derselben Invariante — und ohne sie waere die Entfernung
+    aus run_close() ungesichert: faellt der Aufruf auch hier weg, schreibt
+    NIEMAND mehr outcomes-Zeilen, und zwar lautlos. Kein Test hat das bisher
+    gepinnt (nur die Bar-Fortschreibung war abgedeckt)."""
+    import pandas as pd
+    from src import db
+    conn = db.connect(str(tmp_db_path)); db.init_schema(conn); conn.close()
+
+    prov = MagicMock()
+    prov._source_name = "capital.com"
+    prov.get_ohlc_after.side_effect = lambda t, *a, **k: pd.DataFrame(
+        {"Open": [99.0], "High": [102.0], "Low": [98.0],
+         "Close": [100.0], "Volume": [1000]},
+        index=pd.DatetimeIndex([pd.Timestamp("2026-08-05")]))
+    mocker.patch("main.CapitalComProvider", return_value=prov)
+    ev = mocker.patch("main.evaluate_open_predictions", return_value=2)
+
+    from main import run_final_close
+    run_final_close(date="2026-08-06", db_path=str(tmp_db_path))
     ev.assert_called_once()
 
 

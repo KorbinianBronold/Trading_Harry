@@ -482,6 +482,19 @@ zwischen 3B und 3D **niemand mehr `outcomes`-Rows schreiben** — das Learning M
 keine Trainingsdaten aus dieser Zeit. Deshalb: `evaluate_open_predictions()` bleibt in `close`,
 bis das Learning Modul in 3D die Auswertung übernimmt. Erst dann wird sie hier entfernt.
 
+> ✅ **Überholt am 2026-08-18 — die Begründung ist seit dem Preismodell-Umbau hinfällig.**
+> Die Lücke, die diese Entscheidung schließen sollte, gibt es nicht mehr: `final_close`
+> (00:15 UTC, eingeführt 2026-08-06, s. Abschnitt P3) wertet selbst aus und ist damit
+> die zugesagte „andere Stelle, die `outcomes` schreibt". Der Aufruf in `close` war ab
+> da ein **liegen gebliebenes Duplikat**, kein bewusster Zweitpfad — und nicht bloß
+> redundant, sondern schädlich: um 22:30 Berlin ist die Tagesbar noch nicht final
+> (Schluss 00:00 UTC), TP/SL werden aber gegen Tages-High/Low geprüft, das sich bis
+> dahin nur ausweiten kann. `close` sah also ein zu enges Fenster, und weil
+> `evaluate_open_predictions()` bereits geschlossene Predictions überspringt, gewann
+> die zu früh geschriebene Zeile gegen die korrekte aus `final_close`.
+> **Entfernt** (`run_close()` wertet nicht mehr aus); `final_close` ist die einzige
+> Auswertungsstelle, beide Seiten der Invariante sind jetzt per Test gepinnt.
+
 ### B.7 — DB-Cleanup-Regeln (in `close`)
 
 | Tabelle | Alt | Neu |

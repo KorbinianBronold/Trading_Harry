@@ -581,16 +581,23 @@ def run_pipeline(run_type: str, date: str, db_path: str) -> None:
 
 
 def run_close(date: str, db_path: str) -> None:
-    """Close-Run (22:30 Berlin): Schlusskurse aller Ticker holen, offene
-    Predictions auswerten, DB aufraeumen. Kein Claude, keine Mail.
+    """Close-Run (22:30 Berlin): Schlusskurse aller Ticker holen, DB aufraeumen.
+    Kein Claude, keine Mail, KEINE Auswertung.
 
     Die Schlusskurse kommen seit Sprint 3B / Plan 2 (B.6) fuer ALLE Ticker, nicht
     mehr nur implizit ueber den Evaluator fuer die mit offener Position: db_momentum
     und die relative Staerke mitteln am Folgetag ueber die gesamte Ticker-Liste.
 
-    evaluate_open_predictions() bleibt hier, bis das Learning Modul (3D) die
-    Auswertung uebernimmt — mit dem entfallenen evaluate-Run ist close sonst die
-    einzige Stelle, die ueberhaupt noch outcomes-Zeilen schreibt."""
+    ⚠️ evaluate_open_predictions() gehoert NICHT hierher, auch wenn es hier bis
+    2026-08-18 stand. Einzige Auswertungsstelle ist final_close (00:15 UTC) —
+    so entschieden im Preismodell-Design (Option 1, "Bewertung wandert in den
+    00:00-Job"). Der Grund ist nicht Redundanz-Vermeidung, sondern Korrektheit:
+    um 22:30 Berlin ist die Tagesbar noch nicht final (sie schliesst laut
+    openingHours um 00:00 UTC), und TP-/SL-Treffer werden gegen das Tages-
+    High/Low geprueft, das sich bis dahin nur ausweiten kann. Die 22:30-
+    Auswertung sah also ein zu enges Fenster, und weil
+    evaluate_open_predictions() bereits geschlossene Predictions ueberspringt,
+    gewann die zu frueh geschriebene Zeile gegen die korrekte aus final_close."""
     conn = db.connect(db_path)
     db.init_schema(conn)
     price_provider = CapitalComProvider()
@@ -606,8 +613,6 @@ def run_close(date: str, db_path: str) -> None:
             earnings_provider=earnings_provider,
             conn=conn, date=date, run_type="close")
 
-    n = evaluate_open_predictions(conn=conn, today=date, price_provider=price_provider)
-    log.info(f"Close run: {n} predictions evaluated")
     db.cleanup_old_data(conn)
     conn.close()
 
