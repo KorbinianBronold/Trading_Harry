@@ -122,6 +122,13 @@ def _row_for_setup(rank: int, a: dict) -> str:
         f'<tr><td>{rank}</td><td>{_h(a["ticker"])}</td>'
         f'<td>{_h(a.get("total_score"))}</td>'
         f'<td>{_h(a.get("probability_pct"))}%</td>'
+        # I5 (Plan-3b-Gesamtreview): Score/P% sind NICHT der Sortierschluessel --
+        # das ist rank_score. Ohne diese Spalte war die Top-10-Reihenfolge fuer
+        # einen Mail-Leser ohne DB-Zugriff nicht nachvollziehbar (Score/P% oben
+        # bleiben als vertraute Kennzahlen erhalten, sind aber nicht die Antwort
+        # auf "warum steht das hier vorne").
+        f'<td>{_h(a.get("_rank_score"))}</td>'
+        f'<td>{_h(a.get("_analysis_strength"))}</td>'
         f'<td>{_h(a.get("current_price"))}</td>'
         f'<td>{_h(a.get("tp_price"))}</td>'
         f'<td>{_h(a.get("sl_price"))}</td>'
@@ -140,6 +147,7 @@ def _section_stocks(top_long: list[dict], top_short: list[dict]) -> str:
         return '<h2>Aktien Top-10</h2><p><i>Keine Setups gefunden.</i></p>'
     head = (
         '<tr><th>#</th><th>Ticker</th><th>Score</th><th>P%</th>'
+        '<th>Rank-Score</th><th>Analysis-Strength</th>'
         '<th>Kurs</th><th>TP</th><th>SL</th><th>R/R</th>'
         '<th>ATR/Tag</th><th>Range/Tag</th><th>Haltedauer</th>'
         '<th>Flags</th><th>Begründung</th></tr>'

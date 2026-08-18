@@ -92,6 +92,32 @@ def test_daily_html_when_no_setups_still_renders_other_sections():
     assert "ai-capex-acceleration" in html  # trends still present
 
 
+def test_daily_html_top10_shows_the_actual_sort_key():
+    """I5 (Plan-3b-Gesamtreview): die Top-10-Tabellen sortieren nach rank_score,
+    zeigten bisher aber nur total_score/probability_pct -- fuer einen Mail-Leser
+    ohne DB-Zugriff war die Reihenfolge nicht nachvollziehbar (im Live-Lauf sichtbar:
+    BRK-B mit Score 5.5 stand vor META mit Score 7.0, weil rank_score 9 gegen 4 sagt).
+    _rank_score/_analysis_strength sind exakt die Schluessel, die rank_and_persist()s
+    _enrich() an jede Top-10-Zeile anhaengt (src/ranking.py)."""
+    payload = _sample_payload()
+    payload["top_long"][0]["_rank_score"] = 21
+    payload["top_long"][0]["_analysis_strength"] = 7
+    html = render_daily_html(payload)
+    assert "Rank-Score" in html
+    assert "Analysis-Strength" in html
+    assert "<td>21</td>" in html
+    assert "<td>7</td>" in html
+
+
+def test_daily_html_top10_rank_score_missing_renders_empty_not_crash():
+    """Divergenz-Kandidaten haben nie _rank_score/_analysis_strength in dieser Form
+    (die Klassifikations-Keys sind Top-10-spezifisch) -- ein fehlender Schluessel darf
+    die Tabelle nicht zum Absturz bringen."""
+    payload = _sample_payload()
+    html = render_daily_html(payload)  # _sample_payload() setzt beide Keys nicht
+    assert "Rank-Score" in html
+
+
 def test_daily_html_when_cost_aborted_includes_warning():
     payload = _sample_payload()
     payload["cost_summary"]["aborted_at_phase"] = "deep_analysis"
