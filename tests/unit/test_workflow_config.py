@@ -67,18 +67,34 @@ def test_workflow_has_no_removed_run_types(removed):
     assert removed not in WORKFLOW
 
 
-def test_trade_proposals_has_a_slot_for_both_us_dst_phases():
-    """Der Lauf soll 40 min NACH der US-Eroeffnung liegen, also um 10:10
-    America/New_York. Das ist 14:10 UTC, solange New York auf EDT steht, und
-    15:10 UTC auf EST.
+def test_only_the_us_summer_slot_is_scheduled():
+    """Stand 2026-08-18: der Workflow faehrt bewusst NUR die Sommerzeit, der
+    EST-Slot ist nicht geplant (TODO im schedule-Block von analyze.yml).
 
-    Mit nur dem 14:10-Slot lief er von Anfang November bis Mitte Maerz um
-    09:10 ET — 20 Minuten VOR der Eroeffnung. Der Opening-Gap-Check haette dort
-    zwei Pre-Open-Kurse verglichen und nie gefeuert, und die Re-Validierung
-    haette auf Kursen von vor dem Opening stattgefunden. Genau die Praemisse des
-    Laufs faellt damit weg, und zwar lautlos."""
-    assert "'10 14 * * 1-5'" in WORKFLOW, "Slot fuer die US-Sommerzeit (EDT)"
-    assert "'10 15 * * 1-5'" in WORKFLOW, "Slot fuer die US-Winterzeit (EST)"
+    Der Lauf soll 40 min NACH der US-Eroeffnung liegen, also um 10:10
+    America/New_York — 14:10 UTC unter EDT, 15:10 UTC unter EST. Ohne den
+    EST-Slot laeuft trade_proposals im Winter gar nicht: der Zeitzonen-Filter
+    im Schritt "Determine run_type" wirft den EDT-Slot dann weg (s.
+    test_the_wrong_trade_proposals_slot_is_skipped). Das ist die bewusst
+    gewaehlte Variante — der Lauf faellt aus, statt um 09:10 ET zu laufen,
+    also 20 Minuten VOR der Eroeffnung. Genau so lief er frueher von Anfang
+    November bis Mitte Maerz: der Opening-Gap-Check verglich zwei
+    Pre-Open-Kurse und feuerte nie, die Re-Validierung arbeitete auf Kursen
+    von vor dem Opening. Die Praemisse des Laufs fiel damit lautlos weg.
+
+    ⚠️ Geprueft wird gegen die tatsaechlich geplanten cron-Zeilen, nicht per
+    Substring gegen die ganze Datei: '10 15 * * 1-5' kommt im Kommentartext
+    weiterhin vor, und ein Substring-Test waere allein dadurch gruen
+    geblieben — er haette die Entfernung des Slots gar nicht bemerkt.
+
+    Wird die Winterzeit nachgezogen, gehoert dieser Test mit umgestellt: dann
+    muessen BEIDE Slots geplant sein, jeder mit eigenem case-Zweig."""
+    crons = set(re.findall(r"- cron: '([^']+)'", WORKFLOW))
+    assert "10 14 * * 1-5" in crons, "Slot fuer die US-Sommerzeit (EDT) fehlt"
+    assert "10 15 * * 1-5" not in crons, (
+        "Der EST-Slot ist derzeit bewusst NICHT geplant. Wenn er absichtlich "
+        "wieder dazukommt, diesen Test und das TODO im schedule-Block "
+        "mitziehen — und den case-Zweig nicht vergessen")
     assert 'T="trade_proposals"' in WORKFLOW
 
 

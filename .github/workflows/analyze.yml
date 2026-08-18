@@ -1,21 +1,43 @@
 name: analyze
 on:
   schedule:
+    # ============================================================================
+    # ⚠️ TODO — WINTERZEIT IST NOCH NICHT ABGEDECKT (bewusst aufgeschoben,
+    # Stand 2026-08-18). Alle Slots hier gelten fuer die BERLINER SOMMERZEIT
+    # (CEST = UTC+2). Cron ist UTC-fix, GitHub Actions passt NICHT an die
+    # Zeitumstellung an. Ab der Rueckstellung auf CET (UTC+1, letzter Sonntag im
+    # Oktober) gilt daher:
+    #   * pre_market, close, weekly laufen eine Stunde FRUEHER als hier notiert
+    #     (14:00 / 21:30 / So 19:00 Berlin statt 15:00 / 22:30 / So 20:00),
+    #   * trade_proposals faellt ganz aus (s. Begruendung beim Slot unten).
+    # Vor der Umstellung anzupassen: entweder die UTC-Stunden um 1 erhoehen und
+    # den EST-Slot '10 15 * * 1-5' ergaenzen, oder die Slots ganzjaehrig doppelt
+    # anlegen und im Schritt "Determine run_type" filtern (wie es
+    # trade_proposals schon tut).
+    # ⚠️ Jede neue Cron-Zeile braucht ZWINGEND auch einen case-Zweig im Schritt
+    # "Determine run_type" -- ohne ihn faellt der Lauf still auf den
+    # close-Default zurueck und fuehrt den falschen Run-Type aus. Das ist keine
+    # Fleissaufgabe: tests/unit/test_workflow_config.py erzwingt die Paritaet
+    # und wird rot, wenn eine der beiden Seiten fehlt.
+    # ============================================================================
     - cron: '0 13 * * 1-5'    # pre_market       15:00 Berlin (CEST)
     # trade_proposals haengt als einziger Lauf an der US-Eroeffnung, nicht an
     # Berlin: er soll 40 min danach liegen, also um 10:10 America/New_York.
-    # Das sind 14:10 UTC, solange New York auf EDT steht, und 15:10 UTC auf EST.
-    # Beide Slots feuern ganzjaehrig (Cron ist UTC-fix); der Schritt
-    # "Determine run_type" wirft den jeweils falschen weg.
-    - cron: '10 14 * * 1-5'   # trade_proposals  10:10 New York (EDT)
-    - cron: '10 15 * * 1-5'   # trade_proposals  10:10 New York (EST)
+    # Das sind 14:10 UTC, solange New York auf EDT steht.
+    # ⚠️ Der EST-Slot ('10 15 * * 1-5') ist bewusst NICHT geplant — wir fahren
+    # vorerst nur die Sommerzeit. Die US-Zeitzonenpruefung im Schritt
+    # "Determine run_type" bleibt trotzdem aktiv: sobald New York auf EST steht,
+    # ueberspringt sie diesen Slot. Lieber gar kein Lauf als einer 20 min VOR
+    # der Eroeffnung — genau dieser Fehler lief frueher von November bis Maerz.
+    - cron: '10 14 * * 1-5'   # trade_proposals  10:10 New York (EDT) = 16:10 Berlin (CEST)
     - cron: '30 20 * * 1-5'   # close            22:30 Berlin (CEST)
     - cron: '0 18 * * 0'      # weekly           So 20:00 Berlin (CEST)
     # final_close haengt an der BAR-GRENZE, nicht an einer Boersensitzung:
     # openingHours meldet `zone: UTC` und schliesst auf 00:00 UTC. Job und
     # Datenquelle liegen damit am selben Anker -- eine Zeitumstellung verschiebt
     # beide nicht gegeneinander, es gibt hier also KEINE DST-Kopplung (anders als
-    # bei trade_proposals, der zwei Slots braucht).
+    # bei trade_proposals, der an der US-Eroeffnung haengt). Dieser Slot ist
+    # deshalb als einziger vom TODO oben NICHT betroffen und gilt ganzjaehrig.
     # Taeglich, nicht Mo-Fr: freitags schliesst der Handel um 21:00 UTC, die Bar
     # wird erst danach final -- erst der Samstagslauf holt sie.
     # 15 statt 0: Puffer auf die Bar-Grenze. Actions-Crons verspaeten sich nur.
@@ -83,14 +105,12 @@ jobs:
           case "${{ github.event.schedule }}" in
             "0 13 * * 1-5")  T="pre_market" ;;
             "10 14 * * 1-5") T="trade_proposals" ;;
-            "10 15 * * 1-5") T="trade_proposals" ;;
             "30 20 * * 1-5") T="close" ;;
             "0 18 * * 0")    T="weekly" ;;
             "15 0 * * *")    T="final_close" ;;
             *)               T="close" ;;
           esac
 
-          # Von den beiden trade_proposals-Slots ist immer nur einer richtig.
           # Massgeblich ist die US-Zeitzone, NICHT Europe/Berlin: EU und USA
           # schalten an verschiedenen Wochenenden um, in den Zwischenwochen
           # stimmt eine Berliner Rechnung nicht. 10:10 New York ist 14:10 UTC
@@ -98,6 +118,12 @@ jobs:
           # Ohne diesen Filter lief der Lauf von Anfang November bis Mitte Maerz
           # um 09:10 ET -- 20 Minuten VOR der Eroeffnung. Der Opening-Gap-Check
           # verglich dort zwei Pre-Open-Kurse und feuerte nie.
+          # ⚠️ Aktuell ist nur der EDT-Slot geplant (s. TODO im schedule-Block).
+          # Diese Pruefung bleibt trotzdem stehen und ist der Grund, warum der
+          # Winter-Ausfall ein sauberes Ueberspringen ist statt eines Laufs zur
+          # falschen Zeit. Der "-0500:15"-Zweig laeuft daher derzeit nie an --
+          # er bleibt bewusst stehen, damit die Winterzeit die Pruefung selbst
+          # nicht anfassen muss.
           if [ "$T" = "trade_proposals" ]; then
             NY_OFFSET=$(TZ=America/New_York date +%z)
             UTC_HOUR=$(date -u +%H)

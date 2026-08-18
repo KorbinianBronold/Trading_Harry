@@ -336,12 +336,20 @@ man dort **nicht** sieht:
 **DST.** Cron ist UTC-fix, GitHub Actions passt nicht an die Sommerzeit an. Die
 Kommentare im Workflow gelten für CEST; im Winter (CET) läuft alles 1 h früher.
 
-⚠️ Für `trade_proposals` ist das **nicht** nur eine Verschiebung: der Lauf hängt an
-der **US-Eröffnung** (10:10 America/New_York), nicht an Berlin. Deshalb gibt es
-**zwei** Cron-Slots — 14:10 UTC unter EDT, 15:10 UTC unter EST — und der Workflow
-verwirft den jeweils falschen anhand von `TZ=America/New_York date +%z`. Maßgeblich
-ist bewusst die US-Zeitzone: EU und USA schalten an verschiedenen Wochenenden um.
-Mit nur dem Sommer-Slot lief der Lauf von November bis März **vor** der Eröffnung.
+⚠️ **Der Workflow fährt bewusst NUR die Sommerzeit** (Entscheidung 2026-08-18, TODO
+steht im `schedule`-Block von `analyze.yml`). Ab der Rückstellung auf CET laufen
+`pre_market`, `close` und `weekly` eine Stunde früher als dort notiert, und
+`trade_proposals` fällt ganz aus. Das ist bekannt und aufgeschoben, kein Versehen.
+Einzige Ausnahme: `final_close` hängt an der UTC-Bar-Grenze und gilt ganzjährig.
+
+⚠️ Für `trade_proposals` ist DST **nicht** nur eine Verschiebung: der Lauf hängt an
+der **US-Eröffnung** (10:10 America/New_York), nicht an Berlin. Geplant ist derzeit
+nur der EDT-Slot (14:10 UTC = 16:10 Berlin); der EST-Slot (15:10 UTC) ist bewusst
+auskommentiert. Der Workflow prüft trotzdem weiter `TZ=America/New_York date +%z`
+und **überspringt** den Slot, sobald New York auf EST steht — lieber kein Lauf als
+einer zur falschen Zeit. Maßgeblich ist bewusst die US-Zeitzone: EU und USA schalten
+an verschiedenen Wochenenden um. Ohne diese Prüfung lief der Lauf von November bis
+März **vor** der Eröffnung, und der Opening-Gap-Check verglich zwei Pre-Open-Kurse.
 
 **Kosten.** Die Schätzungen im Workflow und in älteren Dokumenten sind
 nachweislich zu niedrig. Erster echter Messlauf am 2026-07-29: ein `pre_market`
