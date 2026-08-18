@@ -1,6 +1,21 @@
 # PROJECT_STATUS.md — Shares_Future (Trading_Harry)
 
-**Zuletzt aktualisiert:** 2026-08-17 — ✅ **Plan 3a (Batch-Tiefenanalyse) abgeschlossen:
+**Zuletzt aktualisiert:** 2026-08-18 — ✅ **Plan 3b (Ranking) abgeschlossen (12/12
+Tasks).** `rank_score` (`analysis_strength × tech_strength`) ersetzt `probability_pct`
+als Sortierschlüssel, `candidate_class` trennt core/divergence/conflict in
+Persistierung und Aggregaten, der C.1-Fix (`atr_pct`/`rsi_at_entry`/`volume_ratio`) ist
+mitgenommen, `score_total()`/`DIMENSION_WEIGHTS` sind entfernt. Der anschliessende
+Gesamt-Review über alle 12 Commits fand **zwei Critical-Befunde**, beide an Nähten, die
+kein Einzel-Task-Review sehen konnte — `analysis_strength()` zählte für jeden Short
+verkehrt herum, `candidate_class` ging beim 16:10-Ablösen einer Divergenz-Prediction
+verloren — plus drei Important-Befunde; alle fünf in einer Fix-Welle behoben, Re-Review
+bestätigt: ADDRESSED, keine neue Breakage. Live-Testlauf gegen eine Wegwerf-Kopie: 7
+core-Predictions (2 long, 4 short, 1 Commodity), 0 divergence, 0 conflict — plausibel;
+Top-10-Sortierung von Hand nachgerechnet, korrekt; 0 Mutations-Leck in den
+Portfolio-Check-Prompt; 1,9187 EUR, keine Kostenregression gegenüber C.11. **838 Tests
+grün, 92,36 % Coverage.** Details: PROJECT_STATUS **C.13**.
+
+Davor, 2026-08-17 — ✅ **Plan 3a (Batch-Tiefenanalyse) abgeschlossen:
 Abschluss-Review über `e3dc5a7..HEAD` durchgeführt (C.12), keine kritischen Befunde.**
 Vier Important-Befunde, alle behoben — anders als bei Plan 2 keine fehlenden
 Produktions-Aufrufer, ausschliesslich Doku-/Prompt-Konsistenz: CLAUDE.md und
@@ -182,7 +197,7 @@ Einen Branch `sprint3b/plan2-pipeline-umbau` gibt es weder lokal noch remote.
 
 | Modul | Was gebaut |
 |---|---|
-| `config.py` | Alle Konstanten, Ticker-Listen (MVP 20 + Commodity + Crypto), DIMENSION_WEIGHTS, Capital.com-Credentials |
+| `config.py` | Alle Konstanten, Ticker-Listen (MVP 20 + Commodity + Crypto), DIMENSION_WEIGHTS (in Plan 3b entfernt, s. C.13), Capital.com-Credentials |
 | `src/db.py` | Vollständiges SQLite-Schema: price_history, technical_indicators, fundamentals, predictions, outcomes, skipped_tickers, trend_analyses, market_context, cost_tracking, prompt_versions, news_summaries, position_recommendations |
 | `src/providers/base.py` | DataProvider-Interface |
 | `src/providers/yfinance_provider.py` | yFinance-Implementierung (primary in Sprint 1, in Sprint 3 entfernt) |
@@ -2380,6 +2395,142 @@ Tiefe) — im Verifikationslauf bei 46–54 % Auslastung kein beobachtetes Probl
 Invariante, Verdrahtung in `run_pipeline()` — korrekt, gegen echte API-Läufe verifiziert,
 durch Tests abgesichert, die tatsächlich die relevanten Werte prüfen statt nur „es gab
 einen Retry". Plan 3a ist damit **abgeschlossen**. Nächster Schritt: Plan 3b.
+
+---
+
+### C.13 — Plan 3b (Ranking) abgeschlossen ✅ (2026-08-18): zwei Critical-Befunde an den Nähten, alle behoben
+
+12/12 Tasks umgesetzt via `superpowers:subagent-driven-development` (frischer Subagent
+je Task, Task-Review nach jedem Task, ein Fix-Round bei Task 8). `rank_score`
+(`analysis_strength × tech_strength`) ersetzt `probability_pct` als Sortierschlüssel,
+`candidate_class` (`core`/`divergence`/`conflict`) trennt Persistierung und Aggregate,
+der C.1-Fix (`atr_pct`/`rsi_at_entry`/`volume_ratio` standen hart auf `None`) ist
+mitgenommen, `score_total()`/`config.DIMENSION_WEIGHTS` sind entfernt.
+
+**Gesamt-Review über `bc19c8c..d03316b` (12 Commits)**, analog zu C.8/C.12. Die
+Prüfperspektive war bewusst anders als bei den Task-Reviews: nicht „stimmt Task N mit
+seinem eigenen Brief überein", sondern End-to-End-Datenfluss, die Mutations-Invariante
+über den **gesamten** Pfad (nicht nur innerhalb von `rank_and_persist()`), Konsistenz
+von `candidate_class` über **alle** `predictions`-Leser (nicht nur die drei, die Plan
+3b explizit anfasste), und Migrations-/Rückwärtskompatibilität. Genau aus dieser
+Perspektive kamen die beiden Critical-Befunde — beide unsichtbar für jedes
+Einzel-Task-Review, weil sie an Nähten zwischen Tasks bzw. zwischen Plan 3a und 3b
+sitzen, nicht innerhalb einer Task-Diff.
+
+**1. `analysis_strength()` zählte für jeden Short verkehrt herum.** Die aktiven
+v2-Prompts (`prompts/deep_analysis_v2.txt`, seit Plan 3a) verlangen für alle acht
+Score-Dimensionen **trade-relative** Polarität — „HIGHER IS ALWAYS BETTER FOR THE
+PROPOSED TRADE", `valuation: 10 = … stretched for a short`. `analysis_strength()`
+(Spec § 5.2) wandte stattdessen `momentum`s **absolute** Schwelle auf alle acht an
+(`short → value <= 4.0`). Gemessen: ein gut belegter Short (Momentum 2.0, die anderen
+sieben bei 9.0) zählte **1**, ein Short, dessen Fundamentaldaten komplett gegen den
+Trade sprachen (alle acht bei 2.0), zählte **8** — und kam trotzdem durch die
+Guardrails, die nur `momentum` selbst prüfen. Die Short-Top-10 war damit grob
+**invertiert** sortiert, die persistierte `analysis_strength` für Shorts unbrauchbar.
+**Ursache war ein Spec-/Prompt-Defekt, kein Umsetzungsfehler von Plan 3b** — Spec 5.2
+unterstellte absolute Polarität für alle acht, die Plan-3a-Prompts etablierten
+trade-relative; die Kollision lag zwischen zwei Plänen, kein Task-Brief konnte sie
+sehen. **Behoben:** `momentum` behält die richtungsabhängige absolute Regel (die
+Guardrails und die Prompts eigene Hard-Rule hängen daran), die anderen sieben zählen
+jetzt `value >= MOMENTUM_LONG_MIN` unabhängig von der Richtung. Spec § 5.2 korrigiert,
+**Prompts bewusst unverändert** (Regel 10 — der Selbstwiderspruch im Prompt-Wortlaut
+„EVERY one of the eight" gegen die eine `momentum`-Ausnahme bleibt dort stehen, ist
+jetzt aber in CLAUDE.md dokumentiert). Vorher-Nachher am Code gemessen: guter Short
+1→8, schlechter Short 8→1, Longs unverändert. Die Short-Tests, die die alte (falsche)
+Semantik pinnten, wurden auf die neue umgeschrieben, nicht nur grün gepatcht — ein
+Re-Reviewer hat jede umgeschriebene Assertion von Hand gegen `MOMENTUM_LONG_MIN`/
+`MOMENTUM_SHORT_MAX` nachgerechnet.
+
+**2. `candidate_class` ging beim 16:10-Ablösen einer Divergenz-Prediction verloren.**
+`main.py`s `_persist_revision()` baute die Nachfolgezeile für
+`db.supersede_prediction()` ohne die acht neuen Plan-3b-Spalten — `_insert_prediction()`
+stempelte die Nachfolgezeile damit per Default auf `'core'`. Folge, beides still:
+`load_recent_outcomes_aggregate()`s `divergence_summary` war strukturell leer für
+**genau** die Divergenz-Kandidaten, die 16:10 überlebt haben — die einzigen mit einem
+echten Ergebnis — und `load_revision_effectiveness()`s `divergence.confirmed` blieb
+dauerhaft 0, während `core.confirmed` mit Divergenzen aufgebläht wurde. Exakt die
+Frage, für die Tasks 5/6/10 die Trennung gebaut hatten. Verschärfend: ein bestehender
+Test hatte den `divergence`+`trade_proposals`-Zustand von Hand geseedet statt über den
+echten Pfad zu laufen — grün auf einem Zustand, den die Pipeline gar nicht erzeugen
+konnte, maskierte also den Bug. **Behoben:** `_persist_revision()` reicht alle acht
+Spalten aus `pred` (bereits ein `SELECT *`) in den `supersede_prediction()`-Payload
+durch; ein neuer Test treibt `_persist_revision()` direkt und prüft die **Wirkung**
+über `load_revision_effectiveness()` (`divergence.confirmed=1`, `core.confirmed=0`).
+
+**Drei Important-Befunde, in derselben Welle behoben:**
+- `check_earnings()` (Task 4) wurde erhoben, aber **nie durchgesetzt** — kein Aufrufer
+  übergab je `enforce_checks=True`, und der 16:10-Pfad (`_revalidate_all`) rief die
+  Funktion gar nicht auf, obwohl Spec § 5.3 genau das verlangt. Jetzt in
+  `_revalidate_all` verdrahtet, `earnings_in_days` kommt aus dem ohnehin im 16:10-
+  Snapshot vorhandenen Wert (kein neuer Datenpfad nötig).
+- `divergence_summary` wurde gebaut, aber in der Wochenmail nie gerendert — das
+  „Performance"-Wochenblock war still auf `core` verengt. Jetzt als eigener,
+  beschrifteter Unterblock gerendert, nie mit `core` vermischt.
+- Die Wochentabelle „Signal-Veränderungen" gruppiert seit Task 5 nach
+  `(revision_verdict, candidate_class)`, zeigte aber keine `candidate_class`-Spalte —
+  zwei „bestaetigt"-Zeilen waren ununterscheidbar. Spalte ergänzt.
+
+**Nicht in der Fix-Welle, bewusste Entscheidungen:**
+- `_aggregate_yesterday_outcomes()` (der Tages-Footer „Vortags-Performance") vermischt
+  weiterhin core und divergence — Spec § 5.6 zählt „drei Funktionen" auf, die getrennt
+  werden müssen, tatsächlich gibt es vier Leser von `predictions`/`outcomes`. Ruling: der
+  Tages-Footer ist eine „wie lief gestern"-Portfolioansicht, dort ist Mischen
+  vertretbar — es ist jetzt eine dokumentierte Entscheidung, kein Zufall.
+- Die Top-10-Tabellen in der Tagesmail sortieren nach `rank_score`, zeigen aber
+  `total_score`/`probability_pct` als Spalten (I5) — im Live-Lauf sichtbar geworden:
+  BRK-B (Score 5.5) stand vor META (Score 7.0), weil `rank_score` 9 gegen 4 sagt. Für
+  einen Mail-Leser ohne DB-Zugriff nicht nachvollziehbar. Nicht behoben, Kandidat für
+  einen kleinen Folge-Fix.
+- Der C.1-Fix aus dem Sprint-3C-Abschluss-Review (`atr_pct`/`rsi_at_entry`/
+  `volume_ratio` von hart-`None` auf echte Werte) betraf nur den `pre_market`-Pfad
+  (`_to_prediction_row()`). Der 16:10-Pfad (`_persist_revision()`) liess diese drei
+  Spalten unangetastet — sie bleiben auf **jeder** `trade_proposals`-Zeile `None`.
+  Gleiche Fehlerklasse wie C2, aber vorbestehend (nicht durch Plan 3b eingeführt) und
+  ohne Wirkung auf die core/divergence-Trennung. Nicht behoben, Kandidat für einen
+  Folge-Fix.
+
+**Live-Testlauf** gegen eine Wegwerf-Kopie (`_verify_run_2/tracking.db`), echte
+Capital.com/Finnhub/Anthropic-Calls, `RESEND_API_KEY=invalid` (Mail abgefangen statt
+verschickt), volle Request/Response-Protokollierung je Phase in
+`_verify_run_2/logs/` (Kopie und Anpassung von `_verify_run/run_verbose.py` aus C.9/
+C.11 — reine Instrumentierung von aussen, kein Produktionscode angefasst). 12 von 20
+MVP-Tickern durch den Cutoff, 12 Tiefenanalysen + 7 Rohstoff/Krypto-Analysen, **7
+core-Predictions** (2 long: XOM/NVDA, 4 short: BRK-B/META/HD/AVGO, 1 Commodity: CL=F),
+**0 divergence, 0 conflict** — plausibel, keine leere Ausbeute durch einen Bug.
+`rank_score IS NULL` trat in diesem Lauf nicht auf (kein divergence-Kandidat), keine
+Verletzung der NULL-nie-0-Regel gefunden. Top-10-Sortierung von Hand gegen
+`analysis_strength × tech_strength` nachgerechnet: Long XOM(21)>NVDA(16), Short
+BRK-B(9)>META(4)>HD(3)>AVGO(2) — beide korrekt absteigend. `check_earnings` feuerte in
+diesem Lauf nicht (kein Kandidat ≤2 Tage vor Earnings) — Check korrekt inaktiv, aber
+nicht positiv scharfgeschaltet beobachtet. Divergenz-Sektion der (abgefangenen) Mail
+korrekt gerendert: „Keine." plus Zähler „Enthaltungen mit Technik-Richtung: 6 ·
+Technik-Konflikte verworfen: 0 · Deckel-Ueberlauf: 0". **Mutations-Invariante live
+bestätigt:** 0 Treffer für `_candidate_class`/`_analysis_strength`/`_rank_score` im
+Phase-4a-Portfolio-Check-Prompt — der C.6-Vorfall (29 Plan-1-Werte liefen unbemerkt in
+Prompts) wiederholt sich nicht. Kein `stop_reason=max_tokens`, keine unerwarteten
+Fehler (nur die bekannte „unknown sector value 'Media'"-Warnung und ein erwarteter
+Portfolio-Check-Skip für AAPL). **Kosten 1,9187 EUR, 14,4 min — praktisch identisch zur
+C.11-Baseline (1,9072 EUR)**, keine Regression durch Plan 3b.
+
+⏳ **Bewusst nicht in diesem Pass behoben** (Doku-Nachzug, kein Code): die Plan-Datei
+selbst (`…/plan3b-ranking.md:185,206`) trägt noch den alten, falschen
+`analysis_strength`-Pseudocode aus der Zeit vor dem C1-Fix — ausgeführte Plan-Dateien
+sind in diesem Projekt historische Artefakte, keine lebende Spezifikation, aber ein
+Leser könnte den Bug dort wortgetreu wiederherleiten. `README.md` und
+`docs/SPECIFICATION.md` nennen `DIMENSION_WEIGHTS` weiterhin als aktives Konzept —
+beide waren laut vorangegangenem Doku-Audit bereits vor Plan 3b als veraltet bekannt
+und für einen eigenen Aufräum-Pass vorgemerkt; hier bewusst nicht mit angefasst, um
+diesen Pass nicht zu vermischen.
+
+**838 Tests grün, 92,36 % Coverage** (Baseline vor der Fix-Welle: 828/92,33 %).
+
+**Fazit:** Kern der Implementierung — Klassifikation, `rank_score`-Formel,
+Mutations-Sicherheit, Migration — korrekt und gegen einen echten Lauf verifiziert. Die
+beiden Critical-Befunde zeigen aber deutlich, wozu der Gesamt-Review da ist: beide
+lagen exakt dort, wo ein Plan seine eigenen Tasks nicht mehr sieht — an der Naht zu
+Plan 3a (Prompt-Polarität) und an einer Stelle, die keine Plan-3b-Task explizit
+anfasste (`_persist_revision()`). Plan 3b ist damit **abgeschlossen**. Nächster
+Schritt: Sprint 3D (Learning Modul) — braucht eine eigene Planungssession.
 
 ---
 

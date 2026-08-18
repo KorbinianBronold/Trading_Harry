@@ -1,6 +1,25 @@
 # Shares_Future – SP500 CFD Research Tool
 
-**Zuletzt aktualisiert:** 2026-08-17 — ✅ **Verifikationslauf bestanden
+**Zuletzt aktualisiert:** 2026-08-18 — ✅ **Plan 3b (Ranking) abgeschlossen
+(12/12 Tasks, Gesamt-Review + Fix-Welle + Re-Review sauber).** `rank_score`
+(`analysis_strength × tech_strength`) ersetzt `probability_pct` als Sortierschlüssel,
+`candidate_class` trennt core/divergence/conflict in Persistierung und Aggregaten, der
+C.1-Fix (`atr_pct`/`rsi_at_entry`/`volume_ratio`) ist mitgenommen, `score_total()`/
+`DIMENSION_WEIGHTS` sind entfernt. Der Gesamt-Review über alle 12 Commits fand **zwei
+Critical-Befunde an den Nähten, die kein Einzel-Task-Review sehen konnte**:
+`analysis_strength()` zählte für jeden Short verkehrt herum (Kollision zwischen Spec 5.2s
+absoluter Zählregel und der trade-relativen Polarität der aktiven v2-Prompts — Spec 5.2
+korrigiert, Prompts unverändert), und `candidate_class` ging beim 16:10-Ablösen einer
+Divergenz-Prediction verloren (`divergence_summary`/`load_revision_effectiveness()`
+dadurch strukturell leer für genau die Kandidaten mit echtem Ergebnis). Beide plus drei
+Important-Befunde (`check_earnings` nie durchgesetzt, `divergence_summary` nie gerendert,
+mehrdeutige Wochentabellen-Zeilen) in einer Fix-Welle behoben, re-reviewed: alle
+ADDRESSED, keine neue Breakage. Live-Testlauf gegen eine Wegwerf-Kopie bestätigt den
+Fix (Top-10-Sortierung von Hand nachgerechnet korrekt, 0 Mutations-Leck in den
+Portfolio-Check-Prompt, 1,9187 EUR — keine Kostenregression gegenüber C.11).
+**838 Tests grün, 92,36 % Coverage.** Details: PROJECT_STATUS **C.13**.
+
+Davor, 2026-08-17 — ✅ **Verifikationslauf bestanden
 (PROJECT_STATUS C.11).** Nach der Neukalibrierung (`TOKENS_PER_TICKER_DEEP` 900 → 2500,
 `BATCH_TOKEN_RESERVE` 2000 → 200, Wiederholung nach Kappung mit doppelter Decke) trat
 `stop_reason=max_tokens` **kein einziges Mal** auf: 12 von 12 Kandidaten analysiert,
@@ -115,6 +134,26 @@ Die Pipeline-Phasen lassen sich an `main.py:run_pipeline()` ablesen.
 ## Wichtige Designentscheidungen
 - Provider-Hierarchie: Capital.com (alleiniger OHLC-Provider) → Finnhub (Fundamentals, gecacht) — yfinance seit Sprint 3 entfernt (2026-07-09)
 - Guardrails: jede Analyse braucht min. 2 Belege je Score-Dimension
+- Die acht Score-Dimensionen (Market Environment, Company Quality, Valuation, Momentum,
+  Risk, Sector Trend, Catalyst, Policy Risk) bleiben **erhalten und werden einzeln
+  persistiert** — eine Gewichtung zu einem Gesamtscore findet **im Code nicht statt**
+  und ist bewusst Aufgabe von Sprint 3D (Spec § 5.7). Seit Plan 3b sind `score_total()`
+  und `config.DIMENSION_WEIGHTS` entfernt; der Sortierschlüssel ist `rank_score`
+  (`analysis_strength × tech_strength`, § 5.2/5.4), keine gewichtete Summe. Wer hier
+  wieder eine Gewichtung einführt, unterläuft genau die Trennung, die 3D später messen
+  soll — welche Dimension predictet, statt es per Annahme festzulegen.
+  ⚠️ **`analysis_strength()` (Spec § 5.2) zählt `momentum` anders als die anderen
+  sieben Dimensionen.** Die aktiven v2-Prompts (`deep_analysis_v2.txt`,
+  `commodities_crypto_v2.txt`) verlangen für sieben Dimensionen **trade-relative**
+  Polarität ("hoch = gut für DIESEN Trade", `valuation: 10` heisst bei einem Short
+  „teuer genug für einen Short"). `momentum` bleibt die eine **absolute** Ausnahme
+  (tiefer Wert = bärisch), weil sowohl die Guardrails (`src/guardrails.py`) als auch
+  der Prompts eigene Hard-Rule (`direction='short'` verlangt `momentum <= 4.0`) darauf
+  aufbauen. Die v2-Prompts sagen an dieser einen Stelle bewusst nicht „momentum ist die
+  Ausnahme" (Regel 10: Prompts werden nicht mehr geändert, nur der Code passt sich an) —
+  wer den Prompt liest, muss diesen Absatz hier kennen, sonst wirkt die Formel
+  widersprüchlich zum Prompt-Wortlaut. Gefunden im Plan-3b-Abschlussreview (PROJECT_STATUS
+  C.13), vorher zählte jeder Short verkehrt herum.
 - Long/Short getrennt tracken und optimieren
 - Übersprungene Aktien: learnable=False, nie ins Lernmodul
 - SIMULATION_ONLY=True: niemals echte Orders
@@ -417,8 +456,15 @@ und der getroffenen Entscheidungen. Kurzfassung:
       Abschluss-Review über `e3dc5a7..HEAD` durchgeführt: keine kritischen Befunde,
       vier Doku-/Prompt-Konsistenzpunkte behoben. Stand: PROJECT_STATUS
       **C.9–C.11**.
-    - **Plan 3b (Ranking)** — offen, noch keine Plan-Datei; bringt `rank_score`,
-      `candidate_class` und den Mail-Abschnitt.
+    - **Plan 3b (Ranking)** —
+      `…/plans/2026-08-17-analyse-pipeline-plan3b-ranking.md`,
+      ✅ **12/12 Tasks umgesetzt, Gesamt-Review + Fix-Welle + Re-Review sauber, live
+      verifiziert.** `rank_score`/`candidate_class` ersetzen `probability_pct` als
+      Sortier-/Klassifikationslogik, ein eigener Divergenz-Mail-Abschnitt, der C.1-Fix
+      ist mitgenommen. Der Gesamt-Review fand zwei Critical-Befunde an den Nähten
+      zwischen Plan 3a und 3b (Short-Polarität in `analysis_strength()`,
+      `candidate_class`-Verlust beim 16:10-Ablösen) — beide plus drei Important-Befunde
+      in einer Welle behoben. Stand: PROJECT_STATUS **C.13**.
 - **3D / 3E / 3F** sind ⚠️ **Platzhalter** — bei Erreichen aktiv nachfragen und den
   Sprint gemeinsam ausarbeiten, **bevor** Code entsteht. Die Stichpunkte dort sind
   keine Spezifikation.

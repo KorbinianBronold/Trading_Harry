@@ -1,6 +1,19 @@
 # Shares_Future – Architektur & Design
 
-**Zuletzt aktualisiert:** 2026-08-17 — ✅ **Sprint 3C / Plan 3a (Batch-Tiefenanalyse)
+**Zuletzt aktualisiert:** 2026-08-18 — ✅ **Sprint 3C / Plan 3b (Ranking) abgeschlossen:
+12/12 Tasks, Gesamt-Review + Fix-Welle + Re-Review sauber, live verifiziert
+(PROJECT_STATUS C.13).** Neu in diesem Dokument: Modul 6 (`src/ranking.py`) auf
+`rank_score`/`candidate_class` statt `probability_pct`-Sortierung umgeschrieben,
+`signal_context`-Parameter ergänzt, die Mutations-Invariante gegenüber Phase 4a
+explizit dokumentiert. Der Gesamt-Review über alle 12 Commits fand zwei
+Critical-Befunde an den Nähten zwischen Plan 3a und 3b — `analysis_strength()` zählte
+für jeden Short verkehrt herum (Polaritäts-Kollision mit den aktiven v2-Prompts),
+`candidate_class` ging beim 16:10-Ablösen einer Divergenz-Prediction verloren — beide
+plus drei Important-Befunde in einer Welle behoben, re-reviewed sauber. Sprint 3C ist
+damit **abgeschlossen** (Fundament, Trichter, Batch-Tiefenanalyse, Ranking); als
+Nächstes Sprint 3D (Learning Modul, braucht eigene Planungssession).
+
+Davor, 2026-08-17 — ✅ **Sprint 3C / Plan 3a (Batch-Tiefenanalyse)
 abgeschlossen: 11/11 Tasks, live verifiziert, Abschluss-Review durchgeführt
 (PROJECT_STATUS C.9–C.11).** Neu in diesem Dokument: **Phase 3 ist eine Batch-Phase**
 (Grafik + Modul 4 neu beschrieben — `build_batches()` / `analyze_batch()` /
@@ -711,7 +724,9 @@ def analyze_commodities_and_crypto(
 
 ### 6. **`src/ranking.py`** (Phase 4)
 
-Filtert, sortiert und persistiert Top-10-Setups. **Läuft seit B.5 vor Phase 4a.**
+Filtert, klassifiziert, sortiert und persistiert die Kandidaten. **Läuft seit B.5 vor
+Phase 4a.** Seit Plan 3b (Spec § 5) ersetzt `rank_score`/`candidate_class` die alte
+`probability_pct`-Sortierung; `score_total()`/`config.DIMENSION_WEIGHTS` sind entfernt.
 
 ```python
 def rank_and_persist(
@@ -721,22 +736,43 @@ def rank_and_persist(
     stock_analyses: list[dict],       # Phase 3 output
     commodity_crypto_analyses: list,  # Phase 3b output
     market_context: dict,
+    signal_context: dict[str, dict],  # Technik-Signal + C.1-Indikatoren + news_strength je Ticker (main.py::_signal_context())
+    sector_momentum: dict[int, dict] | None = None,
+    enforce_checks: bool = False,
 ) -> dict:
     """
-    Logik:
+    Logik (Spec § 5):
     1. Guardrail-Filter (hold_days ≤ 5, intraday_range ≥ 1%, R/R ≥ 1.5, no "none")
-    2. Checks aus src/signal_checks.py (VIX, Klumpen, relative Stärke, Gap) —
-       erhoben in BEIDEN Läufen, durchgesetzt nur bei enforce=True (16:10)
-    3. Split Long/Short
-    4. Sort by probability_pct DESC
-    5. Keep Top 10 each, ALL commodities/crypto
-    6. Persist to db.predictions; Verworfenes nach db.guardrail_rejects
+    2. Checks aus src/signal_checks.py (VIX, Klumpen, relative Stärke, Gap,
+       Earnings) — erhoben in BEIDEN Läufen, durchgesetzt nur bei enforce=True (16:10)
+    3. Klassifikation je Kandidat (_classify(), § 5.3): core (Technik-Richtung
+       stimmt mit Analyse überein), divergence (Technik neutral/fehlt, wird
+       persistiert, eigene Mail-Sektion), conflict (Technik gegenläufig — verworfen
+       als guardrail_reject; gilt NIE für Rohstoffe/Krypto, § 20.5 #2).
+       rank_score = analysis_strength × tech_strength, aber NULL statt 0, sobald
+       einer der beiden Faktoren 0/unbekannt ist (§ 5.4).
+    4. Split Long/Short, je core und divergence
+    5. Sort by rank_score DESC (Fallback: analysis_strength, dann Ticker)
+    6. Keep Top 10 je Richtung (core), Top DIVERGENCE_TOP_N je Richtung
+       (divergence, § 5.5), ALLE commodities/crypto
+    7. Persist to db.predictions (inkl. candidate_class, tech_*, rank_score,
+       analysis_strength, news_strength); Verworfenes nach db.guardrail_rejects
 
-    Returns: {top_long[], top_short[], commodities_crypto[]}
+    Returns: {top_long[], top_short[], commodities_crypto[], divergence[],
+              divergence_stats: {tech_only_abstentions, conflicts, overflow}}
     """
 ```
 
 **Fail-Verhalten:** `RankingError` → propagates (MUSS funktionieren).
+
+⚠️ **Mutations-Invariante:** die Analyse-Dicts aus `stock_analyses`/
+`commodity_crypto_analyses` werden von `rank_and_persist()` nie mutiert — dieselben
+Objekte gehen danach an `check_open_positions()` (Phase 4a) und werden dort
+`json.dumps`'t in einen Claude-Prompt. Klassifikation/Ranking hängen
+`_candidate_class`/`_analysis_strength`/`_rank_score` nur an **Kopien** (`{**a, ...}`),
+nie ans Original — derselbe Vorfall wie C.6 (unbemerkte Prompt-Kosten durch einen
+angehefteten Schlüssel), diesmal vorab getestet. Ein Test pinnt die Schlüsselmenge der
+Originale unverändert.
 
 ---
 
