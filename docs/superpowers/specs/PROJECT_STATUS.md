@@ -2587,7 +2587,7 @@ den `final_close` 105 Minuten später gesehen hätte — und weil
 `evaluate_open_predictions()` bereits geschlossene Predictions überspringt, **gewann die
 zu früh geschriebene Zeile gegen die korrekte**.
 
-**Schritt 2 — der ganze Run-Type entfällt** (`<commit>`). Nach Schritt 1 blieben in
+**Schritt 2 — der ganze Run-Type entfällt** (`a92c698`). Nach Schritt 1 blieben in
 `run_close()` drei Aufgaben, und **alle drei erledigt `pre_market` um 15:00 bereits**:
 
 | Aufgabe | auch in pre_market | Unterschied |
