@@ -2476,18 +2476,24 @@ durch; ein neuer Test treibt `_persist_revision()` direkt und prüft die **Wirku
   werden müssen, tatsächlich gibt es vier Leser von `predictions`/`outcomes`. Ruling: der
   Tages-Footer ist eine „wie lief gestern"-Portfolioansicht, dort ist Mischen
   vertretbar — es ist jetzt eine dokumentierte Entscheidung, kein Zufall.
-- Die Top-10-Tabellen in der Tagesmail sortieren nach `rank_score`, zeigen aber
-  `total_score`/`probability_pct` als Spalten (I5) — im Live-Lauf sichtbar geworden:
-  BRK-B (Score 5.5) stand vor META (Score 7.0), weil `rank_score` 9 gegen 4 sagt. Für
-  einen Mail-Leser ohne DB-Zugriff nicht nachvollziehbar. Nicht behoben, Kandidat für
-  einen kleinen Folge-Fix.
-- Der C.1-Fix aus dem Sprint-3C-Abschluss-Review (`atr_pct`/`rsi_at_entry`/
-  `volume_ratio` von hart-`None` auf echte Werte) betraf nur den `pre_market`-Pfad
-  (`_to_prediction_row()`). Der 16:10-Pfad (`_persist_revision()`) liess diese drei
-  Spalten unangetastet — sie bleiben auf **jeder** `trade_proposals`-Zeile `None`.
-  Gleiche Fehlerklasse wie C2, aber vorbestehend (nicht durch Plan 3b eingeführt) und
-  ohne Wirkung auf die core/divergence-Trennung. Nicht behoben, Kandidat für einen
-  Folge-Fix.
+- ✅ **I5 behoben (2026-08-18, `896783e`):** Die Top-10-Tabellen in der Tagesmail
+  sortieren nach `rank_score`, zeigten aber nur `total_score`/`probability_pct` als
+  Spalten — im Live-Lauf sichtbar geworden: BRK-B (Score 5.5) stand vor META
+  (Score 7.0), weil `rank_score` 9 gegen 4 sagt. `_row_for_setup()`/
+  `_section_stocks()` zeigen jetzt zwei zusätzliche Spalten (`Rank-Score`,
+  `Analysis-Strength`), Werte kommen aus den `_rank_score`/`_analysis_strength`-Keys,
+  die `rank_and_persist()`s `_enrich()` ohnehin an jede Top-10-Zeile anhängt. TDD,
+  zwei neue Tests (u. a. fehlender Key rendert leer statt abzustürzen).
+- ✅ **O2 behoben (2026-08-18, `b0a8034`):** Der C.1-Fix aus dem Sprint-3C-Abschluss-
+  Review (`atr_pct`/`rsi_at_entry`/`volume_ratio` von hart-`None` auf echte Werte)
+  betraf nur den `pre_market`-Pfad (`_to_prediction_row()`). Der 16:10-Pfad
+  (`_persist_revision()`) liess diese drei Spalten unangetastet — sie blieben auf
+  **jeder** `trade_proposals`-Zeile `None`. Gleiche Fehlerklasse wie C2 (Werte
+  vorhanden, aber nicht durchgereicht), hier am 16:10-`snapshot` statt an den
+  Plan-3b-Signalspalten: derselbe frische `collect()`-Snapshot, den
+  `_signal_context()` für den Morgenlauf liest, trägt `atr_pct`/`rsi_14`/
+  `volume_ratio` bereits. TDD, zwei neue Tests (Werte durchgereicht; fehlender
+  Snapshot-Wert stürzt nicht ab).
 
 **Live-Testlauf** gegen eine Wegwerf-Kopie (`_verify_run_2/tracking.db`), echte
 Capital.com/Finnhub/Anthropic-Calls, `RESEND_API_KEY=invalid` (Mail abgefangen statt
