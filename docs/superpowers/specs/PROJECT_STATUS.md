@@ -1,6 +1,17 @@
 # PROJECT_STATUS.md — Shares_Future (Trading_Harry)
 
-**Zuletzt aktualisiert:** 2026-08-18 — ✅ **Plan 3b (Ranking) abgeschlossen (12/12
+**Zuletzt aktualisiert:** 2026-08-18 — 🗑️ **Run-Type `close` (22:30) ersatzlos
+entfallen.** Aktiv sind nur noch `pre_market`, `trade_proposals`, `final_close`,
+`weekly`. Zuerst fiel `evaluate_open_predictions()` weg — ein liegen gebliebenes Duplikat,
+dessen Begründung (B.6: „sonst schreibt niemand `outcomes`") seit `final_close` hinfällig
+war, und das um 22:30 auf einer noch nicht finalen Tagesbar arbeitete und damit Treffer
+verschlucken konnte. Danach war `run_close()` vollständig redundant: `cleanup_old_data()`,
+Gap-Fill und die **wertgleiche** `technical_indicators`-Zeile erledigt `pre_market` um
+15:00 ohnehin — Indikatoren können sich im Tagesverlauf konstruktionsbedingt nicht ändern.
+Dazu zwei aktive Nachteile (Kurs-Sweep ohne Nutzen, 1,5× schnellere Auto-Deaktivierung).
+**841 Tests grün, 92,39 % Coverage.** Details: **C.14**.
+
+Davor, 2026-08-18 — ✅ **Plan 3b (Ranking) abgeschlossen (12/12
 Tasks).** `rank_score` (`analysis_strength × tech_strength`) ersetzt `probability_pct`
 als Sortierschlüssel, `candidate_class` trennt core/divergence/conflict in
 Persistierung und Aggregaten, der C.1-Fix (`atr_pct`/`rsi_at_entry`/`volume_ratio`) ist
@@ -2553,6 +2564,78 @@ Schritt: Sprint 3D (Learning Modul) — braucht eine eigene Planungssession.
 
 ---
 
+### C.14 — Run-Type `close` ersatzlos entfallen 🗑️ (2026-08-18)
+
+Zwei Schritte, bewusst als getrennte Commits, weil der zweite eine eigene Entscheidung
+verlangte statt als Nebenprodukt mitzulaufen.
+
+**Schritt 1 — `evaluate_open_predictions()` raus aus `run_close()`** (`44520b1`).
+`final_close` ist die einzige Auswertungsstelle; so war es beim Preismodell-Design
+entschieden (Option 1, „Bewertung wandert in den 00:00-Job"). Der Aufruf in `close` war
+ein **liegen gebliebenes Duplikat**, kein bewusster Zweitpfad: die B.6-Entscheidung vom
+2026-07-27 hielt `evaluate` ausdrücklich in `close`, **weil damals gleichzeitig der
+`evaluate`-Run wegfiel und sonst niemand mehr `outcomes` geschrieben hätte**.
+`final_close` (2026-08-06) hat genau diese Lücke geschlossen — die Begründung war
+seitdem hinfällig, nur hat niemand den Aufruf nachgezogen. Der B.6-Abschnitt oben ist
+entsprechend annotiert (nicht umgeschrieben).
+
+⚠️ Es war dabei **nicht nur redundant, sondern schädlich**: um 22:30 Berlin ist die
+Tagesbar noch nicht final (Schluss 00:00 UTC laut `openingHours`), TP-/SL-Treffer werden
+aber gegen das Tages-High/Low geprüft, und das kann sich bis zum Schluss nur
+**ausweiten**. `close` sah also ein zu enges Fenster und konnte einen Treffer übersehen,
+den `final_close` 105 Minuten später gesehen hätte — und weil
+`evaluate_open_predictions()` bereits geschlossene Predictions überspringt, **gewann die
+zu früh geschriebene Zeile gegen die korrekte**.
+
+**Schritt 2 — der ganze Run-Type entfällt** (`<commit>`). Nach Schritt 1 blieben in
+`run_close()` drei Aufgaben, und **alle drei erledigt `pre_market` um 15:00 bereits**:
+
+| Aufgabe | auch in pre_market | Unterschied |
+|---|---|---|
+| `db.cleanup_old_data()` | `run_pipeline`, direkt nach `init_schema()` | keiner |
+| `_fill_price_gaps()` | derselbe `collect()`-Pfad | keiner |
+| `_persist_indicators()` | derselbe `collect()`-Pfad | **keiner — wertgleich** |
+
+Der dritte Punkt widerlegt die naheliegende Gegenthese („abends stehen aktuellere
+Indikatoren drin"): **die Indikatoren können sich im Tagesverlauf gar nicht ändern.**
+Jede Indikator-Funktion bekommt ausschliesslich `df` = `load_price_history_from_db(...)`,
+also nur finale Bars bis D-1; der Live-Kurs landet in `td["price"]` und wird nie nach
+`technical_indicators` geschrieben. `INSERT OR REPLACE` auf `(ticker, date)` überschrieb
+die Zeile um 22:30 mit identischen Werten.
+
+Dazu zwei **aktive Nachteile**, jeder für sich ein Grund: ein voller
+Capital.com-Kurs-Sweep (~46 Ticker) ohne einzigartigen Output, und ein dritter
+`collect()`-Lauf pro Tag, der `ticker_status.skip_count` **1,5× so schnell** gegen
+`TICKER_MAX_SKIPS = 20` treibt — ein dauerhaft kaputter Ticker wäre also schneller
+automatisch stillgelegt worden als beabsichtigt.
+
+Das Gegenargument (Ausfallsicherheit, zweiter Anlauf falls `pre_market` scheitert) wurde
+geprüft und entkräftet: `cleanup_old_data()` läuft in `pre_market` direkt nach
+`init_schema()`, also auch bei einem späten Abbruch, und `_fill_price_gaps()` ist selbst
+nur ein Sicherheitsnetz für Ausfälle, das `final_close` täglich ohnehin überflüssig macht.
+
+**Entfernt:** Cron-Zeile `30 20 * * 1-5`, ihr `case`-Zweig, `run_close()`, der
+Dispatch-Zweig, `close` aus `RUN_TYPES` und aus den `workflow_dispatch`-Optionen. Zwei
+leicht zu übersehende Folgestellen mit korrigiert: der `workflow_dispatch`-**Default**
+stand auf `close` (jetzt `final_close`), und der `*)`-Fallback im `case` fiel auf `close`
+zurück — er startete damit bei einem unbekannten Trigger stillschweigend einen echten
+Lauf. Er setzt jetzt `type=` leer, der Schritt „Run analysis" überspringt dann.
+
+**Tests:** `test_close_still_evaluates_open_predictions` pinnte exakt das entfernte
+Verhalten und wurde **umgedreht statt gelöscht**. Neu ergänzt:
+`test_final_close_evaluates_open_predictions` — die Gegenseite war **ungepinnt**, fiele
+der Aufruf auch dort weg, schriebe niemand mehr `outcomes`, und zwar lautlos. Dazu
+`test_close_is_a_removed_run_type`; bewusst **kein** Substring-Test wie
+`test_workflow_has_no_removed_run_types`, weil `"close"` in `"final_close"` steckt und
+ein `"close" not in ...` entweder immer rot wäre oder das echte Signal verschluckte.
+**841 Tests grün, 92,39 % Coverage.**
+
+Nebenbefund für 3D (kein Bug, s. Abschnitt „Sprint 3D"): die
+`technical_indicators`-Zeile mit `date = T` ist aus Bars bis `T-1` berechnet — für
+Prediction-Features genau richtig, aber leicht als Off-by-one misszuverstehen.
+
+---
+
 ## Sprint 3D — Learning Modul
 
 ⚠️ **Noch nicht ausgearbeitet — braucht eine eigene Planungssession, bevor die Implementierung
@@ -2563,8 +2646,29 @@ Grob umrissen (aus früheren Notizen, **nicht** als Spezifikation zu verstehen):
 - Hit-Rate, Ø P&L, Ø Score bei Treffern vs. Fehltreffern
 - Schreibt `data/learnings.json`
 - `learnable=False`-Predictions nie ins Lernmodul
-- Übernimmt die TP/SL-Auswertung aus `close` (s. B.6)
+- ~~Übernimmt die TP/SL-Auswertung aus `close` (s. B.6)~~ — **erledigt/hinfällig:** die
+  Auswertung sitzt seit dem Preismodell-Umbau in `final_close`, und `close` ist am
+  2026-08-18 ganz entfallen (C.14). 3D muss die Auswertung nicht mehr „übernehmen".
 - Optimiert die Gewichte des `ranking_score` aus 3C
+
+**⚠️ Zwei Eigenschaften der Trainingsdaten, die 3D kennen muss — beide sind KEINE Bugs:**
+
+1. **Die `technical_indicators`-Zeile mit `date = T` ist aus Bars bis `T-1` berechnet**
+   (gefunden am 2026-08-18 bei der `close`-Analyse, C.14). Jede Indikator-Funktion in
+   `data_collector._process_ticker()` bekommt ausschliesslich `df` =
+   `db.load_price_history_from_db(...)`, und das sind nur **finale** Tagesbars — die Bar
+   für Tag T schreibt `final_close` erst um 00:15 UTC des Folgetags. Die Zeile ist
+   gegenüber ihrem eigenen Datumslabel also um einen Handelstag versetzt.
+   **Das ist für Prediction-Features genau richtig:** der Schlusskurs von Tag T darf nicht
+   in die Vorhersage für Tag T einfliessen, sonst ist es Leakage — ein Modell, das in der
+   Rückrechnung glänzt und im Livebetrieb versagt. Wer das später als Off-by-one
+   „korrigiert", zerstört genau diese Eigenschaft. Beim Feature-Engineering explizit
+   mitdenken und die Semantik in `learnings.json` dokumentieren.
+2. **Die Indikatoren sind pro Tag konstant.** Aus demselben Grund schreiben mehrere Läufe
+   am selben Tag (`pre_market` 15:00, `trade_proposals` 16:10) per `INSERT OR REPLACE`
+   wertgleiche Zeilen. Es gibt also **keine** Intraday-Auflösung in dieser Tabelle — wer
+   für 3D eine braucht (z. B. „wie sah RSI zum 16:10-Einstieg aus?"), muss sie neu
+   erheben, nicht aus `technical_indicators` zu rekonstruieren versuchen.
 - Zwei bereits im Code markierte TODOs gehören hierher:
   - `src/evaluator.py` (bei `MAX_HOLD_DAYS`): tagesgenaue TP/SL-Auswertung mit echten
     Intraday-Bars statt Tages-High/Low — beseitigt den `pessimistic_overlap`-Fallback

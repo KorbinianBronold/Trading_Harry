@@ -4,18 +4,18 @@ import pytest
 
 import main
 from main import (
-    run_pipeline, run_weekly, run_close, parse_args, build_commodity_crypto_inputs,
+    run_pipeline, run_weekly, parse_args, build_commodity_crypto_inputs,
 )
 import config
 
 
 def test_parse_args_accepts_all_run_types():
-    for rt in ["pre_market", "trade_proposals", "close", "weekly"]:
+    for rt in ["pre_market", "trade_proposals", "final_close", "weekly"]:
         ns = parse_args(["--run-type", rt])
         assert ns.run_type == rt
 
 
-@pytest.mark.parametrize("removed", ["midday", "evaluate", "position_check"])
+@pytest.mark.parametrize("removed", ["midday", "evaluate", "position_check", "close"])
 def test_parse_args_rejects_removed_run_types(removed):
     """B.1: die drei Run-Types sind vollstaendig entfernt, keine Leichen."""
     with pytest.raises(SystemExit):
@@ -115,7 +115,7 @@ def test_run_pipeline_calls_phases_in_order(mocker):
     mocker.patch("main.check_open_positions",
                  side_effect=lambda **kw: call_log.append("portfolio") or [])
 
-    run_pipeline(run_type="close", date="2026-05-19", db_path=":memory:")
+    run_pipeline(run_type="pre_market", date="2026-05-19", db_path=":memory:")
 
     assert call_log == [
         "trend", "market_context", "collect", "collect", "broad_scan", "policy",
@@ -207,69 +207,6 @@ def test_run_weekly_runs_the_fundamentals_prerun_before_the_aggregate(tmp_db_pat
     assert order == ["fundamentals", "aggregate"]
 
 
-def test_close_run_does_not_call_claude(tmp_db_path, mocker):
-    """Close run must not invoke Claude or send email.
-
-    Provider und collect() muessen mitgemockt werden, seit run_close() die
-    Schlusskurse aller Ticker holt (B.6) — sonst baut der Test eine echte
-    Capital.com-Session auf. Der Fehler wuerde in data_collector geschluckt,
-    der Test bliebe gruen, und ein Unit-Test telefonierte still nach draussen."""
-    mocker.patch("main.CapitalComProvider", return_value=MagicMock())
-    mocker.patch("main.FinnhubProvider", return_value=MagicMock())
-    mocker.patch("main.collect", return_value=([], 0, {}))
-    mock_claude = mocker.patch("src.utils.call_claude")
-    mocker.patch("src.email_sender._send")
-
-    run_close(date="2026-05-21", db_path=str(tmp_db_path))
-
-    mock_claude.assert_not_called()
-
-
-def test_close_pulls_closing_prices_for_all_tickers(tmp_db_path, mocker):
-    """B.6: sonst fehlen Schlusskurse fuer jeden Ticker ohne offene Position —
-    und damit die Basis fuer db_momentum und relative Staerke am Folgetag."""
-    mocker.patch("main.CapitalComProvider", return_value=MagicMock())
-    mocker.patch("main.FinnhubProvider", return_value=MagicMock())
-    collect_mock = mocker.patch("main.collect", return_value=([], 0, {}))
-
-    from main import run_close
-    run_close(date="2026-07-30", db_path=str(tmp_db_path))
-
-    assert collect_mock.call_count == 2
-    passed = [set(c.kwargs["tickers"]) for c in collect_mock.call_args_list]
-    assert set(config.SP500_MVP_TICKERS) in passed
-    cc = set(config.COMMODITY_TICKERS.values()) | set(config.CRYPTO_TICKERS.values())
-    assert cc in passed, "auch Rohstoffe und Krypto brauchen ihre Schlusskurse"
-
-
-def test_close_does_not_evaluate_open_predictions(tmp_db_path, mocker):
-    """final_close ist die EINZIGE Auswertungsstelle (Preismodell-Design,
-    Option 1: "Bewertung wandert in den 00:00-Job").
-
-    Vorher stand hier das Gegenteil (`test_close_still_evaluates_open_predictions`,
-    B.6/Punkt 2) — mit der damals zutreffenden Begruendung, close sei die
-    einzige Stelle, die outcomes-Zeilen schreibt. Seit es final_close gibt,
-    ist diese Praemisse falsch: der 22:30-Aufruf war ein liegen gebliebenes
-    Duplikat aus der Zeit davor, kein bewusster Zweitpfad.
-
-    Warum das nicht nur Redundanz ist, sondern schaedlich: um 22:30 Berlin ist
-    die Tagesbar noch NICHT final (sie schliesst laut openingHours um 00:00
-    UTC). TP-/SL-Treffer werden aber gegen das Tages-High/Low geprueft, und das
-    kann sich bis zum Schluss nur ausweiten. Eine Auswertung um 22:30 sieht
-    also ein zu enges Fenster und kann einen Treffer uebersehen, den
-    final_close 105 Minuten spaeter sieht. Die frueher geschriebene Zeile
-    gewinnt trotzdem: evaluate_open_predictions() ueberspringt bereits
-    geschlossene Predictions."""
-    mocker.patch("main.CapitalComProvider", return_value=MagicMock())
-    mocker.patch("main.FinnhubProvider", return_value=MagicMock())
-    mocker.patch("main.collect", return_value=([], 0, {}))
-    ev = mocker.patch("main.evaluate_open_predictions", return_value=3)
-
-    from main import run_close
-    run_close(date="2026-07-30", db_path=str(tmp_db_path))
-    ev.assert_not_called()
-
-
 def test_final_close_evaluates_open_predictions(tmp_db_path, mocker):
     """Die Gegenseite derselben Invariante — und ohne sie waere die Entfernung
     aus run_close() ungesichert: faellt der Aufruf auch hier weg, schreibt
@@ -313,13 +250,14 @@ def test_main_date_uses_berlin_timezone(tmp_db_path, mocker):
     import main as m
     importlib.reload(m)
     # Vehikel ist seit Plan 2 trade_proposals statt evaluate, seit dem
-    # Historien-Guard `close` — geprueft wird weiterhin die Timezone-Ableitung,
-    # nicht der Run-Type. `close` braucht keine Historie und laeuft deshalb auch
-    # gegen die leere Test-DB bis zum Dispatch durch.
-    mocker.patch.object(m, "run_close")
+    # Historien-Guard `close`, und seit dessen Entfernung (2026-08-18)
+    # `final_close` — geprueft wird weiterhin die Timezone-Ableitung, nicht der
+    # Run-Type. final_close braucht wie close keine Historie und laeuft deshalb
+    # auch gegen die leere Test-DB bis zum Dispatch durch.
+    mocker.patch.object(m, "run_final_close")
     with freeze_time("2026-05-21T23:30:00+00:00"):
-        m.main(["--run-type", "close", "--db-path", str(tmp_db_path)])
-        call_date = m.run_close.call_args[1]["date"]
+        m.main(["--run-type", "final_close", "--db-path", str(tmp_db_path)])
+        call_date = m.run_final_close.call_args[1]["date"]
     assert call_date == "2026-05-22", f"Expected Berlin date 2026-05-22, got {call_date}"
 
 
@@ -1583,6 +1521,34 @@ def test_final_close_is_a_known_run_type():
     assert "final_close" in RUN_TYPES
 
 
+def test_close_is_a_removed_run_type():
+    """`close` (22:30 Berlin) ist am 2026-08-18 ersatzlos entfallen.
+
+    Nach dem Entfernen von evaluate_open_predictions() blieben nur noch drei
+    Aufgaben uebrig, und alle drei erledigt pre_market um 15:00 bereits:
+      * cleanup_old_data() -- laeuft dort direkt nach init_schema(),
+      * _fill_price_gaps() -- derselbe collect()-Pfad,
+      * _persist_indicators() -- mit BYTE-IDENTISCHEN Werten, weil jede
+        Indikator-Funktion ausschliesslich `df` bekommt und `df` nur finale
+        Tagesbars bis D-1 enthaelt (load_price_history_from_db). Der Live-Kurs
+        landet in td["price"] und wird nie nach technical_indicators
+        geschrieben -- die Zeile kann sich im Tagesverlauf gar nicht aendern.
+
+    Dazu zwei aktive Nachteile: ein voller Capital.com-Kurs-Sweep ohne
+    einzigartigen Output, und ein dritter collect()-Lauf pro Tag, der
+    ticker_status.skip_count 1,5x so schnell gegen TICKER_MAX_SKIPS treibt.
+
+    ⚠️ Bewusst kein Substring-Test wie test_workflow_has_no_removed_run_types:
+    "close" steckt in "final_close" drin, ein `"close" not in ...` waere
+    entweder immer rot oder muesste das echte Signal verschlucken."""
+    from main import RUN_TYPES
+    assert "close" not in RUN_TYPES
+    assert "final_close" in RUN_TYPES, "final_close darf davon nicht betroffen sein"
+    assert not hasattr(main, "run_close"), (
+        "run_close() ist entfallen -- eine zurueckgebliebene Funktion waere "
+        "toter Code, den niemand mehr aufruft")
+
+
 # ---------- Task 7b (Preismodell): price_open und is_premarket befuellen ----------
 
 
@@ -1786,11 +1752,12 @@ def test_guard_tolerates_a_minority_of_thin_tickers(tmp_db_path):
     _abort_on_thin_history(str(tmp_db_path))  # darf nicht werfen
 
 
-@pytest.mark.parametrize("run_type", ["final_close", "close", "weekly"])
+@pytest.mark.parametrize("run_type", ["final_close", "weekly"])
 def test_guard_exempts_run_types_that_do_not_need_history(run_type):
     """final_close schreibt die Historie selbst -- ein Guard dort verhinderte
-    die Selbstheilung. close wertet offene Predictions aus, weekly berichtet
-    nur; beide sollen auch bei duenner Historie laufen."""
+    die Selbstheilung. weekly berichtet nur; beide sollen auch bei duenner
+    Historie laufen. (close stand hier bis 2026-08-18 und ist als Run-Type
+    entfallen -- s. test_close_is_a_removed_run_type.)"""
     from main import _RUN_TYPES_NEEDING_HISTORY
     assert run_type not in _RUN_TYPES_NEEDING_HISTORY
 

@@ -1,6 +1,20 @@
 # Shares_Future – SP500 CFD Research Tool
 
-**Zuletzt aktualisiert:** 2026-08-18 — ✅ **Plan 3b (Ranking) abgeschlossen
+**Zuletzt aktualisiert:** 2026-08-18 — 🗑️ **Run-Type `close` (22:30) ersatzlos
+entfallen.** Aktiv sind nur noch `pre_market`, `trade_proposals`, `final_close`,
+`weekly`. Zuerst fiel `evaluate_open_predictions()` aus `run_close()` weg — es war ein
+liegen gebliebenes Duplikat: die B.6-Entscheidung hatte es bewusst dort gehalten, WEIL
+damals der `evaluate`-Run wegfiel und sonst niemand `outcomes` geschrieben hätte, und
+`final_close` hat genau diese Lücke am 2026-08-06 geschlossen. Es war dabei nicht nur
+redundant, sondern schädlich: um 22:30 ist die Tagesbar noch nicht final (Schluss 00:00
+UTC), TP/SL prüfen aber gegen Tages-High/Low, das sich bis dahin nur ausweiten kann — und
+weil `evaluate_open_predictions()` geschlossene Predictions überspringt, **gewann die zu
+früh geschriebene Zeile gegen die korrekte**. Danach war `run_close()` vollständig
+redundant: `cleanup_old_data()` läuft in `pre_market` direkt nach `init_schema()`, der
+Gap-Fill im selben `collect()`-Pfad, und die `technical_indicators`-Zeile ist
+**wertgleich** (s. Designentscheidungen). Details: PROJECT_STATUS **C.14**.
+
+Davor, 2026-08-18 — ✅ **Plan 3b (Ranking) abgeschlossen
 (12/12 Tasks, Gesamt-Review + Fix-Welle + Re-Review sauber).** `rank_score`
 (`analysis_strength × tech_strength`) ersetzt `probability_pct` als Sortierschlüssel,
 `candidate_class` trennt core/divergence/conflict in Persistierung und Aggregaten, der
@@ -221,6 +235,20 @@ Die Pipeline-Phasen lassen sich an `main.py:run_pipeline()` ablesen.
   Kreuzung) sind bewusste Entscheidungen — welche besser predictet, misst 3D.
 - `technical_indicators` trägt 17 Indikatoren, von denen zunächst nur vier etwas
   steuern. Der Rest läuft mit, damit 3D später Historie hat statt bei null zu beginnen.
+- ⚠️ **Die Indikatoren sind pro Tag konstant — sie können sich im Tagesverlauf nicht
+  ändern.** Jede Indikator-Funktion in `_process_ticker()` bekommt ausschliesslich `df`,
+  und `df` ist `db.load_price_history_from_db(...)`, also **nur finale Tagesbars bis
+  D-1**. Der Live-Kurs geht getrennt in `td["price"]` und wird nie nach
+  `technical_indicators` geschrieben. Mehrere Läufe am selben Tag (`pre_market` 15:00,
+  `trade_proposals` 16:10) schreiben deshalb per `INSERT OR REPLACE` auf `(ticker, date)`
+  **wertgleiche** Zeilen. Genau das machte den `close`-Lauf um 22:30 überflüssig — die
+  Annahme „abends stehen aktuellere Indikatoren drin" ist konstruktionsbedingt falsch.
+- ⚠️ **Für 3D wichtig, und KEIN Bug:** die `technical_indicators`-Zeile mit `date = T` ist
+  aus Bars bis **T-1** berechnet, ist gegenüber ihrem eigenen Datumslabel also um einen
+  Handelstag „versetzt". Das ist für Prediction-Features genau richtig: der Schlusskurs
+  von Tag T darf nicht in die Vorhersage für Tag T einfliessen, sonst ist es Leakage. Wer
+  das später als Off-by-one „korrigiert", baut sich ein Modell, das in der Auswertung
+  glänzt und im Livebetrieb versagt. Beim 3D-Entwurf bewusst mitdenken.
 - ⚠️ **Sidecar-Invariante: neue Werte laufen *neben* `td`, nie darin.** Das `td`-Dict aus
   `_process_ticker()` wird in **drei live laufenden** Claude-Prompts `json.dumps`'t:
   `deep_analysis` (seit Plan 3a als `snapshot` im Batch-Eintrag), `commodities_crypto`
@@ -338,7 +366,7 @@ Kommentare im Workflow gelten für CEST; im Winter (CET) läuft alles 1 h frühe
 
 ⚠️ **Der Workflow fährt bewusst NUR die Sommerzeit** (Entscheidung 2026-08-18, TODO
 steht im `schedule`-Block von `analyze.yml`). Ab der Rückstellung auf CET laufen
-`pre_market`, `close` und `weekly` eine Stunde früher als dort notiert, und
+`pre_market` und `weekly` eine Stunde früher als dort notiert, und
 `trade_proposals` fällt ganz aus. Das ist bekannt und aufgeschoben, kein Versehen.
 Einzige Ausnahme: `final_close` hängt an der UTC-Bar-Grenze und gilt ganzjährig.
 
@@ -406,7 +434,7 @@ versehentlicher Klick soll nicht gegen die gemountete `data/tracking.db` laufen.
 
 `docker-compose.yml` mountet `./data` — Läufe schreiben also in die echte Datenbank.
 Für gefahrlose Experimente den Mount überschreiben:
-`docker compose run --rm -v /tmp/dbtest:/app/data trading-harry --run-type close`
+`docker compose run --rm -v /tmp/dbtest:/app/data trading-harry --run-type final_close`
 
 ## Sprint-Stand
 **Vor jeder Implementierung `docs/superpowers/specs/PROJECT_STATUS.md` lesen** — dort

@@ -7,8 +7,8 @@ on:
     # (CEST = UTC+2). Cron ist UTC-fix, GitHub Actions passt NICHT an die
     # Zeitumstellung an. Ab der Rueckstellung auf CET (UTC+1, letzter Sonntag im
     # Oktober) gilt daher:
-    #   * pre_market, close, weekly laufen eine Stunde FRUEHER als hier notiert
-    #     (14:00 / 21:30 / So 19:00 Berlin statt 15:00 / 22:30 / So 20:00),
+    #   * pre_market und weekly laufen eine Stunde FRUEHER als hier notiert
+    #     (14:00 / So 19:00 Berlin statt 15:00 / So 20:00),
     #   * trade_proposals faellt ganz aus (s. Begruendung beim Slot unten).
     # Vor der Umstellung anzupassen: entweder die UTC-Stunden um 1 erhoehen und
     # den EST-Slot '10 15 * * 1-5' ergaenzen, oder die Slots ganzjaehrig doppelt
@@ -16,7 +16,7 @@ on:
     # trade_proposals schon tut).
     # ⚠️ Jede neue Cron-Zeile braucht ZWINGEND auch einen case-Zweig im Schritt
     # "Determine run_type" -- ohne ihn faellt der Lauf still auf den
-    # close-Default zurueck und fuehrt den falschen Run-Type aus. Das ist keine
+    # uebersprungen-Zweig zurueck und laeuft gar nicht. Das ist keine
     # Fleissaufgabe: tests/unit/test_workflow_config.py erzwingt die Paritaet
     # und wird rot, wenn eine der beiden Seiten fehlt.
     # ============================================================================
@@ -30,7 +30,6 @@ on:
     # ueberspringt sie diesen Slot. Lieber gar kein Lauf als einer 20 min VOR
     # der Eroeffnung — genau dieser Fehler lief frueher von November bis Maerz.
     - cron: '10 14 * * 1-5'   # trade_proposals  10:10 New York (EDT) = 16:10 Berlin (CEST)
-    - cron: '30 20 * * 1-5'   # close            22:30 Berlin (CEST)
     - cron: '0 18 * * 0'      # weekly           So 20:00 Berlin (CEST)
     # final_close haengt an der BAR-GRENZE, nicht an einer Boersensitzung:
     # openingHours meldet `zone: UTC` und schliesst auf 00:00 UTC. Job und
@@ -47,8 +46,8 @@ on:
     inputs:
       run_type:
         type: choice
-        options: [pre_market, trade_proposals, close, final_close, weekly]
-        default: close
+        options: [pre_market, trade_proposals, final_close, weekly]
+        default: final_close
 
 permissions:
   contents: write
@@ -105,10 +104,17 @@ jobs:
           case "${{ github.event.schedule }}" in
             "0 13 * * 1-5")  T="pre_market" ;;
             "10 14 * * 1-5") T="trade_proposals" ;;
-            "30 20 * * 1-5") T="close" ;;
             "0 18 * * 0")    T="weekly" ;;
             "15 0 * * *")    T="final_close" ;;
-            *)               T="close" ;;
+            # Unbekannter Trigger: NICHTS ausfuehren. Frueher fiel dieser Zweig
+            # auf den close-Run zurueck und startete stillschweigend einen
+            # echten Lauf. Seit close entfallen ist, gaebe es dafuer ohnehin
+            # keinen gueltigen Wert mehr -- und "irgendetwas laufen lassen" ist
+            # bei einem unerwarteten Ausloeser die falsche Antwort: leer lassen,
+            # der Schritt "Run analysis" ueberspringt dann (if type != '').
+            *)               echo "Unbekannter schedule-Ausdruck: ${{ github.event.schedule }}"
+                             echo "type=" >> "$GITHUB_OUTPUT"
+                             exit 0 ;;
           esac
 
           # Massgeblich ist die US-Zeitzone, NICHT Europe/Berlin: EU und USA

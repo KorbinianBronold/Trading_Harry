@@ -1,6 +1,18 @@
 # Shares_Future – Architektur & Design
 
-**Zuletzt aktualisiert:** 2026-08-18 — ✅ **Sprint 3C / Plan 3b (Ranking) abgeschlossen:
+**Zuletzt aktualisiert:** 2026-08-18 — 🗑️ **Run-Type `close` ersatzlos entfallen.**
+Die TP/SL-Auswertung gehört seit dem Preismodell-Umbau in `final_close` (00:15 UTC) —
+der Aufruf in `close` war ein liegen gebliebenes Duplikat und sah um 22:30 eine noch
+nicht finale Tagesbar. Danach blieb in `run_close()` nichts übrig, das `pre_market`
+um 15:00 nicht ohnehin täte: `cleanup_old_data()` läuft dort direkt nach
+`init_schema()`, der Gap-Fill im selben `collect()`-Pfad, und die
+`technical_indicators`-Zeile ist **wertgleich** — jede Indikator-Funktion bekommt
+ausschliesslich finale Bars bis D-1, der Live-Kurs landet nur in `td["price"]` und
+wird nie persistiert. Es gibt daher keine „tagsüber aktualisierten" Indikatoren.
+Aktive Run-Types sind jetzt `pre_market`, `trade_proposals`, `final_close`, `weekly`.
+Details: PROJECT_STATUS **C.14**.
+
+Davor, 2026-08-18 — ✅ **Sprint 3C / Plan 3b (Ranking) abgeschlossen:
 12/12 Tasks, Gesamt-Review + Fix-Welle + Re-Review sauber, live verifiziert
 (PROJECT_STATUS C.13).** Neu in diesem Dokument: Modul 6 (`src/ranking.py`) auf
 `rank_score`/`candidate_class` statt `probability_pct`-Sortierung umgeschrieben,
@@ -1239,9 +1251,9 @@ Kosten-Abbruch-Mail systematisch auf die falsche Phase zeigen.
 (P2.10, P2.12: 20 Ticker, 3,13 bzw. 3,92 EUR). Der Ablauf stimmt, die Mengen nicht.
 
 ```
-heute = 2026-05-20, run_type = "close"
+heute = 2026-05-20, run_type = "pre_market"
 
-[main.run_pipeline("close", "2026-05-20")]
+[main.run_pipeline("pre_market", "2026-05-20")]
   ↓
 [Phase 0] analyze_trends()
   → 1 Sonnet + web_search
@@ -1429,7 +1441,7 @@ Offen bleibt nur noch `weekly`: zugestellt, aber nicht inhaltlich geprüft.
 | Pipeline | **Phase 4 vor 4a** — 4a nutzt die fertigen Phase-3-Analysen, ohne Web-Search. Mail-Reihenfolge bleibt: Portfolio zuerst |
 | Module | **neu** `src/signal_checks.py` und `src/revalidation.py` (s. 10a/10b) |
 | Guardrails | Momentum-Signale angewandt (hartes Reject nur bei Übereinstimmung); die vier Momentum-Spalten werden befüllt |
-| `close` | Holt Schlusskurse aller Ticker; TP/SL-Auswertung bleibt bis 3D |
+| `close` | Holt Schlusskurse aller Ticker; TP/SL-Auswertung bleibt bis 3D — ⚠️ **überholt:** `close` ist am 2026-08-18 ersatzlos entfallen (C.14) |
 | Weekly-Mail | vier B.9-Blöcke aus `guardrail_rejects`, `ticker_status`, `revision_verdict` und der Sub-Sektor-Abdeckung |
 | Tagesmail | `hold_days_recommended` als Spalte „Haltedauer" (B.11) |
 

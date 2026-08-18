@@ -80,14 +80,18 @@ zuerst — das ist eine dokumentierte Invariante und kein Widerspruch.
 |---|---|---|---|
 | `pre_market` | 13:00 UTC, Mo–Fr | volle Pipeline | **3,13 EUR** (gemessen, 20 Ticker) |
 | `trade_proposals` | 10:10 New York¹ | Re-Validierung der Morgensignale | ~0,5–0,7 EUR |
-| `close` | 20:30 UTC, Mo–Fr | Auswertung offener Predictions | ~0 EUR |
-| `final_close` | 00:15 UTC, **täglich** | schreibt die finalen Tagesbars, bewertet | ~0 EUR |
+| `final_close` | 00:15 UTC, **täglich** | schreibt die finalen Tagesbars, bewertet offene Predictions | ~0 EUR |
 | `weekly` | So 18:00 UTC | Wochenauswertung | ~0 EUR |
 
-¹ Hängt an der US-Eröffnung, nicht an Berlin — deshalb zwei Cron-Slots (14:10 und 15:10
-UTC), von denen der Workflow den falschen verwirft. Details in `CLAUDE.md`.
+¹ Hängt an der US-Eröffnung, nicht an Berlin. Geplant ist nur der EDT-Slot (14:10 UTC);
+der Workflow fährt vorerst ausschliesslich die Berliner Sommerzeit und überspringt den
+Lauf, sobald New York auf EST steht. Details in `CLAUDE.md`.
 
-⚠️ Die Berlin-Zeiten in `analyze.yml` gelten für CEST; im Winter läuft alles 1 h früher.
+⚠️ Die Berlin-Zeiten in `analyze.yml` gelten für CEST; im Winter läuft alles 1 h früher
+(bewusst aufgeschoben, TODO im Workflow).
+
+⚠️ `close` (20:30 UTC) ist am 2026-08-18 **ersatzlos entfallen** — `final_close` wertet
+aus, alles Übrige erledigte `pre_market` ohnehin. Details: PROJECT_STATUS **C.14**.
 
 ## Der CFD-Kurzfristfokus
 

@@ -26,12 +26,19 @@ Mail-Renderer, Tests).
 | Run-Type | Cron (UTC) | Berlin (CEST) | Zweck | Mail? | Kosten |
 |---|---|---|---|---|---|
 | `pre_market` | `0 13 * * 1-5` | 15:00 | volle Pipeline Phase 0–5 | ja | **3,13 EUR** gemessen |
-| `trade_proposals` | `10 14 * * 1-5` **und** `10 15 * * 1-5`¹ | 16:10 | Re-Validierung der Morgensignale | ja | ~0,5–0,7 EUR |
-| `close` | `30 20 * * 1-5` | 22:30 | Auswertung offener Predictions | nein | ~0 EUR |
-| `final_close` | `15 0 * * *` | 02:15 | **schreibt die finalen Tagesbars**, bewertet | nein | ~0 EUR |
+| `trade_proposals` | `10 14 * * 1-5`¹ | 16:10 | Re-Validierung der Morgensignale | ja | ~0,5–0,7 EUR |
+| `final_close` | `15 0 * * *` | 02:15 | **schreibt die finalen Tagesbars**, bewertet offene Predictions | nein | ~0 EUR |
 | `weekly` | `0 18 * * 0` | So 20:00 | Wochenauswertung | ja | ~0 EUR |
 
-¹ Zwei Slots, siehe „Die zwei Cron-Fallen".
+¹ Nur der EDT-Slot ist geplant; der Workflow fährt vorerst ausschliesslich die
+Berliner Sommerzeit (TODO im `schedule`-Block). Siehe „Die zwei Cron-Fallen".
+
+⚠️ **`close` (22:30) ist am 2026-08-18 ersatzlos entfallen.** Die TP/SL-Auswertung
+gehört seit dem Preismodell-Umbau in `final_close` — um 22:30 ist die Tagesbar noch
+nicht final, und TP/SL werden gegen Tages-High/Low geprüft, das sich bis 00:00 UTC
+nur ausweiten kann. Nach dem Entfernen der Auswertung blieb nichts übrig, das
+`pre_market` um 15:00 nicht ohnehin täte (`cleanup_old_data()`, Gap-Fill, und
+Indikator-Zeilen mit identischen Werten). Details: PROJECT_STATUS **C.14**.
 
 ---
 
@@ -202,7 +209,7 @@ Häufigste Ursache: zu wenig Historie → `--report-coverage`.
 ```bash
 gh workflow list --all       # steht analyze auf disabled_manually?
 gh workflow enable analyze.yml
-gh workflow run analyze.yml --ref main -f run_type=close
+gh workflow run analyze.yml --ref main -f run_type=final_close
 ```
 
 ⚠️ Das alte Doppel-Cron-Modell mit Sommer-/Winter-Einträgen je Run-Type ist **weg**
