@@ -706,6 +706,14 @@ def _persist_revision(
         "analysis_strength": pred["analysis_strength"],
         "rank_score": pred["rank_score"],
         "news_strength": pred["news_strength"],
+        # O2 (Plan-3b-Gesamtreview): der C.1-Fix (atr_pct/rsi_at_entry/volume_ratio
+        # nicht mehr hart None, s. _to_prediction_row() in src/ranking.py) deckte
+        # nur den pre_market-Pfad ab. snapshot ist derselbe frische td-Snapshot
+        # aus collect(), den main._signal_context() fuer den Morgenlauf liest --
+        # dieselben drei Schluessel sind hier ebenso vorhanden.
+        "atr_pct": snapshot.get("atr_pct"),
+        "rsi_at_entry": snapshot.get("rsi_14"),
+        "volume_ratio": snapshot.get("volume_ratio"),
     }, verdict=verdict["verdict"])
 
 

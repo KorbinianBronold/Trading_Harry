@@ -921,6 +921,56 @@ def test_supersession_carries_the_plan3b_signal_columns(in_memory_db):
     assert new["news_strength"] == 3
 
 
+def test_supersession_carries_the_c1_indicators(in_memory_db):
+    """O2 (Plan-3b-Gesamtreview): der C.1-Fix (atr_pct/rsi_at_entry/volume_ratio
+    nicht mehr hart None) deckte nur den pre_market-Pfad ab
+    (_to_prediction_row()) -- _persist_revision() liess die 16:10-Nachfolgezeile
+    unangetastet, die drei Spalten blieben auf JEDER trade_proposals-Zeile None.
+    Gleiche Fehlerklasse wie C2 (Werte vorhanden, aber nicht durchgereicht), hier
+    aber am 16:10-Snapshot statt an den Plan-3b-Signalspalten: main.py baut
+    `snapshots = {td["ticker"]: td for td in ...}` aus einem frischen collect()-
+    Lauf, td traegt atr_pct/rsi_14/volume_ratio bereits (src/data_collector.py) --
+    identisch zu dem Weg, den main._signal_context() fuer den Morgenlauf nutzt."""
+    from src import db
+    from main import _persist_revision
+    db.init_schema(in_memory_db)
+    pid = _pred_row(in_memory_db)
+    pred = in_memory_db.execute("SELECT * FROM predictions WHERE id=?", (pid,)).fetchone()
+
+    new_id = _persist_revision(
+        conn=in_memory_db, pred=pred,
+        verdict={"verdict": "bestaetigt", "probability_pct": 71, "reason": "haelt"},
+        snapshot={"price": 101.0, "atr_pct": 2.7, "rsi_14": 61.2,
+                  "volume_ratio": 1.05},
+        date="2026-07-30", checks=[], momentum=(None, None),
+    )
+    new = in_memory_db.execute("SELECT * FROM predictions WHERE id=?", (new_id,)).fetchone()
+    assert new["atr_pct"] == 2.7
+    assert new["rsi_at_entry"] == 61.2
+    assert new["volume_ratio"] == 1.05
+
+
+def test_supersession_survives_a_snapshot_without_c1_indicators(in_memory_db):
+    """Kein Rohstoff/Krypto-Sonderfall noetig, aber ein fehlender Snapshot-Wert
+    (z.B. Datenausfall) darf _persist_revision() nicht zum Absturz bringen."""
+    from src import db
+    from main import _persist_revision
+    db.init_schema(in_memory_db)
+    pid = _pred_row(in_memory_db)
+    pred = in_memory_db.execute("SELECT * FROM predictions WHERE id=?", (pid,)).fetchone()
+
+    new_id = _persist_revision(
+        conn=in_memory_db, pred=pred,
+        verdict={"verdict": "bestaetigt", "probability_pct": 71, "reason": "haelt"},
+        snapshot={"price": 101.0}, date="2026-07-30", checks=[],
+        momentum=(None, None),
+    )
+    new = in_memory_db.execute("SELECT * FROM predictions WHERE id=?", (new_id,)).fetchone()
+    assert new["atr_pct"] is None
+    assert new["rsi_at_entry"] is None
+    assert new["volume_ratio"] is None
+
+
 def test_confirmed_divergence_lands_in_the_divergence_bucket(in_memory_db):
     """Die Wirkung von C2 dort, wo sie sichtbar wird: nach einer bestaetigten
     Divergenz-Zeile muss load_revision_effectiveness() sie im divergence-Topf
