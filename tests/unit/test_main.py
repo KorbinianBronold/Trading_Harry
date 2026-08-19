@@ -141,6 +141,63 @@ def test_ranking_runs_before_portfolio_check(mocker):
     assert order == ["ranking", "portfolio"]
 
 
+# ---------- C.16: market_context-Backfill + news_summaries (2026-08-19) ----------
+
+
+def test_run_pipeline_backfills_market_context_with_fear_greed_and_policy(
+        mocker, tmp_db_path):
+    """fear_greed_value (Phase 3b) und policy_risk_level (Phase 3) entstehen
+    erst NACH save_market_context() in Phase 0b -- der Backfill muss sie auf
+    dieselbe (date, run_type)-Zeile nachtragen."""
+    _mock_all_other_phases(mocker)
+    mocker.patch("main.rank_and_persist", return_value={
+        "top_long": [], "top_short": [], "commodities_crypto": [],
+        "divergence": [], "divergence_stats": {
+            "tech_only_abstentions": 0, "conflicts": 0, "overflow": 0}})
+    mocker.patch("main.check_open_positions", return_value=[])
+
+    run_pipeline(run_type="pre_market", date="2026-05-19", db_path=str(tmp_db_path))
+
+    import sqlite3
+    conn = sqlite3.connect(str(tmp_db_path))
+    conn.row_factory = sqlite3.Row
+    row = conn.execute(
+        "SELECT * FROM market_context WHERE date='2026-05-19' "
+        "AND run_type='pre_market'").fetchone()
+    conn.close()
+    assert row["fear_greed_value"] == 50          # aus fetch_fear_greed-Mock
+    assert row["policy_risk_level"] == "low"       # aus run_policy_monitor-Mock
+    assert row["vix_level"] == 18.0                # unveraendert aus Phase 0b
+
+
+def test_run_pipeline_writes_news_summaries_from_broad_scan_and_deep_analysis(
+        mocker, tmp_db_path):
+    _mock_all_other_phases(mocker)
+    mocker.patch("main.rank_and_persist", return_value={
+        "top_long": [], "top_short": [], "commodities_crypto": [],
+        "divergence": [], "divergence_stats": {
+            "tech_only_abstentions": 0, "conflicts": 0, "overflow": 0}})
+    mocker.patch("main.check_open_positions", return_value=[])
+
+    run_pipeline(run_type="pre_market", date="2026-05-19", db_path=str(tmp_db_path))
+
+    import sqlite3
+    conn = sqlite3.connect(str(tmp_db_path))
+    conn.row_factory = sqlite3.Row
+    rows = conn.execute(
+        "SELECT ticker, source, sentiment, market_impact FROM news_summaries "
+        "WHERE ticker='AAPL' ORDER BY source").fetchall()
+    conn.close()
+    by_source = {r["source"]: r for r in rows}
+    assert set(by_source) == {"broad_scan", "deep_analysis"}
+    # broad_scan: news_strength=2 aus dem Mock -> "notable", kein Sentiment
+    assert by_source["broad_scan"]["market_impact"] == "notable"
+    assert by_source["broad_scan"]["sentiment"] is None
+    # deep_analysis: direction="long" -> "bullish", confidence="high" durchgereicht
+    assert by_source["deep_analysis"]["sentiment"] == "bullish"
+    assert by_source["deep_analysis"]["market_impact"] == "high"
+
+
 def test_run_pipeline_aborts_when_trend_fails(tmp_db_path):
     from src.trend_analyzer import TrendAnalyzerError
     with patch("main.analyze_trends", side_effect=TrendAnalyzerError("no trends")), \
@@ -606,6 +663,30 @@ def test_run_trade_proposals_sends_the_mail(tmp_db_path, mocker):
     run_trade_proposals(date="2026-07-30", db_path=str(tmp_db_path))
 
     send.assert_called_once()
+
+
+def test_run_trade_proposals_backfills_only_policy_risk_level(tmp_db_path, mocker):
+    """trade_proposals ruft fetch_fear_greed() nie (kein Phase 3b) -- nur
+    policy_risk_level darf hier nachgetragen werden, fear_greed_value bleibt
+    NULL statt eines erfundenen Werts."""
+    mocker.patch("main.CapitalComProvider", return_value=MagicMock())
+    mocker.patch("main.FinnhubProvider", return_value=MagicMock())
+    mocker.patch("main.collect", return_value=([], 0, {}))
+    _stub_trade_proposals_side_phases(mocker)
+    mocker.patch("main.send_trade_proposals_email")
+
+    from main import run_trade_proposals
+    run_trade_proposals(date="2026-07-30", db_path=str(tmp_db_path))
+
+    import sqlite3
+    conn = sqlite3.connect(str(tmp_db_path))
+    conn.row_factory = sqlite3.Row
+    row = conn.execute(
+        "SELECT * FROM market_context WHERE date='2026-07-30' "
+        "AND run_type='trade_proposals'").fetchone()
+    conn.close()
+    assert row["policy_risk_level"] == "low"
+    assert row["fear_greed_value"] is None
 
 
 # ---------- Sprint 3B / Plan 2, Task 5: Phase 1c — Pflicht-Kandidaten (B.4) ----------

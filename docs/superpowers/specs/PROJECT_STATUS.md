@@ -2694,6 +2694,84 @@ der Architektur hergeleitet, nicht gegen die echte API gemessen. Nächster
 
 ---
 
+### C.16 — Tote Tabellen/Spalten aufgeräumt, `market_context` + `news_summaries` verdrahtet (2026-08-19)
+
+**Anlass:** Analyse der frisch aus GitHub gesyncten DB (erster Produktionslauf nach
+der Reaktivierung, s. C.14/C.15-Umfeld) fand drei leere Tabellen
+(`fundamentals`, `news_summaries`, `prompt_versions`) und sechs strukturell immer
+`NULL`e Spalten in `market_context` (`sp500_change_pct`, `oil_price`, `gold_price`,
+`btc_price`, `fear_greed_value`, `policy_risk_level`).
+
+**Befund je Fall:**
+- `fundamentals` — nie beschrieben, `fundamentals_cache` übernahm die Rolle vollständig.
+  Keine `save_fundamentals()`-Funktion existiert überhaupt. **Entfernt** (Korbinian
+  bestätigt: fundamentals_cache reicht).
+- `prompt_versions` — bereits bekannt und dokumentiert (A/B-Testing nie gebaut,
+  Sprint 3D). Unverändert stehen gelassen.
+- `news_summaries` — Schema + Retention-Job (`cleanup_old_data()`) existierten, aber
+  kein Insert-Pfad. Korbinian will die Tabelle **für Sprint 3D** — jetzt verdrahtet,
+  s.u.
+- `market_context.oil_price/gold_price/btc_price` — die Rohpreise liegen bereits
+  vollständig in `price_history` (GC=F/SI=F/CL=F/BTC-USD/ETH-USD/SOL-USD/XRP-USD,
+  je 1000 Bars bis 2026-08-18, über dieselbe Capital.com-Pipeline wie die Aktien).
+  Korbinian: Preise gehören dorthin, nicht dupliziert in `market_context`.
+  **Spalten entfernt.**
+- `market_context.fear_greed_value/policy_risk_level` — **werden** berechnet
+  (Phase 3b `fetch_fear_greed()`, Phase 3 `run_policy_monitor()`), landeten aber nur
+  in Mail/Prompt-Kontext, nie zurück in `market_context`. Root Cause:
+  `save_market_context()` läuft in **Phase 0b**, bevor Phase 3/3b überhaupt starten.
+  **Jetzt per Backfill nachgetragen**, s.u.
+- `market_context.sp500_change_pct` — kein Ticker dafür definiert (anders als
+  `VIX_TICKER`), auf Korbinians Wunsch **offen gelassen**, keine Änderung.
+
+⚠️ **Migrations-Präzedenzfall gebrochen, bewusst:** `price_history.premarket_price`
+ist eine dokumentiert-tote Spalte, die **stehen gelassen** wurde, um die
+produktive DB (persistiert via GitHub Release) nicht mit einem `DROP COLUMN`
+anzufassen (`src/db.py:394-397`). Für `fundamentals`/`oil_price`/`gold_price`/
+`btc_price` hat sich Korbinian **bewusst gegen** dieses Muster entschieden — auf
+Nachfrage explizit "tatsächlich droppen" gewählt. Begründung für den Unterschied:
+`fundamentals` war leer (0 Zeilen, minimales Risiko), `market_context` hat nur
+4 Zeilen (nicht 46.000+ wie `price_history`). Gegen eine **Kopie** der echten
+Produktions-DB getestet: Migration lief sauber, alle 4 Zeilen erhalten, keine
+Datenverluste.
+
+**Neue Funktionen** (`src/db.py`):
+- `update_market_context_extras(conn, date, run_type, fear_greed_value,
+  policy_risk_level)` — `UPDATE`, nicht `INSERT OR REPLACE` (würde sonst die in
+  Phase 0b gespeicherten Felder überschreiben). Aufgerufen in `main.py` nach Phase 3b
+  (`run_pipeline()`, beide Werte verfügbar) und nach dem Policy-Monitor
+  (`run_trade_proposals()`, nur `policy_risk_level` — `trade_proposals` ruft
+  `fetch_fear_greed()` nie, `fear_greed_value` bleibt bewusst `NULL` statt erfunden).
+- `save_news_summaries(conn, rows)` — Batch-Insert, kein UNIQUE-Constraint (mehrere
+  Quellen dürfen für denselben Ticker/Tag nebeneinander stehen).
+
+**Feld-Mapping für `news_summaries`** (Korbinians Entscheidung: beide Quellen,
+Phase 2 UND Phase 3): weder `broad_scan` noch `deep_analysis`/`commodities_crypto`
+liefern `sentiment`/`market_impact` direkt — abgeleitet statt unbelegt gelassen:
+- Phase 2 (`broad_scan`): `summary`=`news_note`, `market_impact` aus `news_strength`
+  (0→none, 1→minor, 2→notable, 3→major), `sentiment`=`NULL` (Stärke ist eine
+  Betrags-, keine Richtungsskala — nicht ableitbar).
+- Phase 3/3b (`deep_analysis`/`commodities_crypto`): `summary`=`summary`,
+  `sentiment` aus `direction` (long→bullish, short→bearish, none→neutral),
+  `market_impact`=`confidence` (low/medium/high passt direkt durch).
+
+Nur in `run_pipeline()` verdrahtet (`pre_market`) — `run_trade_proposals()` durchläuft
+weder Phase 2 noch Phase 3/3b (nur die leichtgewichtige `_revalidate_all()`), hat also
+keine Quelle für neue `news_summaries`-Zeilen.
+
+**Tests:** 14 neue Tests (`test_db.py`: Schema-Drop fresh + Migration auf Legacy-DB
+für `fundamentals` und die drei Preisspalten, `update_market_context_extras()`
+inkl. No-Op auf fehlender Zeile, `save_news_summaries()` inkl. Mehrfachquellen;
+`test_main.py`: End-to-End-Backfill in `run_pipeline()` und
+`run_trade_proposals()` gegen eine echte Temp-DB). **868 Tests grün, 92,46 %
+Coverage.**
+
+Noch nicht live verifiziert — der nächste `pre_market`/`trade_proposals`-Lauf zeigt
+erstmals befüllte `fear_greed_value`/`policy_risk_level`-Spalten und
+`news_summaries`-Zeilen.
+
+---
+
 ## Sprint 3D — Learning Modul
 
 ⚠️ **Noch nicht ausgearbeitet — braucht eine eigene Planungssession, bevor die Implementierung
@@ -2708,6 +2786,11 @@ Grob umrissen (aus früheren Notizen, **nicht** als Spezifikation zu verstehen):
   Auswertung sitzt seit dem Preismodell-Umbau in `final_close`, und `close` ist am
   2026-08-18 ganz entfallen (C.14). 3D muss die Auswertung nicht mehr „übernehmen".
 - Optimiert die Gewichte des `ranking_score` aus 3C
+- `news_summaries` wird seit C.16 (2026-08-19) befüllt (Phase 2 `broad_scan` +
+  Phase 3/3b `deep_analysis`/`commodities_crypto`) — `sentiment`/`market_impact`
+  sind dort **abgeleitete**, keine direkt vom Modell gelieferten Werte (Mapping
+  s. C.16). 3D sollte das beim Feature-Engineering kennen, bevor es diese Spalten
+  als Ground Truth behandelt.
 
 **⚠️ Zwei Eigenschaften der Trainingsdaten, die 3D kennen muss — beide sind KEINE Bugs:**
 

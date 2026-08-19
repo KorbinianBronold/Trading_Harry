@@ -48,14 +48,6 @@ CREATE TABLE IF NOT EXISTS technical_indicators (
     UNIQUE(ticker, date)
 );
 
-CREATE TABLE IF NOT EXISTS fundamentals (
-    ticker TEXT NOT NULL, report_date TEXT NOT NULL,
-    eps_actual REAL, eps_estimated REAL, eps_beat_pct REAL,
-    revenue_actual REAL, guidance_raised BOOLEAN,
-    pe_ratio REAL, forward_pe REAL, debt_equity REAL,
-    UNIQUE(ticker, report_date)
-);
-
 CREATE TABLE IF NOT EXISTS news_summaries (
     ticker TEXT, date TEXT NOT NULL, run_type TEXT,
     summary TEXT NOT NULL, sentiment TEXT, source TEXT, market_impact TEXT,
@@ -72,7 +64,6 @@ CREATE TABLE IF NOT EXISTS trend_analyses (
 CREATE TABLE IF NOT EXISTS market_context (
     date TEXT NOT NULL, run_type TEXT NOT NULL,
     sp500_change_pct REAL, vix_level REAL, market_regime TEXT,
-    oil_price REAL, gold_price REAL, btc_price REAL,
     fear_greed_value INTEGER, policy_risk_level TEXT,
     sector_rotation_in TEXT, sector_rotation_out TEXT, macro_summary TEXT,
     advance_decline_ratio REAL,
@@ -325,6 +316,13 @@ def _apply_migrations(conn: sqlite3.Connection) -> None:
     if "advance_decline_ratio" not in mc_cols:
         conn.execute("ALTER TABLE market_context ADD COLUMN advance_decline_ratio REAL")
 
+    # C.16 (2026-08-19): oil_price/gold_price/btc_price waren nie befuellt --
+    # die Rohpreise liegen bereits vollstaendig in price_history (GC=F/SI=F/
+    # CL=F/BTC-USD/...), ueber dieselbe Capital.com-Pipeline wie die Aktien.
+    for col in ("oil_price", "gold_price", "btc_price"):
+        if col in mc_cols:
+            conn.execute(f"ALTER TABLE market_context DROP COLUMN {col}")
+
     out_cols = {r["name"] for r in conn.execute(
         "PRAGMA table_info(outcomes)"
     ).fetchall()}
@@ -336,6 +334,14 @@ def _apply_migrations(conn: sqlite3.Connection) -> None:
     tables = {r["name"] for r in conn.execute(
         "SELECT name FROM sqlite_master WHERE type='table'"
     ).fetchall()}
+
+    # C.16 (2026-08-19): fundamentals war seit Einfuehrung nie beschrieben --
+    # fundamentals_cache (unten) uebernahm diese Rolle vollstaendig. Anders als
+    # price_history.premarket_price (Praezedenzfall: tote Spalte bleibt
+    # stehen) per DROP entfernt: die Tabelle ist leer, das Risiko minimal.
+    if "fundamentals" in tables:
+        conn.execute("DROP TABLE fundamentals")
+
     if "fundamentals_cache" not in tables:
         conn.execute("""
             CREATE TABLE fundamentals_cache (
@@ -990,15 +996,50 @@ def save_market_context(conn: sqlite3.Connection, row: dict) -> None:
     nichts belegbar war, muss speicherbar bleiben."""
     cols = [
         "date", "run_type", "sp500_change_pct", "vix_level", "market_regime",
-        "oil_price", "gold_price", "btc_price", "fear_greed_value",
-        "policy_risk_level", "sector_rotation_in", "sector_rotation_out",
-        "macro_summary", "advance_decline_ratio",
+        "fear_greed_value", "policy_risk_level", "sector_rotation_in",
+        "sector_rotation_out", "macro_summary", "advance_decline_ratio",
     ]
     placeholders = ", ".join(["?"] * len(cols))
     conn.execute(
         f"INSERT OR REPLACE INTO market_context ({', '.join(cols)}) "
         f"VALUES ({placeholders})",
         [row.get(c) for c in cols],
+    )
+    conn.commit()
+
+
+def update_market_context_extras(
+    conn: sqlite3.Connection, date: str, run_type: str,
+    fear_greed_value: int | None, policy_risk_level: str | None,
+) -> None:
+    """Backfillt fear_greed_value/policy_risk_level auf die schon in Phase 0b
+    gespeicherte market_context-Zeile (C.16). Beide Werte entstehen erst in
+    spaeteren Phasen -- Policy Monitor in Phase 3, Fear&Greed in Phase 3b --
+    save_market_context() kennt sie zum Zeitpunkt seines Aufrufs noch nicht.
+    UPDATE statt INSERT OR REPLACE, damit die dort schon gespeicherten Felder
+    (vix_level etc.) nicht ueberschrieben werden. Kein Effekt, wenn die Zeile
+    fehlt (z.B. weil Phase 0b an einem MarketContextError scheiterte)."""
+    conn.execute(
+        "UPDATE market_context SET fear_greed_value = ?, policy_risk_level = ? "
+        "WHERE date = ? AND run_type = ?",
+        (fear_greed_value, policy_risk_level, date, run_type),
+    )
+    conn.commit()
+
+
+def save_news_summaries(conn: sqlite3.Connection, rows: list[dict]) -> None:
+    """Schreibt mehrere news_summaries-Zeilen (C.16, Vorarbeit fuer Sprint 3D).
+    Fehlende Keys werden zu NULL. Kein UNIQUE-Constraint -- mehrere Quellen
+    (broad_scan, deep_analysis, commodities_crypto) duerfen fuer denselben
+    Ticker/Tag nebeneinander stehen, unterschieden ueber 'source'."""
+    if not rows:
+        return
+    cols = ["ticker", "date", "run_type", "summary", "sentiment", "source",
+            "market_impact"]
+    placeholders = ", ".join(["?"] * len(cols))
+    conn.executemany(
+        f"INSERT INTO news_summaries ({', '.join(cols)}) VALUES ({placeholders})",
+        [[row.get(c) for c in cols] for row in rows],
     )
     conn.commit()
 

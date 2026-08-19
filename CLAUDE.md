@@ -1,6 +1,25 @@
 # Shares_Future – SP500 CFD Research Tool
 
-**Zuletzt aktualisiert:** 2026-08-19 — ⚡ **Phase 3b (Commodities/Crypto) gebatcht
+**Zuletzt aktualisiert:** 2026-08-19 — 🧹 **Tote Tabellen/Spalten aufgeräumt,
+`market_context` + `news_summaries` verdrahtet.** Analyse der frisch gesyncten
+Produktions-DB fand `fundamentals` (0 Zeilen, `fundamentals_cache` übernahm die Rolle
+vollständig) und `news_summaries` (0 Zeilen, kein Insert-Pfad existierte) sowie sechs
+strukturell immer `NULL`e `market_context`-Spalten. `fundamentals` und
+`market_context.oil_price/gold_price/btc_price` **entfernt** (Rohpreise liegen bereits
+vollständig in `price_history`, dieselbe Capital.com-Pipeline wie die Aktien) —
+⚠️ bewusster Bruch mit dem `price_history.premarket_price`-Präzedenzfall (tote Spalte
+bleibt sonst stehen statt DROP, um die produktive DB nicht anzufassen), gegen eine Kopie
+der echten DB getestet. `fear_greed_value`/`policy_risk_level` **werden** berechnet
+(Phase 3b/3), landeten aber nie in `market_context` — `save_market_context()` läuft in
+Phase 0b, bevor beide Werte existieren. Neues `update_market_context_extras()`
+(`UPDATE`, kein `INSERT OR REPLACE`) trägt sie nach. `news_summaries` jetzt aus Phase 2
+(`broad_scan`) **und** Phase 3/3b (`deep_analysis`/`commodities_crypto`) befüllt —
+`sentiment`/`market_impact` sind dabei **abgeleitete** Werte (Richtung/Confidence),
+keine direkt vom Modell gelieferten Felder; Vorarbeit für Sprint 3D.
+**868 Tests grün, 92,46 % Coverage.** Noch nicht live verifiziert. Details:
+PROJECT_STATUS **C.16**.
+
+Davor, 2026-08-19 — ⚡ **Phase 3b (Commodities/Crypto) gebatcht
 nach `asset_class` statt sieben Einzelcalls.** Eine Laufzeit-Prüfung der Cron-Jobs vom
 2026-08-18 fand `pre_market` bei 16 Minuten; Aufschlüsselung zeigte Phase 3b (7 fixe
 Assets: Gold, Silber, Öl, BTC, ETH, SOL, XRP) allein bei ~4,8 Minuten — sieben

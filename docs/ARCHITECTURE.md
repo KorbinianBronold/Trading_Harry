@@ -1062,10 +1062,21 @@ SQLite-Schema + Persistence.
 - `cost_tracking` – Claude-API Kosten pro Run
 - `fundamentals_cache` – Finnhub-Fundamentals mit 7-Tage TTL (UNIQUE per ticker)
 - `price_history` – ausschliesslich finale Tages-OHLCV (s. „Die zentrale Trennung" oben)
-- `market_context` – ein Marktzustand je Run (UNIQUE date+run_type), seit 3B echt befüllt
+- `market_context` – ein Marktzustand je Run (UNIQUE date+run_type), seit 3B echt befüllt.
+  Seit C.16 (2026-08-19) **ohne** `oil_price`/`gold_price`/`btc_price` (Rohpreise liegen
+  vollständig in `price_history`, dieselbe Capital.com-Pipeline wie die Aktien) und mit
+  `fear_greed_value`/`policy_risk_level` per Backfill befüllt (`update_market_context_extras()`,
+  s. Helpers unten) — beide Werte entstehen erst in Phase 3/3b, lange nach
+  `save_market_context()` in Phase 0b. `sp500_change_pct` bleibt unverändert `NULL`
+  (kein Ticker dafür definiert, offen gelassen).
 - `skipped_tickers` – Ereignis-Log je übersprungenem Ticker mit Grund; trägt die
   Weekly-Auswertung und die Deaktivierung
-- `trend_analyses`, `news_summaries` – Phase-0-Ausgaben
+- `trend_analyses` – Phase-0-Ausgaben
+- `news_summaries` – seit C.16 (2026-08-19) befüllt aus Phase 2 (`broad_scan`) **und**
+  Phase 3/3b (`deep_analysis`/`commodities_crypto`), Vorarbeit für Sprint 3D.
+  `sentiment`/`market_impact` sind **abgeleitete** Werte (aus `direction`/`confidence`
+  bzw. `news_strength`), keine direkt vom Modell gelieferten Felder. Kein
+  UNIQUE-Constraint — mehrere Quellen dürfen für denselben Ticker/Tag nebeneinander stehen.
 - `cutoff_log` *(neu, Sprint 3C / Plan 2, Task 9)* – **jeder** von Phase 2 bewertete
   Ticker, nicht nur die für Phase 3 ausgewählten (`selected`-Flag +
   `rank_position` nach der Cutoff-Sortierung). UNIQUE(date, run_type, ticker);
@@ -1076,12 +1087,16 @@ SQLite-Schema + Persistence.
   volumenstärkste Tabelle des Systems (~1000 Zeilen/Tag bei 500 Tickern) hat sie
   **180 Tage Retention** in `cleanup_old_data()`
 
-⚠️ **Zwei tote Tabellen** (verifiziert 2026-08-09): `fundamentals` und `prompt_versions`
-werden von `init_schema()` angelegt, aber **nirgends gelesen oder geschrieben** — null
-Zugriffe im gesamten Code. Die Fundamentaldaten liegen in `fundamentals_cache`;
-`prompt_versions` gehört zum noch nicht gebauten A/B-Testing (Sprint 3D). ✅ Die dritte
-Altlast dieser Klasse ist seit Task 10 geschlossen: `MAX_DEEP_ANALYSIS` wird gelesen
-(80 → 50), `BATCH_SIZE_QUICK` ist entfernt, nicht nur tot.
+✅ **`fundamentals` entfernt** (C.16, 2026-08-19): war seit Einführung nie beschrieben,
+`fundamentals_cache` übernahm die Rolle vollständig. Per `DROP TABLE`-Migration entfernt
+(anders als der `price_history.premarket_price`-Präzedenzfall unten — die Tabelle war
+leer, das Risiko minimal). `news_summaries` war ebenfalls tot (kein Insert-Pfad), ist
+seit C.16 aber **verdrahtet** statt entfernt (s. oben) — Korbinian will sie für Sprint 3D.
+⚠️ **Eine tote Tabelle bleibt:** `prompt_versions` wird von `init_schema()` angelegt,
+aber **nirgends gelesen oder geschrieben** (verifiziert 2026-08-09) — sie gehört zum
+noch nicht gebauten A/B-Testing (Sprint 3D). ✅ Eine weitere Altlast dieser Klasse ist
+seit Task 10 geschlossen: `MAX_DEEP_ANALYSIS` wird gelesen (80 → 50), `BATCH_SIZE_QUICK`
+ist entfernt, nicht nur tot.
 
 **Neu in Sprint 3B / Plan 1** (angelegt 2026-07-27/29):
 - `ticker_status` – kumulativer `skip_count` + `inactive`-Flag + `retry_after` pro Ticker
@@ -1122,6 +1137,9 @@ Altlast dieser Klasse ist seit Task 10 geschlossen: `MAX_DEEP_ANALYSIS` wird gel
 - `log_guardrail_reject(conn, row)` / `load_guardrail_rejects_since(conn, since)` – Weekly-Auswertung
 - `compute_sector_db_momentum(...)` / `save_sector_momentum(...)` / `load_sector_momentum(...)` – D9
 - `save_market_context(conn, row)` – Phase 0b
+- `update_market_context_extras(conn, date, run_type, fear_greed_value, policy_risk_level)`
+  *(C.16)* – Backfill nach Phase 3/3b, `UPDATE` statt `INSERT OR REPLACE`
+- `save_news_summaries(conn, rows)` *(C.16)* – Batch-Insert, mehrere Quellen je Ticker/Tag
 
 **Retention** (`cleanup_old_data`, seit 3B): `news_summaries` 30 Tage,
 `trend_analyses` 180 Tage, `skipped_tickers`-Events 90 Tage. `ticker_status`

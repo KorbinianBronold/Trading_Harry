@@ -9,7 +9,6 @@ def test_init_schema_creates_all_tables(in_memory_db):
     expected = {
         "price_history",
         "technical_indicators",
-        "fundamentals",
         "news_summaries",
         "trend_analyses",
         "market_context",
@@ -27,6 +26,39 @@ def test_init_schema_is_idempotent(in_memory_db):
     init_schema(in_memory_db)
     tables = get_tables(in_memory_db)
     assert "predictions" in tables
+
+
+# ---------- fundamentals-Tabelle entfernt (C.16, 2026-08-19) ----------
+# Nie beschrieben -- fundamentals_cache uebernahm diese Rolle vollstaendig,
+# siehe get_cached_fundamentals/save_fundamentals_cache oben. Anders als
+# price_history.premarket_price (Praezedenzfall: tote Spalte bleibt stehen)
+# hier per DROP entfernt: die Tabelle ist leer, das Risiko minimal.
+
+
+def test_fundamentals_table_is_gone_on_a_fresh_db(in_memory_db):
+    init_schema(in_memory_db)
+    assert "fundamentals" not in set(get_tables(in_memory_db))
+
+
+def test_migration_drops_fundamentals_from_a_legacy_db():
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    init_schema(conn)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS fundamentals (
+            ticker TEXT NOT NULL, report_date TEXT NOT NULL,
+            eps_actual REAL, eps_estimated REAL, eps_beat_pct REAL,
+            revenue_actual REAL, guidance_raised BOOLEAN,
+            pe_ratio REAL, forward_pe REAL, debt_equity REAL,
+            UNIQUE(ticker, report_date)
+        )
+    """)
+    conn.commit()
+    assert "fundamentals" in set(get_tables(conn))
+
+    init_schema(conn)
+    assert "fundamentals" not in set(get_tables(conn))
+    conn.close()
 
 
 from src.db import (
@@ -1213,6 +1245,142 @@ def test_save_market_context_tolerates_a_sparse_row(in_memory_db):
     row = in_memory_db.execute("SELECT * FROM market_context").fetchone()
     assert row["vix_level"] is None
     assert row["market_regime"] is None
+
+
+# ---------- oil_price/gold_price/btc_price entfernt (C.16, 2026-08-19) ----------
+# Nie befuellt -- die Rohpreise (GC=F/SI=F/CL=F/BTC-USD/...) liegen bereits
+# vollstaendig in price_history, ueber dieselbe Capital.com-Pipeline wie die
+# Aktien. Eine zweite Kopie hier haette leicht auseinanderlaufen koennen.
+
+
+def test_market_context_has_no_price_columns_on_a_fresh_db(in_memory_db):
+    init_schema(in_memory_db)
+    cols = {r["name"] for r in in_memory_db.execute(
+        "PRAGMA table_info(market_context)").fetchall()}
+    assert not {"oil_price", "gold_price", "btc_price"} & cols
+
+
+def test_migration_drops_price_columns_from_a_legacy_market_context():
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    init_schema(conn)
+    for col in ("oil_price", "gold_price", "btc_price"):
+        conn.execute(f"ALTER TABLE market_context ADD COLUMN {col} REAL")
+    conn.commit()
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(market_context)")}
+    assert {"oil_price", "gold_price", "btc_price"} <= cols
+
+    init_schema(conn)
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(market_context)")}
+    assert not {"oil_price", "gold_price", "btc_price"} & cols
+    conn.close()
+
+
+# ---------- update_market_context_extras() (C.16) ----------
+# fear_greed_value/policy_risk_level entstehen erst in Phase 3/3b -- lange
+# nachdem save_market_context() in Phase 0b geschrieben hat. UPDATE statt
+# INSERT OR REPLACE, damit die dort schon gespeicherten Felder nicht
+# ueberschrieben werden.
+
+
+from src.db import update_market_context_extras
+
+
+def test_update_market_context_extras_backfills_the_existing_row(in_memory_db):
+    init_schema(in_memory_db)
+    save_market_context(in_memory_db, {
+        "date": "2026-08-19", "run_type": "pre_market", "vix_level": 18.0,
+    })
+    update_market_context_extras(
+        in_memory_db, date="2026-08-19", run_type="pre_market",
+        fear_greed_value=62, policy_risk_level="high",
+    )
+    row = in_memory_db.execute("SELECT * FROM market_context").fetchone()
+    assert row["fear_greed_value"] == 62
+    assert row["policy_risk_level"] == "high"
+    assert row["vix_level"] == 18.0          # unveraendert
+
+
+def test_update_market_context_extras_only_touches_the_matching_run(in_memory_db):
+    init_schema(in_memory_db)
+    save_market_context(in_memory_db, {"date": "2026-08-19", "run_type": "pre_market"})
+    save_market_context(in_memory_db, {"date": "2026-08-19", "run_type": "trade_proposals"})
+    update_market_context_extras(
+        in_memory_db, date="2026-08-19", run_type="pre_market",
+        fear_greed_value=62, policy_risk_level="high",
+    )
+    rows = {r["run_type"]: r["fear_greed_value"]
+            for r in in_memory_db.execute("SELECT run_type, fear_greed_value FROM market_context")}
+    assert rows["pre_market"] == 62
+    assert rows["trade_proposals"] is None
+
+
+def test_update_market_context_extras_on_a_missing_row_is_a_noop(in_memory_db):
+    """trade_proposals ruft das auf, auch wenn Phase 0b vorher an einem
+    MarketContextError gescheitert ist und gar keine Zeile existiert."""
+    init_schema(in_memory_db)
+    update_market_context_extras(
+        in_memory_db, date="2026-08-19", run_type="pre_market",
+        fear_greed_value=62, policy_risk_level="high",
+    )
+    assert in_memory_db.execute("SELECT COUNT(*) AS n FROM market_context").fetchone()["n"] == 0
+
+
+# ---------- save_news_summaries() (C.16, Vorarbeit fuer Sprint 3D) ----------
+
+
+from src.db import save_news_summaries
+
+
+def test_save_news_summaries_writes_multiple_rows(in_memory_db):
+    init_schema(in_memory_db)
+    save_news_summaries(in_memory_db, [
+        {"ticker": "AAPL", "date": "2026-08-19", "run_type": "pre_market",
+         "summary": "Starke iPhone-Zahlen.", "sentiment": "bullish",
+         "source": "deep_analysis", "market_impact": "medium"},
+        {"ticker": "MSFT", "date": "2026-08-19", "run_type": "pre_market",
+         "summary": "Analysten-Upgrade.", "sentiment": None,
+         "source": "broad_scan", "market_impact": "notable"},
+    ])
+    rows = in_memory_db.execute(
+        "SELECT ticker, summary, source, sentiment FROM news_summaries "
+        "ORDER BY ticker").fetchall()
+    assert [r["ticker"] for r in rows] == ["AAPL", "MSFT"]
+    assert rows[0]["source"] == "deep_analysis"
+    assert rows[1]["sentiment"] is None
+
+
+def test_save_news_summaries_tolerates_an_empty_list(in_memory_db):
+    init_schema(in_memory_db)
+    save_news_summaries(in_memory_db, [])
+    assert in_memory_db.execute("SELECT COUNT(*) AS n FROM news_summaries").fetchone()["n"] == 0
+
+
+def test_save_news_summaries_missing_keys_become_null(in_memory_db):
+    init_schema(in_memory_db)
+    save_news_summaries(in_memory_db, [
+        {"ticker": "AAPL", "date": "2026-08-19", "run_type": "pre_market",
+         "summary": ""},
+    ])
+    row = in_memory_db.execute("SELECT * FROM news_summaries").fetchone()
+    assert row["sentiment"] is None
+    assert row["source"] is None
+    assert row["market_impact"] is None
+
+
+def test_save_news_summaries_allows_two_sources_for_the_same_ticker(in_memory_db):
+    """Kein UNIQUE-Constraint -- broad_scan und deep_analysis duerfen fuer
+    denselben Ticker/Tag nebeneinander stehen, unterschiedliches 'source'."""
+    init_schema(in_memory_db)
+    save_news_summaries(in_memory_db, [
+        {"ticker": "AAPL", "date": "2026-08-19", "run_type": "pre_market",
+         "summary": "News-Scan-Fund.", "source": "broad_scan"},
+        {"ticker": "AAPL", "date": "2026-08-19", "run_type": "pre_market",
+         "summary": "Tiefenanalyse-Fazit.", "source": "deep_analysis"},
+    ])
+    n = in_memory_db.execute(
+        "SELECT COUNT(*) AS n FROM news_summaries WHERE ticker='AAPL'").fetchone()["n"]
+    assert n == 2
 
 
 # ---------- Migrationspfad bestehender DBs (Regel 5) ----------

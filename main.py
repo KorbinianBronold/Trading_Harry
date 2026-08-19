@@ -211,6 +211,46 @@ def _premarket_flag(date: str, now_utc: str | None = None) -> int:
     return 1 if signal_window.is_premarket(date, now) else 0
 
 
+# C.16 (2026-08-19): news_summaries-Vorarbeit fuer Sprint 3D. Weder broad_scan
+# noch deep_analysis/commodities_crypto liefern "sentiment"/"market_impact"
+# direkt -- die Felder werden aus dem naechstliegenden vorhandenen Wert
+# abgeleitet, statt sie unbelegt zu lassen.
+_NEWS_IMPACT_FROM_STRENGTH = {0: "none", 1: "minor", 2: "notable", 3: "major"}
+_SENTIMENT_FROM_DIRECTION = {"long": "bullish", "short": "bearish", "none": "neutral"}
+
+
+def _news_summaries_from_broad_scan(
+    broad_results: list[dict], date: str, run_type: str,
+) -> list[dict]:
+    """Phase-2-Nachrichten-Scan -> news_summaries-Zeilen. sentiment bleibt
+    None: news_strength ist eine Betrags-, keine Richtungsskala."""
+    return [
+        {
+            "ticker": r.get("ticker"), "date": date, "run_type": run_type,
+            "summary": r.get("news_note") or "", "sentiment": None,
+            "source": "broad_scan",
+            "market_impact": _NEWS_IMPACT_FROM_STRENGTH.get(r.get("news_strength")),
+        }
+        for r in broad_results
+    ]
+
+
+def _news_summaries_from_analyses(
+    analyses: list[dict], date: str, run_type: str, source: str,
+) -> list[dict]:
+    """Phase-3/3b-Tiefenanalysen -> news_summaries-Zeilen. sentiment aus
+    direction, market_impact aus confidence (low/medium/high passt direkt)."""
+    return [
+        {
+            "ticker": a.get("ticker"), "date": date, "run_type": run_type,
+            "summary": a.get("summary") or "",
+            "sentiment": _SENTIMENT_FROM_DIRECTION.get(a.get("direction")),
+            "source": source, "market_impact": a.get("confidence"),
+        }
+        for a in analyses
+    ]
+
+
 def _opening_prices(price_provider, tickers: list[str], date: str) -> dict[str, float]:
     """Tatsaechlicher Eroeffnungskurs je Ticker, minutengenau.
 
@@ -493,6 +533,23 @@ def run_pipeline(run_type: str, date: str, db_path: str) -> None:
             cost_tracker=cost_tracker,
         )
 
+        # C.16: fear_greed_value (Phase 3b) und policy_risk_level (Phase 3)
+        # entstehen beide erst NACH dem save_market_context()-Aufruf aus
+        # Phase 0b -- deshalb ein Backfill statt eines zweiten Inserts.
+        db.update_market_context_extras(
+            conn, date=date, run_type=run_type,
+            fear_greed_value=fg.get("value"),
+            policy_risk_level=policy_context.get("policy_risk_level"),
+        )
+        db.save_news_summaries(
+            conn,
+            _news_summaries_from_broad_scan(broad_results, date, run_type)
+            + _news_summaries_from_analyses(
+                deep_stocks, date, run_type, "deep_analysis")
+            + _news_summaries_from_analyses(
+                deep_cc, date, run_type, "commodities_crypto"),
+        )
+
         # Der 15:00-Kurs ist regulaer vorboerslich (09:00 ET). Die Markierung
         # geht in die Prediction-Zeile und in den Re-Validierungs-Prompt --
         # ein duenn gehandelter Vorboersenkurs ist kein Sitzungskurs.
@@ -773,6 +830,15 @@ def run_trade_proposals(date: str, db_path: str) -> None:
                         f"rein preisbasiert weiter: {e}")
             payload["briefing"] = ["⚠️ Policy-Monitor ausgefallen — "
                                    "keine Nachrichtenlage in dieser Prüfung."]
+
+        # C.16: trade_proposals ruft fetch_fear_greed() nie (kein Phase 3b
+        # hier) -- fear_greed_value bleibt bewusst NULL statt eines erfundenen
+        # Werts, nur policy_risk_level wird nachgetragen.
+        db.update_market_context_extras(
+            conn, date=date, run_type="trade_proposals",
+            fear_greed_value=None,
+            policy_risk_level=policy_context.get("policy_risk_level"),
+        )
 
         current_phase = "revalidation"
         # out= statt Zuweisung: bricht der Lauf hier am Kostendeckel ab, sind die
