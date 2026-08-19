@@ -1,6 +1,24 @@
 # Shares_Future – SP500 CFD Research Tool
 
-**Zuletzt aktualisiert:** 2026-08-19 — 🧹 **Tote Tabellen/Spalten aufgeräumt,
+**Zuletzt aktualisiert:** 2026-08-19 — 📧 **`final_close` verschickt jetzt eine
+Auswertungs-Mail.** Bewusster Bruch mit der bisherigen Entscheidung ("kein
+Claude-Call, keine Mail") — bleibt weiterhin ohne Claude-Call (0 EUR
+Zusatzkosten), aber eine Tabelle (Ticker, Richtung, 16:10-Urteil, Entry, Exit,
+Ergebnis, Richtung korrekt EOD, P&L) zeigt jetzt direkt nach der Auswertung,
+welche `pre_market`/`trade_proposals`-Predictions richtig lagen. Zwei
+Design-Annahmen aus der ersten Anfrage stimmten nicht mit dem Datenmodell
+überein und wurden vor der Umsetzung geklärt: die Richtung ändert sich
+zwischen `pre_market` und `trade_proposals` **strukturell nie** (bei
+gedreht/verworfen entsteht gar keine neue Zeile, die Original-Richtung wird
+ausgewertet — E5), also eine Richtungs-Spalte + „16:10-Urteil" statt zwei
+Richtungs-Spalten; und das Urteil sitzt je nach Ausgang auf unterschiedlichen
+Zeilen (`record_revision()` vs. `supersede_prediction()`), `db.load_evaluated_outcomes()`
+braucht deshalb einen Rückwärts-Join über `superseded_by`. Die alte
+Fussleiste in der nächsten `pre_market`-Mail bleibt zusätzlich bestehen.
+**880 Tests grün, 92,52 % Coverage.** Noch nicht live verifiziert. Details:
+PROJECT_STATUS **C.17**.
+
+Davor, 2026-08-19 — 🧹 **Tote Tabellen/Spalten aufgeräumt,
 `market_context` + `news_summaries` verdrahtet.** Analyse der frisch gesyncten
 Produktions-DB fand `fundamentals` (0 Zeilen, `fundamentals_cache` übernahm die Rolle
 vollständig) und `news_summaries` (0 Zeilen, kein Insert-Pfad existierte) sowie sechs

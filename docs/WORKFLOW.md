@@ -27,7 +27,7 @@ Mail-Renderer, Tests).
 |---|---|---|---|---|---|
 | `pre_market` | `0 13 * * 1-5` | 15:00 | volle Pipeline Phase 0–5 | ja | **3,13 EUR** gemessen |
 | `trade_proposals` | `10 14 * * 1-5`¹ | 16:10 | Re-Validierung der Morgensignale | ja | ~0,5–0,7 EUR |
-| `final_close` | `15 0 * * *` | 02:15 | **schreibt die finalen Tagesbars**, bewertet offene Predictions | nein | ~0 EUR |
+| `final_close` | `15 0 * * *` | 02:15 | **schreibt die finalen Tagesbars**, bewertet offene Predictions | ja *(seit C.17)* | ~0 EUR |
 | `weekly` | `0 18 * * 0` | So 20:00 | Wochenauswertung | ja | ~0 EUR |
 
 ¹ Nur der EDT-Slot ist geplant; der Workflow fährt vorerst ausschliesslich die

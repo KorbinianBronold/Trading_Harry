@@ -2315,3 +2315,116 @@ def test_load_revision_effectiveness_empty_before_any_trade_proposals_run(in_mem
     result = db.load_revision_effectiveness(conn, "2026-08-01")
     for cls in ("core", "divergence"):
         assert result[cls]["confirmed"] == {"total": 0, "correct": 0, "pl_eur": 0.0}
+
+
+# ---------- load_evaluated_outcomes() (C.17, final_close-Mail 2026-08-19) ----------
+
+
+def _seed_evaluated(
+    conn, ticker, direction, entry_price=100.0, exit_price=105.0,
+    tp_hit=1, sl_hit=0, exit_reason="tp_hit", correct_direction_eod=1,
+    pl_eur=10.0, evaluated_date="2026-08-18", run_type="pre_market",
+):
+    """Legt eine Prediction + zugehoeriges Outcome an -- fuer
+    load_evaluated_outcomes()-Tests. Anders als _seed_prediction_with_outcome
+    oben (das nur candidate_class/revision_verdict braucht) setzt dieses
+    Fixture die vollen Preis-/Ergebnisfelder, die die neue Mail zeigt."""
+    pred_id = save_prediction(conn, {
+        **_sample_pred(), "ticker": ticker, "direction": direction,
+        "run_type": run_type, "entry_price": entry_price,
+    })
+    conn.execute(
+        """INSERT INTO outcomes
+           (prediction_id, direction, evaluated_date, price_after_eod,
+            correct_direction_eod, tp_hit, sl_hit, exit_reason, profit_loss_eur)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (pred_id, direction, evaluated_date, exit_price,
+         correct_direction_eod, tp_hit, sl_hit, exit_reason, pl_eur),
+    )
+    conn.commit()
+    return pred_id
+
+
+from src.db import load_evaluated_outcomes
+
+
+def test_load_evaluated_outcomes_returns_price_and_result_fields(in_memory_db):
+    db.init_schema(in_memory_db)
+    _seed_evaluated(in_memory_db, "AAPL", "long", entry_price=178.5,
+                     exit_price=182.0, tp_hit=1, sl_hit=0,
+                     exit_reason="tp_hit", pl_eur=35.0)
+    rows = load_evaluated_outcomes(in_memory_db, "2026-08-18")
+    assert len(rows) == 1
+    r = rows[0]
+    assert r["ticker"] == "AAPL"
+    assert r["direction"] == "long"
+    assert r["entry_price"] == 178.5
+    assert r["price_after_eod"] == 182.0
+    assert r["tp_hit"] == 1
+    assert r["sl_hit"] == 0
+    assert r["exit_reason"] == "tp_hit"
+    assert r["profit_loss_eur"] == 35.0
+
+
+def test_load_evaluated_outcomes_is_scoped_to_the_date(in_memory_db):
+    db.init_schema(in_memory_db)
+    _seed_evaluated(in_memory_db, "AAPL", "long", evaluated_date="2026-08-18")
+    _seed_evaluated(in_memory_db, "MSFT", "long", evaluated_date="2026-08-17")
+    rows = load_evaluated_outcomes(in_memory_db, "2026-08-18")
+    assert [r["ticker"] for r in rows] == ["AAPL"]
+
+
+def test_load_evaluated_outcomes_verdict_is_null_when_never_revalidated(in_memory_db):
+    """Ticker, den trade_proposals nie angesehen hat (z.B. weil er nicht mehr
+    offen war) -- kein Urteil, weder auf der Zeile noch bei einem Vorgaenger."""
+    db.init_schema(in_memory_db)
+    _seed_evaluated(in_memory_db, "AAPL", "long")
+    rows = load_evaluated_outcomes(in_memory_db, "2026-08-18")
+    assert rows[0]["revision_verdict"] is None
+
+
+def test_load_evaluated_outcomes_shows_gedreht_verdict_on_the_evaluated_row_itself(
+        in_memory_db):
+    """gedreht/verworfen: record_revision() setzt das Urteil DIREKT auf die
+    Zeile, die (unveraendert) weiter offen bleibt und spaeter ausgewertet wird."""
+    db.init_schema(in_memory_db)
+    pred_id = save_prediction(in_memory_db, {
+        **_sample_pred(), "ticker": "META", "direction": "short",
+        "run_type": "pre_market",
+    })
+    db.record_revision(in_memory_db, pred_id, "gedreht")
+    in_memory_db.execute(
+        """INSERT INTO outcomes
+           (prediction_id, direction, evaluated_date, tp_hit, sl_hit, exit_reason)
+           VALUES (?, 'short', '2026-08-18', 0, 1, 'sl_hit')""",
+        (pred_id,),
+    )
+    in_memory_db.commit()
+    rows = load_evaluated_outcomes(in_memory_db, "2026-08-18")
+    assert rows[0]["revision_verdict"] == "gedreht"
+
+
+def test_load_evaluated_outcomes_finds_verdict_via_superseded_predecessor(in_memory_db):
+    """bestaetigt/geschwaecht/unveraendert: das Urteil sitzt auf der ALTEN
+    (abgeloesten) Zeile, ausgewertet wird aber die NEUE trade_proposals-Zeile.
+    Ohne den Rueckwaerts-Join ueber superseded_by waere das Urteil unsichtbar."""
+    db.init_schema(in_memory_db)
+    old_id = save_prediction(in_memory_db, {
+        **_sample_pred(), "ticker": "NVDA", "direction": "long",
+        "run_type": "pre_market",
+    })
+    new_id = db.supersede_prediction(in_memory_db, old_id, {
+        **_sample_pred(), "ticker": "NVDA", "direction": "long",
+        "run_type": "trade_proposals",
+    }, verdict="bestaetigt")
+    in_memory_db.execute(
+        """INSERT INTO outcomes
+           (prediction_id, direction, evaluated_date, tp_hit, sl_hit, exit_reason)
+           VALUES (?, 'long', '2026-08-18', 1, 0, 'tp_hit')""",
+        (new_id,),
+    )
+    in_memory_db.commit()
+    rows = load_evaluated_outcomes(in_memory_db, "2026-08-18")
+    assert len(rows) == 1
+    assert rows[0]["revision_verdict"] == "bestaetigt"
+    assert rows[0]["run_type"] == "trade_proposals"

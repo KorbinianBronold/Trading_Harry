@@ -281,10 +281,76 @@ def test_final_close_evaluates_open_predictions(tmp_db_path, mocker):
         index=pd.DatetimeIndex([pd.Timestamp("2026-08-05")]))
     mocker.patch("main.CapitalComProvider", return_value=prov)
     ev = mocker.patch("main.evaluate_open_predictions", return_value=2)
+    mocker.patch("main.send_final_close_email")  # C.17: sonst blockiert das Netz-Fixture
 
     from main import run_final_close
     run_final_close(date="2026-08-06", db_path=str(tmp_db_path))
     ev.assert_called_once()
+
+
+# ---------- C.17: final_close-Mail (2026-08-19) ----------
+
+
+def test_run_final_close_sends_email_with_evaluated_outcomes(tmp_db_path, mocker):
+    """evaluate_open_predictions() bleibt gemockt (wie oben) -- die outcomes-
+    Zeile wird direkt geseedet, damit der neue Query-Aufruf etwas findet."""
+    import pandas as pd
+    from src import db
+    conn = db.connect(str(tmp_db_path))
+    db.init_schema(conn)
+    pred_id = db.save_prediction(conn, {
+        "date": "2026-08-04", "run_type": "pre_market", "ticker": "AAPL",
+        "direction": "long", "entry_price": 178.5, "tp_price": 182.0,
+        "sl_price": 176.7,
+    })
+    conn.execute(
+        """INSERT INTO outcomes
+           (prediction_id, direction, evaluated_date, price_after_eod,
+            correct_direction_eod, tp_hit, sl_hit, exit_reason, profit_loss_eur)
+           VALUES (?, 'long', '2026-08-05', 182.0, 1, 1, 0, 'tp_hit', 35.0)""",
+        (pred_id,),
+    )
+    conn.commit()
+    conn.close()
+
+    prov = MagicMock()
+    prov._source_name = "capital.com"
+    prov.get_ohlc_after.side_effect = lambda t, *a, **k: pd.DataFrame(
+        {"Open": [99.0], "High": [102.0], "Low": [98.0],
+         "Close": [100.0], "Volume": [1000]},
+        index=pd.DatetimeIndex([pd.Timestamp("2026-08-05")]))
+    mocker.patch("main.CapitalComProvider", return_value=prov)
+    mocker.patch("main.evaluate_open_predictions", return_value=1)
+    send = mocker.patch("main.send_final_close_email")
+
+    from main import run_final_close
+    run_final_close(date="2026-08-06", db_path=str(tmp_db_path))
+
+    send.assert_called_once()
+    payload = send.call_args.kwargs["payload"]
+    assert payload["date"] == "2026-08-06"
+    assert [r["ticker"] for r in payload["rows"]] == ["AAPL"]
+
+
+def test_run_final_close_sends_email_even_with_zero_evaluations(tmp_db_path, mocker):
+    """Kein stiller Ausfall: die Mail geht auch raus, wenn nichts ausgewertet
+    wurde (z.B. weil alle offenen Predictions noch im 5-Tage-Fenster sind)."""
+    import pandas as pd
+    prov = MagicMock()
+    prov._source_name = "capital.com"
+    prov.get_ohlc_after.side_effect = lambda t, *a, **k: pd.DataFrame(
+        {"Open": [99.0], "High": [102.0], "Low": [98.0],
+         "Close": [100.0], "Volume": [1000]},
+        index=pd.DatetimeIndex([pd.Timestamp("2026-08-05")]))
+    mocker.patch("main.CapitalComProvider", return_value=prov)
+    mocker.patch("main.evaluate_open_predictions", return_value=0)
+    send = mocker.patch("main.send_final_close_email")
+
+    from main import run_final_close
+    run_final_close(date="2026-08-06", db_path=str(tmp_db_path))
+
+    send.assert_called_once()
+    assert send.call_args.kwargs["payload"]["rows"] == []
 
 
 def test_prompts_contain_intraday_focus():
@@ -1529,6 +1595,7 @@ def test_final_close_writes_final_bars_for_tickers_and_etfs(tmp_db_path, mocker)
     mocker.patch("main.config.SUB_SECTOR_ETFS", {"Semis": "SOXX"})
     mocker.patch("main.config.COMMODITY_TICKERS", {})
     mocker.patch("main.config.CRYPTO_TICKERS", {"Bitcoin": "BTC-USD"})
+    mocker.patch("main.send_final_close_email")  # C.17: sonst blockiert das Netz-Fixture
 
     from main import run_final_close
     run_final_close(date="2026-08-06", db_path=str(tmp_db_path))
@@ -1560,6 +1627,7 @@ def test_final_close_covers_exactly_the_bootstrap_universe(tmp_db_path, mocker):
     prov.get_ohlc_after.side_effect = lambda t, *a, **k: bar
     mocker.patch("main.CapitalComProvider", return_value=prov)
     mocker.patch("main.evaluate_open_predictions", return_value=0)
+    mocker.patch("main.send_final_close_email")  # C.17: sonst blockiert das Netz-Fixture
 
     from main import run_final_close
     run_final_close(date="2026-08-06", db_path=str(tmp_db_path))
@@ -1587,6 +1655,7 @@ def test_final_close_treats_a_missing_bar_as_normal(tmp_db_path, mocker):
     mocker.patch("main.config.USE_FULL_SP500", False)
     mocker.patch("main.config.SUB_SECTOR_ETFS", {})
     mocker.patch("main.build_commodity_crypto_inputs", return_value=[])
+    mocker.patch("main.send_final_close_email")  # C.17: sonst blockiert das Netz-Fixture
 
     from main import run_final_close
     run_final_close(date="2026-08-06", db_path=str(tmp_db_path))   # darf nicht werfen

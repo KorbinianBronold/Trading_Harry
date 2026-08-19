@@ -598,3 +598,72 @@ def test_weekly_revision_block_reads_the_split_shape():
     }
     html = render_weekly_html(payload)  # darf nicht werfen
     assert "KW34" in html
+
+
+# ---------- final_close-Mail (C.17, 2026-08-19) ----------
+
+
+def _final_close_row(**overrides) -> dict:
+    row = {
+        "ticker": "AAPL", "direction": "long", "run_type": "pre_market",
+        "revision_verdict": None, "entry_price": 178.5,
+        "price_after_eod": 182.0, "tp_hit": 1, "sl_hit": 0,
+        "exit_reason": "tp_hit", "correct_direction_eod": 1,
+        "profit_loss_eur": 35.0,
+    }
+    row.update(overrides)
+    return row
+
+
+def test_final_close_mail_shows_ticker_prices_and_result():
+    from src.email_sender import render_final_close_html
+    payload = {"date": "2026-08-19", "rows": [_final_close_row()]}
+    html = render_final_close_html(payload)
+    assert "AAPL" in html
+    assert "178.5" in html and "182.0" in html
+    assert "35.0" in html or "35,0" in html
+
+
+def test_final_close_mail_maps_exit_reason_to_a_label():
+    from src.email_sender import render_final_close_html
+    payload = {"date": "2026-08-19", "rows": [
+        _final_close_row(ticker="AAPL", exit_reason="tp_hit", tp_hit=1, sl_hit=0),
+        _final_close_row(ticker="MSFT", exit_reason="sl_hit", tp_hit=0, sl_hit=1,
+                          correct_direction_eod=0, profit_loss_eur=-20.0),
+        _final_close_row(ticker="NVDA", exit_reason="timeout", tp_hit=0, sl_hit=0),
+        _final_close_row(ticker="GOOGL", exit_reason="data_missing",
+                          tp_hit=0, sl_hit=0, correct_direction_eod=None,
+                          profit_loss_eur=None),
+    ]}
+    html = render_final_close_html(payload)
+    assert "TP" in html
+    assert "SL" in html
+    assert "Timeout" in html
+    assert "Fehlende Daten" in html
+
+
+def test_final_close_mail_shows_the_1610_verdict_when_present():
+    from src.email_sender import render_final_close_html
+    payload = {"date": "2026-08-19", "rows": [
+        _final_close_row(ticker="NVDA", revision_verdict="bestaetigt",
+                         run_type="trade_proposals"),
+        _final_close_row(ticker="META", revision_verdict="gedreht"),
+    ]}
+    html = render_final_close_html(payload)
+    assert "bestaetigt" in html
+    assert "gedreht" in html
+
+
+def test_final_close_mail_handles_no_evaluations():
+    from src.email_sender import render_final_close_html
+    html = render_final_close_html({"date": "2026-08-19", "rows": []})
+    assert "keine" in html.lower() or "Keine" in html
+
+
+def test_send_final_close_email_uses_the_shared_sender(mocker):
+    send = mocker.patch("src.email_sender._send")
+    from src.email_sender import send_final_close_email
+    payload = {"date": "2026-08-19", "rows": [_final_close_row()]}
+    send_final_close_email(payload, api_key="k", email_from="a@b.c", email_to="d@e.f")
+    send.assert_called_once()
+    assert "final_close" in send.call_args[0][3]

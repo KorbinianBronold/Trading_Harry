@@ -571,6 +571,71 @@ def send_trade_proposals_email(
     _send(api_key, email_from, email_to, subject, render_trade_proposals_html(payload))
 
 
+# ---------- final_close-Mail (C.17) ----------
+
+_EXIT_REASON_LABEL = {
+    "tp_hit": "✅ TP", "sl_hit": "❌ SL",
+    "pessimistic_overlap": "❌ SL (TP+SL selber Tag)",
+    "timeout": "⏱ Timeout", "data_missing": "⚠️ Fehlende Daten",
+}
+
+
+def render_final_close_html(payload: dict) -> str:
+    """final_close-Mail (C.17): eine Zeile je heute ausgewerteter Prediction --
+    Entry/Exit-Kurs, Ergebnis (TP/SL/Timeout/Fehlende Daten) und, falls
+    vorhanden, das 16:10-Urteil (bestaetigt/geschwaecht/unveraendert/gedreht/
+    verworfen). Predictions ohne 16:10-Pruefung zeigen eine leere Zelle."""
+    rows = payload.get("rows") or []
+    if not rows:
+        return (
+            '<html><body style="font-family:sans-serif;font-size:14px;">'
+            f'<h1>Shares_Future — {_h(payload.get("date"))} (final_close)</h1>'
+            '<p><i>Keine Predictions heute ausgewertet.</i></p>'
+            '</body></html>'
+        )
+
+    trs = []
+    for r in rows:
+        ergebnis = _EXIT_REASON_LABEL.get(r.get("exit_reason"), _h(r.get("exit_reason")))
+        cde = r.get("correct_direction_eod")
+        korrekt = "—" if cde is None else ("Ja" if cde else "Nein")
+        pl = r.get("profit_loss_eur")
+        pl_str = "—" if pl is None else f'{pl:.2f}'
+        trs.append(
+            f'<tr><td>{_h(r.get("ticker"))}</td>'
+            f'<td>{_h(r.get("direction"))}</td>'
+            f'<td>{_h(r.get("revision_verdict") or "—")}</td>'
+            f'<td>{_h(r.get("entry_price"))}</td>'
+            f'<td>{_h(r.get("price_after_eod"))}</td>'
+            f'<td>{ergebnis}</td>'
+            f'<td>{korrekt}</td>'
+            f'<td>{pl_str}</td></tr>'
+        )
+    return (
+        '<html><body style="font-family:sans-serif;font-size:14px;">'
+        f'<h1>Shares_Future — {_h(payload.get("date"))} (final_close)</h1>'
+        '<table border="1" cellpadding="4" cellspacing="0">'
+        '<tr><th>Ticker</th><th>Richtung</th><th>16:10-Urteil</th>'
+        '<th>Entry</th><th>Exit</th><th>Ergebnis</th>'
+        '<th>Richtung korrekt (EOD)</th><th>P&amp;L (EUR)</th></tr>'
+        + "".join(trs) + '</table>'
+        '</body></html>'
+    )
+
+
+def send_final_close_email(
+    payload: dict, api_key: str, email_from: str, email_to: str,
+) -> None:
+    """Rendert und versendet die final_close-Mail ueber Resend. Wird IMMER
+    verschickt, auch bei 0 Auswertungen (kein stiller Ausfall)."""
+    n = len(payload.get("rows") or [])
+    tp = sum(1 for r in (payload.get("rows") or []) if r.get("tp_hit"))
+    sl = sum(1 for r in (payload.get("rows") or []) if r.get("sl_hit"))
+    subject = (f"[Shares_Future] {payload.get('date')} final_close — "
+               f"{n} ausgewertet ({tp}× TP, {sl}× SL)")
+    _send(api_key, email_from, email_to, subject, render_final_close_html(payload))
+
+
 # ---------- Delivery ----------
 
 def send_daily_email(

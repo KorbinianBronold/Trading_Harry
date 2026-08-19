@@ -2772,6 +2772,72 @@ erstmals befüllte `fear_greed_value`/`policy_risk_level`-Spalten und
 
 ---
 
+### C.17 — `final_close` verschickt jetzt eine Auswertungs-Mail (2026-08-19)
+
+**Anlass:** Korbinian wollte nach jedem `final_close`-Lauf sehen, welche Predictions
+aus `pre_market`/`trade_proposals` richtig oder falsch lagen — bisher gab es dafür
+nur eine aggregierte Kurzfassung (Trefferquote long/short, Gesamt-P&L) in der
+Fussleiste der **nächsten** `pre_market`-Mail, keine Einzeltabelle direkt nach der
+Auswertung. Bewusster Bruch mit der bisherigen Design-Entscheidung
+(`main.py`-Docstring: "Der Lauf ist bewusst schlank: kein Claude-Call, keine Mail") —
+`final_close` bleibt weiterhin ohne Claude-Call (0 EUR Zusatzkosten), bekommt aber
+jetzt eine reine DB-Auswertungs-Mail.
+
+**Design-Klärung vor der Umsetzung (bounded, per Brainstorming-Skill):** Zwei
+Annahmen aus der ersten Anfrage stimmten nicht mit dem Datenmodell überein:
+
+1. **"Vorhersage pre_market" + "Vorhersage trade_proposals" als zwei
+   Richtungs-Spalten** wäre in jedem Fall redundant gewesen. `main.py:_persist_revision()`
+   kopiert bei den Urteilen `bestätigt`/`geschwächt`/`unverändert` die Richtung
+   unverändert in die neue `trade_proposals`-Zeile; bei `gedreht`/`verworfen`
+   entsteht gar keine neue Zeile — die pre_market-Zeile bleibt mit ihrer
+   **ursprünglichen** Richtung offen und wird so ausgewertet (E5: "melden, nicht
+   handeln", nie eine Gegenposition). Die Richtung ändert sich zwischen den beiden
+   Läufen strukturell **nie**. Stattdessen: eine Richtungs-Spalte + eine neue
+   "16:10-Urteil"-Spalte (bestätigt/geschwächt/unverändert/gedreht/verworfen/leer).
+2. **Das Urteil sitzt nicht immer auf der ausgewerteten Zeile.** Bei
+   `gedreht`/`verworfen` schreibt `record_revision()` es direkt auf die (weiter
+   offene) pre_market-Zeile. Bei `bestätigt`/`geschwächt`/`unverändert` schreibt
+   `supersede_prediction()` es auf die **abgelöste** pre_market-Zeile — ausgewertet
+   wird aber die neue `trade_proposals`-Nachfolgezeile, deren eigenes
+   `revision_verdict` NULL bleibt. `db.load_evaluated_outcomes()` braucht deshalb
+   einen `LEFT JOIN` zurück über `superseded_by` plus `COALESCE`, um das Urteil in
+   beiden Fällen zu finden.
+
+**Tabellenspalten** (final: Ticker, Richtung, 16:10-Urteil, Entry, Exit, Ergebnis,
+Richtung korrekt (EOD), P&L): "Ergebnis" bildet `exit_reason` auf ein Label ab
+(TP/SL/SL bei TP+SL selber Tag/Timeout/Fehlende Daten — `evaluator.py`s
+`pessimistic_overlap`-Fall extra benannt, weil er sonst als gewöhnlicher SL-Treffer
+missverstanden würde). "Richtung korrekt (EOD)" bleibt eine **eigene** Spalte neben
+"Ergebnis": beide stimmen bei TP/SL-Treffern immer überein, weichen aber beim
+Timeout-Fall auseinander (Position lief 5 Tage ohne TP/SL-Treffer, der Exit-Kurs kann
+trotzdem in die richtige oder falsche Richtung zeigen).
+
+**Neu:**
+- `db.load_evaluated_outcomes(conn, evaluated_date)` — Query mit dem
+  Rückwärts-Join oben, alphabetisch nach Ticker sortiert.
+- `email_sender.render_final_close_html()` / `send_final_close_email()` — eigene
+  Mail, **immer** verschickt (auch bei 0 Auswertungen: "Keine Predictions heute
+  ausgewertet.") — kein stiller Ausfall, konsistent mit dem Rest des Projekts.
+- `run_final_close()` (`main.py`) ruft nach `evaluate_open_predictions()` die neue
+  Query auf und verschickt die Mail; Docstring korrigiert ("kein Claude-Call" bleibt
+  wahr, "keine Mail" nicht mehr).
+
+**Die alte Fussleiste bleibt** (Korbinians Entscheidung): `_aggregate_yesterday_outcomes()`
+und ihr Rendering in der pre_market-Mail sind unverändert — unterschiedlicher
+Zeitpunkt (nächster Morgen statt sofort), unterschiedlicher Zweck (Kurzfassung statt
+Detailtabelle).
+
+**Tests:** 5 neue Tests in `test_db.py` (Preis-/Ergebnisfelder, Datums-Scoping, drei
+Varianten des Urteil-Lookups), 6 in `test_email_sender.py` (Rendering, Label-Mapping,
+Urteil-Anzeige, 0-Zeilen-Fall, Versand), 2 neue + 4 angepasste in `test_main.py`
+(die vier bestehenden `final_close`-Tests kannten die neue Mail nicht und liefen
+sonst gegen das Netz-Blocking-Fixture). **880 Tests grün, 92,52 % Coverage.**
+
+Noch nicht live verifiziert.
+
+---
+
 ## Sprint 3D — Learning Modul
 
 ⚠️ **Noch nicht ausgearbeitet — braucht eine eigene Planungssession, bevor die Implementierung

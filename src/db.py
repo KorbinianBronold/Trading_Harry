@@ -1321,6 +1321,34 @@ def load_recent_outcomes(
     ).fetchall()
 
 
+def load_evaluated_outcomes(
+    conn: sqlite3.Connection, evaluated_date: str,
+) -> list[sqlite3.Row]:
+    """Returns every outcome evaluated on evaluated_date, joined with its
+    prediction's ticker/direction/entry_price/run_type (C.17, final_close-Mail).
+
+    Das 16:10-Urteil (bestaetigt/geschwaecht/unveraendert/gedreht/verworfen)
+    sitzt je nach Ausgang auf UNTERSCHIEDLICHEN Zeilen (record_revision() vs.
+    supersede_prediction(), s. main.py:_persist_revision()):
+    - gedreht/verworfen: auf der ausgewerteten Zeile selbst -- sie blieb offen.
+    - bestaetigt/geschwaecht/unveraendert: auf der ABGELOESTEN Vorgaenger-Zeile --
+      die ausgewertete Zeile ist die neue trade_proposals-Nachfolgezeile.
+    Der LEFT JOIN auf 'old' (WHERE old.superseded_by = p.id) findet den
+    zweiten Fall; COALESCE nimmt, was vorhanden ist. Nie revalidiert -> beide
+    NULL, revision_verdict bleibt NULL."""
+    return conn.execute(
+        """SELECT o.*, p.ticker, p.run_type, p.entry_price,
+                  COALESCE(p.revision_verdict, old.revision_verdict)
+                      AS revision_verdict
+           FROM outcomes o
+           JOIN predictions p ON p.id = o.prediction_id
+           LEFT JOIN predictions old ON old.superseded_by = p.id
+           WHERE o.evaluated_date = ?
+           ORDER BY p.ticker""",
+        (evaluated_date,),
+    ).fetchall()
+
+
 _FUNDAMENTALS_TTL_DAYS = 7
 
 

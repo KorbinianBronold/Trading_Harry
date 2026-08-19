@@ -32,7 +32,7 @@ from src import signal_checks
 from src.revalidation import revalidate_one, RevalidationError
 from src.email_sender import (
     send_daily_email, send_weekly_email, generate_daily_briefing,
-    send_error_email, send_trade_proposals_email,
+    send_error_email, send_trade_proposals_email, send_final_close_email,
 )
 from src.providers.finnhub_provider import FinnhubProvider
 from src.providers.capital_provider import CapitalComProvider
@@ -1071,16 +1071,19 @@ def _write_final_bar(conn, price_provider, ticker: str, target: str) -> bool:
 
 
 def run_final_close(date: str, db_path: str) -> None:
-    """Run-Type final_close (00:15 UTC, taeglich): holt die FINALE Tages-OHLC und
-    bewertet danach die offenen Predictions.
+    """Run-Type final_close (00:15 UTC, taeglich): holt die FINALE Tages-OHLC,
+    bewertet danach die offenen Predictions und verschickt eine Auswertungs-
+    Mail (C.17, seit 2026-08-19).
 
     `date` ist das UTC-Laufdatum; ausgewertet wird der UTC-Vortag. Die Tagesbar
     wird laut openingHours (`zone: UTC`) um 00:00 UTC final -- vorher gelesen
     waere sie provisorisch, und High/Low koennen sich bis dahin nur ausweiten.
     Genau darauf beruhen TP- und SL-Pruefung.
 
-    Der Lauf ist bewusst schlank: kein Claude-Call, keine Mail. Die Ergebnisse
-    erscheinen in der Fussleiste der naechsten pre_market-Mail."""
+    Kein Claude-Call -- die Mail ist eine reine DB-Auswertung (outcomes +
+    predictions), null zusaetzliche Kosten. Wird IMMER verschickt, auch bei
+    0 Auswertungen (kein stiller Ausfall) -- die aggregierte Kurzfassung
+    bleibt zusaetzlich in der Fussleiste der naechsten pre_market-Mail."""
     conn = db.connect(db_path)
     db.init_schema(conn)
     price_provider = CapitalComProvider()
@@ -1101,7 +1104,15 @@ def run_final_close(date: str, db_path: str) -> None:
     n = evaluate_open_predictions(
         conn=conn, today=date, price_provider=price_provider)
     log.info(f"final_close: {n} Predictions bewertet")
+
+    rows = [dict(r) for r in db.load_evaluated_outcomes(conn, target)]
     conn.close()
+
+    send_final_close_email(
+        payload={"date": date, "rows": rows},
+        api_key=config.RESEND_API_KEY,
+        email_from=config.EMAIL_FROM, email_to=config.EMAIL_TO,
+    )
 
 
 def _update_weekly_fundamentals(

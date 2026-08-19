@@ -80,7 +80,7 @@ zuerst — das ist eine dokumentierte Invariante und kein Widerspruch.
 |---|---|---|---|
 | `pre_market` | 13:00 UTC, Mo–Fr | volle Pipeline | **3,13 EUR** (gemessen, 20 Ticker) |
 | `trade_proposals` | 10:10 New York¹ | Re-Validierung der Morgensignale | ~0,5–0,7 EUR |
-| `final_close` | 00:15 UTC, **täglich** | schreibt die finalen Tagesbars, bewertet offene Predictions | ~0 EUR |
+| `final_close` | 00:15 UTC, **täglich** | schreibt die finalen Tagesbars, bewertet offene Predictions, verschickt Auswertungs-Mail *(seit C.17)* | ~0 EUR |
 | `weekly` | So 18:00 UTC | Wochenauswertung | ~0 EUR |
 
 ¹ Hängt an der US-Eröffnung, nicht an Berlin. Geplant ist nur der EDT-Slot (14:10 UTC);
