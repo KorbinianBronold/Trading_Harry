@@ -1,6 +1,7 @@
 # Shares_Future – Live Workflow & Operationen
 
-**Zuletzt aktualisiert:** 2026-08-09 — vollständig auf den Ist-Stand gezogen.
+**Zuletzt aktualisiert:** 2026-08-19 — auf den Ist-Stand gezogen (Kosten-Abschnitt neu
+gemessen, Trichter/Cutoff-Deckel korrigiert).
 
 > ℹ️ Das Produkt heisst **Shares_Future**, das GitHub-Repo **`KorbinianBronold/Trading_Harry`**.
 > Ältere Dokumente nannten als Repo fälschlich `Shares_Future` — `gh`-Befehle mit
@@ -19,9 +20,10 @@
 
 ## Overview
 
-Fünf Run-Types. `midday`, `evaluate` und `position_check` gibt es **nicht mehr** — sie
-wurden in Sprint 3B / Plan 2 restlos entfernt (Run-Type, Cron, Funktionen, Prompts,
-Mail-Renderer, Tests).
+Vier Run-Types. `midday`, `evaluate`, `position_check` und `close` gibt es **nicht
+mehr** — die ersten drei wurden in Sprint 3B / Plan 2 restlos entfernt (Run-Type, Cron,
+Funktionen, Prompts, Mail-Renderer, Tests), `close` folgte am 2026-08-18 (PROJECT_STATUS
+C.14, s.u.).
 
 | Run-Type | Cron (UTC) | Berlin (CEST) | Zweck | Mail? | Kosten |
 |---|---|---|---|---|---|
@@ -86,7 +88,7 @@ python setup/historical_loader.py --report-coverage
 ```
 
 Seit `9394e8f` bricht ein `pre_market`- oder `trade_proposals`-Lauf **laut ab**, wenn mehr
-als die Hälfte des Universums zu wenig Historie hat. `close`, `final_close` und `weekly`
+als die Hälfte des Universums zu wenig Historie hat. `final_close` und `weekly`
 sind ausgenommen — `final_close` schreibt die Historie selbst und wäre sonst blockiert.
 
 Danach hält `final_close` die Historie täglich fort.
@@ -145,23 +147,28 @@ gh release download db-latest --pattern "tracking.db"   # lokal holen
 `CostCapExceeded`; der Lauf bricht ab, `aborted_at_phase` wird gesetzt und die Mail geht
 mit Warnbanner raus.
 
-**Gemessen am 2026-08-09, `pre_market` mit 20 Tickern: 3,1318 EUR**
-(101.648 Input-, 62.976 Output-Tokens).
+**Gemessen am 2026-08-18 (erster Produktionslauf nach Reaktivierung), `pre_market` mit
+20 MVP-Tickern: 1,9025 EUR** — deutlich günstiger als die alte 2026-08-09-Messung
+(3,13 EUR), weil der Trichter seither einen Teil der Ticker vor der teuren Phase 3
+aussortiert.
 
 | Phase | kumuliert |
 |---|---|
-| Phase 0 (Trends) | 0,13 EUR |
-| Phase 2 (Quick-Filter) | 0,24 EUR |
-| **Phase 3 (Tiefenanalyse)** | **2,53 EUR** |
-| Phase 3b (Rohstoffe/Krypto) | 3,13 EUR |
+| Phase 0 (Trends) | 0,21 EUR |
+| Phase 2 (Nachrichten-Scan) | 0,42 EUR |
+| Phase 2a (Cutoff) | 17 von 20 Kandidaten für Phase 3 ausgewählt, 0 EUR (reiner Code) |
+| **Phase 3 (Tiefenanalyse, gebatcht)** | **1,05 EUR** |
+| Phase 3b (Rohstoffe/Krypto, seit C.15 gebatcht) | 1,90 EUR |
 
-⚠️ **Bei 20 Tickern sind 78 % des Caps verbraucht.** Der Puffer ist dünn.
+⚠️ **Bei 20 Tickern sind ~48 % des Caps verbraucht.** Puffer ist da, aber nicht üppig.
 
-⚠️ **Es gibt keinen Deckel auf die Zahl der Tiefenanalysen.** `MAX_DEEP_ANALYSIS = 80` und
-`BATCH_SIZE_QUICK = 30` sind **tote Konstanten** — nirgends im Code gelesen. Alle 20 Ticker
-gingen in Phase 3, je ~0,11 EUR. Hochgerechnet auf 500 Ticker wären das ~55 EUR pro Lauf.
-Der technische Pre-Filter (Sprint 3C / C.4) ist damit keine Optimierung, sondern die
-Voraussetzung für jede Skalierung.
+✅ **Es gibt seit Plan 2 (Task 10, 2026-08-15) einen harten Deckel auf Phase 3:**
+`config.MAX_DEEP_ANALYSIS = 50` wird von `broad_scan.cutoff_candidates()` gelesen und
+gedeckelt — anders als früher, wo `MAX_DEEP_ANALYSIS = 80` und `BATCH_SIZE_QUICK = 30`
+tote, ungelesene Konstanten waren (Zustand bis 2026-08-09/14, PROJECT_STATUS B.1/C.7
+Befund 9). Bei 500 Tickern greift der Cutoff über `news_strength`/`tech_strength`, nicht
+mehr nur der Deckel selbst — die genaue Hochrechnung für die volle S&P-500-Liste steht
+noch aus (Sprint 3F).
 
 ```bash
 sqlite3 data/tracking.db \

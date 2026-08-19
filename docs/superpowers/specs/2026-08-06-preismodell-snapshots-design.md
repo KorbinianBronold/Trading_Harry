@@ -269,10 +269,17 @@ Schema-Kommentar als tot markiert, damit sie nicht erneut jemanden beschäftigt.
 | `final_close` fällt komplett aus | Nichts wird bewertet — und niemand merkt es, weil der Job keine Mail schickt. **`pre_market` prüft deshalb, ob für den letzten Handelstag eine finale Bar vorliegt, und warnt sonst sichtbar in der Tagesmail.** |
 | 400er vom Provider | Kann nach dem Fix aus 8.1 nicht mehr durch ein Zukunfts-`to` entstehen. Ein trotzdem auftretender 400er wird als normaler Abruffehler behandelt. |
 
-Sichtbarkeit der Bewertung: `final_close` verschickt **keine** Mail. Die Ergebnisse
-erscheinen wie bisher in der Fussleiste der nächsten `pre_market`-Mail
-(`_section_footer`, „Vortags-Performance"), gespeist aus `_aggregate_yesterday_outcomes`.
-Damit das trägt, ist E7 zwingend.
+Sichtbarkeit der Bewertung (Stand bei Entwurf dieser Spec): `final_close` verschickt
+**keine** Mail. Die Ergebnisse erscheinen wie bisher in der Fussleiste der nächsten
+`pre_market`-Mail (`_section_footer`, „Vortags-Performance"), gespeist aus
+`_aggregate_yesterday_outcomes`. Damit das trägt, ist E7 zwingend.
+
+> ⚠️ **Überholt seit C.17 (2026-08-19), nicht umgeschrieben.** `final_close` verschickt
+> jetzt zusätzlich eine eigene Auswertungs-Mail direkt nach der Bewertung (Einzeltabelle
+> je Prediction, immer verschickt — auch bei 0 Auswertungen). Die Fussleiste oben bleibt
+> zusätzlich bestehen (anderer Zeitpunkt, andere Detailtiefe); der hier beschriebene
+> Ausfall-Fall („niemand merkt es") ist dadurch **doppelt** abgesichert. Details:
+> PROJECT_STATUS **C.17**.
 
 ---
 

@@ -1,6 +1,11 @@
 # Analyse-Pipeline-Umbau — Design
 
-**Status:** 🟡 **Spezifikation gültig, Umsetzung teilweise erfolgt** (Stand 2026-08-17)
+**Status:** 🟢 **Spezifikation gültig, Umsetzung vollständig** (Stand 2026-08-19) —
+alle vier Pläne (1, 2, 3a, 3b) sind abgeschlossen. §6/§9 sind seit C.15 (2026-08-19)
+**korrigiert**, nicht mehr im ursprünglichen Wortlaut: die dort getroffene „ein Call je
+Asset, kein Batch"-Entscheidung für Commodities/Crypto war eine unbegründete
+Vereinfachung, die mit dem eigentlichen Zweck des Abschnitts (Spec §6: nie filtern)
+verwechselt wurde — s. Annotation dort und PROJECT_STATUS **C.15**.
 **Erstellt:** 2026-08-11
 
 - **Plan 1 (Fundament)** ✅ abgeschlossen — 17 Indikatoren, Technik-Signal, Schema.
@@ -18,10 +23,11 @@
   einziges Mal** mehr auf, 12 von 12 Kandidaten analysiert. **Der Kostenhebel aus § 13.2
   ist unterboten:** 0,0204 EUR je Ticker gegen ein Ziel von 0,034 und ~0,12 im alten Weg.
   PROJECT_STATUS **C.9–C.12**
-- **Plan 3b (Ranking)** ⏳ offen, Plan-Datei in Arbeit — § 5 (`rank_score`,
-  `candidate_class`), Mail-Abschnitt. Die Designentscheidungen dazu stehen in **§ 20.5**;
-  sie sind am Verifikationslauf des 3a-Abschlusses gemessen, nicht am Schreibtisch
-  gewählt
+- **Plan 3b (Ranking)** ✅ **abgeschlossen** (2026-08-18) — 12/12 Tasks, Gesamt-Review +
+  Fix-Welle + Re-Review sauber, live verifiziert. § 5 (`rank_score`, `candidate_class`),
+  Mail-Abschnitt sind umgesetzt. Der Gesamt-Review fand zwei Critical-Befunde an den
+  Nähten zu Plan 3a (Short-Polarität in `analysis_strength()`, `candidate_class`-Verlust
+  beim 16:10-Ablösen) — beide behoben. PROJECT_STATUS **C.13**
 **Betrifft:** Phasen 1c/2/3 sowie Ranking und Scoring in `pre_market`
 **Nicht betroffen:** Preismodell und Snapshots, `final_close`, Evaluator, Cron-Struktur,
 DB-Persistenz, R/R- und VIX-Logik, CFD-Eignungsregeln, Mail-Versandmechanik
@@ -719,11 +725,24 @@ wird ausschliesslich die **Bewertungsqualität**.
 | **Phase-2-Scan** | ja | **nein** (§ 6.2) |
 | Cutoff | ja | **nein** |
 | **Phase 2b Fundamentaldaten** | ja | **nein** (§ 6.3) |
-| Tiefenanalyse | Batch nach Sub-Sektor | eigener Prompt, ein Call je Asset |
-| `thin` + Polaritäts-Klärung | Prompt v2 | **auch Prompt v2** |
+| Tiefenanalyse | Batch nach Sub-Sektor | eigener Prompt, ~~ein Call je Asset~~ Batch nach `asset_class` ¹ |
+| `thin` + Polaritäts-Klärung | Prompt v2 | Prompt v3 ¹ |
 | News-Stärke, Qualifikation, `rank_score`, Divergenz | ja | ja |
 | **B.3-Checks** | ja | **nein** (§ 6.4) |
 | `earnings_in_days`-Check | ja | trivial erfüllt (`None`) |
+
+> ¹ **Korrigiert seit C.15 (2026-08-19), nicht im ursprünglichen Wortlaut belassen.**
+> „Ein Call je Asset" war eine unbegründete Vereinfachung obendrauf — dieser Abschnitt
+> verlangt nur, dass die sieben Assets **nie gefiltert** werden (s. Warnung oben), nicht,
+> dass sie einzeln aufgerufen werden. Ein Laufzeit-Check am 2026-08-19 fand Phase 3b bei
+> sieben sequenziellen Calls à ~40s (~4,8 min von 16 min `pre_market`-Gesamtlaufzeit).
+> `commodities_crypto.py` batcht seither nach `asset_class` (Commodities: 3, Crypto: 4 —
+> 2 Calls statt 7), analog zu Aktien' Sub-Sektor-Batching aus § 4.8: der gemeinsame
+> Kontext (Makro-Linse vs. Fear&Greed/Dominance) ist nur innerhalb einer Klasse wirklich
+> gemeinsam. Neue Prompt-Version `commodities_crypto_v3.txt` (Regel 10: v2 bleibt
+> unangetastet). Fehlerpfad bewusst schlanker als bei Aktien (§ 10): einmal wiederholen,
+> kein Halbieren — Batches sind mit max. 4 Assets schon klein. Details: PROJECT_STATUS
+> **C.15**.
 
 ### 6.1 Ausnahme von der automatischen Deaktivierung
 
@@ -858,7 +877,7 @@ Nach Regel 10 entstehen **neue Versionen**, die v1-Dateien bleiben unangetastet.
 |---|---|
 | `prompts/broad_scan_v1.txt` | **neu** — der Phase-2-Scan |
 | `prompts/deep_analysis_v2.txt` | Batch-Format, selektive Recherche, `evidence_quality`, Polaritäts-Festlegung, R/R-Ziel 1:2 (C.3) |
-| `prompts/commodities_crypto_v2.txt` | `evidence_quality`, Polaritäts-Festlegung, R/R-Ziel, angepasste `premarket_change_pct`-Erklärung |
+| `prompts/commodities_crypto_v2.txt` (abgelöst durch v3, s. § 6, C.15) | `evidence_quality`, Polaritäts-Festlegung, R/R-Ziel, angepasste `premarket_change_pct`-Erklärung |
 | `prompts/quick_filter_v1.txt` | entfällt mit `quick_filter.py` |
 
 Der Analyse-Prompt folgt dem in der Planung erprobten Muster: acht Dimensionen je Aktie,
