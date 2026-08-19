@@ -13,7 +13,7 @@
 > **Quelle der Wahrheit für Zeitpläne ist `.github/workflows/analyze.yml`.** Wo dieses
 > Dokument davon abweicht, gilt der Workflow.
 
-⚠️ **`analyze.yml` steht derzeit auf `disabled_manually`.** Nichts läuft automatisch.
+✅ **`analyze.yml` ist aktiv** (seit 2026-08-18). Die Cron-Jobs laufen nach Zeitplan unten.
 
 ---
 
@@ -207,8 +207,8 @@ Häufigste Ursache: zu wenig Historie → `--report-coverage`.
 ### Cron feuert nicht
 
 ```bash
-gh workflow list --all       # steht analyze auf disabled_manually?
-gh workflow enable analyze.yml
+gh workflow list --all       # ist analyze active?
+gh workflow enable analyze.yml   # falls disabled
 gh workflow run analyze.yml --ref main -f run_type=final_close
 ```
 

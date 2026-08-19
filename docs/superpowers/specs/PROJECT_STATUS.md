@@ -171,10 +171,9 @@ Ursache der leeren 04.08.-Läufe ist geklärt (P2.4) und in sechs Commits behobe
 Sämtliche `.md`-Dokumente sind auf diesen Stand gezogen (P2.11).
 **608 Tests grün, Coverage 93,47 %.**
 
-⏳ **Offen:** `trade_proposals` und `weekly` (nie ausgeführt), der einmalige
-`bootstrap-db`-Lauf, danach die Reaktivierung von `analyze.yml`.
-⚠️ `analyze.yml` steht weiterhin auf `disabled_manually` — das ist eine bewusste
-Entscheidung, keine Nachlässigkeit.
+✅ **Abgeschlossen:** `bootstrap-db`-Lauf (2026-08-08), Reaktivierung von `analyze.yml`
+(2026-08-18, erster Lauf erfolgreich).
+⏳ **Offen:** `weekly` (nie ausgeführt und nicht inhaltlich verifiziert).
 
 Davor, 2026-08-06 — Task-20-Review abgeschlossen: **acht Defekte behoben**
 (3 Criticals, eingefrorene Tagesbar, beide Weekly-Blöcke, Winter-Cron, Netzsperre), Details
@@ -765,9 +764,10 @@ Plan-Datei: `docs/superpowers/plans/2026-07-30-sprint3b-plan2-pipeline-umbau.md`
 
 ⚠️ **Umgesetzt heisst hier: der Code ist geschrieben, getestet und auf `main`.** Er lief
 am **2026-08-04 dreimal erfolgreich** (`pre_market`, `trade_proposals`, `close`), erzeugte
-dabei aber **keine Predictions**; `analyze.yml` ist seither wieder `disabled_manually`.
-Die Live-Verifikation (P2.4) bleibt damit ein echtes Gate — die Mechanik hat einmal
-getragen, die Wirkung ist unbestätigt.
+dabei aber **keine Predictions**. Die Live-Verifikation (P2.4) durch lokal gehostete
+Wegwerf-Kopien erfolgte später (2026-08-14, P2.12): alle Läufe erfolgreich, echte Mail
+versendet. **`analyze.yml` seit 2026-08-18 wieder aktiv**, erster Produktionslauf
+erfolgreich.
 
 Eingangsvoraussetzungen für Plan 2 — **alle erfüllt**:
 - ✅ verifizierte ETF-Epics (D8: 20/20 bestätigt, `setup/verify_epics.py`)
@@ -870,8 +870,8 @@ einziges Mal ausgeführt" worden. Das stimmt nicht mehr. Über die GitHub-API be
 | 2026-08-04 21:44 | `close` | `success` |
 
 Alle drei auf Commit `92773c8`, also **mit vollständigem Plan-2-Code**, ausgelöst per
-`schedule`. Danach wurde `analyze.yml` wieder deaktiviert (`state=disabled_manually`),
-weshalb der Irrtum entstand.
+`schedule`. Danach wurde `analyze.yml` deaktiviert (manuell), um das Fehler-Gate zu
+schliessen, bis die Ursache geklärt war.
 
 **Aber: die Läufe erzeugten keine Predictions.** In der `db-latest`-DB gibt es für den
 2026-08-04 zwar `cost_tracking`-Zeilen für `pre_market` und `trade_proposals`, aber

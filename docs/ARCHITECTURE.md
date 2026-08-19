@@ -83,10 +83,9 @@ Universums, Historien-Guard, erweiterte Invariantenliste, Testzahlen auf 608.
 >
 > ✅ **Live-Verifikation abgeschlossen (2026-08-14, PROJECT_STATUS P2.12).**
 > `pre_market` → `trade_proposals` → `close` liefen zu den echten Cron-Zeiten gegen eine
-> Wegwerf-Kopie, mit echten API-Calls und echtem Mailversand. `analyze.yml` steht weiterhin
-> auf `disabled_manually` — das ist eine bewusste Pausierung bis zum `bootstrap-db`-Lauf,
-> keine offene Frage zum Code mehr. Einzig `weekly` ist zugestellt, aber nicht inhaltlich
-> geprüft.
+> Wegwerf-Kopie, mit echten API-Calls und echtem Mailversand. ✅ **`analyze.yml` seit
+> 2026-08-18 wieder aktiv** (manuell reaktiviert nach `bootstrap-db`, erster Lauf gelaufen).
+> Einzig `weekly` ist zugestellt, aber nicht inhaltlich geprüft.
 >
 > Historische Abschnitte weiter unten (Sprint 1 / Sprint 2) sind bewusst nicht
 > umgeschrieben — sie sind als Historie gekennzeichnet.
@@ -1445,10 +1444,10 @@ Kurzüberblick, was sich an der oben beschriebenen Architektur ändern wird:
 
 ### Sprint 3B / Plan 2 — umgesetzt (2026-07-30 bis 2026-08-04)
 
-Code vollständig, 20/20 Tasks, alles auf `main`. ⚠️ `analyze.yml` steht weiterhin auf
-`disabled_manually` — bewusst, bis der `bootstrap-db`-Lauf steht. Ausgeführt und verifiziert
-sind `pre_market`, `close`, `final_close` und seit 2026-08-14 auch `trade_proposals`
-(lokal, gegen Wegwerf-Kopien, zu den echten Cron-Zeiten) — PROJECT_STATUS P2.10, P3.5, P2.12.
+Code vollständig, 20/20 Tasks, alles auf `main`. ✅ `analyze.yml` seit 2026-08-18 reaktiviert
+(nach erfolgreichem `bootstrap-db`). Ausgeführt und verifiziert sind `pre_market`, `close`,
+`final_close` und seit 2026-08-14 auch `trade_proposals` (lokal, gegen Wegwerf-Kopien, zu den
+echten Cron-Zeiten) — PROJECT_STATUS P2.10, P3.5, P2.12. Erster Produktionslauf am 2026-08-18.
 Offen bleibt nur noch `weekly`: zugestellt, aber nicht inhaltlich geprüft.
 
 | Bereich | Änderung |

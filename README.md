@@ -127,9 +127,8 @@ Alle Setups müssen erfüllen (`src/guardrails.py`, Werte aus `config.py`):
 | 3C — Ranking-Überarbeitung | 📋 spezifiziert, offen |
 | 3D / 3E / 3F | ⚠️ **Platzhalter** — Sprint wird erst gemeinsam ausgearbeitet |
 
-⚠️ **`analyze.yml` steht auf `disabled_manually`.** Die Reaktivierung ist eine bewusste
-Entscheidung und setzt voraus, dass `db-latest` echte Historie hat (Workflow
-`bootstrap-db`, nur `workflow_dispatch`). Sonst bricht jeder Lauf am Historien-Guard ab.
+✅ **`analyze.yml` ist aktiv** (seit 2026-08-18 manuell reaktiviert). Die Voraussetzung
+war, dass `db-latest` echte Historie hat (Workflow `bootstrap-db`, nur `workflow_dispatch` — erledigt 2026-08-08).
 
 ## Wichtige Dateien
 
