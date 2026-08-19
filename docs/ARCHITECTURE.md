@@ -705,32 +705,48 @@ Phase 2b) ruft sie nie, das ist die Aufgabenteilung aus Spec § 18.1c.
 
 ### 5. **`src/commodities_crypto.py`** (Phase 3b)
 
-7 feste Assets (Gold, Silver, Oil, BTC, ETH, SOL, XRP).
+7 feste Assets (Gold, Silver, Oil, BTC, ETH, SOL, XRP). Seit C.15 (2026-08-19)
+gebatcht nach `asset_class` (Commodities: 3, Crypto: 4) statt 7 Einzelcalls — die
+7 Assets selbst sind weiterhin ungefiltert (Spec § 6), nur die Call-Struktur änderte
+sich.
 
 ```python
 def fetch_fear_greed() -> dict | None:
     """Externe API: https://api.alternative.me/fng/
     Returns: {value: 0-100, label: "Extreme Fear"|...}"""
 
-def analyze_commodities_and_crypto(
-    ticker_datas: dict,
+def build_batches(ticker_datas: list[dict]) -> list[list[dict]]:
+    """Gruppiert nach asset_class -- Commodities- und Crypto-Batch getrennt,
+    analog zu deep_analysis.build_batches()'s Sub-Sektor-Gruppierung."""
+
+def analyze_batch(
+    ticker_datas: list[dict],
     trend_context: dict,
     policy_context: dict,
     extra_context: dict,  # {fear_greed_value, btc_dominance, ...}
     cost_tracker: CostTracker,
+    max_tokens_override: int | None = None,
+) -> tuple[list[dict], list[str]]:
+    """
+    EIN gestreamter Sonnet-Call fuer einen ganzen asset_class-Batch + web_search.
+    Same schema as deep_analysis (results-Liste, 8-Dim + hold_days + intraday_range).
+    Raises BatchTruncatedError bei stop_reason == 'max_tokens'.
+    """
+
+def analyze_commodities_and_crypto(
+    ticker_datas: dict,
+    trend_context: dict,
+    policy_context: dict,
+    extra_context: dict,
+    cost_tracker: CostTracker,
 ) -> list[dict]:
-    """
-    Sonnet × 7 (1 pro Asset) + web_search.
-    Same schema as deep_analysis (8-Dim + hold_days + intraday_range).
-    
-    Extra context für Prompt:
-    - fear_greed_value (on-chain sentiment)
-    - btc_dominance_pct (crypto market share)
-    - gold_silver_ratio (commodity divergence)
-    """
+    """Sonnet × 2 (1 pro asset_class) statt × 7. Ruft build_batches() + analyze_batch()
+    mit Retry-Schale (_run_one_batch_with_recovery: einmal wiederholen, kein Halbieren)."""
 ```
 
-**Fail-Verhalten:** `CommoditiesCryptoError` → skip Asset, continue.
+**Fail-Verhalten:** ein Batch-Call, der zweimal fehlschlägt (unparsebar oder
+`BatchTruncatedError`), gibt seine ganzen Assets als `missing` auf — bis zu 4 auf
+einen Schlag statt 1 wie im alten Einzelcall-Pfad (Trade-off, s. PROJECT_STATUS C.15).
 
 ---
 
@@ -1195,7 +1211,7 @@ Versionssuffix:
 | `market_context` | `market_context_v1.txt` |
 | `broad_scan` | `broad_scan_v1.txt` — ✅ live, ersetzt `quick_filter` seit Task 10 |
 | `deep_analysis` | **`deep_analysis_v2.txt`** (Batch, `thin`, Polarität, R/R 1:2), `policy_monitor_v1.txt` |
-| `commodities_crypto` | **`commodities_crypto_v2.txt`** |
+| `commodities_crypto` | **`commodities_crypto_v3.txt`** (Batch nach `asset_class`, seit C.15) |
 | `portfolio_check` | **`portfolio_check_v2.txt`** |
 | `revalidation` | `trade_proposals_v1.txt` |
 
@@ -1204,9 +1220,10 @@ Modul fest verdrahtet; ein Wechsel ist eine Code-Änderung. Die Tabelle `prompt_
 wird angelegt und **nie benutzt** — sie gehört zu Sprint 3D.
 
 ⚠️ `prompts/portfolio_check_v1.txt` ist verwaist: genutzt wird v2. Dasselbe gilt seit
-Plan 3a für `deep_analysis_v1.txt` und `commodities_crypto_v1.txt` — sie liegen
+Plan 3a für `deep_analysis_v1.txt`, und seit C.15 für `commodities_crypto_v1.txt`
+**und** `commodities_crypto_v2.txt` (genutzt wird jetzt v3) — sie liegen
 **absichtlich unangetastet** daneben (Regel 10: Prompts werden nie überschrieben, eine
-neue Version ist eine neue Datei). Ein Test pinnt, dass v1 unverändert bleibt.
+neue Version ist eine neue Datei). Tests pinnen, dass v1/v2 unverändert bleiben.
 
 ⚠️ Die Prompts werden **auf Modulebene** gelesen, nicht je Aufruf. Eine geänderte
 Prompt-Datei wirkt erst nach einem Neustart des Prozesses.
@@ -1295,10 +1312,11 @@ heute = 2026-05-20, run_type = "pre_market"
     Token-Budget, s. PROJECT_STATUS C.9
 
   ↓
-[Phase 3b] analyze_commodities_and_crypto()
-  → Sonnet × 7 Calls
+[Phase 3b] analyze_commodities_and_crypto()      # seit C.15 (2026-08-19): Batch statt 1 Call/Asset
+  → build_batches() gruppiert nach asset_class (Commodities: 3, Crypto: 4)
+  → Sonnet × 2 Calls (1 pro Batch) + web_search, gestreamt
   ← 7 Assets (Gold, Silver, Oil, BTC, ETH, SOL, XRP)
-  ✓ costs ~0.35 EUR
+  ✓ costs ~0.35 EUR (unveraendert, weniger Calls != weniger Tokens)
 
   ↓
 [Phase 4] rank_and_persist()

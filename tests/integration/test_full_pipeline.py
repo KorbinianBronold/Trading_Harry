@@ -111,12 +111,16 @@ def test_full_pipeline_writes_predictions_and_sends_email(tmp_path, monkeypatch)
         _deep_for("AAPL"), _deep_for("MSFT"), _deep_for("NVDA"),
     ]})
 
+    # Seit 2026-08-19 laeuft Phase 3b gebatcht nach asset_class
+    # (commodities_crypto.build_batches()): mit genau 1 Commodity- und 1
+    # Crypto-Ticker landet hier weiterhin je ein Asset in einem Batch, aber
+    # die Antwort braucht jetzt den results-Wrapper wie bei Phase 3.
     cc_obj = json.loads(cc_resp)
     def _cc_for(ticker: str, asset_class: str) -> str:
         cp = dict(cc_obj)
         cp["ticker"] = ticker
         cp["asset_class"] = asset_class
-        return json.dumps(cp)
+        return json.dumps({"results": [cp]})
 
     # Phase 0b: wie die anderen Phasen auf Modulebene gemockt, damit der
     # Integrationstest den Markt-Kontext wirklich durchlaeuft (Parsen +
@@ -132,8 +136,8 @@ def test_full_pipeline_writes_predictions_and_sends_email(tmp_path, monkeypatch)
         _r(broad_scan_resp_3, web_search_calls=3),            # broad_scan
         _r(policy_resp, web_search_calls=3),                 # policy_monitor
         _r(deep_batch_resp),                                  # deep: 1 Batch (AAPL+MSFT+NVDA)
-        _r(_cc_for("GC=F", "commodity")),                    # cc Gold
-        _r(_cc_for("BTC-USD", "crypto")),                    # cc BTC
+        _r(_cc_for("GC=F", "commodity")),                    # cc: 1 Batch (Gold)
+        _r(_cc_for("BTC-USD", "crypto")),                    # cc: 1 Batch (BTC)
     ]
 
     # Seit Sprint 3B / Plan 2 (B.5) laeuft Phase 4a NACH Phase 4 (Ranking) und

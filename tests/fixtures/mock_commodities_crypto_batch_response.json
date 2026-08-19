@@ -1,0 +1,64 @@
+{
+  "results": [
+    {
+      "ticker": "GC=F",
+      "asset_class": "commodity",
+      "direction": "long",
+      "confidence": "medium",
+      "current_price": 2380.0,
+      "tp_price": 2420.0,
+      "sl_price": 2360.0,
+      "tp_pct": 1.68,
+      "sl_pct": 0.84,
+      "rr_ratio": 2.0,
+      "total_score": 6.9,
+      "probability_pct": 58,
+      "hold_days_recommended": 2,
+      "intraday_range_pct": 1.2,
+      "summary": "Gold supported by Fed dovish pivot expectations. SL below 100-day SMA.",
+      "sources_used": ["https://www.kitco.com/x", "https://www.reuters.com/y"],
+      "signal_consistency_check": "ok",
+      "scores": {
+        "market_environment": {"value": 7.0, "evidence": ["DXY -0.5%", "10Y yield -8bp"], "evidence_quality": "ok"},
+        "company_quality":    {"value": 7.0, "evidence": ["central bank buying", "ETF inflows"], "evidence_quality": "ok"},
+        "valuation":           {"value": 5.5, "evidence": ["fair vs hist", "GSR 80"], "evidence_quality": "ok"},
+        "momentum":           {"value": 7.0, "evidence": ["RSI 60", "above SMA50"], "evidence_quality": "ok"},
+        "risk":               {"value": 6.0, "evidence": ["ATR 1.2%", "Fed surprise risk"], "evidence_quality": "ok"},
+        "sector_trend":       {"value": 7.0, "evidence": ["XAU index +2%", "miners +3%"], "evidence_quality": "ok"},
+        "catalyst":           {"value": 6.5, "evidence": ["CPI Tue", "FOMC minutes Wed"], "evidence_quality": "ok"},
+        "policy_risk":        {"value": 6.0, "evidence": ["geopolitics China-Taiwan", "Mideast"], "evidence_quality": "ok"}
+      },
+      "extra": {"fear_greed_value": 62, "gold_silver_ratio": 80.3, "btc_dominance_pct": null}
+    },
+    {
+      "ticker": "SI=F",
+      "asset_class": "commodity",
+      "direction": "none",
+      "confidence": "low",
+      "current_price": 28.5,
+      "tp_price": 28.5,
+      "sl_price": 28.5,
+      "tp_pct": 0.0,
+      "sl_pct": 0.0,
+      "rr_ratio": 0.0,
+      "total_score": 4.0,
+      "probability_pct": 40,
+      "hold_days_recommended": 1,
+      "intraday_range_pct": 1.5,
+      "summary": "No clear intraday setup for silver today.",
+      "sources_used": ["https://www.kitco.com/x", "https://www.reuters.com/y"],
+      "signal_consistency_check": "ok",
+      "scores": {
+        "market_environment": {"value": 5.0, "evidence": ["e1", "e2"], "evidence_quality": "ok"},
+        "company_quality":    {"value": 5.0, "evidence": ["e1"], "evidence_quality": "thin"},
+        "valuation":           {"value": 5.0, "evidence": ["e1", "e2"], "evidence_quality": "ok"},
+        "momentum":           {"value": 5.0, "evidence": ["e1", "e2"], "evidence_quality": "ok"},
+        "risk":               {"value": 5.0, "evidence": ["e1", "e2"], "evidence_quality": "ok"},
+        "sector_trend":       {"value": 5.0, "evidence": ["e1", "e2"], "evidence_quality": "ok"},
+        "catalyst":           {"value": 4.0, "evidence": ["e1", "e2"], "evidence_quality": "ok"},
+        "policy_risk":        {"value": 5.0, "evidence": ["e1", "e2"], "evidence_quality": "ok"}
+      },
+      "extra": {"fear_greed_value": 62, "gold_silver_ratio": 80.3, "btc_dominance_pct": null}
+    }
+  ]
+}

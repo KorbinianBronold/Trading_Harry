@@ -1,6 +1,21 @@
 # Shares_Future – SP500 CFD Research Tool
 
-**Zuletzt aktualisiert:** 2026-08-18 — 🗑️ **Run-Type `close` (22:30) ersatzlos
+**Zuletzt aktualisiert:** 2026-08-19 — ⚡ **Phase 3b (Commodities/Crypto) gebatcht
+nach `asset_class` statt sieben Einzelcalls.** Eine Laufzeit-Prüfung der Cron-Jobs vom
+2026-08-18 fand `pre_market` bei 16 Minuten; Aufschlüsselung zeigte Phase 3b (7 fixe
+Assets: Gold, Silber, Öl, BTC, ETH, SOL, XRP) allein bei ~4,8 Minuten — sieben
+sequenzielle Sonnet-Calls à ca. 40s, weil `commodities_crypto.py` seit Plan 3a bewusst
+„ein Call je Asset" blieb (gepinnt in einem jetzt ersetzten Test). Diese Formulierung
+war eine unbegründete Vereinfachung obendrauf: Spec §6 verlangt nur, dass die sieben
+Assets **nie gefiltert** werden, nicht, dass sie einzeln aufgerufen werden. Jetzt zwei
+Batches (Commodities, Crypto) statt sieben Calls — analog zu `deep_analysis.py`s
+Sub-Sektor-Batching bei Aktien. Neue Prompt-Version `commodities_crypto_v3.txt`
+(Regel 10: v2 bleibt unangetastet), Fehlerpfad bewusst schlanker als bei Aktien
+(einmal wiederholen, kein Halbieren — Batches sind mit max. 4 Assets schon klein).
+⚠️ Trade-off: ein zweimal fehlgeschlagener Batch verliert jetzt bis zu 4 Assets statt
+eines. Noch nicht live verifiziert. Details: PROJECT_STATUS **C.15**.
+
+Davor, 2026-08-18 — 🗑️ **Run-Type `close` (22:30) ersatzlos
 entfallen.** Aktiv sind nur noch `pre_market`, `trade_proposals`, `final_close`,
 `weekly`. Zuerst fiel `evaluate_open_predictions()` aus `run_close()` weg — es war ein
 liegen gebliebenes Duplikat: die B.6-Entscheidung hatte es bewusst dort gehalten, WEIL
@@ -179,9 +194,10 @@ Die Pipeline-Phasen lassen sich an `main.py:run_pipeline()` ablesen.
   `prompt_versions` wird von `init_schema()` angelegt und nirgends gelesen oder
   geschrieben (verifiziert 2026-08-09). Ein Wechsel ist eine Code-Änderung, kein
   Datenbank-Eintrag. Gehört zu Sprint 3D.
-  ⚠️ Seit Plan 3a sind **`deep_analysis_v2` und `commodities_crypto_v2` aktiv**; die
-  v1-Dateien liegen unangetastet daneben (Regel 10: Prompts werden nie überschrieben,
-  neue Versionen sind neue Dateien). Wer eine v1-Datei ändert, ändert nichts am Verhalten.
+  ⚠️ Seit Plan 3a ist **`deep_analysis_v2` aktiv**, seit C.15 (2026-08-19) ist es für
+  Commodities/Crypto **`commodities_crypto_v3`** (v2 lief nur bis dahin) — die v1/v2-
+  Dateien liegen unangetastet daneben (Regel 10: Prompts werden nie überschrieben, neue
+  Versionen sind neue Dateien). Wer eine alte Version ändert, ändert nichts am Verhalten.
 - **Phase 3 analysiert gebatcht nach Sub-Sektor, nicht je Ticker.** Ein Sub-Sektor ist
   eine **unteilbare Einheit**, die per First-Fit-Decreasing in Batches bis
   `BATCH_SIZE_DEEP` gepackt wird — zerrissen wird er nur, wenn er den Wert allein
@@ -202,6 +218,18 @@ Die Pipeline-Phasen lassen sich an `main.py:run_pipeline()` ablesen.
   und die Hälften laufen mit angehobener Decke. Seit der Formel-Korrektur ändert
   Halbieren den Platz **pro Ticker** nicht mehr (früher tat es das nur zufällig über den
   4096er-Boden), es wäre ohne diesen Punkt wirkungslos.
+- **Phase 3b (Commodities/Crypto) analysiert seit C.15 (2026-08-19) gebatcht nach
+  `asset_class`, nicht mehr je Asset.** Zwei Batches (Commodities: Gold/Silber/Öl,
+  Crypto: BTC/ETH/SOL/XRP) statt sieben Einzelcalls — dieselbe Begründung wie beim
+  Phase-3-Sub-Sektor-Batching: der gemeinsame Kontext (Makro-Linse vs. Fear&Greed/
+  Dominance) ist nur innerhalb einer Klasse wirklich gemeinsam. **Ändert nichts an
+  Spec §6** (alle sieben Assets laufen immer, kein Trichter, kein Cutoff) — Batching
+  betrifft nur die Call-Struktur, nicht die Auswahl.
+  ⚠️ **Der Fehlerpfad ist bewusst schlanker als bei Aktien:** einmal wiederholen (bei
+  einer Kappung mit doppelter Decke wie in `deep_analysis.py`), dann aufgeben — **kein
+  Halbieren**. Bei höchstens 4 Assets pro Batch spart eine weitere Aufteilung kaum noch
+  Call-Overhead. Trade-off: ein zweimal fehlgeschlagener Batch verliert bis zu 4 Assets
+  auf einen Schlag, vorher war jedes Asset unabhängig.
 - ⚠️ `evidence_quality: "thin"` umgeht die Zwei-Belege-Pflicht der Guardrails — aber
   **nur bei exakt diesem Wert**. Ein fehlendes Feld (v1-Ergebnis) oder ein unbekannter
   Wert fällt auf die strenge Regel zurück. Eine thin-Dimension wird **behalten**, nicht

@@ -2636,6 +2636,64 @@ Prediction-Features genau richtig, aber leicht als Off-by-one misszuverstehen.
 
 ---
 
+### C.15 — Phase 3b (Commodities/Crypto) gebatcht nach asset_class (2026-08-19)
+
+**Anlass:** eine Laufzeit-Prüfung der Cron-Jobs vom 2026-08-18 fand `pre_market` bei
+16 Minuten — deutlich mehr als die anderen Läufe. Aufschlüsselung nach Phase: Phase 3
+(17 Aktien, gebatcht, 3 Calls) brauchte ~7 Minuten, aber **Phase 3b (7 Commodities/
+Crypto) allein ~4,8 Minuten** — sieben sequenzielle Einzelcalls à ca. 40s, weil
+`commodities_crypto.py` seit Plan 3a (Task 5) bewusst **ein Call je Asset** blieb,
+kein Batch (Spec §6/§9, gepinnt in `test_commodities_crypto_v2_pins_contract`).
+
+**Die Entscheidung war zum Zeitpunkt von Plan 3a richtig begründet, aber die
+Begründung betraf nicht die API-Call-Struktur:** Spec §6 verlangt, dass die sieben
+Assets **nie gefiltert** werden (kein Trichter, kein Cutoff, keine Ausnahme) — das
+bleibt unverändert. Batching ändert nicht, *welche* Assets analysiert werden, nur
+*wie viele Calls* das tut. Die „ein Call je Asset"-Formulierung in Plan 3a war eine
+zusätzliche, unbegründete Vereinfachung obendrauf, keine Ableitung aus §6.
+
+**Fix:** `commodities_crypto.py` batcht jetzt nach `asset_class` — Commodities (Gold,
+Silber, Öl) und Crypto (BTC, ETH, SOL, XRP) je ein Batch, analog zu
+`deep_analysis.build_batches()`s Sub-Sektor-Gruppierung bei Aktien: der gemeinsame
+Kontext (Makro-Linse für Rohstoffe, Fear&Greed/Dominance für Krypto) ist nur
+**innerhalb** einer Klasse wirklich gemeinsam, deshalb keine einzelne Batch über
+alle 7. Aus 7 sequenziellen Calls wurden 2 — bei den heute festen 3+4 Assets ein
+fester Faktor, kein weiterer Trichter.
+
+**Neue Prompt-Version** `prompts/commodities_crypto_v3.txt` (Regel 10: v1/v2 bleiben
+unangetastet auf der Platte) — inhaltlich identisch zu v2, nur mit dem
+`results`-Listen-Wrapper aus `deep_analysis_v2.txt` übernommen.
+`test_commodities_crypto_v2_untouched` pinnt, dass v2 weiterhin **kein**
+`results`-Objekt enthält.
+
+**Fehlerpfad bewusst schlanker als bei Aktien:** `_run_one_batch_with_recovery()`
+wiederholt einmal (bei einer Kappung mit `TRUNCATION_RETRY_FACTOR`-facher Decke wie
+in `deep_analysis.py`, C.9), gibt danach den ganzen Batch auf — **kein Halbieren**.
+Bei maximal 4 Assets pro Batch (asset_class-Gruppierung der fixen 7) spart eine
+weitere Aufteilung kaum noch Call-Overhead; die Halbier-Kaskade aus Spec 10 war für
+Batches bis 8 Ticker gebaut.
+
+⚠️ **Trade-off, nicht kostenlos:** vorher war jedes Asset unabhängig — ein
+kaputter Call verlor genau ein Asset. Jetzt verliert ein zweimal fehlgeschlagener
+Batch bis zu 4 Assets auf einen Schlag. Bislang unbeobachtet (die Retry-Stufe fängt
+den häufigen Fall), aber eine reale Verschlechterung des Fehlerbilds gegenüber
+vorher — im Read-Live-Testlauf beobachten.
+
+**Tests:** `test_commodities_crypto.py` komplett neu geschrieben (TDD, RED vor
+GREEN) — `build_batches()`, `max_tokens_for_batch()`, `analyze_batch()` (inkl.
+Truncation, Teilergebnisse, Fehler), `analyze_commodities_and_crypto()` (Retry,
+Aufgeben, `CostCapExceeded`-Propagation, Batch-Anzahl). `analyze_asset()` (die alte
+Einzel-Call-Funktion) ist ersatzlos entfernt, keine Aufrufer mehr ausserhalb der
+alten Tests. `tests/integration/test_full_pipeline.py` angepasst: die
+Commodities/Crypto-Mock-Antworten brauchen jetzt den `results`-Wrapper.
+**854 Tests grün, 92,41 % Coverage.**
+
+Noch nicht live verifiziert — die Zeitersparnis (7 × ~40s → 2 Batchcalls) ist aus
+der Architektur hergeleitet, nicht gegen die echte API gemessen. Nächster
+`pre_market`-Lauf zeigt die tatsächliche Phase-3b-Dauer.
+
+---
+
 ## Sprint 3D — Learning Modul
 
 ⚠️ **Noch nicht ausgearbeitet — braucht eine eigene Planungssession, bevor die Implementierung
