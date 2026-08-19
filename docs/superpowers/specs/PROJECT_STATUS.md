@@ -2848,6 +2848,12 @@ Grob umrissen (aus früheren Notizen, **nicht** als Spezifikation zu verstehen):
 - Hit-Rate, Ø P&L, Ø Score bei Treffern vs. Fehltreffern
 - Schreibt `data/learnings.json`
 - `learnable=False`-Predictions nie ins Lernmodul
+- **⚠️ Logging & Auditability (2026-08-19 gemeldet):** Request/Response-Payloads, Prompts
+  und Claude-Antworten werden derzeit nicht persistiert — nur CostTracker + Skip-Gründe. Für
+  3D gebraucht: separater `audit_log` Table (Metadaten: Timestamp, Ticker, Phase,
+  Prompt-Version, Kosten, `stop_reason`) + optionale Blob-Speicherung für Learning-Runs
+  unter `--log-prompts`-Flag. Deckt auch Compliance-Anforderungen ab. Details: nachzudenken
+  in der 3D-Planungssession.
 - ~~Übernimmt die TP/SL-Auswertung aus `close` (s. B.6)~~ — **erledigt/hinfällig:** die
   Auswertung sitzt seit dem Preismodell-Umbau in `final_close`, und `close` ist am
   2026-08-18 ganz entfallen (C.14). 3D muss die Auswertung nicht mehr „übernehmen".

@@ -197,6 +197,19 @@ Stack, Abhängigkeiten, Verzeichnisbaum und Env-Variablen stehen in
 `requirements.txt`, `.env.example` und im Repo selbst — hier bewusst nicht doppelt.
 Die Pipeline-Phasen lassen sich an `main.py:run_pipeline()` ablesen.
 
+## Knowledge Graph
+**graphify-out/graph.json und GRAPH_REPORT.md müssen in jeder Session aktuell gehalten werden** — vor komplexeren Fragen zu Architektur/Cross-File-Abhängigkeiten zuerst `/graphify query` oder `graphify update` laufen lassen, nie blind in Einzeldateien gehen. Das verhindert Navigations-Fehler und Duplicate-Work. Der Graph wird per AST extrahiert (kein API-Key nötig), neue/geänderte Dateien werden bei `graphify update` automatisch reindexiert.
+
+## Modell-Einsatz (2026-08-19 Entscheidung — Claude 5 Standard)
+**Haiku für einfache Scoring-Tasks, Sonnet 5 für Tiefenanalyse, Opus nur für Sprint 3D:**
+- `broad_scan` (News-Scoring 0-3): **Haiku 4.5** → spart 90% Kosten (~$0.001/Call)
+- `portfolio_check` (HALTEN/SCHLIESSEN): **Haiku 4.5** → strukturiert, kein Overkill (~$0.006/Lauf)
+- `deep_analysis` + `commodities_crypto` (8 Dimensionen): **Sonnet 5** → braucht Nuance, schneller
+- `trend_analyzer`, `market_context`, `revalidation`: **Sonnet 5** (Claude 5 Standard)
+- **Opus 5:** nicht in Produktion außer Sprint 3D (Learning Modul).
+- **Fable 5:** wird nach 3D-Evaluierung erwogen (sehr schnell, ideal für tägliche Scoring-Läufe).
+- Test-Skript (`random/test_prompts_manual.ipynb`): maximal **Sonnet 5** (kein Opus)
+
 ## Wichtige Designentscheidungen
 - Provider-Hierarchie: Capital.com (alleiniger OHLC-Provider) → Finnhub (Fundamentals, gecacht) — yfinance seit Sprint 3 entfernt (2026-07-09)
 - Guardrails: jede Analyse braucht min. 2 Belege je Score-Dimension

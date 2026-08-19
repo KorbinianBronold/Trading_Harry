@@ -29,7 +29,7 @@ log = logging.getLogger("shares_future.portfolio_check")
 SYSTEM_PROMPT = (Path(__file__).resolve().parent.parent
                  / "prompts" / "portfolio_check_v2.txt").read_text()
 
-MODEL = "claude-sonnet-4-6"
+MODEL = "claude-haiku-4-5"  # HALTEN/SCHLIESSEN/ANPASSEN — strukturiert, Haiku reicht
 MAX_TOKENS = 2048
 MAX_HOLD_DAYS = config.MAX_HOLD_DAYS
 VALID_ACTIONS = {"HALTEN", "SCHLIESSEN", "ANPASSEN"}

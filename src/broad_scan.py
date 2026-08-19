@@ -23,7 +23,7 @@ log = logging.getLogger("shares_future.broad_scan")
 SYSTEM_PROMPT = (Path(__file__).resolve().parent.parent
                  / "prompts" / "broad_scan_v1.txt").read_text()
 
-MODEL = config.CLAUDE_MODEL_SONNET
+MODEL = config.CLAUDE_MODEL_HAIKU  # News-Scoring (0-3) braucht keine Sonnet-Kraft, spart 90%
 
 # R27 / Spec 20.4: 500 Ticker x ein Ergebnisobjekt sprengt quick_filters 4096
 # deutlich -- die Rechnung steht im Task-8-Report. Ein aktiver Nachrichtentag
