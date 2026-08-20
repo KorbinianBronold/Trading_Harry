@@ -3063,6 +3063,77 @@ belegt, stand aber in keinem gültigen Dokument — dieser Eintrag schliesst die
 **Tests:** 13 neue (5 Renderer, 5 in `test_main.py`, 3 für `load_news_summaries`).
 **900 Tests grün.**
 
+### C.20 — Trainingsdaten-Fundament: Wissensstand einfrieren, Retention vereinheitlichen (2026-08-20)
+
+**Anlass:** Korbinian fragte, ob sein Zielbild — aus Kursen, Technik, News,
+Marktlage, Fundamentaldaten, Risiko, Marktrendite, Über-/Unterkauft und
+Branchenstimmung eine Prognose zu rechnen — im Code überhaupt angelegt ist. Ein
+Audit gegen das Schema ergab: **sieben der neun Größen sind je Prediction sauber
+eingefroren**, zwei nicht. Dazu kam ein dritter Verlust, den niemand auf dem
+Schirm hatte.
+
+**Die Leitfrage, aus der alles folgt:** *Ist für jede Prediction später
+rekonstruierbar, was das System zum Zeitpunkt der Entscheidung wusste?* Ein
+Merkmal, das zum Trainingszeitpunkt fehlt, existiert für 3D nicht — und
+rückwirkend ist das nicht heilbar.
+
+**Drei Verlustarten gefunden:**
+
+1. **Löschung.** `news_summaries` stand auf **30 Tagen** — der kürzesten Frist im
+   Projekt. Vergeben, als die Tabelle noch ein Log war, **bevor** C.16 sie zur
+   Trainingsdatenquelle machte. Man behielt das Label (`outcomes`, dauerhaft) und
+   verlor nach einem Monat die Begründung. `cutoff_log` (180 T.) trägt zusätzlich
+   den **Selektions-Bias**: ohne ihn trainiert 3D nur auf Tickern, die den
+   Trichter passiert haben.
+2. **Überschreiben.** `fundamentals_cache` hält genau **eine** Zeile je Ticker
+   (`INSERT OR REPLACE`, 7-Tage-TTL) — es gab nie eine Historie. In `predictions`
+   standen nur die abgeleiteten Scores, nicht die Rohwerte.
+3. **Wegwerfen.** `compute_relative_strength()` lief nur im 16:10-Prompt und
+   wurde nirgends persistiert.
+
+**Umsetzung** (Spec: `2026-08-20-trainingsdaten-fundament-design.md`, Plan:
+`plans/2026-08-20-trainingsdaten-fundament.md`):
+
+- **E1** `config.LEARNING_RETENTION_DAYS = 730` für alle vier befristeten
+  Tabellen, parametrisiert statt vier SQL-Literale. Genau die Streuung war die
+  Ursache. ⚠️ Grössenrechnung steht an der Konstante: bei 500 Tickern wären es
+  mehrere hundert MB — **bei einer Universumsvergrösserung erneut prüfen**.
+- **E2** Sieben neue `predictions`-Spalten: `pe_ratio`, `forward_pe`,
+  `market_cap_b`, `debt_equity`, `analyst_consensus`, `analyst_consensus_period`,
+  `relative_strength`. Bewusst **in `predictions`**, nicht als Cache-Historie: der
+  Wert gehört zur *Entscheidung*, und ein Join über Gültigkeitsfenster wäre genau
+  die Komplexität, die später Leakage produziert.
+- **E3** Finnhubs `period` wird durchgereicht. **Aufgezeichnet, nicht
+  durchgesetzt** — welche Frist einen Konsens veralten lässt, soll 3D messen,
+  nicht eine Zeile im Provider per Annahme entscheiden.
+- **E4** `relative_strength` in **beiden** Läufen berechnet. Nur um 16:10 wäre es
+  systematisch mit dem `run_type` korreliert und damit schlimmer als kein Merkmal.
+- **E5** `analyst_upside` bleibt leer und wird **nicht** entfernt — Finnhub
+  liefert dort kein Kursziel. Abwesenheit ist ehrlich, erfundene Daten wären es
+  nicht; die Spalte bleibt Landestelle für eine spätere Quelle.
+- **E6** Kein Backfill. Die Rohwerte von damals existieren nicht mehr — sie zu
+  rekonstruieren hiesse, sie zu erfinden.
+- **E7** Rein additiv (`ALTER TABLE ADD COLUMN`), kein DROP, keine Umbenennung.
+
+⚠️ **Sidecar-Invariante bewusst erweitert.** `analyst_consensus_period` liegt im
+`td` und damit in drei Prompts. Das ist kein Leck wie die 29 Plan-1-Indikatoren
+(~250 Tokens technischer Rohwerte je Ticker): das Feld gehört zu seinen
+Geschwistern — `pe_ratio` und `analyst_consensus` liegen längst dort. Beide
+Invarianten-Tests wurden mit Begründung im Test nachgezogen.
+
+**Tests:** 916 grün. Die vier Einzeltests, die je eine eigene Retention pinnten
+(30/90/180/180), sind durch parametrisierte Tests über alle vier Tabellen ersetzt
+— plus ein Regressionstest, der `news_summaries` explizit über 30 Tage hält.
+Migration gegen eine Kopie der echten DB geprüft: Spalten da, 14 Predictions und
+46.019 Bars unverändert.
+
+**Aufgeschoben:** `news_summaries.sentiment` ist **kein** Sentiment, sondern aus
+der gewählten Richtung rückabgeleitet — wer es als unabhängiges Nachrichtensignal
+auswertet, korreliert das Modell mit seiner eigenen Ausgabe. Umbenennung ist der
+nächste Schritt. Ebenso offen: Universum auf ~100 Ticker (Kostenrechnung s. u.),
+`analyst_upside` befüllen, TP/SL-Kalibrierung ab ~30 Outcomes (heute 7 von 7
+`sl_hit` — bei n=7 nicht entscheidbar).
+
 ## Sprint 3D — Learning Modul
 
 ⚠️ **Noch nicht ausgearbeitet — braucht eine eigene Planungssession, bevor die Implementierung

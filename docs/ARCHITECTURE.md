@@ -1,6 +1,14 @@
 # Shares_Future – Architektur & Design
 
-**Zuletzt aktualisiert:** 2026-08-20 — 🧠 **Migration auf Claude 5 (Sonnet 5 / Opus 5)
+**Zuletzt aktualisiert:** 2026-08-20 — 🧊 **Trainingsdaten-Fundament (C.20).**
+`predictions` friert jetzt zusätzlich den **Wissensstand** ein: Fundamental-Rohwerte,
+Analysten-Konsens samt Periode und `relative_strength` (sieben neue Spalten).
+Grund: `fundamentals_cache` hält nur eine Zeile je Ticker und überschreibt sie —
+es gab nie eine Historie. Die Retention der vier befristeten Tabellen läuft über
+`config.LEARNING_RETENTION_DAYS` (730) statt über vier SQL-Literale;
+`news_summaries` stand als einzige auf 30 Tagen. Details: PROJECT_STATUS **C.20**.
+
+Davor, 2026-08-20 — 🧠 **Migration auf Claude 5 (Sonnet 5 / Opus 5)
 inklusive Neukalibrierung aller Token-Decken.** In diesem Dokument geändert: die
 `max_tokens_for_batch()`-Formel (jetzt `n * 6000 + 200`, der 4096er-Boden bindet nicht
 mehr) und der C.10/C.11-Kalibrierungsblock bei Modul 4. Hintergrund: `call_claude()`

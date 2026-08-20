@@ -1,6 +1,19 @@
 # Shares_Future – SP500 CFD Research Tool
 
-**Zuletzt aktualisiert:** 2026-08-20 — 📊 **Rohstoff-/Krypto-Abschnitt der Mail war
+**Zuletzt aktualisiert:** 2026-08-20 — 🧊 **Trainingsdaten-Fundament: der
+Wissensstand wird jetzt je Prediction eingefroren.** Audit gegen das Schema ergab
+drei Verlustarten: `news_summaries` wurde nach **30 Tagen gelöscht** (kürzeste Frist
+im Projekt, vergeben als die Tabelle noch ein Log war — man behielt das Label und
+verlor die Begründung), `fundamentals_cache` **überschreibt** sich (eine Zeile je
+Ticker, nie Historie), und `relative_strength` wurde **berechnet und weggeworfen**.
+Neu: `config.LEARNING_RETENTION_DAYS = 730` für alle vier befristeten Tabellen
+(parametrisiert statt vier SQL-Literale — die Streuung war die Ursache), sieben
+neue `predictions`-Spalten (Fundamental-Rohwerte + Analysten-**Periode** +
+relative Stärke), `relative_strength` jetzt in **beiden** Läufen. Rein additiv,
+kein Backfill. **916 Tests grün**, Migration gegen eine Kopie der echten DB
+geprüft (14 Predictions, 46.019 Bars unverändert). Details: PROJECT_STATUS **C.20**.
+
+Davor, 2026-08-20 — 📊 **Rohstoff-/Krypto-Abschnitt der Mail war
 leer — zwei vorbestehende Ursachen, nicht aus der Migration.** Die 16:10-Mail konnte den
 Abschnitt **nie** befüllen (`run_trade_proposals` initialisierte
 `payload["commodities_crypto"] = []` und wies es nie zu; Phase 3b läuft dort nicht), die
@@ -406,6 +419,22 @@ Die Pipeline-Phasen lassen sich an `main.py:run_pipeline()` ablesen.
   `trade_proposals` 16:10) schreiben deshalb per `INSERT OR REPLACE` auf `(ticker, date)`
   **wertgleiche** Zeilen. Genau das machte den `close`-Lauf um 22:30 überflüssig — die
   Annahme „abends stehen aktuellere Indikatoren drin" ist konstruktionsbedingt falsch.
+- ⚠️ **Was eine Prediction wusste, steht IN der Prediction — nicht im Cache.**
+  `fundamentals_cache` hält nur eine Zeile je Ticker (`INSERT OR REPLACE`,
+  7-Tage-TTL) und hat **keine Historie**. Fundamental-Rohwerte, Analysten-Konsens
+  **samt Periode** und `relative_strength` werden deshalb seit 2026-08-20 in
+  `predictions` eingefroren (C.20). **Wer ein neues Merkmal einführt, das in die
+  Entscheidung einfliesst, friert es dort mit ein** — sonst ist es für Sprint 3D
+  nicht vorhanden, und zwar rückwirkend unheilbar.
+  ⚠️ Die Analysten-Periode wird **aufgezeichnet, nicht durchgesetzt**: welche
+  Frist einen Konsens veralten lässt, soll 3D messen. Wer hier ein
+  Verfallsdatum hart einbaut, nimmt genau die Messung vorweg.
+- ⚠️ **`config.LEARNING_RETENTION_DAYS` gilt für vier Tabellen gemeinsam**
+  (`news_summaries`, `trend_analyses`, `skipped_tickers`, `cutoff_log`). Wer eine
+  davon auf eine eigene Frist setzt, wiederholt den Fehler, der `news_summaries`
+  auf 30 Tage stellte, während das zugehörige Label dauerhaft blieb. `cutoff_log`
+  fällt bewusst darunter: es trägt den **Selektions-Bias** — ohne ihn trainiert 3D
+  nur auf Tickern, die den Trichter passiert haben.
 - ⚠️ **Für 3D wichtig, und KEIN Bug:** die `technical_indicators`-Zeile mit `date = T` ist
   aus Bars bis **T-1** berechnet, ist gegenüber ihrem eigenen Datumslabel also um einen
   Handelstag „versetzt". Das ist für Prediction-Features genau richtig: der Schlusskurs
