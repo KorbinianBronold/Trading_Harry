@@ -909,57 +909,7 @@ def test_log_guardrail_reject_defaults_missing_keys_to_null(in_memory_db):
 # ---------- Retention (Sprint 3B / Plan 1, Task 9 — Entscheidung D4) ----------
 
 
-def test_cleanup_deletes_news_older_than_30_days(in_memory_db):
-    init_schema(in_memory_db)
-    # news_summaries.summary ist NOT NULL — muss mitgegeben werden.
-    in_memory_db.execute(
-        "INSERT INTO news_summaries (ticker, date, summary) "
-        "VALUES ('AAPL', date('now','-45 days'), 'alt')"
-    )
-    in_memory_db.execute(
-        "INSERT INTO news_summaries (ticker, date, summary) "
-        "VALUES ('MSFT', date('now','-10 days'), 'frisch')"
-    )
-    in_memory_db.commit()
-    cleanup_old_data(in_memory_db)
-    left = [r["ticker"] for r in in_memory_db.execute(
-        "SELECT ticker FROM news_summaries").fetchall()]
-    assert left == ["MSFT"]
 
-
-def test_cleanup_keeps_skipped_events_for_90_days(in_memory_db):
-    init_schema(in_memory_db)
-    in_memory_db.execute(
-        "INSERT INTO skipped_tickers (ticker, date, run_type, reason) "
-        "VALUES ('OLD', date('now','-100 days'), 'pre_market', 'x')"
-    )
-    in_memory_db.execute(
-        "INSERT INTO skipped_tickers (ticker, date, run_type, reason) "
-        "VALUES ('RECENT', date('now','-60 days'), 'pre_market', 'x')"
-    )
-    in_memory_db.commit()
-    cleanup_old_data(in_memory_db)
-    left = [r["ticker"] for r in in_memory_db.execute(
-        "SELECT ticker FROM skipped_tickers ORDER BY ticker").fetchall()]
-    assert left == ["RECENT"]
-
-
-def test_cleanup_keeps_trend_analyses_for_180_days(in_memory_db):
-    """trend_analyses bleibt bei 180 Tagen — D4 aendert nur news und skipped."""
-    init_schema(in_memory_db)
-    in_memory_db.execute(
-        "INSERT INTO trend_analyses (date, run_type, trend_name) "
-        "VALUES (date('now','-200 days'), 'pre_market', 'alt')"
-    )
-    in_memory_db.execute(
-        "INSERT INTO trend_analyses (date, run_type, trend_name) "
-        "VALUES (date('now','-150 days'), 'pre_market', 'jung')"
-    )
-    in_memory_db.commit()
-    cleanup_old_data(in_memory_db)
-    left = [r["trend_name"] for r in in_memory_db.execute(
-        "SELECT trend_name FROM trend_analyses").fetchall()]
-    assert left == ["jung"]
 
 
 # ---------- sector_momentum (Sprint 3B / Plan 1, Task 9a — Entscheidung D9) ----------
@@ -2105,32 +2055,6 @@ def test_migration_adds_tech_strength_to_a_legacy_cutoff_log():
     conn.close()
 
 
-def test_cleanup_prunes_cutoff_log_after_180_days(in_memory_db):
-    """Abschluss-Review-Befund: cutoff_log ist die volumenstaerkste Tabelle des
-    Systems (eine Zeile je bewertetem Ticker je Lauf -- bei 500 Tickern ~1000
-    Zeilen taeglich) und war als einzige Ereignistabelle von cleanup_old_data()
-    ausgenommen. Die DB reist bei JEDEM Lauf durch ein GitHub Release, also
-    darf sie nicht unbegrenzt wachsen. 180 Tage = dieselbe Aufbewahrung wie
-    trend_analyses, reichlich fuer die 3D-Auswertung, fuer die die Tabelle
-    gebaut wurde."""
-    init_schema(in_memory_db)
-    row = {"ticker": "AAPL", "news_strength": 1, "premarket_change_pct": 0.5,
-           "tech_direction": "long", "tech_agreement": 2, "tech_strength": 2,
-           "rank_position": 0, "selected": True}
-    in_memory_db.execute(
-        "INSERT INTO cutoff_log (date, run_type, ticker, selected) "
-        "VALUES (date('now','-200 days'), 'pre_market', 'OLD', 1)")
-    log_cutoff(in_memory_db, date="2026-08-15", run_type="pre_market",
-               evaluated=[row])
-    in_memory_db.commit()
-
-    cleanup_old_data(in_memory_db)
-
-    remaining = {r["ticker"] for r in in_memory_db.execute(
-        "SELECT ticker FROM cutoff_log")}
-    assert "OLD" not in remaining
-    assert "AAPL" in remaining
-
 
 def test_log_cutoff_upserts_on_rerun(in_memory_db):
     """Ein doppelter Lauf desselben Tages/Run-Types ersetzt die Zeile statt
@@ -2474,3 +2398,64 @@ def test_load_news_summaries_returns_empty_when_nothing_matches(in_memory_db):
     init_schema(in_memory_db)
     assert load_news_summaries(
         in_memory_db, date="2026-05-19", source="commodities_crypto") == []
+
+
+# ---------- LEARNING_RETENTION_DAYS (Spec E1) -------------------------------
+# Ersetzt vier Einzeltests, die je eine eigene Frist pinnten (30/90/180/180).
+# Genau diese Streuung war der Fehler: news_summaries stand unbemerkt auf 30
+# Tagen, waehrend das zugehoerige Label (outcomes) dauerhaft blieb.
+import config as _cfg
+from datetime import date as _date_cls, timedelta as _timedelta
+
+_TRAINING_TABLES = ["news_summaries", "trend_analyses", "skipped_tickers",
+                    "cutoff_log"]
+
+
+def _seed_dated_row(conn, table, date):
+    sql = {
+        "news_summaries":  "INSERT INTO news_summaries (ticker,date,summary) VALUES ('AAPL',?,'s')",
+        "trend_analyses":  "INSERT INTO trend_analyses (date,run_type,trend_name) VALUES (?,'pre_market','ai')",
+        "skipped_tickers": "INSERT INTO skipped_tickers (ticker,date,run_type,reason) VALUES ('AAPL',?,'pre_market','x')",
+        "cutoff_log":      "INSERT INTO cutoff_log (date,run_type,ticker,selected) VALUES (?,'pre_market','AAPL',1)",
+    }[table]
+    conn.execute(sql, (date,))
+    conn.commit()
+
+
+@pytest.mark.parametrize("table", _TRAINING_TABLES)
+def test_training_tables_keep_rows_inside_the_shared_retention(in_memory_db, table):
+    init_schema(in_memory_db)
+    recent = (_date_cls.today()
+              - _timedelta(days=_cfg.LEARNING_RETENTION_DAYS - 5)).isoformat()
+    _seed_dated_row(in_memory_db, table, recent)
+
+    cleanup_old_data(in_memory_db)
+
+    n = in_memory_db.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+    assert n == 1, f"{table}: Zeile INNERHALB der Frist wurde geloescht"
+
+
+@pytest.mark.parametrize("table", _TRAINING_TABLES)
+def test_training_tables_drop_rows_beyond_the_shared_retention(in_memory_db, table):
+    init_schema(in_memory_db)
+    old = (_date_cls.today()
+           - _timedelta(days=_cfg.LEARNING_RETENTION_DAYS + 5)).isoformat()
+    _seed_dated_row(in_memory_db, table, old)
+
+    cleanup_old_data(in_memory_db)
+
+    n = in_memory_db.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+    assert n == 0, f"{table}: Zeile JENSEITS der Frist blieb stehen"
+
+
+def test_news_summaries_outlive_thirty_days(in_memory_db):
+    """Konkreter Regressionsschutz: news_summaries war die einzige Tabelle mit
+    30 Tagen -- man behielt das Label und verlor die Begruendung."""
+    init_schema(in_memory_db)
+    _seed_dated_row(in_memory_db, "news_summaries",
+                    (_date_cls.today() - _timedelta(days=45)).isoformat())
+
+    cleanup_old_data(in_memory_db)
+
+    assert in_memory_db.execute(
+        "SELECT COUNT(*) FROM news_summaries").fetchone()[0] == 1

@@ -320,6 +320,27 @@ DIVERGENCE_TOP_N = 5
 TICKER_MAX_SKIPS = 20
 TICKER_RETRY_AFTER_DAYS = 30
 
+# Sprint 3D / Trainingsdaten-Fundament (Spec E1): gemeinsame Aufbewahrungsfrist
+# fuer die vier Tabellen, aus denen das Lernmodul spaeter Merkmale zieht.
+#
+# ⚠️ Bis 2026-08-20 standen hier VIER verschiedene Literale direkt im SQL von
+# cleanup_old_data() -- und news_summaries stand als einzige auf 30 Tagen, weil
+# sie als Logtabelle angelegt wurde, BEVOR C.16 sie zur Trainingsdatenquelle
+# machte. Man behielt das Label (outcomes, dauerhaft) und verlor nach einem
+# Monat die Begruendung. Eine benannte Konstante macht die Frist zu einer
+# bewussten Entscheidung statt zu einem uebersehenen Literal.
+#
+# Zwei Jahre, weil Saisonalitaet und Regimewechsel mehr als einen Jahreszyklus
+# brauchen -- sonst lernt 3D ein einzelnes Marktjahr auswendig.
+#
+# ⚠️ GROESSE (die Datenbank reist bei jedem Lauf durch ein GitHub Release):
+# bei 20 Tickern ~27 news_summaries- und ~20 cutoff_log-Zeilen taeglich, also
+# grob 35.000 Zeilen in zwei Jahren -- wenige MB. Bei 500 Tickern waeren es
+# ~557 news_summaries-Zeilen MIT VOLLTEXT und ~500 cutoff_log-Zeilen taeglich,
+# zusammen mehrere hundert MB. Diese Frist gehoert deshalb bei einer
+# Universumsvergroesserung erneut auf den Tisch (s. PROJECT_STATUS C.20).
+LEARNING_RETENTION_DAYS = 730
+
 RR_RATIO_DEFAULT = 2.0
 RR_RATIO_MIN_HARD = 1.5
 MOMENTUM_LONG_MIN = 6.0

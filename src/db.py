@@ -867,32 +867,37 @@ def save_cost_tracking(conn: sqlite3.Connection, row: dict) -> None:
 
 
 def cleanup_old_data(conn: sqlite3.Connection) -> None:
-    """Loescht abgelaufene Zeilen: news_summaries > 30 Tage, trend_analyses und
-    cutoff_log > 180 Tage, skipped_tickers-Events > 90 Tage (Sprint 3B / B.7, D4).
+    """Loescht Zeilen jenseits von config.LEARNING_RETENTION_DAYS aus den vier
+    Tabellen, aus denen Sprint 3D Merkmale zieht (Sprint 3B / B.7, D4; Frist
+    vereinheitlicht 2026-08-20, Spec E1).
 
-    Die Skip-Events halten laenger als frueher, weil die Weekly-Mail auswerten
-    soll, welcher Ticker wie oft und warum uebersprungen wurde. News altern
-    dagegen schneller aus — aeltere Zusammenfassungen sind wertlos.
+    ⚠️ Der Satz "News altern schneller aus — aeltere Zusammenfassungen sind
+    wertlos" stand hier bis 2026-08-20 und begruendete 30 Tage fuer
+    news_summaries. Er galt, solange die Tabelle eine Logtabelle war. Seit C.16
+    ist sie die Quelle der News-BELEGE je Prediction: man behielt das Label
+    (outcomes, dauerhaft) und verlor nach einem Monat die Begruendung. Die
+    Aussage ist damit ueberholt, nicht bloss die Zahl.
 
-    `cutoff_log` kam im Abschluss-Review von Plan 2 dazu und ist die
-    volumenstaerkste Tabelle des Systems: eine Zeile je BEWERTETEM Ticker je
-    Lauf, bei 500 Tickern also ~1000 Zeilen taeglich. Ohne Retention waechst sie
-    unbegrenzt — und die Datenbank reist bei jedem Lauf durch ein GitHub
-    Release. 180 Tage sind bewusst dieselbe Grenze wie fuer trend_analyses:
-    reichlich fuer die 3D-Auswertung, fuer die die Tabelle gebaut wurde, aber
-    beschraenkt.
+    `cutoff_log` bleibt die volumenstaerkste Tabelle: eine Zeile je BEWERTETEM
+    Ticker je Lauf, bei 500 Tickern ~1000 taeglich. Sie faellt trotzdem unter
+    dieselbe Frist, weil sie den SELEKTIONS-BIAS traegt -- ohne sie trainiert 3D
+    nur auf Tickern, die den Trichter passiert haben, ohne die Verworfenen
+    rekonstruieren zu koennen. Waere sie kuerzer als die Prediction-Historie,
+    entstuende genau diese Luecke. Die Groessenabwaegung steht jetzt an
+    config.LEARNING_RETENTION_DAYS und ist bei einer Universumsvergroesserung
+    erneut zu pruefen.
 
     ticker_status wird bewusst NIE angefasst: der kumulative Skip-Zaehler und das
     inactive-Flag muessen die Event-Retention ueberleben. Zurueckgesetzt wird nur
     ueber reactivate_ticker() oder das automatische retry_after-Datum."""
-    conn.executescript(
-        """
-        DELETE FROM news_summaries WHERE date < date('now', '-30 days');
-        DELETE FROM trend_analyses WHERE date < date('now', '-180 days');
-        DELETE FROM skipped_tickers WHERE date < date('now', '-90 days');
-        DELETE FROM cutoff_log     WHERE date < date('now', '-180 days');
-        """
-    )
+    # Spec E1: EINE Frist, parametrisiert -- vier Literale im SQL waren der
+    # Grund, warum news_summaries jahrelang unbemerkt auf 30 Tagen stand.
+    for _table in ("news_summaries", "trend_analyses", "skipped_tickers",
+                   "cutoff_log"):
+        conn.execute(
+            f"DELETE FROM {_table} WHERE date < date('now', ?)",
+            (f"-{config.LEARNING_RETENTION_DAYS} days",),
+        )
     conn.commit()
 
 
