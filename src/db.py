@@ -163,6 +163,9 @@ CREATE TABLE IF NOT EXISTS fundamentals_cache (
     sector TEXT,
     analyst_upside REAL,
     consensus TEXT,
+    -- Spec E3: Finnhubs 'period' zur Empfehlung. Ohne sie ist ein drei Monate
+    -- alter Konsens nicht von einem taggleichen zu unterscheiden.
+    analyst_consensus_period TEXT,
     earnings_next_date TEXT,   -- Sprint 3C / Analyse-Pipeline-Umbau Task 7: ISO-Datum
                                -- statt Tageszahl (Spec 18.1d) -- days_to_next waere
                                -- relativ zum Abrufzeitpunkt und bei 7-Tage-TTL nach
@@ -391,6 +394,12 @@ def _apply_migrations(conn: sqlite3.Connection) -> None:
     if "earnings_next_date" not in fc_cols:
         conn.execute(
             "ALTER TABLE fundamentals_cache ADD COLUMN earnings_next_date TEXT"
+        )
+    # Spec E3/E7: additive Migration -- Bestands-DBs bekommen die Spalte und
+    # behalten ihre Daten.
+    if "analyst_consensus_period" not in fc_cols:
+        conn.execute(
+            "ALTER TABLE fundamentals_cache ADD COLUMN analyst_consensus_period TEXT"
         )
 
     ph_cols = {r["name"] for r in conn.execute(
@@ -1422,14 +1431,16 @@ def save_fundamentals_cache(
     conn.execute(
         """INSERT OR REPLACE INTO fundamentals_cache
            (ticker, fetched_date, pe_ratio, forward_pe, market_cap_b,
-            debt_equity, sector, analyst_upside, consensus, earnings_next_date)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            debt_equity, sector, analyst_upside, consensus, earnings_next_date,
+            analyst_consensus_period)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             ticker, _fetched,
             data.get("pe_ratio"), data.get("forward_pe"), data.get("market_cap_b"),
             data.get("debt_equity"), data.get("sector"),
             data.get("analyst_upside"), data.get("consensus"),
             data.get("earnings_next_date"),
+            data.get("analyst_consensus_period"),
         ),
     )
     conn.commit()

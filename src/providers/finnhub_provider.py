@@ -81,8 +81,16 @@ class FinnhubProvider(DataProvider):
             return {}
 
         consensus = None
+        consensus_period = None
         if recs:
             r     = recs[0]
+            # Spec E3: die Periode mitschreiben. recs[0] ist die juengste
+            # Meldung, sagt aber nichts darueber, WIE jung -- ohne dieses Feld
+            # ist ein drei Monate alter Konsens im Prompt nicht von einem
+            # taggleichen zu unterscheiden. Bewusst NICHT hier verwerfen:
+            # welche Frist richtig ist, soll Sprint 3D messen, nicht diese
+            # Zeile per Annahme entscheiden.
+            consensus_period = r.get("period")
             total = (r.get("buy") or 0) + (r.get("hold") or 0) + (r.get("sell") or 0)
             if total > 0:
                 ratio     = (r.get("buy") or 0) / total
@@ -100,8 +108,12 @@ class FinnhubProvider(DataProvider):
             "market_cap_b":   market_cap_b,
             "debt_equity":    debt_eq,
             "sector":         profile.get("finnhubIndustry"),
+            # Spec E5: bewusst leer -- Finnhub liefert hier kein Kursziel. Die
+            # Spalte bleibt als Landestelle fuer eine spaetere Quelle stehen;
+            # Abwesenheit ist ehrlich, erfundene Daten waeren es nicht.
             "analyst_upside": None,
             "consensus":      consensus,
+            "analyst_consensus_period": consensus_period,
         }
 
     def get_last_available_date(self, ticker):

@@ -280,3 +280,48 @@ def test_no_client_skips_rate_limiter_entirely(mocker):
     finally:
         fh._client = original
     assert sleeps == []
+
+
+# ---------- Analysten-Aktualitaet (Spec E3) ----------
+# Bis 2026-08-20 wurde recs[0] ohne jede Datumspruefung genommen: ein Konsens
+# von vor drei Monaten war im Prompt nicht von einem tagesaktuellen zu
+# unterscheiden. Fuer Sprint 3D ist ein Merkmal ohne Zeitbezug Rauschen.
+
+def _fundamentals_client(recs):
+    c = MagicMock()
+    c.company_profile2.return_value = {"finnhubIndustry": "Semiconductors",
+                                       "marketCapitalization": 3_000_000}
+    c.company_basic_financials.return_value = {"metric": {}}
+    c.recommendation_trends.return_value = recs
+    return c
+
+
+def test_get_fundamentals_passes_through_the_consensus_period():
+    client = _fundamentals_client(
+        [{"period": "2026-08-01", "buy": 8, "hold": 2, "sell": 0}])
+
+    with patch("src.providers.finnhub_provider._client", client):
+        out = FinnhubProvider().get_fundamentals("AAPL")
+
+    assert out["analyst_consensus_period"] == "2026-08-01"
+    assert out["consensus"] == "buy"
+
+
+def test_get_fundamentals_period_is_none_when_finnhub_omits_it():
+    client = _fundamentals_client([{"buy": 5, "hold": 5, "sell": 0}])
+
+    with patch("src.providers.finnhub_provider._client", client):
+        out = FinnhubProvider().get_fundamentals("AAPL")
+
+    assert out["analyst_consensus_period"] is None
+    assert out["consensus"] == "hold"
+
+
+def test_get_fundamentals_period_is_none_without_any_recommendation():
+    client = _fundamentals_client([])
+
+    with patch("src.providers.finnhub_provider._client", client):
+        out = FinnhubProvider().get_fundamentals("AAPL")
+
+    assert out["analyst_consensus_period"] is None
+    assert out["consensus"] is None

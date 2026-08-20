@@ -2459,3 +2459,27 @@ def test_news_summaries_outlive_thirty_days(in_memory_db):
 
     assert in_memory_db.execute(
         "SELECT COUNT(*) FROM news_summaries").fetchone()[0] == 1
+
+
+def test_fundamentals_cache_roundtrips_the_consensus_period(in_memory_db):
+    """Spec E3: ohne die Periode ist ein alter Konsens nicht von einem frischen
+    zu unterscheiden."""
+    init_schema(in_memory_db)
+    save_fundamentals_cache(in_memory_db, "AAPL", {
+        "pe_ratio": 25.0, "consensus": "buy",
+        "analyst_consensus_period": "2026-08-01",
+    }, fetched_date="2026-08-20")
+
+    row = get_cached_fundamentals(in_memory_db, "AAPL", today="2026-08-20")
+
+    assert row["analyst_consensus_period"] == "2026-08-01"
+
+
+def test_fundamentals_cache_tolerates_a_missing_period(in_memory_db):
+    init_schema(in_memory_db)
+    save_fundamentals_cache(in_memory_db, "AAPL", {"pe_ratio": 25.0},
+                            fetched_date="2026-08-20")
+
+    row = get_cached_fundamentals(in_memory_db, "AAPL", today="2026-08-20")
+
+    assert row["analyst_consensus_period"] is None

@@ -256,6 +256,16 @@ def test_process_ticker_return_shape_excludes_the_29_new_indicator_columns(in_me
         "volume_ratio", "intraday_range_pct",
         "pe_ratio", "forward_pe", "market_cap_b", "debt_equity", "sector",
         "analyst_target_upside", "analyst_consensus",
+        # 2026-08-20, Spec E3: BEWUSSTE Erweiterung der Schluesselmenge, kein
+        # Leck. Das Feld gehoert zu seinen Geschwistern -- pe_ratio,
+        # analyst_consensus und die uebrigen Fundamentaldaten liegen laengst im
+        # td und damit im Prompt. Es traegt das Alter der Analystenmeinung, ohne
+        # das ein drei Monate alter Konsens nicht von einem taggleichen zu
+        # unterscheiden ist. Unterschied zu den 29 Plan-1-Indikatoren, gegen die
+        # dieser Test gebaut wurde: die waren ~250 Tokens je Ticker technischer
+        # Rohwerte, die der Prompt nie angefordert hat -- das hier ist EIN
+        # Datums-String neben Feldern derselben Herkunft.
+        "analyst_consensus_period",
         "earnings_in_days", "earnings_beat_pct", "data_quality",
     }
     assert set(out.keys()) == expected_keys
@@ -1645,6 +1655,10 @@ def test_phase_2b_mirrors_freshly_fetched_fundamentals_into_the_td(in_memory_db)
           "pe_ratio": None, "forward_pe": None, "market_cap_b": None,
           "debt_equity": None, "sector": "Unknown",
           "analyst_target_upside": None, "analyst_consensus": None,
+          # Spec E3: _process_ticker() legt den Schluessel seit 2026-08-20 an --
+          # das Literal hier bildet dessen Form nach, die Invariante (Phase 2b
+          # FUELLT nur, legt nichts an) bleibt unveraendert scharf.
+          "analyst_consensus_period": None,
           "earnings_in_days": None, "earnings_beat_pct": None,
           "data_quality": "medium"}
     ep = MagicMock()
@@ -1761,6 +1775,9 @@ def test_phase_2b_adds_no_new_keys_to_the_td(in_memory_db):
           "pe_ratio": None, "market_cap_b": None, "sector": "Unknown",
           "forward_pe": None, "debt_equity": None,
           "analyst_target_upside": None, "analyst_consensus": None,
+          # Spec E3: _process_ticker() legt den Schluessel seit 2026-08-20 an --
+          # die Invariante (Phase 2b FUELLT nur, legt nichts an) bleibt scharf.
+          "analyst_consensus_period": None,
           "earnings_in_days": None, "earnings_beat_pct": None,
           "data_quality": "medium"}
     before = set(td)

@@ -76,6 +76,10 @@ def _apply_fundamentals_to_td(td: dict, fundamentals: dict, date: str) -> None:
         "sector":                fundamentals.get("sector") or "Unknown",
         "analyst_target_upside": fundamentals.get("analyst_upside"),
         "analyst_consensus":     fundamentals.get("consensus"),
+        # Spec E3: bewusst IM td und damit im Prompt sichtbar -- das Alter einer
+        # Analystenmeinung ist echte Entscheidungsinformation, anders als die
+        # 29 Plan-1-Indikatoren, die deshalb im Sidecar bleiben.
+        "analyst_consensus_period": fundamentals.get("analyst_consensus_period"),
         "earnings_in_days":      _earnings_in_days(
             fundamentals.get("earnings_next_date"), date),
         "earnings_beat_pct":     None,
