@@ -358,8 +358,13 @@ RSI_MIDLINE = 50.0
 CFD_MARGIN_EUR = 500
 CFD_LEVERAGE = 5
 
-MAX_COST_PER_RUN_EUR = 4.00
-COST_WARN_THRESHOLD_EUR = 3.00
+# Spec F7: 4,00 -> 6,00 mit der Universumsvergroesserung auf 142 Ticker
+# (hochgerechnet ~4,92 EUR je Lauf). ⚠️ Der Deckel ist die letzte Sicherung
+# gegen einen Kostenunfall -- angehoben, weil die GRUNDLAST steigt, nicht weil
+# er stoert. Der Puffer von ~1,08 EUR deckt die Streuung, die adaptives Denken
+# erzeugt (C.18).
+MAX_COST_PER_RUN_EUR = 6.00
+COST_WARN_THRESHOLD_EUR = 4.50
 CLAUDE_PARALLEL_CALLS = 5
 
 CAPITAL_COM_BATCH_PAUSE = 12
@@ -371,5 +376,37 @@ CAPITAL_COM_BASE_URL   = "https://demo-api-capital.backend-capital.com"
 
 USE_FULL_SP500 = os.getenv("USE_FULL_SP500", "false").lower() == "true"
 
-# Full S&P 500 ticker list. Replace with complete 500-symbol list before enabling USE_FULL_SP500.
-SP500_FULL_TICKERS: list[str] = SP500_MVP_TICKERS  # stub — replace with full list
+# Erweitertes Aktien-Universum (Spec F4/F5, 2026-08-20). War bis dahin ein Stub
+# auf SP500_MVP_TICKERS -- USE_FULL_SP500 haette also gar nichts vergroessert.
+#
+# ⚠️ JEDES Symbol hier ist am 2026-08-20 per DIREKTEM Epic-Abruf gegen
+# Capital.com verifiziert (/markets?epics=, nicht ueber die Volltextsuche --
+# die liefert laut SUB_SECTOR_ETFS-Kommentar zu jedem Kuerzel irgendetwas).
+# Vier Kandidaten loesten NICHT auf und fehlen bewusst: BK, EA, EMR, MMC.
+# Ein Ticker ohne Kurse wuerde als 'insufficient bars' uebersprungen, zaehlte
+# Richtung TICKER_MAX_SKIPS und deaktivierte sich selbst -- lieber weglassen.
+#
+# ⚠️ Diese Liste ist NICHT der vollstaendige S&P 500. Sie sind 142 liquide
+# Large Caps (20 MVP + 122 verifizierte), bewusst als Zwischenschritt: 7x
+# Datendurchsatz fuer ~4,92 EUR je Lauf, ohne die Voraussetzungen von Sprint 3F
+# (Parallelisierung, thread-sicherer CostTracker). Der Sprung auf 500 laege bei
+# ~9,88 EUR und ungemessener Laufzeit.
+#
+# ⚠️ Neue Ticker brauchen VOR der Aufnahme historical_loader.py, sonst fehlen
+# die Bars (CLAUDE.md). Reihenfolge: verifizieren -> laden -> --report-coverage
+# -> erst dann USE_FULL_SP500=true.
+SP500_FULL_TICKERS: list[str] = SP500_MVP_TICKERS + [
+    "ABT", "ADBE", "ADI", "AEP", "AIG", "AMAT", "AMD", "AMGN", "AMT",
+    "ANET", "APD", "AXP", "BA", "BAC", "BKNG", "BLK", "BMY", "BSX", "C",
+    "CAT", "CB", "CDNS", "CI", "CL", "CMCSA", "CMG", "COF", "COP", "COST",
+    "CRM", "CSCO", "CSX", "CVS", "CVX", "D", "DE", "DG", "DHR", "DIS",
+    "DUK", "ELV", "EOG", "EQIX", "ETN", "FCX", "GD", "GE", "GILD", "GIS",
+    "GS", "HCA", "HON", "IBM", "INTC", "INTU", "ISRG", "ITW", "KLAC", "KMB",
+    "KO", "LIN", "LMT", "LOW", "LRCX", "MCD", "MDLZ", "MDT", "MET", "MMM",
+    "MO", "MPC", "MRK", "MS", "MU", "NEE", "NFLX", "NKE", "NOC", "NOW",
+    "NSC", "NUE", "O", "ORCL", "OXY", "PANW", "PEP", "PFE", "PGR", "PLD",
+    "PM", "PNC", "PSX", "QCOM", "REGN", "RTX", "SBUX", "SCHW", "SHW", "SLB",
+    "SNPS", "SO", "SPG", "SPGI", "SYK", "SYY", "T", "TFC", "TGT", "TJX",
+    "TMO", "TMUS", "TXN", "UBER", "UNP", "UPS", "USB", "VLO", "VRTX", "VZ",
+    "WFC", "YUM", "ZTS",
+]
