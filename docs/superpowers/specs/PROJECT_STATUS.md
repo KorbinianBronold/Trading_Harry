@@ -2954,8 +2954,63 @@ Hauptdurchgangs plus der `trade_proposals`-Lauf, alle sauber.
    von **keiner** Produktionsstelle gelesen — ein Tippfehler wäre erst in Sprint 3D
    aufgefallen): löst auf, antwortet, `MODEL_PRICING` kennt sie. 0,0002 EUR.
 
+**Nachtrag am selben Tag — ein vierter Aufrufer, im ersten Durchgang übersehen:**
+
+Auf die Frage „ist die Migration abgeschlossen?" hat eine vollständige Aufstellung
+aller `call_claude`-Aufrufstellen **`deep_analysis.run_policy_monitor()`** als vierten
+Sonnet-5-Einzelcall mit derselben Lücke gefunden — dieselbe Bug-Klasse wie Phase 0,
+nur nicht durch einen Absturz sichtbar geworden:
+
+- `MAX_TOKENS_POLICY = 3072` war nach der Migration die **knappste verbliebene Decke
+  im Projekt** — knapper als die 4096, an denen `trend_analyzer` nachweislich kappte.
+- Kein `stop_reason`-Check: eine Kappung wäre als `JSONDecodeError` →
+  `PolicyMonitorError` erschienen.
+- Der Aufrufer (`main.py`, Phase `policy_monitor`) fängt das **nicht** ab — eine
+  Kappung hätte den ganzen `pre_market`-Lauf gerissen, exakt wie in Messlauf 2.
+
+Dass er in fünf Läufen sauber blieb, war nach der Lehre oben **kein Beleg**. Jetzt auf
+`call_claude_retry_on_truncation()` umgestellt, `MAX_TOKENS_POLICY` 3072 → **9216**
+(3×, dieselbe Anhebung wie bei `trend_analyzer`). **Damit hat jeder Sonnet-5-Aufrufer
+im Projekt eine Kappungs-Erkennung** — die Batch-Module über `BatchTruncatedError`, die
+vier Einzelcalls über den Helfer.
+
+Nicht betroffen und bewusst unangetastet: `broad_scan` und `portfolio_check` laufen auf
+**Haiku 4.5**, wo Denken ohne explizites `thinking`-Feld aus bleibt (`broad_scan` hat
+ohnehin eine eigene `stop_reason`-Prüfung); `quick_filter` ist seit Plan 2 toter Code.
+
+**Live nachverifiziert:** `trade_proposals` erneut gegen eine Wegwerf-Kopie —
+Policy-Monitor sauber (`level=high`, 3 Events), Re-Validierung sauber, 0,4841 EUR.
+**`weekly` einmal komplett geprüft:** macht **null Claude-Calls** (nur Finnhub,
+DB-Aggregate, Mail) und ist von der Migration damit strukturell nicht betroffen; der
+Lauf ging bis zum Mailversand durch. **886 Tests grün.**
+
+**Aufräumen zum Abschluss — Modell-Strings vereinheitlicht.** Der zuletzt rote Test
+`test_broad_scan_uses_configured_model_and_web_search` war **kein** Migrationsschaden:
+Commit `0db8644` (2026-08-19) stellte `broad_scan` + `portfolio_check` auf Haiku um,
+ohne die Tests nachzuziehen — der Code war richtig, die Erwartung veraltet. Beim
+Beheben kamen zwei weitere, **grün gebliebene** Fehler derselben Art zum Vorschein:
+
+- `test_broad_scan.py` setzte in der Fixture `r.model = CLAUDE_MODEL_SONNET`, während
+  der Code Haiku abrechnet — die Kostenprüfungen rechneten still zu **dreifachen**
+  Preisen. Kein Test schlug an, weil nur `total_eur > 0` geprüft wird.
+- `test_portfolio_check.py` behauptete `claude-sonnet-4-6` — ein Modell, das seit der
+  Migration nirgends mehr läuft.
+
+Ursache in allen drei Fällen: **hart kodierte Modell-Strings**, die bei einem Wechsel
+nicht mitwandern. Deshalb liest jetzt **jedes** Modul sein Modell aus `config`
+(`portfolio_check` und `quick_filter` waren die letzten beiden mit Literal; die drei
+Sonnet-Module hatten es beim String-Swap ebenfalls hart bekommen), und die
+Test-Fixtures ebenso. Bewusste Ausnahmen: `test_cost_tracker.py` (prüft `MODEL_PRICING`
+anhand seiner Schlüssel — mit `config` tautologisch) und `test_utils.py` (generischer
+Durchreicher). Gegenprobe: eine Änderung in `config.py` wandert nachweislich durch alle
+acht Module. Der Helfer `_fake_sonnet_result` heisst jetzt `_fake_result` — ein
+modellspezifischer Fixture-Name ist genau die Namensfäule, die hier zwei Fehler
+verdeckt hat. **887 Tests grün, 0 rot.**
+
 **Offen bleibt:** `claude-opus-5` ist weiterhin nirgends produktiv verdrahtet — die
-Preiszeile ist damit smoke-getestet, aber nicht unter Last erprobt.
+Preiszeile ist damit smoke-getestet, aber nicht unter Last erprobt. Und `market_context`
+hat als einziges der vier Einzelcall-Module keine Stichprobenreihe, nur sechs saubere
+Einzelläufe.
 
 ---
 

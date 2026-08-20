@@ -8,6 +8,7 @@ import json
 import logging
 from pathlib import Path
 
+import config
 from src.cost_tracker import CostTracker
 from src.utils import call_claude, extract_json_blob
 
@@ -16,7 +17,11 @@ log = logging.getLogger("shares_future.quick_filter")
 SYSTEM_PROMPT = (Path(__file__).resolve().parent.parent
                  / "prompts" / "quick_filter_v1.txt").read_text()
 
-MODEL = "claude-haiku-4-5"
+# Aus config gelesen statt hart kodiert (2026-08-20), analog zu portfolio_check.
+# ⚠️ quick_filter ist seit Plan 2 TOTER CODE (nicht in run_pipeline verdrahtet) --
+# nur angeglichen, damit eine etwaige Reaktivierung nicht auf einem veralteten
+# Modell-String startet.
+MODEL = config.CLAUDE_MODEL_HAIKU
 MAX_TOKENS = 4096
 
 # TODO(Sprint 3 Learning Module): Score-Schwellenwert-Optimierung. Aktuell gibt

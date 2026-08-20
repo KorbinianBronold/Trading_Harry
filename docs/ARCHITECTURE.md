@@ -1191,7 +1191,9 @@ JSON hängt. Ein striktes `json.loads` scheiterte daran.
 `BatchTruncatedError`** (C.18). Es erkennt `stop_reason == "max_tokens"`, wiederholt
 **einmal** mit `TRUNCATION_RETRY_FACTOR`-facher Decke und wirft danach — die Batch-Module
 behalten ihren reicheren Pfad (Wiederholen → Halbieren) und nutzen es nicht. Genutzt von
-`trend_analyzer`, `market_context` und `revalidation`; dort kam eine Kappung vorher als
+`trend_analyzer`, `market_context`, `revalidation` und `deep_analysis.run_policy_monitor()`
+(letzteres als Nachtrag — beim ersten Durchgang übersehen, obwohl es mit 3072 die
+knappste Decke hatte); dort kam eine Kappung vorher als
 `JSONDecodeError` an, und bei `trend_analyzer` ist das laut Spec § 3 fatal für den ganzen
 Lauf. **Es bucht jeden Versuch selbst** — auch den verworfenen gekappten — die drei
 Aufrufer rufen `cost_tracker.add_from_result()` deshalb nicht mehr selbst auf.

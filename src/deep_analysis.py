@@ -12,7 +12,8 @@ from pathlib import Path
 
 import config
 from src.cost_tracker import CostTracker
-from src.utils import call_claude, extract_json_blob, WEB_SEARCH_TOOL
+from src.utils import (call_claude, call_claude_retry_on_truncation,
+                       extract_json_blob, WEB_SEARCH_TOOL)
 
 log = logging.getLogger("shares_future.deep_analysis")
 
@@ -20,7 +21,7 @@ PROMPT_DIR = Path(__file__).resolve().parent.parent / "prompts"
 DEEP_SYSTEM_PROMPT = (PROMPT_DIR / "deep_analysis_v2.txt").read_text()  # fuer analyze_batch()
 POLICY_SYSTEM_PROMPT = (PROMPT_DIR / "policy_monitor_v1.txt").read_text()
 
-MODEL = "claude-sonnet-5"
+MODEL = config.CLAUDE_MODEL_SONNET
 # Spec 4.8: der alte feste Wert 4096 war fuer EINEN Ticker ausgelegt, das
 # Budget wird deshalb aus der Batchgroesse abgeleitet.
 #
@@ -60,7 +61,18 @@ MODEL = "claude-sonnet-5"
 TOKENS_PER_TICKER_DEEP = 6000
 BATCH_TOKEN_RESERVE = 200
 MAX_TOKENS_DEEP_MIN = 4096
-MAX_TOKENS_POLICY = 3072
+# ⚠️ 3072 war gegen claude-sonnet-4-6 bemessen und war nach der Sonnet-5-Migration
+# die KNAPPSTE verbliebene Decke im Projekt -- knapper als die 4096, an denen
+# trend_analyzer nachweislich kappte (C.18). Dass run_policy_monitor in fuenf
+# Messlaeufen sauber durchlief, beweist unter adaptivem Denken nichts: Phase 3b
+# lief im ersten Lauf ebenfalls sauber und kappte im dritten. 9216 = 3x, dieselbe
+# Anhebung wie bei trend_analyzer; die Decke kostet nur, was sie nutzt.
+#
+# ⚠️ Der Aufrufer faengt PolicyMonitorError NICHT ab (main.py, Phase
+# "policy_monitor"): eine Kappung riss vor C.18 den ganzen pre_market-Lauf mit,
+# genau wie der Phase-0-Fall. Deshalb laeuft der Call ueber
+# call_claude_retry_on_truncation() und nicht ueber das nackte call_claude().
+MAX_TOKENS_POLICY = 9216
 
 # Eine identische Wiederholung nach einer Kappung liefert deterministisch
 # dieselbe Kappung -- im Testlauf fuenfmal beobachtet, je ~2-3 Minuten fuer ein
@@ -99,11 +111,12 @@ def run_policy_monitor(
         "events from the last 48h. Then return the JSON object defined in your "
         "system prompt."
     )
-    result = call_claude(
+    # Bucht jeden Versuch selbst -- auch einen verworfenen gekappten.
+    result = call_claude_retry_on_truncation(
         model=MODEL, system=POLICY_SYSTEM_PROMPT, user=user_msg,
-        max_tokens=MAX_TOKENS_POLICY, tools=[WEB_SEARCH_TOOL],
+        max_tokens=MAX_TOKENS_POLICY, cost_tracker=cost_tracker,
+        tools=[WEB_SEARCH_TOOL],
     )
-    cost_tracker.add_from_result(result)
     parsed = extract_json_blob(result.text, PolicyMonitorError)
     if "events" not in parsed or "policy_risk_level" not in parsed:
         raise PolicyMonitorError(

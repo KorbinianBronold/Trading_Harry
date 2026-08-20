@@ -3,6 +3,7 @@ from pathlib import Path
 from unittest.mock import patch, MagicMock
 import pytest
 
+import config
 from src.cost_tracker import CostTracker
 from src.commodities_crypto import (
     analyze_commodities_and_crypto, analyze_batch, build_batches,
@@ -24,7 +25,7 @@ def _fake_result(text: str, output_tokens: int = 4000,
     r.output_tokens = output_tokens
     r.cache_read_tokens = 0
     r.cache_creation_tokens = 0
-    r.model = "claude-sonnet-5"
+    r.model = config.CLAUDE_MODEL_SONNET
     r.web_search_calls = web_search_calls
     r.stop_reason = stop_reason
     return r

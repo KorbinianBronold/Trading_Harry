@@ -29,7 +29,11 @@ log = logging.getLogger("shares_future.portfolio_check")
 SYSTEM_PROMPT = (Path(__file__).resolve().parent.parent
                  / "prompts" / "portfolio_check_v2.txt").read_text()
 
-MODEL = "claude-haiku-4-5"  # HALTEN/SCHLIESSEN/ANPASSEN — strukturiert, Haiku reicht
+# HALTEN/SCHLIESSEN/ANPASSEN — strukturiert, Haiku reicht. Aus config gelesen
+# statt hart kodiert (2026-08-20): ein hart kodierter String greift beim naechsten
+# Modellwechsel still daneben, weil er nicht mitwandert. Genau das war bei
+# broad_scan der Fall, wo Test-Fixture und Produktionsmodell auseinanderliefen.
+MODEL = config.CLAUDE_MODEL_HAIKU
 MAX_TOKENS = 2048
 MAX_HOLD_DAYS = config.MAX_HOLD_DAYS
 VALID_ACTIONS = {"HALTEN", "SCHLIESSEN", "ANPASSEN"}

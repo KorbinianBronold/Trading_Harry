@@ -8,6 +8,7 @@ spec §3 "Phase 0 fehlt → Run abbrechen + Alert-Mail".
 import logging
 from pathlib import Path
 
+import config
 from src import db
 from src.cost_tracker import CostTracker
 from src.utils import (call_claude_retry_on_truncation, extract_json_blob,
@@ -18,7 +19,7 @@ log = logging.getLogger("shares_future.trend_analyzer")
 SYSTEM_PROMPT = (Path(__file__).resolve().parent.parent
                  / "prompts" / "trend_analyzer_v1.txt").read_text()
 
-MODEL = "claude-sonnet-5"
+MODEL = config.CLAUDE_MODEL_SONNET
 # ⚠️ 4096 war gegen claude-sonnet-4-6 bemessen, das ohne explizites
 # thinking-Feld gar nicht dachte. Unter claude-sonnet-5 (adaptives Denken an,
 # Denk- und Antworttokens teilen sich die Decke) reicht der Wert NICHT

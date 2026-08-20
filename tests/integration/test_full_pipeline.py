@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 import pandas as pd
+import config
 
 import main as orchestrator
 
@@ -75,7 +76,7 @@ def test_full_pipeline_writes_predictions_and_sends_email(tmp_path, monkeypatch)
     deep_resp = (FIXTURE_DIR / "mock_deep_analysis_response.json").read_text()
     cc_resp = (FIXTURE_DIR / "mock_commodities_crypto_response.json").read_text()
 
-    def _r(text, web_search_calls=2, model="claude-sonnet-5"):
+    def _r(text, web_search_calls=2, model=config.CLAUDE_MODEL_SONNET):
         r = MagicMock()
         r.text = text
         r.input_tokens = 1000
@@ -172,8 +173,9 @@ def test_full_pipeline_writes_predictions_and_sends_email(tmp_path, monkeypatch)
                side_effect=[_r(market_ctx_resp, web_search_calls=2)]), \
          patch("src.trend_analyzer.call_claude_retry_on_truncation", side_effect=[sequence[0]]), \
          patch("src.broad_scan.call_claude", side_effect=[sequence[1]]), \
-         patch("src.deep_analysis.call_claude",
-               side_effect=[sequence[2], sequence[3]]), \
+         patch("src.deep_analysis.call_claude_retry_on_truncation",
+               side_effect=[sequence[2]]), \
+         patch("src.deep_analysis.call_claude", side_effect=[sequence[3]]), \
          patch("src.commodities_crypto.call_claude",
                side_effect=[sequence[4], sequence[5]]), \
          patch("src.portfolio_check.call_claude",

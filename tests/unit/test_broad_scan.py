@@ -24,7 +24,7 @@ EXCLUDED_TD_FIELDS = (
 )
 
 
-def _fake_sonnet_result(
+def _fake_result(
     text: str, web_search_calls: int = 4,
     output_tokens: int = 3000, stop_reason: str = "end_turn",
 ) -> MagicMock:
@@ -34,7 +34,7 @@ def _fake_sonnet_result(
     r.output_tokens = output_tokens
     r.cache_read_tokens = 0
     r.cache_creation_tokens = 0
-    r.model = config.CLAUDE_MODEL_SONNET
+    r.model = config.CLAUDE_MODEL_HAIKU
     r.web_search_calls = web_search_calls
     r.stop_reason = stop_reason
     return r
@@ -86,7 +86,7 @@ def test_broad_scan_returns_one_result_per_ticker():
     """Genau ein Ergebnis je Input-Ticker, in Eingabereihenfolge -- auch wenn
     die Modellantwort eine andere Reihenfolge liefert."""
     payload = FIXTURE_PATH.read_text()
-    fake = _fake_sonnet_result(payload)
+    fake = _fake_result(payload)
     tracker = CostTracker(hard_cap_eur=10.0)
     batch = [_td("AAPL"), _td("MSFT")]
 
@@ -115,7 +115,7 @@ def test_broad_scan_zeroes_strength_without_note():
         {"ticker": "AAPL", "news_strength": 2, "news_note": ""},
         {"ticker": "MSFT", "news_strength": 1},
     ]})
-    fake = _fake_sonnet_result(payload)
+    fake = _fake_result(payload)
     tracker = CostTracker(hard_cap_eur=10.0)
 
     with patch("src.broad_scan.call_claude", return_value=fake):
@@ -138,7 +138,7 @@ def test_broad_scan_missing_ticker_defaults_to_zero():
     payload = json.dumps({"results": [
         {"ticker": "AAPL", "news_strength": 2, "news_note": "Earnings beat."},
     ]})
-    fake = _fake_sonnet_result(payload)
+    fake = _fake_result(payload)
     tracker = CostTracker(hard_cap_eur=10.0)
 
     with patch("src.broad_scan.call_claude", return_value=fake):
@@ -160,7 +160,7 @@ def test_broad_scan_bad_json():
     """R26: unparsebare Antwort ist NICHT fatal -- broad_scan_batch degradiert
     auf news_strength=0 fuer den ganzen Batch statt zu werfen. Ein Ergebnis je
     Ticker bleibt garantiert, der Lauf laeuft weiter (Spec Section 10)."""
-    fake = _fake_sonnet_result("this is not JSON at all, just prose.")
+    fake = _fake_result("this is not JSON at all, just prose.")
     tracker = CostTracker(hard_cap_eur=10.0)
 
     with patch("src.broad_scan.call_claude", return_value=fake):
@@ -185,7 +185,7 @@ def test_broad_scan_missing_news_strength_key_defaults_to_zero():
     payload = json.dumps({"results": [
         {"ticker": "AAPL", "news_note": "some stray note without a strength"},
     ]})
-    fake = _fake_sonnet_result(payload)
+    fake = _fake_result(payload)
     tracker = CostTracker(hard_cap_eur=10.0)
 
     with patch("src.broad_scan.call_claude", return_value=fake):
@@ -209,7 +209,7 @@ def test_broad_scan_news_strength_above_range_zeroed(caplog):
     payload = json.dumps({"results": [
         {"ticker": "AAPL", "news_strength": 7, "news_note": "Huge rally."},
     ]})
-    fake = _fake_sonnet_result(payload)
+    fake = _fake_result(payload)
     tracker = CostTracker(hard_cap_eur=10.0)
 
     with patch("src.broad_scan.call_claude", return_value=fake):
@@ -233,7 +233,7 @@ def test_broad_scan_news_strength_below_range_zeroed(caplog):
     payload = json.dumps({"results": [
         {"ticker": "AAPL", "news_strength": -2, "news_note": "Odd value."},
     ]})
-    fake = _fake_sonnet_result(payload)
+    fake = _fake_result(payload)
     tracker = CostTracker(hard_cap_eur=10.0)
 
     with patch("src.broad_scan.call_claude", return_value=fake):
@@ -258,7 +258,7 @@ def test_broad_scan_news_strength_non_integer_zeroed(caplog):
     payload = json.dumps({"results": [
         {"ticker": "AAPL", "news_strength": 2.5, "news_note": "Fractional."},
     ]})
-    fake = _fake_sonnet_result(payload)
+    fake = _fake_result(payload)
     tracker = CostTracker(hard_cap_eur=10.0)
 
     with patch("src.broad_scan.call_claude", return_value=fake):
@@ -284,7 +284,7 @@ def test_broad_scan_news_strength_bool_treated_as_non_numeric():
     payload = json.dumps({"results": [
         {"ticker": "AAPL", "news_strength": True, "news_note": "Odd type."},
     ]})
-    fake = _fake_sonnet_result(payload)
+    fake = _fake_result(payload)
     tracker = CostTracker(hard_cap_eur=10.0)
 
     with patch("src.broad_scan.call_claude", return_value=fake):
@@ -309,7 +309,7 @@ def test_broad_scan_news_strength_in_range_values_untouched():
         {"ticker": "NVDA", "news_strength": 2, "news_note": "Notable move."},
         {"ticker": "AMZN", "news_strength": 3, "news_note": "Major catalyst."},
     ]})
-    fake = _fake_sonnet_result(payload)
+    fake = _fake_result(payload)
     tracker = CostTracker(hard_cap_eur=10.0)
     batch = [_td("AAPL"), _td("MSFT"), _td("NVDA"), _td("AMZN")]
 
@@ -334,7 +334,7 @@ def test_broad_scan_valid_json_missing_results_key_degrades_to_zero():
     strukturell kaputt, nicht syntaktisch. Degradiert genauso wie
     unparsebares JSON, statt zu werfen."""
     payload = json.dumps({"unexpected": "shape"})
-    fake = _fake_sonnet_result(payload)
+    fake = _fake_result(payload)
     tracker = CostTracker(hard_cap_eur=10.0)
 
     with patch("src.broad_scan.call_claude", return_value=fake):
@@ -353,7 +353,7 @@ def test_broad_scan_valid_json_missing_results_key_degrades_to_zero():
 def test_broad_scan_payload_contains_premarket_change_pct():
     """R22/R23: der Sidecar-Wert landet in der Nutzlast, obwohl er nicht in
     td steht."""
-    fake = _fake_sonnet_result(FIXTURE_PATH.read_text())
+    fake = _fake_result(FIXTURE_PATH.read_text())
     tracker = CostTracker(hard_cap_eur=10.0)
     sidecar = {"AAPL": {"premarket_change_pct": 2.7, "tech_direction": "long"},
                "MSFT": {"premarket_change_pct": -1.1, "tech_direction": "none"}}
@@ -377,7 +377,7 @@ def test_broad_scan_payload_excludes_unrelated_td_fields():
     """R23: die 19 td-Felder ausserhalb der expliziten Acht-Felder-Liste
     erreichen den Prompt NICHT -- der Payload wird explizit zusammengesetzt,
     nicht per json.dumps(td)."""
-    fake = _fake_sonnet_result(FIXTURE_PATH.read_text())
+    fake = _fake_result(FIXTURE_PATH.read_text())
     tracker = CostTracker(hard_cap_eur=10.0)
 
     with patch("src.broad_scan.call_claude", return_value=fake) as mock_call:
@@ -395,7 +395,7 @@ def test_broad_scan_payload_excludes_unrelated_td_fields():
 
 
 def test_broad_scan_uses_configured_model_and_web_search():
-    fake = _fake_sonnet_result(FIXTURE_PATH.read_text())
+    fake = _fake_result(FIXTURE_PATH.read_text())
     tracker = CostTracker(hard_cap_eur=10.0)
 
     with patch("src.broad_scan.call_claude", return_value=fake) as mock_call:
@@ -408,12 +408,17 @@ def test_broad_scan_uses_configured_model_and_web_search():
         )
 
     kwargs = mock_call.call_args.kwargs
-    assert kwargs["model"] == config.CLAUDE_MODEL_SONNET
+    # ⚠️ HAIKU, nicht Sonnet -- das ist Absicht (Modell-Einsatz-Entscheidung vom
+    # 2026-08-19): News-Scoring 0-3 braucht keine Sonnet-Kraft und spart so ~90 %.
+    # Der Test stand bis 2026-08-20 auf CLAUDE_MODEL_SONNET und war seit der
+    # Umstellung in 0db8644 rot -- der Code war richtig, die Erwartung veraltet.
+    # Wer hier auf Sonnet "zurueckrepariert", macht Phase 2 zehnmal teurer.
+    assert kwargs["model"] == config.CLAUDE_MODEL_HAIKU
     assert kwargs["tools"] == [WEB_SEARCH_TOOL]
 
 
 def test_broad_scan_bills_cost_tracker():
-    fake = _fake_sonnet_result(FIXTURE_PATH.read_text())
+    fake = _fake_result(FIXTURE_PATH.read_text())
     tracker = CostTracker(hard_cap_eur=10.0)
 
     with patch("src.broad_scan.call_claude", return_value=fake):
@@ -436,7 +441,7 @@ def test_broad_scan_warns_when_output_near_max_tokens(caplog):
     Warnung ist ein wegen Kappung auf news_strength=0 degradierter Batch im
     Log nicht von einem echten ruhigen Nachrichtentag zu unterscheiden --
     genau das Problem, das das Review-Finding benannt hat."""
-    fake = _fake_sonnet_result(FIXTURE_PATH.read_text())
+    fake = _fake_result(FIXTURE_PATH.read_text())
     fake.output_tokens = int(MAX_TOKENS * 0.95)
     tracker = CostTracker(hard_cap_eur=10.0)
 
@@ -457,7 +462,7 @@ def test_broad_scan_warns_when_output_near_max_tokens(caplog):
 def test_broad_scan_no_truncation_warning_for_normal_output(caplog):
     """Gegenprobe: eine unauffaellige Antwort (weit unter MAX_TOKENS) loest
     keine Kappungs-Warnung aus -- sonst waere das Log-Signal wertlos."""
-    fake = _fake_sonnet_result(FIXTURE_PATH.read_text())
+    fake = _fake_result(FIXTURE_PATH.read_text())
     tracker = CostTracker(hard_cap_eur=10.0)
 
     with patch("src.broad_scan.call_claude", return_value=fake):
@@ -492,7 +497,7 @@ def test_broad_scan_uses_streaming():
     """Phase 2 laeuft gestreamt -- ein einzelner Call ueber bis zu 500 Ticker
     mit MAX_TOKENS=32000 ist genau der Fall, fuer den Spec 20.4 den
     Streaming-Pfad verlangt."""
-    fake = _fake_sonnet_result(FIXTURE_PATH.read_text())
+    fake = _fake_result(FIXTURE_PATH.read_text())
     tracker = CostTracker(hard_cap_eur=10.0)
 
     with patch("src.broad_scan.call_claude", return_value=fake) as cc:
@@ -509,7 +514,7 @@ def test_broad_scan_uses_streaming():
 def test_broad_scan_warns_on_stop_reason_max_tokens(caplog):
     """stop_reason ist das harte Signal -- es warnt auch dann, wenn
     output_tokens weit unter der Ratio-Schwelle liegen."""
-    fake = _fake_sonnet_result(
+    fake = _fake_result(
         FIXTURE_PATH.read_text(), output_tokens=100, stop_reason="max_tokens",
     )
     tracker = CostTracker(hard_cap_eur=10.0)
@@ -527,7 +532,7 @@ def test_broad_scan_warns_on_stop_reason_max_tokens(caplog):
 
 def test_broad_scan_no_warning_when_stop_reason_clean_and_output_small(caplog):
     """Kein Fehlalarm: sauberes stop_reason und kleine Ausgabe schweigen."""
-    fake = _fake_sonnet_result(
+    fake = _fake_result(
         FIXTURE_PATH.read_text(), output_tokens=100, stop_reason="end_turn",
     )
     tracker = CostTracker(hard_cap_eur=10.0)

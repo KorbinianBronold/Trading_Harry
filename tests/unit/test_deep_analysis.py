@@ -3,6 +3,7 @@ from pathlib import Path
 from unittest.mock import patch, MagicMock
 import pytest
 
+import config
 from src.cost_tracker import CostTracker
 from src.deep_analysis import (
     run_policy_monitor, DeepAnalysisError, BatchTruncatedError,
@@ -13,7 +14,7 @@ from src.deep_analysis import (
 FIXTURE_DIR = Path(__file__).parent.parent / "fixtures"
 
 
-def _fake_result(text: str, model: str = "claude-sonnet-5",
+def _fake_result(text: str, model: str = config.CLAUDE_MODEL_SONNET,
                  web_search_calls: int = 3, output_tokens: int = 4000,
                  stop_reason: str = "end_turn") -> MagicMock:
     r = MagicMock()
@@ -33,7 +34,7 @@ def test_run_policy_monitor_parses_and_returns(in_memory_db):
     fake = _fake_result(payload)
     tracker = CostTracker(hard_cap_eur=10.0)
 
-    with patch("src.deep_analysis.call_claude", return_value=fake):
+    with patch("src.utils.call_claude", return_value=fake):
         out = run_policy_monitor(date="2026-05-19", run_type="close",
                                  cost_tracker=tracker)
 
@@ -47,11 +48,11 @@ def test_run_policy_monitor_uses_web_search():
     fake = _fake_result(payload)
     tracker = CostTracker(hard_cap_eur=10.0)
 
-    with patch("src.deep_analysis.call_claude", return_value=fake) as mock_call:
+    with patch("src.utils.call_claude", return_value=fake) as mock_call:
         run_policy_monitor(date="2026-05-19", run_type="close",
                            cost_tracker=tracker)
     kwargs = mock_call.call_args.kwargs
-    assert kwargs["model"] == "claude-sonnet-5"
+    assert kwargs["model"] == config.CLAUDE_MODEL_SONNET
     assert any(t.get("name") == "web_search" for t in kwargs["tools"])
 
 
@@ -60,7 +61,7 @@ def test_run_policy_monitor_tolerates_empty_events():
         "policy_risk_level": "low", "events": [], "summary": "Calm news cycle.",
     }))
     tracker = CostTracker(hard_cap_eur=10.0)
-    with patch("src.deep_analysis.call_claude", return_value=fake):
+    with patch("src.utils.call_claude", return_value=fake):
         out = run_policy_monitor(date="2026-05-19", run_type="close",
                                  cost_tracker=tracker)
     assert out["events"] == []
@@ -490,3 +491,39 @@ def test_deep_analysis_v1_untouched():
     v1 = Path(__file__).parent.parent.parent / "prompts" / "deep_analysis_v1.txt"
     assert v1.exists()
     assert "You receive ONE ticker snapshot" in v1.read_text()
+
+
+# --- run_policy_monitor: Kappungs-Erkennung (C.18-Nachtrag) -----------------
+# Vierter Sonnet-5-Einzelcall, beim ersten Durchgang uebersehen: 3072 war die
+# knappste verbliebene Decke, und eine Kappung kam als JSONDecodeError an.
+# main.py:499 faengt PolicyMonitorError NICHT -> der ganze pre_market-Lauf faellt.
+
+def test_run_policy_monitor_retries_a_truncated_answer_instead_of_parsing_it():
+    """Eine Kappung darf nicht als 'kaputtes JSON' durchgereicht werden."""
+    payload = (FIXTURE_DIR / "mock_policy_monitor_response.json").read_text()
+    truncated = _fake_result('{"policy_risk_level": "hi', stop_reason="max_tokens")
+    clean = _fake_result(payload)
+    tracker = CostTracker(hard_cap_eur=10.0)
+
+    with patch("src.utils.call_claude", side_effect=[truncated, clean]) as mock_call:
+        out = run_policy_monitor(date="2026-05-19", run_type="close",
+                                 cost_tracker=tracker)
+
+    assert out["policy_risk_level"] == "medium"
+    assert mock_call.call_count == 2
+    first, second = mock_call.call_args_list
+    assert second.kwargs["max_tokens"] == first.kwargs["max_tokens"] * 2
+
+
+def test_run_policy_monitor_bills_the_discarded_truncated_attempt():
+    payload = (FIXTURE_DIR / "mock_policy_monitor_response.json").read_text()
+    truncated = _fake_result("{trunc", stop_reason="max_tokens")
+    clean = _fake_result(payload)
+    tracker = CostTracker(hard_cap_eur=10.0)
+
+    with patch("src.utils.call_claude", side_effect=[truncated, clean]):
+        run_policy_monitor(date="2026-05-19", run_type="close",
+                           cost_tracker=tracker)
+
+    # beide Versuche gebucht, nicht nur der verwertete
+    assert tracker.input_tokens == 5000 * 2

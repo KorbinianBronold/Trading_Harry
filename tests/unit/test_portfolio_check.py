@@ -3,6 +3,7 @@ from pathlib import Path
 from unittest.mock import patch, MagicMock
 import pytest
 
+import config
 from src import db
 from src.cost_tracker import CostTracker
 from src.portfolio_check import (
@@ -19,7 +20,7 @@ def _fake_result(text: str) -> MagicMock:
     r.output_tokens = 2000
     r.cache_read_tokens = 0
     r.cache_creation_tokens = 0
-    r.model = "claude-sonnet-4-6"
+    r.model = config.CLAUDE_MODEL_HAIKU  # portfolio_check laeuft auf Haiku, nicht Sonnet
     r.web_search_calls = 2
     return r
 
@@ -230,7 +231,7 @@ def test_check_one_position_uses_no_web_search(mocker):
     call = mocker.patch("src.portfolio_check.call_claude")
     call.return_value = MagicMock(
         text='{"action": "HALTEN", "reason": "ok"}',
-        model="claude-sonnet-4-6", input_tokens=10, output_tokens=5,
+        model=config.CLAUDE_MODEL_HAIKU, input_tokens=10, output_tokens=5,
         cache_read_tokens=0, cache_creation_tokens=0, web_search_calls=0,
     )
     from src.portfolio_check import check_one_position

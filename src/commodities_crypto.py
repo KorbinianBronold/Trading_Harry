@@ -17,6 +17,7 @@ from pathlib import Path
 
 import requests
 
+import config
 from src.cost_tracker import CostTracker
 from src.utils import call_claude, extract_json_blob, WEB_SEARCH_TOOL
 
@@ -25,7 +26,7 @@ log = logging.getLogger("shares_future.commodities_crypto")
 SYSTEM_PROMPT = (Path(__file__).resolve().parent.parent
                  / "prompts" / "commodities_crypto_v3.txt").read_text()
 
-MODEL = "claude-sonnet-5"
+MODEL = config.CLAUDE_MODEL_SONNET
 FEAR_GREED_URL = "https://api.alternative.me/fng/"
 FEAR_GREED_TIMEOUT_SEC = 5
 

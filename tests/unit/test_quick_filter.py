@@ -3,6 +3,7 @@ from pathlib import Path
 from unittest.mock import patch, MagicMock
 import pytest
 
+import config
 from src.cost_tracker import CostTracker
 from src.quick_filter import quick_filter_batch, QuickFilterError
 
@@ -17,7 +18,7 @@ def _fake_haiku_result(text: str) -> MagicMock:
     r.output_tokens = 2000
     r.cache_read_tokens = 0
     r.cache_creation_tokens = 0
-    r.model = "claude-haiku-4-5"
+    r.model = config.CLAUDE_MODEL_HAIKU
     r.web_search_calls = 0
     return r
 
@@ -76,7 +77,7 @@ def test_quick_filter_uses_haiku_and_no_web_search():
         )
 
     kwargs = mock_call.call_args.kwargs
-    assert kwargs["model"] == "claude-haiku-4-5"
+    assert kwargs["model"] == config.CLAUDE_MODEL_HAIKU
     assert kwargs.get("tools") in (None, [])
 
 
