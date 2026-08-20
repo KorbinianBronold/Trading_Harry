@@ -667,3 +667,60 @@ def test_send_final_close_email_uses_the_shared_sender(mocker):
     send_final_close_email(payload, api_key="k", email_from="a@b.c", email_to="d@e.f")
     send.assert_called_once()
     assert "final_close" in send.call_args[0][3]
+
+
+# ---- Commodities/Crypto: alle 7 immer zeigen (Bugfix 2026-08-20) ----------
+# Vorher rutschten Assets, bei denen Claude sich enthielt (direction='none')
+# oder die Guardrails an der Zwei-Belege-Regel scheiterten, komplett aus der
+# Mail -- der Abschnitt zeigte dann "Keine Daten.". Die alte SPECIFICATION.md
+# (Sektion 3) nennt aber alle sieben namentlich, und Spec 6 garantiert, dass
+# sie IMMER analysiert werden. Die Analyse war da, nur das Rendering warf sie weg.
+
+from src.email_sender import _section_commodities_crypto
+
+
+def _cc(ticker, direction="long", tradeable=True, summary="Gold zieht an."):
+    return {
+        "ticker": ticker, "asset_class": "commodity", "direction": direction,
+        "current_price": 2380.0, "tp_price": 2420.0, "sl_price": 2360.0,
+        "total_score": 6.9, "probability_pct": 58, "confidence": "medium",
+        "summary": summary, "tradeable": tradeable,
+        "extra": {"fear_greed_value": 62},
+    }
+
+
+def test_commodities_section_renders_non_tradeable_assets_instead_of_dropping_them():
+    """Der Kern des Bugs: ein Asset ohne handelbares Signal muss trotzdem
+    erscheinen -- mit Einschaetzung, nur ohne Handelsempfehlung."""
+    html = _section_commodities_crypto([
+        _cc("BTC-USD", direction="none", tradeable=False,
+            summary="Seitwaerts, kein klares Setup."),
+    ])
+    assert "Keine Daten" not in html
+    assert "BTC-USD" in html
+    assert "Seitwaerts, kein klares Setup." in html
+
+
+def test_commodities_section_suppresses_tp_sl_for_non_tradeable_assets():
+    """TP/SL sind eine Handelsempfehlung -- bei einer Enthaltung waeren sie
+    eine Aussage, die die Analyse gerade NICHT getroffen hat."""
+    html = _section_commodities_crypto([
+        _cc("BTC-USD", direction="none", tradeable=False),
+    ])
+    assert "2420" not in html and "2360" not in html
+
+
+def test_commodities_section_keeps_tp_sl_for_tradeable_assets():
+    html = _section_commodities_crypto([_cc("GC=F", tradeable=True)])
+    assert "2420" in html and "2360" in html
+
+
+def test_commodities_section_shows_the_summary_column():
+    """Das summary-Feld liefert der v3-Prompt laengst -- es wurde nur nie
+    gerendert. Genau das sind die 'Einschaetzungen' in der Mail."""
+    html = _section_commodities_crypto([_cc("GC=F", summary="Zinsen stuetzen.")])
+    assert "Zinsen stuetzen." in html
+
+
+def test_commodities_section_still_says_keine_daten_only_when_truly_empty():
+    assert "Keine Daten" in _section_commodities_crypto([])

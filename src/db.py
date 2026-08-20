@@ -1044,6 +1044,36 @@ def save_news_summaries(conn: sqlite3.Connection, rows: list[dict]) -> None:
     conn.commit()
 
 
+def load_news_summaries(
+    conn: sqlite3.Connection, date: str, source: str,
+) -> list[dict]:
+    """Liest die news_summaries EINES Tages aus EINER Quelle, je Ticker nur die
+    zuletzt geschriebene Zeile.
+
+    Gegenstueck zu save_news_summaries(). Gebraucht fuer den Rohstoff-/Krypto-
+    Abschnitt der 16:10-Mail: Phase 3b laeuft dort nicht, die Morgen-
+    Einschaetzung steht aber hier (C.16 befuellt die Tabelle aus Phase 3b mit
+    ALLEN sieben Assets, auch den nicht handelbaren).
+
+    Die Tabelle hat bewusst kein UNIQUE -- pre_market und trade_proposals
+    duerfen denselben Ticker am selben Tag schreiben. Fuer die Mail zaehlt die
+    juengste Zeile, deshalb MAX(rowid) je Ticker."""
+    rows = conn.execute(
+        """
+        SELECT ticker, summary, sentiment, market_impact, run_type
+          FROM news_summaries
+         WHERE rowid IN (
+               SELECT MAX(rowid) FROM news_summaries
+                WHERE date = ? AND source = ?
+                GROUP BY ticker
+         )
+         ORDER BY ticker
+        """,
+        (date, source),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
 def skip_reason_counts(
     conn: sqlite3.Connection, date: str, run_type: str,
 ) -> list[tuple[str, int]]:

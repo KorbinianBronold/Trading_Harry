@@ -219,6 +219,11 @@ _NEWS_IMPACT_FROM_STRENGTH = {0: "none", 1: "minor", 2: "notable", 3: "major"}
 _SENTIMENT_FROM_DIRECTION = {"long": "bullish", "short": "bearish", "none": "neutral"}
 
 
+_DIRECTION_FROM_SENTIMENT = {
+    v: k for k, v in _SENTIMENT_FROM_DIRECTION.items() if v is not None
+}
+
+
 def _news_summaries_from_broad_scan(
     broad_results: list[dict], date: str, run_type: str,
 ) -> list[dict]:
@@ -233,6 +238,62 @@ def _news_summaries_from_broad_scan(
         }
         for r in broad_results
     ]
+
+
+def _commodities_payload(
+    deep_cc: list[dict], ranked_cc: list[dict],
+) -> list[dict]:
+    """Alle sieben Rohstoffe/Kryptos fuer die Mail, nicht nur die handelbaren.
+
+    Spec 6 garantiert, dass die sieben IMMER vollstaendig analysiert werden --
+    die Analyse existiert also auch fuer Assets, bei denen Claude sich enthaelt
+    (direction='none') oder die an der Zwei-Belege-Regel scheitern. Bis
+    2026-08-20 landete nur ranked['commodities_crypto'] im Payload, das durch
+    ranking._guardrail_filter() laeuft; die uebrigen fielen still weg und der
+    Mail-Abschnitt stand auf "Keine Daten.".
+
+    Handelbare Assets behalten die GERANKTE Zeile (sie traegt die Anreicherung
+    aus Phase 4), die uebrigen kommen als rohe Analyse durch und werden mit
+    tradeable=False markiert -- der Renderer unterdrueckt dann TP/SL, weil das
+    eine Handelsempfehlung waere, die hier gerade nicht gegeben wurde."""
+    ranked_by_ticker = {a["ticker"]: a for a in ranked_cc}
+    out = []
+    for a in deep_cc:
+        ranked = ranked_by_ticker.get(a.get("ticker"))
+        out.append({**(ranked or a), "tradeable": ranked is not None})
+    return out
+
+
+def _commodities_from_morning(
+    conn, date: str, snapshots: dict[str, dict],
+) -> list[dict]:
+    """Rohstoff-/Krypto-Abschnitt fuer die 16:10-Mail.
+
+    Phase 3b laeuft um 16:10 bewusst NICHT (Spec 6: die Tiefenanalyse ist ein
+    Morgenlauf) -- der Abschnitt war deshalb dort strukturell immer leer:
+    run_trade_proposals initialisierte payload['commodities_crypto'] = [] und
+    wies es nie zu. Statt einen zweiten Analyselauf zu bezahlen, zeigt die
+    16:10-Mail die Morgen-Einschaetzung aus news_summaries (dort landen seit
+    C.16 ALLE sieben, auch die nicht handelbaren) mit dem frischen 16:10-Kurs
+    aus dem ohnehin gesammelten Snapshot.
+
+    tradeable ist immer False: der 16:10-Lauf hat diese Assets nicht neu
+    bewertet, eine TP/SL-Zeile waere hier eine Empfehlung ohne Analyse."""
+    rows = db.load_news_summaries(
+        conn, date=date, source="commodities_crypto")
+    out = []
+    for r in rows:
+        snap = snapshots.get(r["ticker"]) or {}
+        out.append({
+            "ticker": r["ticker"],
+            "direction": _DIRECTION_FROM_SENTIMENT.get(r.get("sentiment")),
+            "summary": r.get("summary"),
+            "confidence": r.get("market_impact"),
+            "current_price": snap.get("price"),
+            "tradeable": False,
+            "extra": {},
+        })
+    return out
 
 
 def _news_summaries_from_analyses(
@@ -582,7 +643,8 @@ def run_pipeline(run_type: str, date: str, db_path: str) -> None:
         )
         payload["top_long"]            = ranked["top_long"]
         payload["top_short"]           = ranked["top_short"]
-        payload["commodities_crypto"]  = ranked["commodities_crypto"]
+        payload["commodities_crypto"]  = _commodities_payload(
+            deep_cc, ranked["commodities_crypto"])
         payload["divergence"]          = ranked["divergence"]
         payload["divergence_stats"]    = ranked["divergence_stats"]
 
@@ -796,6 +858,12 @@ def run_trade_proposals(date: str, db_path: str) -> None:
             price_provider, [td["ticker"] for td in sp_tds], date)
         for _t, _snap in snapshots.items():
             _snap["price_open"] = opens.get(_t)
+
+        # Rohstoffe/Krypto: Phase 3b laeuft um 16:10 nicht, der Abschnitt war
+        # deshalb bis 2026-08-20 strukturell IMMER leer ("Keine Daten."). Statt
+        # eines zweiten Analyselaufs die Morgen-Einschaetzung plus 16:10-Kurs.
+        payload["commodities_crypto"] = _commodities_from_morning(
+            conn, date, snapshots)
 
         current_phase = "open_positions"
         _forced_candidates(price_provider)   # nur fuer den Log — Phase 4a sieht sie ohnehin

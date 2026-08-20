@@ -1,6 +1,21 @@
 # Shares_Future – SP500 CFD Research Tool
 
-**Zuletzt aktualisiert:** 2026-08-20 — 🧠 **Migration auf Claude 5 (Sonnet 5 /
+**Zuletzt aktualisiert:** 2026-08-20 — 📊 **Rohstoff-/Krypto-Abschnitt der Mail war
+leer — zwei vorbestehende Ursachen, nicht aus der Migration.** Die 16:10-Mail konnte den
+Abschnitt **nie** befüllen (`run_trade_proposals` initialisierte
+`payload["commodities_crypto"] = []` und wies es nie zu; Phase 3b läuft dort nicht), die
+pre_market-Mail zeigte nur, was `ranking._guardrail_filter()` überlebte — Enthaltungen
+(`direction='none'`) und dünne Belege fielen **ganz** raus statt nur aus dem Ranking.
+⚠️ Spec § 6 („kein Vorfilter für die sieben") betrifft die **Analyse**, die korrekt lief;
+verloren gingen sie erst beim Rendern. Neu: alle sieben immer im Payload
+(`_commodities_payload`), nicht handelbare mit Kurs + Einschätzung, aber **ohne TP/SL**
+(das wäre eine Empfehlung, die die Analyse nicht gegeben hat); 16:10 lädt die
+Morgen-Einschätzung aus `news_summaries` (`_commodities_from_morning`, 0 EUR, kein
+zweiter Claude-Call); neue Spalte „Einschätzung" rendert das `summary`-Feld, das der
+v3-Prompt längst liefert. **900 Tests grün**, live über die Kette pre_market → 16:10
+verifiziert. Details: PROJECT_STATUS **C.19**.
+
+Davor, 2026-08-20 — 🧠 **Migration auf Claude 5 (Sonnet 5 /
 Opus 5), inklusive der Messung, die der String-Swap übersprungen hatte.**
 `utils.call_claude()` setzt **kein** `thinking`-Feld — unter `claude-sonnet-4-6` hiess
 das „kein Denken", unter `claude-sonnet-5` heisst dasselbe Weglassen „**adaptives

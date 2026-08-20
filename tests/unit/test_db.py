@@ -2428,3 +2428,49 @@ def test_load_evaluated_outcomes_finds_verdict_via_superseded_predecessor(in_mem
     assert len(rows) == 1
     assert rows[0]["revision_verdict"] == "bestaetigt"
     assert rows[0]["run_type"] == "trade_proposals"
+
+
+# ---------- load_news_summaries() (Bugfix 2026-08-20) ----------------------
+from src.db import load_news_summaries
+
+
+def test_load_news_summaries_filters_by_date_and_source(in_memory_db):
+    init_schema(in_memory_db)
+    save_news_summaries(in_memory_db, [
+        {"ticker": "GC=F", "date": "2026-05-19", "run_type": "pre_market",
+         "summary": "Gold", "sentiment": "bullish",
+         "source": "commodities_crypto", "market_impact": "medium"},
+        {"ticker": "AAPL", "date": "2026-05-19", "run_type": "pre_market",
+         "summary": "Aktie", "sentiment": None,
+         "source": "broad_scan", "market_impact": "low"},
+        {"ticker": "SI=F", "date": "2026-05-18", "run_type": "pre_market",
+         "summary": "Vortag", "sentiment": "bearish",
+         "source": "commodities_crypto", "market_impact": "low"},
+    ])
+    rows = load_news_summaries(
+        in_memory_db, date="2026-05-19", source="commodities_crypto")
+    assert [r["ticker"] for r in rows] == ["GC=F"]
+
+
+def test_load_news_summaries_dedupes_per_ticker_keeping_the_latest(in_memory_db):
+    """pre_market und trade_proposals koennen denselben Ticker am selben Tag
+    schreiben -- der Abschnitt darf ein Asset trotzdem nur einmal zeigen."""
+    init_schema(in_memory_db)
+    save_news_summaries(in_memory_db, [
+        {"ticker": "GC=F", "date": "2026-05-19", "run_type": "pre_market",
+         "summary": "alt", "sentiment": "bullish",
+         "source": "commodities_crypto", "market_impact": "medium"},
+        {"ticker": "GC=F", "date": "2026-05-19", "run_type": "trade_proposals",
+         "summary": "neu", "sentiment": "bearish",
+         "source": "commodities_crypto", "market_impact": "high"},
+    ])
+    rows = load_news_summaries(
+        in_memory_db, date="2026-05-19", source="commodities_crypto")
+    assert len(rows) == 1
+    assert rows[0]["summary"] == "neu"
+
+
+def test_load_news_summaries_returns_empty_when_nothing_matches(in_memory_db):
+    init_schema(in_memory_db)
+    assert load_news_summaries(
+        in_memory_db, date="2026-05-19", source="commodities_crypto") == []

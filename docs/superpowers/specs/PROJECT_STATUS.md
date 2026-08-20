@@ -3014,6 +3014,55 @@ Einzelläufe.
 
 ---
 
+### C.19 — Rohstoff-/Krypto-Abschnitt der Mail war leer (2026-08-20)
+
+**Anlass:** Korbinian meldete mit Screenshot, dass „Commodities + Crypto" in der Mail
+auf **„Keine Daten."** steht, obwohl der Abschnitt immer Marktlage, Trend und eine
+Einschätzung zu den sieben Assets zeigen sollte.
+
+**Zwei verschiedene Ursachen, beide vorbestehend — nichts davon aus der C.18-Migration:**
+
+1. **16:10-Mail (der Screenshot).** `run_trade_proposals()` initialisierte
+   `payload["commodities_crypto"] = []` und wies es **nie wieder zu** — die einzige
+   Zuweisung im Projekt stand in `run_pipeline()`. Phase 3b läuft um 16:10 bewusst
+   nicht (Spec § 6: die Tiefenanalyse ist ein Morgenlauf), und die dort gesammelten
+   `cc_tds` flossen nur in `snapshots` für die Re-Validierung. **Der Abschnitt konnte
+   dort also nie befüllt sein — 100 % aller 16:10-Mails, seit es den Run-Type gibt.**
+   Identifiziert über die Abfolge im Screenshot (Commodities → Marktlage → Vortags-
+   Performance), die es nur im `trade_proposals`-Template gibt.
+2. **pre_market-Mail.** Der Payload kam aus `ranked["commodities_crypto"]`, das durch
+   `ranking._guardrail_filter()` läuft: Enthaltungen (`direction='none'`) und Analysen,
+   die die Zwei-Belege-Regel reissen, fallen dort **ganz** heraus statt nur aus dem
+   Ranking. Gemessen in der C.18-Messreihe: Lauf 1 → 3 von 7 überlebten (SOL/XRP wegen
+   dünner Catalyst-Belege), Lauf 4 → 7 von 7. Bei lauter Enthaltungen wäre auch diese
+   Mail leer.
+
+⚠️ **Spec-Lage, weil sie in zwei Richtungen zeigt:** Spec § 6 („kein Vorfilter für die
+sieben") betrifft die **Analyse** — die lief korrekt, alle sieben werden immer
+analysiert. Verloren gingen sie erst beim Mail-Rendering. Die alte `SPECIFICATION.md`
+(Sektion 3) nennt tatsächlich alle sieben namentlich, ist aber ausdrücklich **als
+historisch eingefroren markiert** und damit kein gültiger Beleg. Die Absicht ist also
+belegt, stand aber in keinem gültigen Dokument — dieser Eintrag schliesst die Lücke.
+
+**Neu:**
+- `db.load_news_summaries(conn, date, source)` — je Ticker die jüngste Zeile
+  (`MAX(rowid)`, die Tabelle hat bewusst kein UNIQUE).
+- `main._commodities_payload(deep_cc, ranked_cc)` — alle sieben in den Payload;
+  handelbare behalten die **gerankte** Zeile (sie trägt die Phase-4-Anreicherung), die
+  übrigen kommen als rohe Analyse durch, markiert mit `tradeable=False`.
+- `main._commodities_from_morning(conn, date, snapshots)` — 16:10 lädt die
+  Morgen-Einschätzung aus `news_summaries` (dort landen seit C.16 **alle sieben**, auch
+  die nicht handelbaren) und reichert sie mit dem frischen 16:10-Kurs an. **0 EUR, kein
+  zweiter Claude-Call.**
+- `email_sender._section_commodities_crypto()` rendert nicht handelbare Assets mit
+  Kurs und Einschätzung, aber **ohne TP/SL** — die sind eine Handelsempfehlung, und
+  genau die hat die Analyse dort nicht gegeben. Neue Spalte „Einschätzung": das
+  `summary`-Feld liefert der v3-Prompt längst, es wurde nur nie gerendert (Prompts
+  blieben unangetastet, Regel 10).
+
+**Tests:** 13 neue (5 Renderer, 5 in `test_main.py`, 3 für `load_news_summaries`).
+**900 Tests grün.**
+
 ## Sprint 3D — Learning Modul
 
 ⚠️ **Noch nicht ausgearbeitet — braucht eine eigene Planungssession, bevor die Implementierung

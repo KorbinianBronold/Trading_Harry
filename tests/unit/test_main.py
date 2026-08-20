@@ -1980,3 +1980,80 @@ def test_load_recent_outcomes_aggregate_separates_divergence(tmp_db_path):
     assert agg["divergence_summary"]["long_total"] == 1
     assert agg["divergence_summary"]["total_pl_eur"] == -20.0
     conn.close()
+
+
+# ---- Commodities/Crypto: alle 7 in den Payload (Bugfix 2026-08-20) --------
+
+from main import _commodities_payload, _commodities_from_morning
+
+
+def test_commodities_payload_keeps_all_assets_not_just_the_tradeable_ones():
+    """Der Bug: nur ranked[...] landete im Payload, Enthaltungen fielen raus."""
+    deep_cc = [
+        {"ticker": "GC=F", "direction": "long", "summary": "Gold zieht an."},
+        {"ticker": "BTC-USD", "direction": "none", "summary": "Kein Setup."},
+    ]
+    ranked_cc = [{"ticker": "GC=F", "direction": "long", "total_score": 7.0}]
+
+    out = _commodities_payload(deep_cc, ranked_cc)
+
+    assert [a["ticker"] for a in out] == ["GC=F", "BTC-USD"]
+
+
+def test_commodities_payload_marks_tradeability_per_asset():
+    deep_cc = [
+        {"ticker": "GC=F", "direction": "long"},
+        {"ticker": "BTC-USD", "direction": "none"},
+    ]
+    ranked_cc = [{"ticker": "GC=F", "direction": "long", "total_score": 7.0}]
+
+    by_ticker = {a["ticker"]: a for a in _commodities_payload(deep_cc, ranked_cc)}
+
+    assert by_ticker["GC=F"]["tradeable"] is True
+    assert by_ticker["BTC-USD"]["tradeable"] is False
+
+
+def test_commodities_payload_prefers_the_ranked_row_for_tradeable_assets():
+    """Die gerankte Zeile traegt die Anreicherung (rank_score etc.) -- fuer
+    handelbare Assets muss sie gewinnen, nicht die rohe Analyse."""
+    deep_cc = [{"ticker": "GC=F", "direction": "long", "total_score": 1.0}]
+    ranked_cc = [{"ticker": "GC=F", "direction": "long", "total_score": 7.0}]
+
+    out = _commodities_payload(deep_cc, ranked_cc)
+
+    assert out[0]["total_score"] == 7.0
+
+
+def test_commodities_from_morning_reads_summaries_and_current_prices(in_memory_db):
+    """16:10: Phase 3b laeuft dort nicht. Die Morgen-Einschaetzung kommt aus
+    news_summaries, der Kurs aus dem frischen 16:10-Snapshot."""
+    from src import db as _db
+    _db.init_schema(in_memory_db)
+    _db.save_news_summaries(in_memory_db, [
+        {"ticker": "GC=F", "date": "2026-05-19", "run_type": "pre_market",
+         "summary": "Gold zieht an.", "sentiment": "bullish",
+         "source": "commodities_crypto", "market_impact": "medium"},
+    ])
+    snapshots = {"GC=F": {"ticker": "GC=F", "price": 2391.0}}
+
+    out = _commodities_from_morning(in_memory_db, "2026-05-19", snapshots)
+
+    assert len(out) == 1
+    assert out[0]["ticker"] == "GC=F"
+    assert out[0]["summary"] == "Gold zieht an."
+    assert out[0]["current_price"] == 2391.0
+    assert out[0]["tradeable"] is False   # 16:10 gibt keine neue Empfehlung ab
+
+
+def test_commodities_from_morning_ignores_stock_news_rows(in_memory_db):
+    """news_summaries traegt auch broad_scan- und deep_analysis-Zeilen --
+    nur die Phase-3b-Quelle gehoert in diesen Abschnitt."""
+    from src import db as _db
+    _db.init_schema(in_memory_db)
+    _db.save_news_summaries(in_memory_db, [
+        {"ticker": "AAPL", "date": "2026-05-19", "run_type": "pre_market",
+         "summary": "Aktien-News", "sentiment": None,
+         "source": "broad_scan", "market_impact": "low"},
+    ])
+    out = _commodities_from_morning(in_memory_db, "2026-05-19", {})
+    assert out == []

@@ -239,15 +239,31 @@ def _section_commodities_crypto(items: list[dict]) -> str:
     rows = []
     for a in items:
         extra = a.get("extra") or {}
+        # Ein Asset ohne handelbares Signal (Enthaltung oder an den Guardrails
+        # gescheitert) erscheint TROTZDEM -- Spec 6 garantiert, dass alle sieben
+        # immer analysiert werden, und die alte SPECIFICATION.md (Sektion 3)
+        # nennt sie namentlich. Vorher fielen sie ganz raus und der Abschnitt
+        # stand auf "Keine Daten.". Unterdrueckt werden nur TP/SL: die sind eine
+        # Handelsempfehlung, und genau die hat die Analyse hier nicht gegeben.
+        tradeable = a.get("tradeable", True)
+        if tradeable:
+            direction = _h(a.get("direction"))
+            tp, sl = _h(a.get("tp_price")), _h(a.get("sl_price"))
+            score = _h(a.get("total_score"))
+            prob = f'{_h(a.get("probability_pct"))}%'
+        else:
+            direction = f'<i>{_h(a.get("direction") or "none")}</i>'
+            tp = sl = score = prob = "&ndash;"
         rows.append(
             f'<tr><td>{_h(a["ticker"])}</td>'
-            f'<td>{_h(a.get("direction"))}</td>'
-            f'<td>{_h(a.get("total_score"))}</td>'
-            f'<td>{_h(a.get("probability_pct"))}%</td>'
+            f'<td>{direction}</td>'
+            f'<td>{score}</td>'
+            f'<td>{prob}</td>'
             f'<td>{_h(a.get("current_price"))}</td>'
-            f'<td>{_h(a.get("tp_price"))}</td>'
-            f'<td>{_h(a.get("sl_price"))}</td>'
-            f'<td>{_h(extra.get("fear_greed_value"))}</td></tr>'
+            f'<td>{tp}</td>'
+            f'<td>{sl}</td>'
+            f'<td>{_h(extra.get("fear_greed_value"))}</td>'
+            f'<td>{_h(a.get("summary"))}</td></tr>'
         )
     gsr = next(
         (a.get("extra", {}).get("gold_silver_ratio")
@@ -269,7 +285,8 @@ def _section_commodities_crypto(items: list[dict]) -> str:
         '<h2>Commodities + Crypto</h2>'
         '<table border="1" cellpadding="4" cellspacing="0">'
         '<tr><th>Ticker</th><th>Dir</th><th>Score</th><th>P%</th>'
-        '<th>Kurs</th><th>TP</th><th>SL</th><th>F&amp;G</th></tr>'
+        '<th>Kurs</th><th>TP</th><th>SL</th><th>F&amp;G</th>'
+        '<th>Einschätzung</th></tr>'
         + "".join(rows) + '</table>' + footer
     )
 
