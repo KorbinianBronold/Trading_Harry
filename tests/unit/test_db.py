@@ -1286,18 +1286,18 @@ def test_save_news_summaries_writes_multiple_rows(in_memory_db):
     init_schema(in_memory_db)
     save_news_summaries(in_memory_db, [
         {"ticker": "AAPL", "date": "2026-08-19", "run_type": "pre_market",
-         "summary": "Starke iPhone-Zahlen.", "sentiment": "bullish",
+         "summary": "Starke iPhone-Zahlen.", "derived_direction": "bullish",
          "source": "deep_analysis", "market_impact": "medium"},
         {"ticker": "MSFT", "date": "2026-08-19", "run_type": "pre_market",
-         "summary": "Analysten-Upgrade.", "sentiment": None,
+         "summary": "Analysten-Upgrade.", "derived_direction": None,
          "source": "broad_scan", "market_impact": "notable"},
     ])
     rows = in_memory_db.execute(
-        "SELECT ticker, summary, source, sentiment FROM news_summaries "
+        "SELECT ticker, summary, source, derived_direction FROM news_summaries "
         "ORDER BY ticker").fetchall()
     assert [r["ticker"] for r in rows] == ["AAPL", "MSFT"]
     assert rows[0]["source"] == "deep_analysis"
-    assert rows[1]["sentiment"] is None
+    assert rows[1]["derived_direction"] is None
 
 
 def test_save_news_summaries_tolerates_an_empty_list(in_memory_db):
@@ -1313,7 +1313,7 @@ def test_save_news_summaries_missing_keys_become_null(in_memory_db):
          "summary": ""},
     ])
     row = in_memory_db.execute("SELECT * FROM news_summaries").fetchone()
-    assert row["sentiment"] is None
+    assert row["derived_direction"] is None
     assert row["source"] is None
     assert row["market_impact"] is None
 
@@ -2362,13 +2362,13 @@ def test_load_news_summaries_filters_by_date_and_source(in_memory_db):
     init_schema(in_memory_db)
     save_news_summaries(in_memory_db, [
         {"ticker": "GC=F", "date": "2026-05-19", "run_type": "pre_market",
-         "summary": "Gold", "sentiment": "bullish",
+         "summary": "Gold", "derived_direction": "bullish",
          "source": "commodities_crypto", "market_impact": "medium"},
         {"ticker": "AAPL", "date": "2026-05-19", "run_type": "pre_market",
-         "summary": "Aktie", "sentiment": None,
+         "summary": "Aktie", "derived_direction": None,
          "source": "broad_scan", "market_impact": "low"},
         {"ticker": "SI=F", "date": "2026-05-18", "run_type": "pre_market",
-         "summary": "Vortag", "sentiment": "bearish",
+         "summary": "Vortag", "derived_direction": "bearish",
          "source": "commodities_crypto", "market_impact": "low"},
     ])
     rows = load_news_summaries(
@@ -2382,10 +2382,10 @@ def test_load_news_summaries_dedupes_per_ticker_keeping_the_latest(in_memory_db)
     init_schema(in_memory_db)
     save_news_summaries(in_memory_db, [
         {"ticker": "GC=F", "date": "2026-05-19", "run_type": "pre_market",
-         "summary": "alt", "sentiment": "bullish",
+         "summary": "alt", "derived_direction": "bullish",
          "source": "commodities_crypto", "market_impact": "medium"},
         {"ticker": "GC=F", "date": "2026-05-19", "run_type": "trade_proposals",
-         "summary": "neu", "sentiment": "bearish",
+         "summary": "neu", "derived_direction": "bearish",
          "source": "commodities_crypto", "market_impact": "high"},
     ])
     rows = load_news_summaries(
@@ -2544,3 +2544,61 @@ def test_init_schema_migrates_a_predictions_table_without_the_new_columns(in_mem
     assert set(_FROZEN_FIELDS) <= cols
     assert in_memory_db.execute(
         "SELECT COUNT(*) FROM predictions").fetchone()[0] == 1, "Daten verloren"
+
+
+# ---------- sentiment -> derived_direction (Spec F1/F2) ---------------------
+# Die Spalte hiess "derived_direction", trug aber keine Nachrichtenstimmung: der Wert
+# wird aus der vom Modell GEWAEHLTEN Richtung rueckabgeleitet. Wer ihn in 3D als
+# unabhaengiges Nachrichtensignal auswertet, korreliert das Modell mit seiner
+# eigenen Ausgabe -- eine Tautologie, die nach starkem Signal aussieht.
+
+def test_news_summaries_uses_derived_direction_not_sentiment(in_memory_db):
+    init_schema(in_memory_db)
+    cols = {r["name"] for r in in_memory_db.execute(
+        "PRAGMA table_info(news_summaries)")}
+
+    assert "derived_direction" in cols
+    assert "sentiment" not in cols, "der irrefuehrende Name lebt noch"
+
+
+def test_save_and_load_roundtrip_derived_direction(in_memory_db):
+    init_schema(in_memory_db)
+    save_news_summaries(in_memory_db, [
+        {"ticker": "GC=F", "date": "2026-05-19", "run_type": "pre_market",
+         "summary": "Gold", "derived_direction": "bullish",
+         "source": "commodities_crypto", "market_impact": "medium"},
+    ])
+
+    rows = load_news_summaries(
+        in_memory_db, date="2026-05-19", source="commodities_crypto")
+
+    assert rows[0]["derived_direction"] == "bullish"
+
+
+def test_migration_renames_sentiment_and_keeps_the_values(in_memory_db):
+    """Spec F2: umbenennen, nicht neu anlegen -- die Werte sind korrekt, nur
+    der Name war falsch."""
+    in_memory_db.execute(
+        "CREATE TABLE news_summaries (ticker TEXT, date TEXT NOT NULL, "
+        "run_type TEXT, summary TEXT NOT NULL, sentiment TEXT, source TEXT, "
+        "market_impact TEXT, created_at TIMESTAMP)")
+    in_memory_db.execute(
+        "INSERT INTO news_summaries (ticker,date,summary,sentiment,source) "
+        "VALUES ('AAPL','2026-05-19','s','bullish','deep_analysis')")
+    in_memory_db.commit()
+
+    init_schema(in_memory_db)
+
+    row = in_memory_db.execute(
+        "SELECT * FROM news_summaries WHERE ticker='AAPL'").fetchone()
+    assert row["derived_direction"] == "bullish", "Wert bei der Umbenennung verloren"
+
+
+def test_migration_is_idempotent(in_memory_db):
+    """Zweiter init_schema()-Aufruf darf nicht erneut umbenennen wollen."""
+    init_schema(in_memory_db)
+    init_schema(in_memory_db)
+
+    cols = {r["name"] for r in in_memory_db.execute(
+        "PRAGMA table_info(news_summaries)")}
+    assert "derived_direction" in cols

@@ -185,16 +185,16 @@ def test_run_pipeline_writes_news_summaries_from_broad_scan_and_deep_analysis(
     conn = sqlite3.connect(str(tmp_db_path))
     conn.row_factory = sqlite3.Row
     rows = conn.execute(
-        "SELECT ticker, source, sentiment, market_impact FROM news_summaries "
+        "SELECT ticker, source, derived_direction, market_impact FROM news_summaries "
         "WHERE ticker='AAPL' ORDER BY source").fetchall()
     conn.close()
     by_source = {r["source"]: r for r in rows}
     assert set(by_source) == {"broad_scan", "deep_analysis"}
     # broad_scan: news_strength=2 aus dem Mock -> "notable", kein Sentiment
     assert by_source["broad_scan"]["market_impact"] == "notable"
-    assert by_source["broad_scan"]["sentiment"] is None
+    assert by_source["broad_scan"]["derived_direction"] is None
     # deep_analysis: direction="long" -> "bullish", confidence="high" durchgereicht
-    assert by_source["deep_analysis"]["sentiment"] == "bullish"
+    assert by_source["deep_analysis"]["derived_direction"] == "bullish"
     assert by_source["deep_analysis"]["market_impact"] == "high"
 
 
@@ -2036,7 +2036,7 @@ def test_commodities_from_morning_reads_summaries_and_current_prices(in_memory_d
     _db.init_schema(in_memory_db)
     _db.save_news_summaries(in_memory_db, [
         {"ticker": "GC=F", "date": "2026-05-19", "run_type": "pre_market",
-         "summary": "Gold zieht an.", "sentiment": "bullish",
+         "summary": "Gold zieht an.", "derived_direction": "bullish",
          "source": "commodities_crypto", "market_impact": "medium"},
     ])
     snapshots = {"GC=F": {"ticker": "GC=F", "price": 2391.0}}
@@ -2057,7 +2057,7 @@ def test_commodities_from_morning_ignores_stock_news_rows(in_memory_db):
     _db.init_schema(in_memory_db)
     _db.save_news_summaries(in_memory_db, [
         {"ticker": "AAPL", "date": "2026-05-19", "run_type": "pre_market",
-         "summary": "Aktien-News", "sentiment": None,
+         "summary": "Aktien-News", "derived_direction": None,
          "source": "broad_scan", "market_impact": "low"},
     ])
     out = _commodities_from_morning(in_memory_db, "2026-05-19", {})

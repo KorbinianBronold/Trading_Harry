@@ -50,7 +50,13 @@ CREATE TABLE IF NOT EXISTS technical_indicators (
 
 CREATE TABLE IF NOT EXISTS news_summaries (
     ticker TEXT, date TEXT NOT NULL, run_type TEXT,
-    summary TEXT NOT NULL, sentiment TEXT, source TEXT, market_impact TEXT,
+    summary TEXT NOT NULL,
+    -- ⚠️ KEINE Nachrichtenstimmung: aus der vom Modell GEWAEHLTEN Richtung
+    -- rueckabgeleitet (long->bullish). Wer das als unabhaengiges Signal
+    -- auswertet, korreliert das Modell mit seiner eigenen Ausgabe. Hiess bis
+    -- 2026-08-20 'sentiment' und lud damit zu genau dem Fehler ein.
+    derived_direction TEXT,
+    source TEXT, market_impact TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -409,6 +415,16 @@ def _apply_migrations(conn: sqlite3.Connection) -> None:
         )
     # Spec E3/E7: additive Migration -- Bestands-DBs bekommen die Spalte und
     # behalten ihre Daten.
+    # Spec F1/F2: 'sentiment' war ein irrefuehrender Name fuer einen aus der
+    # Richtung abgeleiteten Wert. Umbenennen statt loeschen -- der Wert ist
+    # korrekt, nur der Name lud zur Fehlinterpretation ein. Idempotent: nur
+    # wenn die alte Spalte existiert UND die neue noch nicht.
+    _ns_cols = {r["name"] for r in conn.execute(
+        "PRAGMA table_info(news_summaries)").fetchall()}
+    if "sentiment" in _ns_cols and "derived_direction" not in _ns_cols:
+        conn.execute(
+            "ALTER TABLE news_summaries RENAME COLUMN sentiment TO derived_direction")
+
     # Spec E2/E3/E4/E7: additive Migration der eingefrorenen Merkmale.
     _pred_cols = {r["name"] for r in conn.execute(
         "PRAGMA table_info(predictions)").fetchall()}
@@ -1076,8 +1092,8 @@ def save_news_summaries(conn: sqlite3.Connection, rows: list[dict]) -> None:
     Ticker/Tag nebeneinander stehen, unterschieden ueber 'source'."""
     if not rows:
         return
-    cols = ["ticker", "date", "run_type", "summary", "sentiment", "source",
-            "market_impact"]
+    cols = ["ticker", "date", "run_type", "summary", "derived_direction",
+            "source", "market_impact"]
     placeholders = ", ".join(["?"] * len(cols))
     conn.executemany(
         f"INSERT INTO news_summaries ({', '.join(cols)}) VALUES ({placeholders})",
@@ -1102,7 +1118,7 @@ def load_news_summaries(
     juengste Zeile, deshalb MAX(rowid) je Ticker."""
     rows = conn.execute(
         """
-        SELECT ticker, summary, sentiment, market_impact, run_type
+        SELECT ticker, summary, derived_direction, market_impact, run_type
           FROM news_summaries
          WHERE rowid IN (
                SELECT MAX(rowid) FROM news_summaries

@@ -226,23 +226,30 @@ def _premarket_flag(date: str, now_utc: str | None = None) -> int:
 # direkt -- die Felder werden aus dem naechstliegenden vorhandenen Wert
 # abgeleitet, statt sie unbelegt zu lassen.
 _NEWS_IMPACT_FROM_STRENGTH = {0: "none", 1: "minor", 2: "notable", 3: "major"}
-_SENTIMENT_FROM_DIRECTION = {"long": "bullish", "short": "bearish", "none": "neutral"}
+# ⚠️ Das ist KEINE Stimmungsanalyse, sondern eine Kodierung der vom Modell
+# GEWAEHLTEN Richtung. Die Zielspalte heisst seit 2026-08-20 derived_direction
+# statt sentiment -- wer den alten Namen als unabhaengiges Nachrichtensignal
+# auswertete, korrelierte das Modell mit seiner eigenen Ausgabe (Spec F1).
+_DERIVED_DIRECTION_FROM_DIRECTION = {
+    "long": "bullish", "short": "bearish", "none": "neutral"}
 
 
-_DIRECTION_FROM_SENTIMENT = {
-    v: k for k, v in _SENTIMENT_FROM_DIRECTION.items() if v is not None
+_DIRECTION_FROM_DERIVED = {
+    v: k for k, v in _DERIVED_DIRECTION_FROM_DIRECTION.items() if v is not None
 }
 
 
 def _news_summaries_from_broad_scan(
     broad_results: list[dict], date: str, run_type: str,
 ) -> list[dict]:
-    """Phase-2-Nachrichten-Scan -> news_summaries-Zeilen. sentiment bleibt
-    None: news_strength ist eine Betrags-, keine Richtungsskala."""
+    """Phase-2-Nachrichten-Scan -> news_summaries-Zeilen. derived_direction
+    bleibt None: news_strength ist eine Betrags-, keine Richtungsskala."""
     return [
         {
             "ticker": r.get("ticker"), "date": date, "run_type": run_type,
-            "summary": r.get("news_note") or "", "sentiment": None,
+            # derived_direction bleibt None: news_strength ist eine Betrags-,
+            # keine Richtungsskala (Spec F1).
+            "summary": r.get("news_note") or "", "derived_direction": None,
             "source": "broad_scan",
             "market_impact": _NEWS_IMPACT_FROM_STRENGTH.get(r.get("news_strength")),
         }
@@ -296,7 +303,7 @@ def _commodities_from_morning(
         snap = snapshots.get(r["ticker"]) or {}
         out.append({
             "ticker": r["ticker"],
-            "direction": _DIRECTION_FROM_SENTIMENT.get(r.get("sentiment")),
+            "direction": _DIRECTION_FROM_DERIVED.get(r.get("derived_direction")),
             "summary": r.get("summary"),
             "confidence": r.get("market_impact"),
             "current_price": snap.get("price"),
@@ -309,13 +316,16 @@ def _commodities_from_morning(
 def _news_summaries_from_analyses(
     analyses: list[dict], date: str, run_type: str, source: str,
 ) -> list[dict]:
-    """Phase-3/3b-Tiefenanalysen -> news_summaries-Zeilen. sentiment aus
-    direction, market_impact aus confidence (low/medium/high passt direkt)."""
+    """Phase-3/3b-Tiefenanalysen -> news_summaries-Zeilen. derived_direction
+    aus direction, market_impact aus confidence (low/medium/high passt direkt).
+
+    ⚠️ Beides sind ABGELEITETE Werte, keine vom Modell gelieferten Felder."""
     return [
         {
             "ticker": a.get("ticker"), "date": date, "run_type": run_type,
             "summary": a.get("summary") or "",
-            "sentiment": _SENTIMENT_FROM_DIRECTION.get(a.get("direction")),
+            "derived_direction": _DERIVED_DIRECTION_FROM_DIRECTION.get(
+                a.get("direction")),
             "source": source, "market_impact": a.get("confidence"),
         }
         for a in analyses
