@@ -3134,6 +3134,86 @@ nächste Schritt. Ebenso offen: Universum auf ~100 Ticker (Kostenrechnung s. u.)
 `analyst_upside` befüllen, TP/SL-Kalibrierung ab ~30 Outcomes (heute 7 von 7
 `sl_hit` — bei n=7 nicht entscheidbar).
 
+### C.21 — Zirkularität behoben, Universum auf 142 Ticker (2026-08-20)
+
+Fortsetzung von C.20. Zwei Schritte, deren **Reihenfolge Teil des Designs** ist:
+erst die verfälschende Aufzeichnung reparieren, dann den Durchsatz vervielfachen —
+andernfalls skaliert man den Fehler mit.
+Spec: `2026-08-20-zirkularitaet-und-universum-design.md` (Entscheidungen F1–F7).
+
+**Teil A — `news_summaries.sentiment` → `derived_direction` (F1/F2).**
+Die Spalte trug keine Nachrichtenstimmung, sondern die aus der vom Modell
+**gewählten Richtung** rückabgeleitete Kodierung (`long`→`bullish`). Wer sie in
+Sprint 3D als unabhängiges Nachrichtensignal ausgewertet hätte, korrelierte das
+Modell mit seiner eigenen Ausgabe — eine Tautologie, die nach starkem Signal
+aussieht. **Umbenannt, nicht gelöscht:** der Wert ist korrekt, nur der Name lud
+zur Fehlinterpretation ein. Migration per `RENAME COLUMN`, idempotent, gegen eine
+Kopie der echten DB geprüft (Werte erhalten, zweiter Lauf No-Op).
+
+**Teil B — Universum 20 → 142 (F4–F7).**
+`SP500_FULL_TICKERS` war ein **Stub auf die 20 MVP-Ticker** — `USE_FULL_SP500`
+hätte also gar nichts vergrössert. Jetzt 20 MVP + 122 verifizierte Large Caps.
+
+⚠️ **Die Epic-Verifikation war ein Gate, keine Formalie (F5):** geprüft per
+**direktem** Abruf `/markets?epics=`, ausdrücklich **nicht** über
+`verify_epics.py` — das nutzt die Volltextsuche, und die liefert laut
+`SUB_SECTOR_ETFS`-Kommentar zu jedem Kürzel irgendetwas. Von 126 Kandidaten
+lösten **122 auf, vier nicht** (BK, EA, EMR, MMC) und fehlen bewusst: ein Ticker
+ohne Kurse würde als `insufficient bars` übersprungen, zählte Richtung
+`TICKER_MAX_SKIPS` und deaktivierte sich selbst.
+
+142 statt der in F4 geplanten ~100: verifizierte Ticker für eine runde Zahl
+wegzuwerfen wäre schlechter als sie zu nutzen, und die Kostenrechnung trägt es
+(~4,92 € je Lauf gegen den neuen Deckel von 6,00 €).
+
+**Kostendeckel (F7):** `MAX_COST_PER_RUN_EUR` 4,00 → **6,00**,
+`COST_WARN_THRESHOLD_EUR` 3,00 → 4,50. Angehoben, weil die **Grundlast** steigt —
+der Deckel bleibt die letzte Sicherung gegen einen Kostenunfall, der Puffer von
+~1,08 € deckt die Streuung aus adaptivem Denken (C.18).
+
+**Backfill (F6):** 121.643 Bars über 142 Ticker gegen eine Wegwerf-Kopie geladen,
+`--report-coverage` meldet „Alle Ticker haben genug Historie".
+
+⚠️ **`USE_FULL_SP500` bleibt `false`.** Die Aktivierung ist Korbinians
+Entscheidung und braucht **vorher den Backfill gegen die produktive DB** — der
+hier gefahrene lief bewusst nur gegen eine Kopie. Reihenfolge: verifizieren →
+laden → `--report-coverage` → erst dann der Env-Schalter.
+
+**Messlauf mit 142 Tickern** (Wegwerf-Kopie, `USE_FULL_SP500=true`, echte APIs):
+
+| | gemessen | meine Hochrechnung |
+|---|---|---|
+| Lauf gesamt | **3,4712 €** | 4,92 € |
+| davon `broad_scan` (142 Ticker) | **0,576 €** | 1,97 € |
+| Laufzeit | **34 min** | ungemessen |
+| Kappungen | **0** | — |
+| Ergebnis | 142 ok / 0 skipped, 10 long + 2 short + 7 cc | — |
+
+⚠️ **Meine lineare Kostenhochrechnung war um Faktor 3,4 zu pessimistisch** — für
+`broad_scan` 1,97 € geschätzt, 0,576 € gemessen. Grund: der Scan **batcht**, der
+gemeinsame Kontext (Trend, Marktlage) wird über den Batch amortisiert statt je
+Ticker bezahlt. Wer künftig auf 500 hochrechnet, darf **nicht** linear
+fortschreiben: die frühere 500er-Schätzung von ~9,88 € ist damit ebenfalls zu
+hoch, realistisch dürften es grob 4–5 € sein. Vor einem 3F-Sprung trotzdem messen,
+nicht rechnen.
+
+⚠️ **Neues Regime: der Cutoff greift jetzt am Deckel.** 50 von 142 Kandidaten —
+`MAX_DEEP_ANALYSIS = 50` bindet erstmals, bei 20 Tickern entschied noch die
+Qualifikationsregel (9–13 von 20). Genau die Unterscheidung, die im
+`cleanup_old_data`-Umfeld für 3F notiert war. **Damit ist Phase 3 ab jetzt
+kostenmässig gedeckelt** und wächst bei weiterer Vergrösserung nicht mehr mit —
+aber die Auswahl wird selektiver, was für 3D den Selektions-Bias verstärkt
+(`cutoff_log` hält ihn fest, s. C.20).
+
+⚠️ **Laufzeit 34 min** (vorher ~17 min bei 20 Tickern). Das Fenster zwischen
+`pre_market` (15:00) und `trade_proposals` (16:10) beträgt 70 min — es passt, aber
+die Reserve halbiert sich. Bei einer weiteren Vergrösserung ist die Laufzeit die
+bindende Grenze, nicht die Kosten.
+
+**Tests:** 925 grün, darunter eine neue `test_config.py` mit den Invarianten, die
+sonst niemand prüft (keine Duplikate, MVP-Ticker enthalten, die vier
+nicht-auflösenden ausgeschlossen, `WARN < MAX`).
+
 ## Sprint 3D — Learning Modul
 
 ⚠️ **Noch nicht ausgearbeitet — braucht eine eigene Planungssession, bevor die Implementierung

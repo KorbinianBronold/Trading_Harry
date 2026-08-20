@@ -1,6 +1,21 @@
 # Shares_Future – SP500 CFD Research Tool
 
-**Zuletzt aktualisiert:** 2026-08-20 — 🧊 **Trainingsdaten-Fundament: der
+**Zuletzt aktualisiert:** 2026-08-20 — 🔭 **Zirkularität behoben, Universum auf
+142 Ticker.** `news_summaries.sentiment` hiess so, trug aber die aus der
+**gewählten Richtung** rückabgeleitete Kodierung — als „Nachrichtensignal"
+ausgewertet hätte 3D das Modell mit seiner eigenen Ausgabe korreliert. Jetzt
+`derived_direction` (umbenannt, nicht gelöscht: der Wert stimmt, der Name log).
+`SP500_FULL_TICKERS` war ein **Stub auf die 20 MVP-Ticker** — `USE_FULL_SP500`
+vergrösserte gar nichts. Jetzt 142, jeder per **direktem** Epic-Abruf verifiziert
+(nicht über die Volltextsuche); vier lösten nicht auf und fehlen bewusst.
+Kostendeckel 4,00 → 6,00 €. Messlauf mit 142 Tickern: **3,4712 €, 34 min,
+0 Kappungen** — ⚠️ meine lineare Kostenschätzung war um Faktor 3,4 zu hoch, weil
+`broad_scan` batcht und den gemeinsamen Kontext amortisiert. Der Cutoff greift
+jetzt erstmals **am Deckel** (50 von 142). ⚠️ **`USE_FULL_SP500` bleibt aus** — Aktivierung
+braucht erst den Backfill gegen die produktive DB. **925 Tests grün.**
+Details: PROJECT_STATUS **C.21**.
+
+Davor, 2026-08-20 — 🧊 **Trainingsdaten-Fundament: der
 Wissensstand wird jetzt je Prediction eingefroren.** Audit gegen das Schema ergab
 drei Verlustarten: `news_summaries` wurde nach **30 Tagen gelöscht** (kürzeste Frist
 im Projekt, vergeben als die Tabelle noch ein Log war — man behielt das Label und
