@@ -13,7 +13,7 @@ from src.deep_analysis import (
 FIXTURE_DIR = Path(__file__).parent.parent / "fixtures"
 
 
-def _fake_result(text: str, model: str = "claude-sonnet-4-6",
+def _fake_result(text: str, model: str = "claude-sonnet-5",
                  web_search_calls: int = 3, output_tokens: int = 4000,
                  stop_reason: str = "end_turn") -> MagicMock:
     r = MagicMock()
@@ -51,7 +51,7 @@ def test_run_policy_monitor_uses_web_search():
         run_policy_monitor(date="2026-05-19", run_type="close",
                            cost_tracker=tracker)
     kwargs = mock_call.call_args.kwargs
-    assert kwargs["model"] == "claude-sonnet-4-6"
+    assert kwargs["model"] == "claude-sonnet-5"
     assert any(t.get("name") == "web_search" for t in kwargs["tools"])
 
 

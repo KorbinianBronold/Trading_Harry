@@ -75,7 +75,7 @@ def test_full_pipeline_writes_predictions_and_sends_email(tmp_path, monkeypatch)
     deep_resp = (FIXTURE_DIR / "mock_deep_analysis_response.json").read_text()
     cc_resp = (FIXTURE_DIR / "mock_commodities_crypto_response.json").read_text()
 
-    def _r(text, web_search_calls=2, model="claude-sonnet-4-6"):
+    def _r(text, web_search_calls=2, model="claude-sonnet-5"):
         r = MagicMock()
         r.text = text
         r.input_tokens = 1000

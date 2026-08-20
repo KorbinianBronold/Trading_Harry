@@ -20,9 +20,9 @@ FINNHUB_API_KEY = os.getenv("FINNHUB_API_KEY")
 PAID_API_KEY = os.getenv("PAID_API_KEY")
 PAID_API_TYPE = os.getenv("PAID_API_TYPE", "polygon")
 
-CLAUDE_MODEL_SONNET = "claude-sonnet-4-6"
+CLAUDE_MODEL_SONNET = "claude-sonnet-5"
 CLAUDE_MODEL_HAIKU = "claude-haiku-4-5"
-CLAUDE_MODEL_OPUS = "claude-opus-4-7"
+CLAUDE_MODEL_OPUS = "claude-opus-5"
 
 SIMULATION_ONLY = True
 

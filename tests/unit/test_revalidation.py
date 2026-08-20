@@ -6,7 +6,7 @@ from src.cost_tracker import CostTracker
 
 
 def _claude(text: str) -> MagicMock:
-    return MagicMock(text=text, model="claude-sonnet-4-6",
+    return MagicMock(text=text, model="claude-sonnet-5",
                      input_tokens=800, output_tokens=200,
                      cache_read_tokens=0, cache_creation_tokens=0,
                      web_search_calls=0)

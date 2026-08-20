@@ -20,7 +20,7 @@ PROMPT_DIR = Path(__file__).resolve().parent.parent / "prompts"
 DEEP_SYSTEM_PROMPT = (PROMPT_DIR / "deep_analysis_v2.txt").read_text()  # fuer analyze_batch()
 POLICY_SYSTEM_PROMPT = (PROMPT_DIR / "policy_monitor_v1.txt").read_text()
 
-MODEL = "claude-sonnet-4-6"
+MODEL = "claude-sonnet-5"
 # Spec 4.8: der alte feste Wert 4096 war fuer EINEN Ticker ausgelegt, das
 # Budget wird deshalb aus der Batchgroesse abgeleitet.
 #

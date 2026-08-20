@@ -24,7 +24,7 @@ def _fake_result(text: str, output_tokens: int = 4000,
     r.output_tokens = output_tokens
     r.cache_read_tokens = 0
     r.cache_creation_tokens = 0
-    r.model = "claude-sonnet-4-6"
+    r.model = "claude-sonnet-5"
     r.web_search_calls = web_search_calls
     r.stop_reason = stop_reason
     return r

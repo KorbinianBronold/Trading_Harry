@@ -18,7 +18,7 @@ def _fake_claude_result(text: str, web_search_calls: int = 4) -> MagicMock:
     r.output_tokens = 3000
     r.cache_read_tokens = 0
     r.cache_creation_tokens = 0
-    r.model = "claude-sonnet-4-6"
+    r.model = "claude-sonnet-5"
     r.web_search_calls = web_search_calls
     return r
 
@@ -127,6 +127,6 @@ def test_analyze_trends_uses_web_search_tool_in_request(in_memory_db):
         )
 
     kwargs = mock_call.call_args.kwargs
-    assert kwargs["model"] == "claude-sonnet-4-6"
+    assert kwargs["model"] == "claude-sonnet-5"
     assert kwargs["tools"] is not None
     assert any(t.get("name") == "web_search" for t in kwargs["tools"])

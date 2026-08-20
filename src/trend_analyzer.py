@@ -17,7 +17,7 @@ log = logging.getLogger("shares_future.trend_analyzer")
 SYSTEM_PROMPT = (Path(__file__).resolve().parent.parent
                  / "prompts" / "trend_analyzer_v1.txt").read_text()
 
-MODEL = "claude-sonnet-4-6"
+MODEL = "claude-sonnet-5"
 MAX_TOKENS = 4096
 
 

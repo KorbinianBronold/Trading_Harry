@@ -6,8 +6,14 @@ import config
 USD_PER_EUR = 1.10
 
 # Per million tokens, USD. Use Anthropic published rates (May 2026).
+# claude-opus-5/claude-sonnet-5 hinzugefuegt (2026-08-20-Migration weg von
+# claude-opus-4-7/claude-sonnet-4-6, s. config.py) -- die alten Eintraege
+# bleiben stehen statt geloescht zu werden, falls irgendwo noch ein alter
+# Model-String durchreicht (z.B. Altdaten-Reprocessing, Tests).
 MODEL_PRICING = {
+    "claude-opus-5":     {"input":  5.00, "output": 25.00, "cache_read": 0.50, "cache_write":  6.25},
     "claude-opus-4-7":   {"input": 15.00, "output": 75.00, "cache_read": 1.50, "cache_write": 18.75},
+    "claude-sonnet-5":   {"input":  3.00, "output": 15.00, "cache_read": 0.30, "cache_write":  3.75},
     "claude-sonnet-4-6": {"input":  3.00, "output": 15.00, "cache_read": 0.30, "cache_write":  3.75},
     "claude-haiku-4-5":  {"input":  1.00, "output":  5.00, "cache_read": 0.10, "cache_write":  1.25},
 }
