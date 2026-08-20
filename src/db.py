@@ -94,7 +94,19 @@ CREATE TABLE IF NOT EXISTS predictions (
     tech_adx_band TEXT, tech_strength INTEGER,
     analysis_strength INTEGER, rank_score INTEGER,
     news_strength INTEGER,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    -- Spec E2/E3/E4 (2026-08-20): was das System zum Zeitpunkt der
+    -- Entscheidung wusste. fundamentals_cache haelt nur EINE Zeile je Ticker
+    -- (INSERT OR REPLACE, 7-Tage-TTL) und hat keine Historie -- ohne diese
+    -- Spalten ist der PE-Wert einer Prediction vom Vormonat nicht mehr
+    -- rekonstruierbar, und fuer Sprint 3D existiert das Merkmal dann nicht.
+    pe_ratio REAL,
+    forward_pe REAL,
+    market_cap_b REAL,
+    debt_equity REAL,
+    analyst_consensus TEXT,
+    analyst_consensus_period TEXT,
+    relative_strength REAL
 );
 
 CREATE TABLE IF NOT EXISTS outcomes (
@@ -397,6 +409,18 @@ def _apply_migrations(conn: sqlite3.Connection) -> None:
         )
     # Spec E3/E7: additive Migration -- Bestands-DBs bekommen die Spalte und
     # behalten ihre Daten.
+    # Spec E2/E3/E4/E7: additive Migration der eingefrorenen Merkmale.
+    _pred_cols = {r["name"] for r in conn.execute(
+        "PRAGMA table_info(predictions)").fetchall()}
+    for _col, _type in (
+        ("pe_ratio", "REAL"), ("forward_pe", "REAL"),
+        ("market_cap_b", "REAL"), ("debt_equity", "REAL"),
+        ("analyst_consensus", "TEXT"), ("analyst_consensus_period", "TEXT"),
+        ("relative_strength", "REAL"),
+    ):
+        if _col not in _pred_cols:
+            conn.execute(f"ALTER TABLE predictions ADD COLUMN {_col} {_type}")
+
     if "analyst_consensus_period" not in fc_cols:
         conn.execute(
             "ALTER TABLE fundamentals_cache ADD COLUMN analyst_consensus_period TEXT"
@@ -721,6 +745,10 @@ def _insert_prediction(conn: sqlite3.Connection, pred: dict) -> int:
         "candidate_class", "tech_direction", "tech_agreement",
         "tech_adx_band", "tech_strength", "analysis_strength",
         "rank_score", "news_strength",
+        # Spec E2/E3/E4: der eingefrorene Wissensstand. Fehlen sie im Dict,
+        # liefert pred.get() None -- Bestandsaufrufer brechen nicht (E6).
+        "pe_ratio", "forward_pe", "market_cap_b", "debt_equity",
+        "analyst_consensus", "analyst_consensus_period", "relative_strength",
     ]
     placeholders = ", ".join(["?"] * len(cols))
     values = [pred.get(c) for c in cols]

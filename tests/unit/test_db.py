@@ -2483,3 +2483,64 @@ def test_fundamentals_cache_tolerates_a_missing_period(in_memory_db):
     row = get_cached_fundamentals(in_memory_db, "AAPL", today="2026-08-20")
 
     assert row["analyst_consensus_period"] is None
+
+
+# ---------- Wissensstand je Prediction einfrieren (Spec E2/E3/E4/E7) --------
+# fundamentals_cache haelt nur EINE Zeile je Ticker (INSERT OR REPLACE, 7-Tage-
+# TTL) und hat keine Historie: der PE-Wert einer Prediction vom Vormonat war
+# nicht mehr rekonstruierbar. Fuer Sprint 3D ist ein Merkmal, das zum
+# Trainingszeitpunkt fehlt, nicht vorhanden -- und zwar rueckwirkend unheilbar.
+
+_FROZEN_FIELDS = {
+    "pe_ratio": 25.0, "forward_pe": 23.0, "market_cap_b": 3000.0,
+    "debt_equity": 1.4, "analyst_consensus": "buy",
+    "analyst_consensus_period": "2026-08-01", "relative_strength": 1.25,
+}
+
+
+def test_prediction_freezes_what_the_system_knew(in_memory_db):
+    init_schema(in_memory_db)
+    pid = db.save_prediction(in_memory_db, {
+        "date": "2026-05-19", "run_type": "pre_market", "asset_class": "stock",
+        "ticker": "AAPL", "direction": "long", "entry_price": 178.0,
+        "status": "open", **_FROZEN_FIELDS,
+    })
+
+    row = in_memory_db.execute(
+        "SELECT * FROM predictions WHERE id=?", (pid,)).fetchone()
+
+    for key, expected in _FROZEN_FIELDS.items():
+        assert row[key] == expected, f"{key} wurde nicht eingefroren"
+
+
+def test_prediction_tolerates_missing_frozen_fields(in_memory_db):
+    """Spec E6: Bestandsaufrufer duerfen die neuen Keys weglassen -- kein
+    Backfill, die Felder bleiben dann NULL."""
+    init_schema(in_memory_db)
+    pid = _insert_test_prediction(in_memory_db)
+
+    row = in_memory_db.execute(
+        "SELECT * FROM predictions WHERE id=?", (pid,)).fetchone()
+
+    assert row["pe_ratio"] is None
+    assert row["relative_strength"] is None
+    assert row["analyst_consensus_period"] is None
+
+
+def test_init_schema_migrates_a_predictions_table_without_the_new_columns(in_memory_db):
+    """Spec E7: additiv -- Bestands-DBs bekommen die Spalten und behalten Daten."""
+    in_memory_db.execute(
+        "CREATE TABLE predictions (id INTEGER PRIMARY KEY, date TEXT, "
+        "ticker TEXT, direction TEXT, status TEXT)")
+    in_memory_db.execute(
+        "INSERT INTO predictions (date,ticker,direction,status) "
+        "VALUES ('2026-01-01','AAPL','long','open')")
+    in_memory_db.commit()
+
+    init_schema(in_memory_db)
+
+    cols = {r["name"] for r in in_memory_db.execute(
+        "PRAGMA table_info(predictions)")}
+    assert set(_FROZEN_FIELDS) <= cols
+    assert in_memory_db.execute(
+        "SELECT COUNT(*) FROM predictions").fetchone()[0] == 1, "Daten verloren"
