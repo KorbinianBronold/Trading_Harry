@@ -1924,6 +1924,11 @@ def test_signal_context_bundles_tech_signal_and_c1_indicators():
         "tech_adx_band": "normal", "tech_strength": 3,
         "atr_pct": 2.5, "rsi_14": 55.0, "volume_ratio": 0.9,
         "earnings_in_days": 3, "news_strength": 2,
+        # Spec E2/E3: reisen seit 2026-08-20 mit, damit sie in der Prediction
+        # eingefroren werden koennen. Hier None, weil das td sie nicht traegt.
+        "pe_ratio": None, "forward_pe": None, "market_cap_b": None,
+        "debt_equity": None, "analyst_consensus": None,
+        "analyst_consensus_period": None,
     }
 
 
@@ -2057,3 +2062,22 @@ def test_commodities_from_morning_ignores_stock_news_rows(in_memory_db):
     ])
     out = _commodities_from_morning(in_memory_db, "2026-05-19", {})
     assert out == []
+
+
+def test_signal_context_carries_the_fundamentals_for_freezing():
+    """Spec E2: die Rohwerte muessen bis ins Prediction-Dict durchreichen --
+    fundamentals_cache ueberschreibt sich, in predictions stehen sie dauerhaft."""
+    from main import _signal_context
+    tds = [{"ticker": "AAPL", "pe_ratio": 25.0, "forward_pe": 23.0,
+            "market_cap_b": 3000.0, "debt_equity": 1.4,
+            "analyst_consensus": "buy",
+            "analyst_consensus_period": "2026-08-01"}]
+
+    ctx = _signal_context(tds, {})["AAPL"]
+
+    assert ctx["pe_ratio"] == 25.0
+    assert ctx["forward_pe"] == 23.0
+    assert ctx["market_cap_b"] == 3000.0
+    assert ctx["debt_equity"] == 1.4
+    assert ctx["analyst_consensus"] == "buy"
+    assert ctx["analyst_consensus_period"] == "2026-08-01"

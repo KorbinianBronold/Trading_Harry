@@ -151,6 +151,16 @@ def _signal_context(
             "volume_ratio":   td.get("volume_ratio"),
             "earnings_in_days": td.get("earnings_in_days"),
             "news_strength":  news_strength_by_ticker.get(t),
+            # Spec E2/E3: die Fundamental-Rohwerte reisen mit, damit
+            # _to_prediction_row() sie DAUERHAFT in die Zeile schreiben kann.
+            # fundamentals_cache haelt nur eine Zeile je Ticker und
+            # ueberschreibt sie -- ohne das hier ist der Wert von damals weg.
+            "pe_ratio":       td.get("pe_ratio"),
+            "forward_pe":     td.get("forward_pe"),
+            "market_cap_b":   td.get("market_cap_b"),
+            "debt_equity":    td.get("debt_equity"),
+            "analyst_consensus": td.get("analyst_consensus"),
+            "analyst_consensus_period": td.get("analyst_consensus_period"),
         }
     return out
 

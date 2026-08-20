@@ -784,3 +784,49 @@ def test_ranking_does_not_mutate_the_input_analyses(in_memory_db):
     )
 
     assert (set(a.keys()), set(cc.keys())) == keys_before
+
+
+# ---- Wissensstand einfrieren (Spec E2/E4) ---------------------------------
+
+def test_to_prediction_row_freezes_fundamentals_and_relative_strength(in_memory_db):
+    """Spec E2/E4: die Rohwerte und die relative Staerke muessen in JEDER
+    Prediction stehen -- relative_strength entstand bisher nur um 16:10 und
+    wurde weggeworfen, waere als Merkmal also mit dem run_type korreliert."""
+    from src.ranking import _to_prediction_row
+    from src import db as _db
+    _db.init_schema(in_memory_db)
+
+    analysis = {
+        "ticker": "AAPL", "direction": "long", "current_price": 178.0,
+        "tp_price": 184.0, "sl_price": 176.0, "rr_ratio": 3.0, "scores": {},
+    }
+    signal_ctx = {
+        "pe_ratio": 25.0, "forward_pe": 23.0, "market_cap_b": 3000.0,
+        "debt_equity": 1.4, "analyst_consensus": "buy",
+        "analyst_consensus_period": "2026-08-01",
+    }
+
+    row = _to_prediction_row(
+        analysis, "2026-05-19", "pre_market", {}, in_memory_db, signal_ctx)
+
+    assert row["pe_ratio"] == 25.0
+    assert row["forward_pe"] == 23.0
+    assert row["market_cap_b"] == 3000.0
+    assert row["debt_equity"] == 1.4
+    assert row["analyst_consensus"] == "buy"
+    assert row["analyst_consensus_period"] == "2026-08-01"
+    assert "relative_strength" in row, "relative Staerke fehlt in der Zeile"
+
+
+def test_to_prediction_row_relative_strength_is_none_without_sector(in_memory_db):
+    """Ohne Sub-Sektor-Zuordnung gibt es keinen ETF zum Vergleichen."""
+    from src.ranking import _to_prediction_row
+    from src import db as _db
+    _db.init_schema(in_memory_db)
+
+    row = _to_prediction_row(
+        {"ticker": "NOPE", "direction": "long", "current_price": 1.0,
+         "tp_price": 2.0, "sl_price": 0.5, "rr_ratio": 2.0, "scores": {}},
+        "2026-05-19", "pre_market", {}, in_memory_db, {})
+
+    assert row["relative_strength"] is None

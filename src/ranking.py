@@ -198,6 +198,22 @@ def _to_prediction_row(
         "analysis_strength": analysis.get("_analysis_strength"),
         "rank_score": analysis.get("_rank_score"),
         "news_strength": signal_ctx.get("news_strength"),
+        # Spec E2 (2026-08-20): der Wissensstand gehoert zur ENTSCHEIDUNG, nicht
+        # zum Ticker. fundamentals_cache haelt nur eine Zeile je Ticker und
+        # ueberschreibt sie alle 7 Tage -- ohne diese sechs Felder ist der
+        # Fundamentalstand einer alten Prediction unrekonstruierbar und damit
+        # fuer Sprint 3D nicht existent.
+        "pe_ratio":       signal_ctx.get("pe_ratio"),
+        "forward_pe":     signal_ctx.get("forward_pe"),
+        "market_cap_b":   signal_ctx.get("market_cap_b"),
+        "debt_equity":    signal_ctx.get("debt_equity"),
+        "analyst_consensus": signal_ctx.get("analyst_consensus"),
+        "analyst_consensus_period": signal_ctx.get("analyst_consensus_period"),
+        # Spec E4: in BEIDEN Laeufen berechnet, nicht nur um 16:10 -- ein
+        # Merkmal, das systematisch mit dem run_type korreliert, ist fuer 3D
+        # schlimmer als keins. Reine DB-Rechnung, kostet nichts.
+        "relative_strength": signal_checks.compute_relative_strength(
+            conn, analysis["ticker"], date),
     }
 
 
