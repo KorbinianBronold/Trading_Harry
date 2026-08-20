@@ -12,10 +12,12 @@ nicht deterministisch, ein sauberer Durchlauf beweist **nichts**. Schwerster Fal
 `trend_analyzer` (Phase 0) hatte keine `stop_reason`-Prüfung, eine Kappung kam als
 `JSONDecodeError` an — und Phase 0 ist laut Spec § 3 fatal für den ganzen Lauf.
 Neu: `utils.call_claude_retry_on_truncation()` (erkennen → einmal mit doppelter Decke
-wiederholen → werfen, **jeder** Versuch gebucht) für die drei Einzelcall-Module
-(`trend_analyzer`, `market_context`, `revalidation`); die Batch-Module behalten ihren
-reicheren Pfad. Decken neu kalibriert: `TOKENS_PER_TICKER_DEEP` 2500 → 6000,
-`TOKENS_PER_ASSET_CC` 3584 → 8192, Phase 0 4096 → 12288, die beiden 1024er → 6144.
+wiederholen → werfen, **jeder** Versuch gebucht) für die vier Einzelcall-Module
+(`trend_analyzer`, `market_context`, `revalidation`, `run_policy_monitor`); die
+Batch-Module behalten ihren reicheren Pfad. **Damit hat jeder Sonnet-5-Aufrufer eine
+Kappungs-Erkennung.** Decken neu kalibriert: `TOKENS_PER_TICKER_DEEP` 2500 → 6000,
+`TOKENS_PER_ASSET_CC` 3584 → 8192, Phase 0 4096 → 12288, `MAX_TOKENS_POLICY`
+3072 → 9216, die beiden 1024er → 6144.
 **884 Tests grün, 93 % Coverage** (⚠️ plus ein **vorbestehender** roter Test in
 `test_broad_scan.py`, nicht aus dieser Migration — die „880 grün" unten waren zu
 optimistisch). Nachgemessen: `trade_proposals` end-to-end sauber, und
@@ -240,6 +242,18 @@ Die Pipeline-Phasen lassen sich an `main.py:run_pipeline()` ablesen.
 - ⚠️ **Ein Modellwechsel ist nie nur ein String-Swap.** Er ändert Tokenizer,
   Denk-Verhalten und damit jede kalibrierte `max_tokens`-Decke — s. Designentscheidungen
   und PROJECT_STATUS C.18. Nach jedem Wechsel gehört ein Messlauf dazu.
+- ✅ **Jedes Modul liest sein Modell aus `config`** (seit 2026-08-20), keins kodiert
+  den String hart: `CLAUDE_MODEL_SONNET` für `trend_analyzer`, `deep_analysis`,
+  `commodities_crypto`, `market_context`, `revalidation`; `CLAUDE_MODEL_HAIKU` für
+  `broad_scan`, `portfolio_check`, `quick_filter` (tot). Ein Wechsel ist damit **eine**
+  Zeile in `config.py`. Vorher liefen hart kodierte Strings und Test-Fixtures
+  auseinander — `test_broad_scan` war seit `0db8644` rot (Erwartung Sonnet, Code Haiku),
+  und `test_portfolio_check` rechnete still zu Sonnet-4.6-Preisen, während der Code
+  Haiku abrechnete. Beides fiel erst beim Aufräumen dieser Migration auf.
+  ⚠️ **Test-Fixtures lesen ebenfalls aus `config`**, damit sie nicht wieder
+  auseinanderlaufen. Zwei bewusste Ausnahmen: `test_cost_tracker.py` prüft
+  `MODEL_PRICING` anhand seiner Schlüssel (mit `config` wäre der Test tautologisch),
+  und `test_utils.py` reicht das Modell nur generisch durch.
 
 ## Wichtige Designentscheidungen
 - Provider-Hierarchie: Capital.com (alleiniger OHLC-Provider) → Finnhub (Fundamentals, gecacht) — yfinance seit Sprint 3 entfernt (2026-07-09)
@@ -310,10 +324,17 @@ Die Pipeline-Phasen lassen sich an `main.py:run_pipeline()` ablesen.
   Phase 3b nur im dritten von vier Läufen, jeweils bei identischem Code und identischer
   Decke. Deshalb ist die **Erkennung** das eigentliche Netz und die angehobene Decke nur
   die Optimierung, die sie selten auslöst: Batch-Pfade über `BatchTruncatedError`,
-  Einzelcalls (`trend_analyzer`, `market_context`, `revalidation`) über
-  `utils.call_claude_retry_on_truncation()`. **Ein neuer Claude-Aufrufer ohne
-  `stop_reason`-Prüfung ist ein Bug**, kein Stilfehler — bei `trend_analyzer` kam eine
-  Kappung als `JSONDecodeError` an und riss laut Spec § 3 den ganzen Lauf mit.
+  Einzelcalls (`trend_analyzer`, `market_context`, `revalidation`,
+  `deep_analysis.run_policy_monitor`) über `utils.call_claude_retry_on_truncation()`.
+  **Ein neuer Claude-Aufrufer ohne `stop_reason`-Prüfung ist ein Bug**, kein
+  Stilfehler — bei `trend_analyzer` kam eine Kappung als `JSONDecodeError` an und riss
+  laut Spec § 3 den ganzen Lauf mit.
+  ⚠️ `run_policy_monitor` wurde beim ersten Durchgang **übersehen** und erst bei einer
+  vollständigen Aufstellung aller `call_claude`-Aufrufstellen gefunden — es lief in
+  fünf Messläufen sauber und sah deshalb unauffällig aus, hatte aber mit 3072 die
+  knappste Decke im Projekt. **Wer hier ein Modell wechselt, zählt die Aufrufstellen ab**,
+  statt sich auf saubere Läufe zu verlassen. Haiku-Aufrufer (`broad_scan`,
+  `portfolio_check`) sind nicht betroffen: dort ist Denken ohne `thinking`-Feld aus.
   ⚠️ Jeder Versuch wird **gebucht**, auch der verworfene gekappte. Ihn auszulassen wäre
   die Fehlerklasse, die hier schon zweimal Kosten verschleiert hat (Cache-Doppelabzug,
   `web_search_calls`).
