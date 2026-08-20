@@ -1,6 +1,30 @@
 # Shares_Future – SP500 CFD Research Tool
 
-**Zuletzt aktualisiert:** 2026-08-19 — 📧 **`final_close` verschickt jetzt eine
+**Zuletzt aktualisiert:** 2026-08-20 — 🧠 **Migration auf Claude 5 (Sonnet 5 /
+Opus 5), inklusive der Messung, die der String-Swap übersprungen hatte.**
+`utils.call_claude()` setzt **kein** `thinking`-Feld — unter `claude-sonnet-4-6` hiess
+das „kein Denken", unter `claude-sonnet-5` heisst dasselbe Weglassen „**adaptives
+Denken an**", und die Denk-Tokens teilen sich die `max_tokens`-Decke mit dem
+Antworttext. Genau dieses Risiko war 2026-08-11 der dokumentierte Grund, **nicht** zu
+wechseln (Spec § 14). Vier Messläufe gegen Wegwerf-Kopien: **jedes Modul kappte in
+einem ANDEREN Lauf, bei identischem Code und identischer Decke** — adaptives Denken ist
+nicht deterministisch, ein sauberer Durchlauf beweist **nichts**. Schwerster Fall:
+`trend_analyzer` (Phase 0) hatte keine `stop_reason`-Prüfung, eine Kappung kam als
+`JSONDecodeError` an — und Phase 0 ist laut Spec § 3 fatal für den ganzen Lauf.
+Neu: `utils.call_claude_retry_on_truncation()` (erkennen → einmal mit doppelter Decke
+wiederholen → werfen, **jeder** Versuch gebucht) für die drei Einzelcall-Module
+(`trend_analyzer`, `market_context`, `revalidation`); die Batch-Module behalten ihren
+reicheren Pfad. Decken neu kalibriert: `TOKENS_PER_TICKER_DEEP` 2500 → 6000,
+`TOKENS_PER_ASSET_CC` 3584 → 8192, Phase 0 4096 → 12288, die beiden 1024er → 6144.
+**884 Tests grün, 93 % Coverage** (⚠️ plus ein **vorbestehender** roter Test in
+`test_broad_scan.py`, nicht aus dieser Migration — die „880 grün" unten waren zu
+optimistisch). Nachgemessen: `trade_proposals` end-to-end sauber, und
+`revalidate_one()` 6× wiederholt **6/6 sauber** — wobei **drei der sechs Stichproben
+über der alten 1024er Decke lagen**: rund die Hälfte aller 16:10-Re-Validierungen
+hätte gekappt, mangels `stop_reason`-Prüfung still als „Zeile bleibt offen".
+Details: PROJECT_STATUS **C.18**.
+
+Davor, 2026-08-19 — 📧 **`final_close` verschickt jetzt eine
 Auswertungs-Mail.** Bewusster Bruch mit der bisherigen Entscheidung ("kein
 Claude-Call, keine Mail") — bleibt weiterhin ohne Claude-Call (0 EUR
 Zusatzkosten), aber eine Tabelle (Ticker, Richtung, 16:10-Urteil, Entry, Exit,
@@ -200,15 +224,22 @@ Die Pipeline-Phasen lassen sich an `main.py:run_pipeline()` ablesen.
 ## Knowledge Graph
 **graphify-out/graph.json und GRAPH_REPORT.md müssen in jeder Session aktuell gehalten werden** — vor komplexeren Fragen zu Architektur/Cross-File-Abhängigkeiten zuerst `/graphify query` oder `graphify update` laufen lassen, nie blind in Einzeldateien gehen. Das verhindert Navigations-Fehler und Duplicate-Work. Der Graph wird per AST extrahiert (kein API-Key nötig), neue/geänderte Dateien werden bei `graphify update` automatisch reindexiert.
 
-## Modell-Einsatz (2026-08-19 Entscheidung — Claude 5 Standard)
+## Modell-Einsatz (2026-08-19 Entscheidung — seit 2026-08-20 live, C.18)
 **Haiku für einfache Scoring-Tasks, Sonnet 5 für Tiefenanalyse, Opus nur für Sprint 3D:**
 - `broad_scan` (News-Scoring 0-3): **Haiku 4.5** → spart 90% Kosten (~$0.001/Call)
 - `portfolio_check` (HALTEN/SCHLIESSEN): **Haiku 4.5** → strukturiert, kein Overkill (~$0.006/Lauf)
 - `deep_analysis` + `commodities_crypto` (8 Dimensionen): **Sonnet 5** → braucht Nuance, schneller
 - `trend_analyzer`, `market_context`, `revalidation`: **Sonnet 5** (Claude 5 Standard)
-- **Opus 5:** nicht in Produktion außer Sprint 3D (Learning Modul).
-- **Fable 5:** wird nach 3D-Evaluierung erwogen (sehr schnell, ideal für tägliche Scoring-Läufe).
+- **Opus 5:** nicht in Produktion außer Sprint 3D (Learning Modul). `MODEL_PRICING` kennt
+  die Zeile, produktiv gelaufen ist sie nie.
+- **Fable 5:** wird nach 3D-Evaluierung erwogen. ⚠️ **Nicht als Spar-Option missverstehen**
+  (frühere Notiz hier sagte „sehr schnell, ideal für tägliche Scoring-Läufe" — das ist
+  falsch): Fable 5 ist das **fähigste** Modell und mit $10/$50 je Mio. Tokens **teurer
+  als Opus**. Für die täglichen Scoring-Läufe bleibt Haiku die richtige Wahl.
 - Test-Skript (`random/test_prompts_manual.ipynb`): maximal **Sonnet 5** (kein Opus)
+- ⚠️ **Ein Modellwechsel ist nie nur ein String-Swap.** Er ändert Tokenizer,
+  Denk-Verhalten und damit jede kalibrierte `max_tokens`-Decke — s. Designentscheidungen
+  und PROJECT_STATUS C.18. Nach jedem Wechsel gehört ein Messlauf dazu.
 
 ## Wichtige Designentscheidungen
 - Provider-Hierarchie: Capital.com (alleiniger OHLC-Provider) → Finnhub (Fundamentals, gecacht) — yfinance seit Sprint 3 entfernt (2026-07-09)
@@ -268,6 +299,24 @@ Die Pipeline-Phasen lassen sich an `main.py:run_pipeline()` ablesen.
   und die Hälften laufen mit angehobener Decke. Seit der Formel-Korrektur ändert
   Halbieren den Platz **pro Ticker** nicht mehr (früher tat es das nur zufällig über den
   4096er-Boden), es wäre ohne diesen Punkt wirkungslos.
+- ⚠️ **`call_claude()` setzt kein `thinking`-Feld — und genau das bedeutet unter
+  Claude 5 das Gegenteil von früher.** Bei `claude-sonnet-4-6` hiess Weglassen „kein
+  Denken", bei `claude-sonnet-5`/`claude-opus-5` heisst es „**adaptives Denken an**".
+  Denk- und Antworttokens teilen sich dieselbe `max_tokens`-Decke, jede vor dem
+  2026-08-20 kalibrierte Decke ist deshalb neu zu messen (C.18). **Wer hier wieder ein
+  Modell wechselt, wechselt implizit auch das Token-Budget.**
+  ⚠️ **Adaptives Denken ist nicht deterministisch — ein sauberer Lauf beweist nichts.**
+  In der C.18-Messreihe kappte Phase 3 nur im ersten, Phase 0 nur im zweiten und
+  Phase 3b nur im dritten von vier Läufen, jeweils bei identischem Code und identischer
+  Decke. Deshalb ist die **Erkennung** das eigentliche Netz und die angehobene Decke nur
+  die Optimierung, die sie selten auslöst: Batch-Pfade über `BatchTruncatedError`,
+  Einzelcalls (`trend_analyzer`, `market_context`, `revalidation`) über
+  `utils.call_claude_retry_on_truncation()`. **Ein neuer Claude-Aufrufer ohne
+  `stop_reason`-Prüfung ist ein Bug**, kein Stilfehler — bei `trend_analyzer` kam eine
+  Kappung als `JSONDecodeError` an und riss laut Spec § 3 den ganzen Lauf mit.
+  ⚠️ Jeder Versuch wird **gebucht**, auch der verworfene gekappte. Ihn auszulassen wäre
+  die Fehlerklasse, die hier schon zweimal Kosten verschleiert hat (Cache-Doppelabzug,
+  `web_search_calls`).
 - **Phase 3b (Commodities/Crypto) analysiert seit C.15 (2026-08-19) gebatcht nach
   `asset_class`, nicht mehr je Asset.** Zwei Batches (Commodities: Gold/Silber/Öl,
   Crypto: BTC/ETH/SOL/XRP) statt sieben Einzelcalls — dieselbe Begründung wie beim

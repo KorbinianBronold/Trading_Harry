@@ -32,7 +32,21 @@ FEAR_GREED_TIMEOUT_SEC = 5
 # Gleiche Herleitung wie TOKENS_PER_TICKER_DEEP (deep_analysis.py, C.10): die
 # alte Einzel-Asset-Decke war 3584 fuer EIN Asset -- das wird jetzt der
 # Pro-Asset-Anteil, die Reserve deckt nur den JSON-Rahmen ({"results": [...]}).
-TOKENS_PER_ASSET_CC = 3584
+#
+# ⚠️ 2026-08-20-Migration auf claude-sonnet-5 (adaptives Denken standardmaessig
+# an, Denk- und Antworttokens teilen sich die max_tokens-Decke): 3584 reicht
+# NICHT verlaesslich. Der erste Messlauf verfuehrte zum Gegenteil -- dort liefen
+# beide Batches (n=3, n=4) im ersten Versuch sauber durch, waehrend die
+# deep_analysis-Batches kappten. Der Verifikationslauf danach kappte dann den
+# n=3-Batch bei max_tokens=10952, bei identischem Code und identischer Decke.
+#
+# Das ist der eigentliche Befund dieser Migration und der Grund, warum hier
+# ueberhaupt eine Zahl steht statt "gemessen, passt": ein einzelner sauberer
+# Durchlauf beweist unter adaptivem Denken NICHTS. Genau dieselbe Nicht-
+# Determiniertheit traf Phase 0 (trend_analyzer) in umgekehrter Reihenfolge.
+# Demonstriert ausreichend war die verdoppelte Decke, 21904/3 = ~7300 je Asset;
+# 8192 liegt darueber und kostet nur, was es auch nutzt.
+TOKENS_PER_ASSET_CC = 8192
 BATCH_TOKEN_RESERVE_CC = 200
 MAX_TOKENS_CC_MIN = 4096
 

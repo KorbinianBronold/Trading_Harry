@@ -168,9 +168,9 @@ def test_full_pipeline_writes_predictions_and_sends_email(tmp_path, monkeypatch)
     _seed_conn.commit()
     _seed_conn.close()
 
-    with patch("src.market_context.call_claude",
+    with patch("src.market_context.call_claude_retry_on_truncation",
                side_effect=[_r(market_ctx_resp, web_search_calls=2)]), \
-         patch("src.trend_analyzer.call_claude", side_effect=[sequence[0]]), \
+         patch("src.trend_analyzer.call_claude_retry_on_truncation", side_effect=[sequence[0]]), \
          patch("src.broad_scan.call_claude", side_effect=[sequence[1]]), \
          patch("src.deep_analysis.call_claude",
                side_effect=[sequence[2], sequence[3]]), \

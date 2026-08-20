@@ -34,7 +34,7 @@ def _vix_provider(close: float | None) -> MagicMock:
 
 
 def _fetch(mocker, json_text: str = _GOOD_JSON, provider=None, tracker=None):
-    mocker.patch("src.market_context.call_claude",
+    mocker.patch("src.utils.call_claude",
                  return_value=_claude_result(json_text))
     from src.market_context import fetch_market_context
     return fetch_market_context(
@@ -59,7 +59,7 @@ def test_fetch_market_context_parses_claude_json(mocker):
 def test_fetch_market_context_uses_web_search(mocker):
     """Ohne Websuche kann Claude weder VIX noch A/D-Ratio belegen."""
     from src.utils import WEB_SEARCH_TOOL
-    patched = mocker.patch("src.market_context.call_claude",
+    patched = mocker.patch("src.utils.call_claude",
                            return_value=_claude_result(_GOOD_JSON))
     from src.market_context import fetch_market_context
     fetch_market_context(date="2026-07-27", run_type="pre_market",

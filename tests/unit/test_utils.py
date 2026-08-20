@@ -341,3 +341,91 @@ def test_call_claude_non_streaming_still_default_and_carries_stop_reason():
 
     assert fake_client.messages.stream.call_count == 0
     assert result.stop_reason == "max_tokens"
+
+
+# --- call_claude_retry_on_truncation ---------------------------------------
+# Sonnet 5 denkt standardmaessig (adaptiv) und teilt sich die max_tokens-Decke
+# zwischen Denk- und Antworttokens. Die drei Einzelcall-Module (trend_analyzer,
+# market_context, revalidation) hatten dafuer bis zur 2026-08-20-Migration
+# KEINE Erkennung: eine Kappung kam bei ihnen als JSONDecodeError an.
+
+from src.utils import call_claude_retry_on_truncation, ClaudeTruncatedError
+
+
+def _result(text: str, stop_reason: str, output_tokens: int = 100) -> ClaudeResult:
+    return ClaudeResult(
+        text=text, input_tokens=10, output_tokens=output_tokens,
+        cache_read_tokens=0, cache_creation_tokens=0, model="claude-sonnet-5",
+        web_search_calls=0, stop_reason=stop_reason,
+    )
+
+
+def test_truncation_retry_passes_clean_result_through_untouched():
+    """Der Normalfall darf sich nicht aendern: ein Call, ein Billing."""
+    tracker = MagicMock()
+    clean = _result("{}", "end_turn")
+
+    with patch("src.utils.call_claude", return_value=clean) as mock_call:
+        out = call_claude_retry_on_truncation(
+            model="m", system="s", user="u", max_tokens=1024, cost_tracker=tracker)
+
+    assert out is clean
+    assert mock_call.call_count == 1
+    assert tracker.add_from_result.call_count == 1
+
+
+def test_truncation_retry_repeats_with_doubled_ceiling():
+    """Eine identische Wiederholung kaeme identisch zurueck -- die Decke steigt."""
+    tracker = MagicMock()
+    results = [_result("{trunc", "max_tokens"), _result("{}", "end_turn")]
+
+    with patch("src.utils.call_claude", side_effect=results) as mock_call:
+        out = call_claude_retry_on_truncation(
+            model="m", system="s", user="u", max_tokens=1024, cost_tracker=tracker)
+
+    assert out is results[1]
+    assert mock_call.call_count == 2
+    assert mock_call.call_args_list[0].kwargs["max_tokens"] == 1024
+    assert mock_call.call_args_list[1].kwargs["max_tokens"] == 2048
+
+
+def test_truncation_retry_bills_the_discarded_attempt_too():
+    """Die gekappte Antwort ist bezahlt, auch wenn sie verworfen wird. Sie NICHT
+    zu buchen waere genau der Fehler-Typ, der hier zweimal Kosten verschleiert
+    hat (cache-Doppelabzug, web_search_calls)."""
+    tracker = MagicMock()
+    results = [_result("{trunc", "max_tokens", output_tokens=999),
+               _result("{}", "end_turn", output_tokens=111)]
+
+    with patch("src.utils.call_claude", side_effect=results):
+        call_claude_retry_on_truncation(
+            model="m", system="s", user="u", max_tokens=1024, cost_tracker=tracker)
+
+    billed = [c.args[0] for c in tracker.add_from_result.call_args_list]
+    assert [r.output_tokens for r in billed] == [999, 111]
+
+
+def test_truncation_retry_raises_when_the_retry_also_truncates():
+    """Sonst faellt eine doppelt gekappte Antwort wieder als JSONDecodeError
+    an -- die Diagnose-Falle, die den Verifikationslauf gekostet hat."""
+    tracker = MagicMock()
+    results = [_result("{trunc", "max_tokens"), _result("{still", "max_tokens")]
+
+    with patch("src.utils.call_claude", side_effect=results):
+        with pytest.raises(ClaudeTruncatedError, match="2048"):
+            call_claude_retry_on_truncation(
+                model="m", system="s", user="u", max_tokens=1024, cost_tracker=tracker)
+
+
+def test_truncation_retry_forwards_tools_and_stream():
+    tracker = MagicMock()
+    tools = [{"type": "web_search_20250305", "name": "web_search"}]
+
+    with patch("src.utils.call_claude", return_value=_result("{}", "end_turn")) as mock_call:
+        call_claude_retry_on_truncation(
+            model="m", system="s", user="u", max_tokens=1024,
+            cost_tracker=tracker, tools=tools, stream=True)
+
+    kwargs = mock_call.call_args.kwargs
+    assert kwargs["tools"] == tools
+    assert kwargs["stream"] is True

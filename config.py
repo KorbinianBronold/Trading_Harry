@@ -273,6 +273,22 @@ MAX_DEEP_ANALYSIS = 50
 # gegen die echte API (PROJECT_STATUS C.11): 0 Kappungen bei 47-54 % Auslastung.
 # Ob 8 die beste Batchgroesse ist, bleibt weiterhin ungemessen -- nur EIN Wert
 # lief im Verifikationslauf.
+#
+# ⚠️ Der C.11-Befund "0 Kappungen" oben gilt nur fuer claude-sonnet-4-6 (kein
+# Denken ohne explizites thinking-Feld). Seit der 2026-08-20-Migration auf
+# claude-sonnet-5 (adaptives Denken standardmaessig an, teilt sich die
+# max_tokens-Decke mit dem Antworttext) kappten BEIDE Batches (n=8, n=4) beim
+# ersten Versuch in einem Live-Messlauf -- C.9 reproduziert. TOKENS_PER_TICKER_DEEP
+# deshalb auf 6000 angehoben (deep_analysis.py); im Verifikationslauf danach
+# liefen beide Batches (n=8, n=3) im ersten Versuch sauber durch.
+#
+# ⚠️ Wer diese Zahlen erneut anfasst: unter adaptivem Denken beweist EIN sauberer
+# Lauf nichts. In derselben Messreihe kappte Phase 0 (trend_analyzer) nur im
+# zweiten von drei Laeufen und Phase 3b (commodities_crypto) nur im dritten --
+# jeweils bei identischem Code und identischer Decke. Deshalb faengt seit dieser
+# Migration jeder Claude-Aufrufer eine Kappung explizit ab (Batch-Pfade ueber
+# BatchTruncatedError, die Einzelcalls ueber utils.call_claude_retry_on_truncation);
+# die angehobenen Decken sind nur die Optimierung, die das Netz selten ausloest.
 BATCH_SIZE_DEEP = 8
 
 # Sprint 3C / Analyse-Pipeline-Umbau, Plan 2 (Trichter), Spec 4.7: ein Ticker

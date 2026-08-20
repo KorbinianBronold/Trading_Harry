@@ -1,6 +1,17 @@
 # Shares_Future – Architektur & Design
 
-**Zuletzt aktualisiert:** 2026-08-18 — 🗑️ **Run-Type `close` ersatzlos entfallen.**
+**Zuletzt aktualisiert:** 2026-08-20 — 🧠 **Migration auf Claude 5 (Sonnet 5 / Opus 5)
+inklusive Neukalibrierung aller Token-Decken.** In diesem Dokument geändert: die
+`max_tokens_for_batch()`-Formel (jetzt `n * 6000 + 200`, der 4096er-Boden bindet nicht
+mehr) und der C.10/C.11-Kalibrierungsblock bei Modul 4. Hintergrund: `call_claude()`
+setzt kein `thinking`-Feld — bei `claude-sonnet-4-6` hiess das „kein Denken", bei
+`claude-sonnet-5` heisst es „adaptives Denken an", und Denk- wie Antworttokens teilen
+sich dieselbe Decke. Neu ist ausserdem `utils.call_claude_retry_on_truncation()`, das
+den drei Einzelcall-Modulen (`trend_analyzer`, `market_context`, `revalidation`)
+überhaupt erst eine Kappungs-Erkennung gibt — bei `trend_analyzer` riss eine Kappung
+vorher den ganzen Lauf mit. Details: PROJECT_STATUS **C.18**.
+
+Davor, 2026-08-18 — 🗑️ **Run-Type `close` ersatzlos entfallen.**
 Die TP/SL-Auswertung gehört seit dem Preismodell-Umbau in `final_close` (00:15 UTC) —
 der Aufruf in `close` war ein liegen gebliebenes Duplikat und sah um 22:30 eine noch
 nicht finale Tagesbar. Danach blieb in `run_close()` nichts übrig, das `pre_market`
@@ -602,7 +613,8 @@ def build_batches(ticker_datas, batch_size=config.BATCH_SIZE_DEEP) -> list[list[
 
 def max_tokens_for_batch(n) -> int:
     """max(4096, n * TOKENS_PER_TICKER_DEEP + BATCH_TOKEN_RESERVE)
-    = max(4096, n * 2500 + 200), seit C.10 neu kalibriert.
+    = max(4096, n * 6000 + 200), seit C.18 neu kalibriert (davor 2500,
+    C.10). Der 4096er-Boden bindet seit C.18 fuer kein n >= 1 mehr.
     ⚠️ Die Reserve ist BEWUSST klein: ein grosser fester Term verwaessert
     den Pro-Ticker-Wert, je groesser der Batch wird (das war der C.9-Bug --
     1150 Tokens/Ticker bei n=8 gegen 2048 bei n=2)."""
@@ -656,6 +668,17 @@ Im Verifikationslauf trat `max_tokens` **kein einziges Mal** auf, 12 von 12 Kand
 wurden analysiert (Budget zu 47–54 % genutzt), Phase 3 kostete **0,0204 EUR je Ticker**
 gegen ein Ziel von 0,034. ⚠️ Wie knapp der alte Wert war: der 8er-Batch brauchte 9 409
 Tokens bei 9 200 Budget — 2,3 % daneben, nicht grob falsch.
+
+⚠️ **Der C.10/C.11-Wert 2500 galt nur für `claude-sonnet-4-6` — seit der Migration auf
+`claude-sonnet-5` (2026-08-20, C.18) sind es 6000.** Grund ist kein neuer Prompt,
+sondern das Modell: `call_claude()` setzt kein `thinking`-Feld, was bei Sonnet 4.6
+„kein Denken" hiess und bei Sonnet 5 „adaptives Denken an" heisst — Denk- und
+Antworttokens teilen sich dieselbe Decke. Im Messlauf kappten **beide** Batches beim
+ersten Versuch. Parallel: `TOKENS_PER_ASSET_CC` (Phase 3b) 3584 → 8192, und die drei
+Einzelcall-Module bekamen mit `utils.call_claude_retry_on_truncation()` überhaupt erst
+eine Kappungs-Erkennung. ⚠️ **Adaptives Denken ist nicht deterministisch** — in der
+Messreihe kappte jedes Modul in einem anderen Lauf bei identischem Code; ein sauberer
+Lauf ist deshalb kein Beleg für eine ausreichende Decke.
 
 ---
 
@@ -1157,10 +1180,21 @@ Querschnitts-Helfer, die jedes Claude-aufrufende Modul benutzt.
 | `retry_with_backoff(...)` | Dekorator für transiente API-Fehler |
 | `ClaudeResult` | Ergebnis-Objekt inkl. Token-Zahlen **und `stop_reason`** — Grundlage der Kostenerfassung |
 | `call_claude(..., stream=False)` | Anthropic-Wrapper mit Prompt-Caching, optional gestreamt |
+| `call_claude_retry_on_truncation(...)` | `call_claude()` + Kappungs-Erkennung für die Einzelcall-Module (C.18) |
+| `ClaudeTruncatedError` | Wurf, wenn auch die Wiederholung mit doppelter Decke kappt |
 | `extract_json_blob(text, error_cls)` | toleranter JSON-Auszug aus Claudes Antwort |
 
 ⚠️ `extract_json_blob` nutzt `raw_decode`, weil Claude gelegentlich Fliesstext hinter das
 JSON hängt. Ein striktes `json.loads` scheiterte daran.
+
+⚠️ **`call_claude_retry_on_truncation()` ist der Einzelcall-Gegenpart zu
+`BatchTruncatedError`** (C.18). Es erkennt `stop_reason == "max_tokens"`, wiederholt
+**einmal** mit `TRUNCATION_RETRY_FACTOR`-facher Decke und wirft danach — die Batch-Module
+behalten ihren reicheren Pfad (Wiederholen → Halbieren) und nutzen es nicht. Genutzt von
+`trend_analyzer`, `market_context` und `revalidation`; dort kam eine Kappung vorher als
+`JSONDecodeError` an, und bei `trend_analyzer` ist das laut Spec § 3 fatal für den ganzen
+Lauf. **Es bucht jeden Versuch selbst** — auch den verworfenen gekappten — die drei
+Aufrufer rufen `cost_tracker.add_from_result()` deshalb nicht mehr selbst auf.
 
 ⚠️ **`stream=True` ist nötig, sobald die erwartete Ausgabe gross wird** (Plan 3a):
 der nicht gestreamte Pfad hängt am httpx-Default-Timeout von 600 s, den eine lange

@@ -177,10 +177,14 @@ def _broken_response() -> MagicMock:
 
 
 def test_max_tokens_for_batch_scales_with_size():
-    """Abgeleitet statt fest: 4096 war fuer EINEN Ticker ausgelegt."""
-    assert max_tokens_for_batch(8) == 20200     # 8 * 2500 + 200
-    assert max_tokens_for_batch(1) == 4096      # Boden greift
-    assert max_tokens_for_batch(20) == 50200
+    """Abgeleitet statt fest: 4096 war fuer EINEN Ticker ausgelegt.
+
+    Seit der Sonnet-5-Recalibrierung (TOKENS_PER_TICKER_DEEP 2500 -> 6000,
+    s. deep_analysis.py) bindet der Boden fuer kein n >= 1 mehr: 1*6000+200
+    liegt schon ueber MAX_TOKENS_DEEP_MIN."""
+    assert max_tokens_for_batch(8) == 48200     # 8 * 6000 + 200
+    assert max_tokens_for_batch(1) == 6200      # 1 * 6000 + 200, Boden greift nicht mehr
+    assert max_tokens_for_batch(20) == 120200
 
 
 def test_max_tokens_per_ticker_never_falls_below_the_per_ticker_value():

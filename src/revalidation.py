@@ -15,7 +15,7 @@ from pathlib import Path
 import config
 from src.cost_tracker import CostTracker
 from src.signal_checks import CheckResult
-from src.utils import call_claude, extract_json_blob
+from src.utils import call_claude_retry_on_truncation, extract_json_blob
 
 log = logging.getLogger("shares_future.revalidation")
 
@@ -23,7 +23,21 @@ SYSTEM_PROMPT = (Path(__file__).resolve().parent.parent
                  / "prompts" / "trade_proposals_v1.txt").read_text()
 
 MODEL = config.CLAUDE_MODEL_SONNET
-MAX_TOKENS = 1024
+# ⚠️ 1024 war gegen claude-sonnet-4-6 bemessen, das ohne explizites
+# thinking-Feld nicht dachte. Unter claude-sonnet-5 teilen sich Denk- und
+# Antworttokens die Decke. Der Fall ist hier besonders unguenstig:
+# revalidate_one() laeuft je offener Position, und eine gekappte Antwort liesse
+# die Zeile offen (s. Docstring) -- also ein stiller Ausfall genau im
+# 16:10-Lauf, der ueber Ablehnungen entscheidet.
+#
+# GEMESSEN (2026-08-20, C.18): 6 Wiederholungen mit echter Prediction-Zeile und
+# echtem collect()-Snapshot, 6/6 sauber, Output 775-1232 Tokens (Spitze bei 20 %
+# dieser Decke). ⚠️ DREI der sechs Stichproben lagen ueber der alten 1024er
+# Decke -- der Wert war also nicht vorsorglich zu hoch gegriffen, sondern
+# vorher zu knapp: rund die Haelfte der 16:10-Re-Validierungen haette gekappt,
+# und mangels stop_reason-Pruefung waere das als "Zeile bleibt offen"
+# durchgegangen statt als Fehler.
+MAX_TOKENS = 6144
 
 VERDICTS = frozenset({"bestaetigt", "geschwaecht", "unveraendert", "gedreht"})
 
@@ -64,11 +78,11 @@ def revalidate_one(
     unbekanntem Urteil — der Aufrufer faengt das und laesst die Zeile dann offen."""
     user_msg = _build_user_message(
         prediction, snapshot, checks, relative_strength, policy_context)
-    result = call_claude(
+    # Bucht jeden Versuch selbst -- auch einen verworfenen gekappten.
+    result = call_claude_retry_on_truncation(
         model=MODEL, system=SYSTEM_PROMPT, user=user_msg,
-        max_tokens=MAX_TOKENS, tools=[],
+        max_tokens=MAX_TOKENS, cost_tracker=cost_tracker, tools=[],
     )
-    cost_tracker.add_from_result(result)
     parsed = extract_json_blob(result.text, RevalidationError)
 
     verdict = parsed.get("verdict")

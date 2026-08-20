@@ -147,6 +147,75 @@ def call_claude(
     return _result_from_message(response, model)
 
 
+# Deckungsgleich mit deep_analysis.TRUNCATION_RETRY_FACTOR und dem Pendant in
+# commodities_crypto: wer einmal ueber die Decke laeuft, ist selten knapp
+# darueber, und die Decke kostet nur, was sie auch nutzt. Bewusst NICHT aus
+# deep_analysis importiert -- utils darf nicht von seinen Aufrufern abhaengen.
+TRUNCATION_RETRY_FACTOR = 2
+
+
+class ClaudeTruncatedError(RuntimeError):
+    """Die Antwort lief in max_tokens und ist abgeschnitten -- auch nach der
+    Wiederholung mit angehobener Decke."""
+
+
+def call_claude_retry_on_truncation(
+    model: str,
+    system: str,
+    user: str,
+    max_tokens: int,
+    cost_tracker,
+    tools: list | None = None,
+    stream: bool = False,
+    retry_factor: int = TRUNCATION_RETRY_FACTOR,
+) -> ClaudeResult:
+    """call_claude() plus Kappungs-Erkennung fuer die EINZELCALL-Module.
+
+    Hintergrund (2026-08-20, Migration auf claude-sonnet-5): Sonnet 4.6 dachte
+    ohne explizites thinking-Feld gar nicht, Sonnet 5 denkt standardmaessig
+    adaptiv -- und die Denk-Tokens teilen sich dieselbe max_tokens-Decke mit dem
+    Antworttext. deep_analysis/commodities_crypto hatten dafuer laengst eine
+    Erkennung (BatchTruncatedError); trend_analyzer, market_context und
+    revalidation hatten KEINE: dort kam eine Kappung als JSONDecodeError an
+    ('Unterminated string'), und bei trend_analyzer ist das laut Spec 3 fatal
+    fuer den ganzen Lauf.
+
+    ⚠️ Adaptives Denken ist NICHT deterministisch. Im Messlauf lief Phase 0
+    einmal sauber durch und kappte beim naechsten Lauf bei identischem Code und
+    identischer Decke. Eine angehobene Decke allein ist deshalb kein Ersatz fuer
+    diese Erkennung, sondern nur die Optimierung, die sie selten ausloest.
+
+    Wie im Batch-Pfad gilt: eine identische Wiederholung kaeme identisch zurueck,
+    die Wiederholung bekommt deshalb retry_factor-fach Platz. JEDER Versuch wird
+    gebucht -- auch der verworfene. Ihn nicht zu buchen waere genau die Klasse
+    Fehler, die in diesem Projekt schon zweimal Kosten verschleiert hat."""
+    def _attempt(budget: int) -> ClaudeResult:
+        result = call_claude(model=model, system=system, user=user,
+                             max_tokens=budget, tools=tools, stream=stream)
+        # Vor jeder Pruefung: die Tokens sind verbraucht, egal ob verwertbar.
+        cost_tracker.add_from_result(result)
+        return result
+
+    result = _attempt(max_tokens)
+    if getattr(result, "stop_reason", None) != "max_tokens":
+        return result
+
+    retry_budget = max_tokens * retry_factor
+    log.warning(
+        f"Antwort bei max_tokens={max_tokens} abgeschnitten "
+        f"(stop_reason=max_tokens) -- Wiederholung mit {retry_budget}; "
+        f"eine identische Wiederholung kaeme identisch zurueck."
+    )
+    result = _attempt(retry_budget)
+    if getattr(result, "stop_reason", None) == "max_tokens":
+        raise ClaudeTruncatedError(
+            f"Antwort auch bei max_tokens={retry_budget} noch abgeschnitten "
+            f"(stop_reason=max_tokens) -- ein abgeschnittenes Ergebnis wird "
+            f"nicht verwertet."
+        )
+    return result
+
+
 import json
 import re
 from typing import Type

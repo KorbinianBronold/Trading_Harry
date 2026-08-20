@@ -18,7 +18,8 @@ from pathlib import Path
 
 import config
 from src.cost_tracker import CostTracker
-from src.utils import call_claude, extract_json_blob, WEB_SEARCH_TOOL
+from src.utils import (call_claude_retry_on_truncation, extract_json_blob,
+                       WEB_SEARCH_TOOL)
 
 log = logging.getLogger("shares_future.market_context")
 
@@ -26,7 +27,14 @@ SYSTEM_PROMPT = (Path(__file__).resolve().parent.parent
                  / "prompts" / "market_context_v1.txt").read_text()
 
 MODEL = config.CLAUDE_MODEL_SONNET
-MAX_TOKENS = 1024
+# ⚠️ 1024 war gegen claude-sonnet-4-6 bemessen (kein Denken ohne explizites
+# thinking-Feld). Unter claude-sonnet-5 teilen sich Denk- und Antworttokens die
+# Decke; die Antwort ist hier zwar klein, der Denk-Aufschlag ist es nicht.
+# Anders als bei trend_analyzer wurde hier KEINE Kappung beobachtet -- der Wert
+# steigt trotzdem, weil derselbe Messlauf gezeigt hat, dass ein einmaliges
+# Durchlaufen unter adaptivem Denken nichts beweist (Phase 0 lief einmal sauber
+# und kappte beim naechsten Lauf). Die Decke kostet nur, was sie nutzt.
+MAX_TOKENS = 6144
 VALID_REGIMES = {"risk_on", "risk_off", "neutral"}
 
 
@@ -79,12 +87,12 @@ def fetch_market_context(
         "Ermittle den aktuellen US-Marktkontext und antworte mit dem JSON-Objekt "
         "aus deinem System-Prompt."
     )
-    result = call_claude(
+    # Bucht jeden Versuch selbst -- auch einen verworfenen gekappten. Die Tokens
+    # sind verbraucht, egal ob die Antwort lesbar ist.
+    result = call_claude_retry_on_truncation(
         model=MODEL, system=SYSTEM_PROMPT, user=user_msg,
-        max_tokens=MAX_TOKENS, tools=[WEB_SEARCH_TOOL],
+        max_tokens=MAX_TOKENS, cost_tracker=cost_tracker, tools=[WEB_SEARCH_TOOL],
     )
-    # Vor dem Parsen: die Tokens sind verbraucht, egal ob die Antwort lesbar ist.
-    cost_tracker.add_from_result(result)
     parsed = extract_json_blob(result.text, MarketContextError)
 
     regime = parsed.get("market_regime")

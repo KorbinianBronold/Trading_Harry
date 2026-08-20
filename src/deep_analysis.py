@@ -43,7 +43,21 @@ MODEL = "claude-sonnet-5"
 # erzeugt wird. Ein zu knapper Wert dagegen kostet den ganzen Call -- ein
 # gekapptes Ergebnis wird verworfen (s. BatchTruncatedError). Im Testlauf gingen
 # so ~21 % der Laufkosten fuer nichts drauf.
-TOKENS_PER_TICKER_DEEP = 2500
+#
+# ⚠️ 2026-08-20-Migration auf claude-sonnet-5: der obige Wert (2500) war gegen
+# Sonnet 4.6 kalibriert, das ohne explizites thinking-Feld GAR NICHT dachte.
+# Sonnet 5 denkt beim selben Aufruf standardmaessig (adaptiv) -- und die Denk-
+# Tokens teilen sich dieselbe max_tokens-Decke mit dem Antworttext. Ein Live-
+# Messlauf (echte API, 20 MVP-Ticker, throwaway-DB) reproduzierte C.9 exakt:
+# BEIDE Batches (n=8, n=4) kappten beim ersten Versuch, der eingebaute 2x-Retry
+# fing es aber jeweils auf (12/12 Analysen kamen an). Demonstriert ausreichend
+# war (n*2500+200)*2 = n*5000+400 fuer beide Batchgroessen. 6000 haelt die
+# Reserve bei 200 (kein Rueckfall auf den C.9-Fehler eines festen Reserve-
+# Terms) und legt ~19 % Marge ueber das gemessene Minimum, weil adaptives
+# Denken nicht deterministisch ist. Re-Verifikationslauf gegen die echte API:
+# s. config.py-Kommentar bei BATCH_SIZE_DEEP (dort stand vorher der jetzt
+# veraltete Sonnet-4.6-Befund "0 Kappungen bei 47-54% Auslastung", C.11).
+TOKENS_PER_TICKER_DEEP = 6000
 BATCH_TOKEN_RESERVE = 200
 MAX_TOKENS_DEEP_MIN = 4096
 MAX_TOKENS_POLICY = 3072

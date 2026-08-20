@@ -2838,6 +2838,127 @@ Noch nicht live verifiziert.
 
 ---
 
+### C.18 — Migration auf Claude 5 (Sonnet 5 / Opus 5) + Kappungs-Erkennung für alle Einzelcalls (2026-08-20)
+
+**Anlass:** Korbinian hatte die Modell-Strings auf `claude-sonnet-5` / `claude-opus-5`
+umgestellt (`config.py`, `deep_analysis.py`, `commodities_crypto.py`,
+`trend_analyzer.py` + Testfixtures) und um eine Prüfung gebeten. Die Modell-IDs
+selbst waren korrekt und vollständig durchgereicht — der Befund lag woanders.
+
+**Der eigentliche Befund: eine Design-Entscheidung wurde still umgekehrt.**
+`utils.call_claude()` setzt **kein** `thinking`-Feld. Unter `claude-sonnet-4-6` hiess
+das: **kein Denken**. Unter `claude-sonnet-5` heisst dasselbe Weglassen:
+**adaptives Denken an** — und die Denk-Tokens teilen sich die `max_tokens`-Decke mit
+dem Antworttext. Genau dieses Risiko war der dokumentierte Grund, 2026-08-11 **nicht**
+auf Sonnet 5 zu wechseln (Spec § 14: „Ein Modellwechsel ist ein eigener Schritt mit
+eigener Messung"). Diese Messung fand nie statt; der String-Swap hat sie übersprungen.
+
+**Vier Messläufe** gegen Wegwerf-Kopien von `data/tracking.db` (`main.py --db-path`,
+echte Capital.com-/Finnhub-/Anthropic-Calls, 20 MVP-Ticker,
+`RESEND_API_KEY=invalid` — Mailversand abgefangen; alle Kopien nach dem Lauf
+gelöscht, die echte DB nie angefasst):
+
+| Lauf | Phase 0 (`trend_analyzer`) | Phase 3 (`deep_analysis`) | Phase 3b (`commodities_crypto`) | Kosten |
+|------|---------------------------|---------------------------|----------------------------------|--------|
+| 1 (Ist-Stand) | sauber | **beide Batches gekappt** (n=8, n=4) | sauber | 2,0766 EUR |
+| 2 (nach Fix Phase 3) | **gekappt → Lauf abgebrochen** | — (nie erreicht) | — | — |
+| 3 (nach Fix Phase 0) | sauber | sauber | **n=3 gekappt** | 1,9894 EUR |
+| 4 (nach Fix Phase 3b) | sauber | sauber | sauber | 1,4289 EUR |
+
+⚠️ **Die Lehre steht in den Spalten, nicht in den Zahlen: jedes Modul kappte in einem
+ANDEREN Lauf, bei identischem Code und identischer Decke.** Adaptives Denken ist
+nicht deterministisch. Ein einzelner sauberer Durchlauf beweist damit **nicht**, dass
+eine Decke reicht — genau dieser Fehlschluss hätte in Lauf 1 dazu geführt,
+`commodities_crypto` unangetastet zu lassen (dort stand nach Lauf 1 sogar schon der
+Kommentar „bewusst nicht prophylaktisch erhöht ohne Kappungsbefund" im Code; Lauf 3
+hat ihn widerlegt und er wurde korrigiert).
+
+**Lauf 2 war der schwerste Fall und lag ausserhalb des ursprünglichen Auftrags:**
+`trend_analyzer` (Phase 0) hatte — anders als die Batch-Module — **keine**
+`stop_reason`-Prüfung. Eine Kappung kam dort als `JSONDecodeError`
+(„Unterminated string") an, und Phase 0 ist laut Spec § 3 **fatal für den ganzen
+Lauf**. Dieselbe Lücke hatten `market_context` und `revalidation`
+(beide `MAX_TOKENS = 1024`, beide ohne Erkennung). Bei `revalidation` wäre der Ausfall
+besonders unangenehm: er trifft je offene Position im 16:10-Lauf und liesse die Zeile
+still offen.
+
+**Neu — `utils.call_claude_retry_on_truncation()`** (+ `ClaudeTruncatedError`,
+`TRUNCATION_RETRY_FACTOR = 2` lokal in `utils.py`, bewusst nicht aus `deep_analysis`
+importiert): erkennt `stop_reason == "max_tokens"`, wiederholt **einmal** mit
+verdoppelter Decke und wirft, wenn auch die Wiederholung kappt. **Bucht jeden Versuch**
+— auch den verworfenen. Ihn nicht zu buchen wäre genau die Fehlerklasse, die in diesem
+Projekt schon zweimal Kosten verschleiert hat (Cache-Doppelabzug, `web_search_calls`).
+Die drei Einzelcall-Module nutzen sie jetzt; die Batch-Module behalten ihren eigenen,
+reicheren Fehlerpfad (Wiederholen → Halbieren) über `BatchTruncatedError`.
+
+**Neu kalibrierte Decken** (die Decke kostet nur, was sie nutzt — ein zu knapper Wert
+kostet den ganzen Call):
+
+| Modul | vorher | jetzt | Grundlage |
+|-------|--------|-------|-----------|
+| `deep_analysis.TOKENS_PER_TICKER_DEEP` | 2500 | **6000** | demonstriert nötig: `(n*2500+200)*2` = 5000/Ticker (Lauf 1) |
+| `commodities_crypto.TOKENS_PER_ASSET_CC` | 3584 | **8192** | demonstriert nötig: 21904/3 ≈ 7300/Asset (Lauf 3) |
+| `trend_analyzer.MAX_TOKENS` | 4096 | **12288** | Kappung in Lauf 2 |
+| `market_context.MAX_TOKENS` | 1024 | **6144** | vorsorglich (keine Kappung beobachtet) |
+| `revalidation.MAX_TOKENS` | 1024 | **6144** | vorsorglich (im `pre_market`-Lauf nicht enthalten) |
+
+Die Formel-Form `max(MIN, n*PER_X + RESERVE)` bleibt unangetastet — der C.9-Fehler
+(fester Reserve-Term verwässert den Pro-Ticker-Wert) wird nicht wieder eingeführt,
+`BATCH_TOKEN_RESERVE` bleibt bei 200. Seit `TOKENS_PER_TICKER_DEEP = 6000` bindet
+`MAX_TOKENS_DEEP_MIN = 4096` für kein `n >= 1` mehr; der pinnende Test wurde
+entsprechend nachgezogen.
+
+**`MODEL_PRICING` (`cost_tracker.py`)**: `claude-opus-5` (5,00/25,00) und
+`claude-sonnet-5` (3,00/15,00) ergänzt, die alten Einträge bewusst **behalten** —
+`add_call()` wirft `ValueError` bei unbekanntem Modell, das ist als Sicherheitsnetz
+gewollt (Spec § 13).
+
+**Tests:** 5 neue in `test_utils.py` (Durchreichen im Normalfall, verdoppelte
+Wiederholung, Buchung des verworfenen Versuchs, Wurf bei doppelter Kappung,
+Weiterreichen von `tools`/`stream`). Die Patch-Ziele in `test_trend_analyzer.py`,
+`test_market_context.py` und `test_revalidation.py` zeigen jetzt auf
+`src.utils.call_claude` statt auf den Modul-Namensraum — so läuft die **echte**
+Helper-Logik inklusive Buchung unter Test, statt wegge­mockt zu werden.
+**884 Tests grün, 93 % Coverage.**
+
+⚠️ **Vorbestehender roter Test, NICHT aus dieser Migration:**
+`test_broad_scan_uses_configured_model_and_web_search` erwartet
+`config.CLAUDE_MODEL_SONNET`, während `broad_scan.py` bewusst
+`config.CLAUDE_MODEL_HAIKU` nutzt (Modell-Einsatz-Entscheidung vom 2026-08-19). Der
+Test war schon vor dieser Session rot — gegen `git stash` verifiziert. Die Angabe
+„880 Tests grün" in C.17/CLAUDE.md war insofern zu optimistisch. Bewusst hier nicht
+mitrepariert (fremder Befund, eigener Fix).
+
+**Nachgemessen am selben Tag (die beiden nach dem Hauptlauf offenen Punkte):**
+
+1. **`trade_proposals` end-to-end**, gegen eine Wegwerf-Kopie mit `--date 2026-08-18`
+   (dort lag noch ein offenes `pre_market`-Signal, AVGO short — deshalb ohne
+   vorgeschalteten `pre_market`-Lauf und für 0,396 EUR statt ~3 EUR): `market_context`
+   sauber, Policy-Monitor sauber, 1 Signal re-validiert, **keine Kappung**.
+2. **`revalidate_one()` 6× wiederholt** mit echter Prediction-Zeile und echtem
+   `collect()`-Snapshot (weil ein einzelner Durchlauf unter adaptivem Denken nichts
+   beweist — s. o.): **6/6 sauber**, Output 775–1232 Tokens (Mittel 992), Spitze bei
+   **20 % der 6144er Decke**.
+
+⚠️ **Der Nebenbefund ist der eigentliche Ertrag: die 6144 waren nicht „vorsorglich",
+sie waren nötig.** Drei der sechs Stichproben (1068, 1232, 1065 Tokens) liegen **über
+der alten Decke von 1024** — bei unverändertem Code hätte also rund die Hälfte aller
+16:10-Re-Validierungen gekappt. Und weil `revalidation` bis zu dieser Migration keine
+`stop_reason`-Prüfung hatte, wäre das nicht als Fehler aufgefallen, sondern als
+`RevalidationError` → „Zeile bleibt offen" (s. Docstring): ein **stiller** Ausfall
+genau in dem Lauf, der über Ablehnungen entscheidet. Für `market_context` (ebenfalls
+1024 → 6144) gibt es diese Stichprobenreihe nicht; dort stützen nur die vier Läufe des
+Hauptdurchgangs plus der `trade_proposals`-Lauf, alle sauber.
+
+3. **Smoketest `claude-opus-5`** (die ID steht in `config.CLAUDE_MODEL_OPUS`, wird aber
+   von **keiner** Produktionsstelle gelesen — ein Tippfehler wäre erst in Sprint 3D
+   aufgefallen): löst auf, antwortet, `MODEL_PRICING` kennt sie. 0,0002 EUR.
+
+**Offen bleibt:** `claude-opus-5` ist weiterhin nirgends produktiv verdrahtet — die
+Preiszeile ist damit smoke-getestet, aber nicht unter Last erprobt.
+
+---
+
 ## Sprint 3D — Learning Modul
 
 ⚠️ **Noch nicht ausgearbeitet — braucht eine eigene Planungssession, bevor die Implementierung

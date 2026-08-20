@@ -22,7 +22,7 @@ OK_JSON = ('{"verdict": "bestaetigt", "probability_pct": 71, '
 
 def test_revalidation_uses_no_web_search(mocker):
     """E1: die 27 Einzelrecherchen sind gestrichen — genau das spart die Kosten."""
-    call = mocker.patch("src.revalidation.call_claude", return_value=_claude(OK_JSON))
+    call = mocker.patch("src.utils.call_claude", return_value=_claude(OK_JSON))
     from src.revalidation import revalidate_one
     revalidate_one(prediction=PRED, snapshot={"ticker": "AAPL", "price": 179.0},
                    checks=[], relative_strength=1.4, policy_context={},
@@ -31,7 +31,7 @@ def test_revalidation_uses_no_web_search(mocker):
 
 
 def test_revalidation_returns_verdict_and_probability(mocker):
-    mocker.patch("src.revalidation.call_claude", return_value=_claude(OK_JSON))
+    mocker.patch("src.utils.call_claude", return_value=_claude(OK_JSON))
     from src.revalidation import revalidate_one
     out = revalidate_one(prediction=PRED, snapshot={"ticker": "AAPL", "price": 179.0},
                          checks=[], relative_strength=1.4, policy_context={},
@@ -44,7 +44,7 @@ def test_revalidation_returns_verdict_and_probability(mocker):
 
 def test_revalidation_rejects_an_unknown_verdict(mocker):
     """Ein erfundenes Urteil darf nicht still als 'bestaetigt' durchgehen."""
-    mocker.patch("src.revalidation.call_claude",
+    mocker.patch("src.utils.call_claude",
                  return_value=_claude('{"verdict": "super", "probability_pct": 71}'))
     from src.revalidation import revalidate_one, RevalidationError
     with pytest.raises(RevalidationError):
@@ -54,7 +54,7 @@ def test_revalidation_rejects_an_unknown_verdict(mocker):
 
 
 def test_revalidation_raises_on_unparseable_output(mocker):
-    mocker.patch("src.revalidation.call_claude", return_value=_claude("kein JSON"))
+    mocker.patch("src.utils.call_claude", return_value=_claude("kein JSON"))
     from src.revalidation import revalidate_one, RevalidationError
     with pytest.raises(RevalidationError):
         revalidate_one(prediction=PRED, snapshot={}, checks=[],
@@ -63,7 +63,7 @@ def test_revalidation_raises_on_unparseable_output(mocker):
 
 
 def test_revalidation_books_its_cost(mocker):
-    mocker.patch("src.revalidation.call_claude", return_value=_claude(OK_JSON))
+    mocker.patch("src.utils.call_claude", return_value=_claude(OK_JSON))
     from src.revalidation import revalidate_one
     tracker = CostTracker()
     revalidate_one(prediction=PRED, snapshot={}, checks=[],
@@ -74,7 +74,7 @@ def test_revalidation_books_its_cost(mocker):
 
 def test_fired_checks_reach_the_model(mocker):
     """Der Prompt muss die Warnungen kennen, sonst kann er sie nicht wuerdigen."""
-    call = mocker.patch("src.revalidation.call_claude", return_value=_claude(OK_JSON))
+    call = mocker.patch("src.utils.call_claude", return_value=_claude(OK_JSON))
     from src.revalidation import revalidate_one
     from src.signal_checks import CheckResult
     revalidate_one(

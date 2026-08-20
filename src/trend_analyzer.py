@@ -10,7 +10,8 @@ from pathlib import Path
 
 from src import db
 from src.cost_tracker import CostTracker
-from src.utils import call_claude, extract_json_blob, WEB_SEARCH_TOOL
+from src.utils import (call_claude_retry_on_truncation, extract_json_blob,
+                       WEB_SEARCH_TOOL)
 
 log = logging.getLogger("shares_future.trend_analyzer")
 
@@ -18,7 +19,17 @@ SYSTEM_PROMPT = (Path(__file__).resolve().parent.parent
                  / "prompts" / "trend_analyzer_v1.txt").read_text()
 
 MODEL = "claude-sonnet-5"
-MAX_TOKENS = 4096
+# ⚠️ 4096 war gegen claude-sonnet-4-6 bemessen, das ohne explizites
+# thinking-Feld gar nicht dachte. Unter claude-sonnet-5 (adaptives Denken an,
+# Denk- und Antworttokens teilen sich die Decke) reicht der Wert NICHT
+# verlaesslich: im Messlauf lief Phase 0 einmal sauber durch und kappte beim
+# naechsten Lauf bei identischem Code -- die Antwort brach dann mitten im JSON
+# ab ('Unterminated string'), und Phase 0 ist laut Spec 3 fatal fuer den
+# ganzen Lauf. 12288 gibt dem Antworttext seinen alten Platz zurueck und legt
+# den gemessenen Denk-Aufschlag obendrauf; die Kappungs-Erkennung in
+# call_claude_retry_on_truncation() ist das eigentliche Netz darunter, weil
+# adaptives Denken nicht deterministisch ist.
+MAX_TOKENS = 12288
 
 
 class TrendAnalyzerError(RuntimeError):
@@ -40,15 +51,15 @@ def analyze_trends(
         "market trends, then return the JSON object defined in your system prompt."
     )
 
-    result = call_claude(
+    # Bucht jeden Versuch selbst -- auch einen verworfenen gekappten.
+    result = call_claude_retry_on_truncation(
         model=MODEL,
         system=SYSTEM_PROMPT,
         user=user_msg,
         max_tokens=MAX_TOKENS,
+        cost_tracker=cost_tracker,
         tools=[WEB_SEARCH_TOOL],
     )
-
-    cost_tracker.add_from_result(result)
 
     parsed = extract_json_blob(result.text, TrendAnalyzerError)
     trends = parsed.get("trends") or []

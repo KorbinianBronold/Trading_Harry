@@ -29,7 +29,7 @@ def test_analyze_trends_parses_response_and_writes_db(in_memory_db):
     fake = _fake_claude_result(payload)
     tracker = CostTracker(hard_cap_eur=10.0)
 
-    with patch("src.trend_analyzer.call_claude", return_value=fake):
+    with patch("src.utils.call_claude", return_value=fake):
         out = analyze_trends(
             conn=in_memory_db,
             date="2026-05-19",
@@ -54,7 +54,7 @@ def test_analyze_trends_bills_cost_tracker(in_memory_db):
     fake = _fake_claude_result(payload, web_search_calls=5)
     tracker = CostTracker(hard_cap_eur=10.0)
 
-    with patch("src.trend_analyzer.call_claude", return_value=fake):
+    with patch("src.utils.call_claude", return_value=fake):
         analyze_trends(
             conn=in_memory_db,
             date="2026-05-19",
@@ -73,7 +73,7 @@ def test_analyze_trends_raises_on_invalid_json(in_memory_db):
     fake = _fake_claude_result("this is not json at all")
     tracker = CostTracker(hard_cap_eur=10.0)
 
-    with patch("src.trend_analyzer.call_claude", return_value=fake):
+    with patch("src.utils.call_claude", return_value=fake):
         with pytest.raises(TrendAnalyzerError):
             analyze_trends(
                 conn=in_memory_db, date="2026-05-19",
@@ -90,7 +90,7 @@ def test_analyze_trends_raises_on_empty_trends(in_memory_db):
     }))
     tracker = CostTracker(hard_cap_eur=10.0)
 
-    with patch("src.trend_analyzer.call_claude", return_value=fake):
+    with patch("src.utils.call_claude", return_value=fake):
         with pytest.raises(TrendAnalyzerError, match="empty"):
             analyze_trends(
                 conn=in_memory_db, date="2026-05-19",
@@ -106,7 +106,7 @@ def test_analyze_trends_extracts_json_from_markdown_fences(in_memory_db):
     fake = _fake_claude_result(fenced)
     tracker = CostTracker(hard_cap_eur=10.0)
 
-    with patch("src.trend_analyzer.call_claude", return_value=fake):
+    with patch("src.utils.call_claude", return_value=fake):
         out = analyze_trends(
             conn=in_memory_db, date="2026-05-19",
             run_type="pre_market", cost_tracker=tracker,
@@ -120,7 +120,7 @@ def test_analyze_trends_uses_web_search_tool_in_request(in_memory_db):
     fake = _fake_claude_result(payload)
     tracker = CostTracker(hard_cap_eur=10.0)
 
-    with patch("src.trend_analyzer.call_claude", return_value=fake) as mock_call:
+    with patch("src.utils.call_claude", return_value=fake) as mock_call:
         analyze_trends(
             conn=in_memory_db, date="2026-05-19",
             run_type="pre_market", cost_tracker=tracker,
