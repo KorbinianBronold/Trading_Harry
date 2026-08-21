@@ -573,6 +573,14 @@ Die Pipeline-Phasen lassen sich an `main.py:run_pipeline()` ablesen.
 - ⚠️ Der `open` der Tages-Bar ist **nicht** der Eröffnungskurs: die Bar beginnt laut
   `openingHours` um 08:00 UTC, also vorbörslich. Gemessen 0,47 % Abweichung bei AAPL
   (310,54 gegen 309,09). Der echte Eröffnungskurs kommt aus einer `MINUTE`-Bar.
+- ⚠️ **Der Gap-Mechanismus legt KEINE Historie an — er füllt nur Löcher.**
+  `data_collector._fill_price_gaps()` sagt das in seinem eigenen Docstring
+  („Kein Nachladen, wenn der Ticker noch gar keine Historie hat"), und sein
+  Scanfenster ist ohnehin nur `GAP_SCAN_BARS = 220`. Die Vorstellung „erst live
+  schalten, die Gaps füllen sich schon" ist deshalb **falsch**: ein Ticker ohne
+  Historie wird als `insufficient bars` übersprungen, zählt Richtung
+  `TICKER_MAX_SKIPS = 20` und deaktiviert sich nach 20 Läufen selbst. Backfill
+  ist Pflicht, nicht Komfort.
 - ⚠️ **Ein neuer Ticker braucht erst `setup/historical_loader.py --tickers <X>`**,
   bevor er in die Config kommt. Ohne Historie wird er als `insufficient bars`
   übersprungen und zählt Richtung Deaktivierung — der stille Bootstrap-Pfad ist

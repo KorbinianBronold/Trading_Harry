@@ -3270,6 +3270,70 @@ explizit statt über eine AttributeError-Warnung je Ticker.
 
 **Tests:** 947 grün.
 
+### C.23 — Vollständige S&P-500-Liste: 451 verifizierte Ticker (2026-08-21)
+
+Fortsetzung von C.21, wo `SP500_FULL_TICKERS` von einem Stub auf 142
+handverlesene Ticker kam. Jetzt die vollständige Liste.
+
+**Quelle:** die S&P-500-Konstituenten als **CSV**
+(`github.com/datasets/s-and-p-500-companies`), 503 Symbole, Punktnotation auf
+die Projektkonvention normalisiert (`BRK.B` → `BRK-B`).
+
+⚠️ **Ein erster Versuch über die gerenderte Wikipedia-Tabelle wurde verworfen.**
+Das zusammenfassende Modell lieferte halluzinierte Symbole (`OLAPK`, `XCYG`,
+`WYRE WYRE`, `TESA`) und längst übernommene Firmen (`RHT` 2019, `SVB` 2023,
+`PXD`/`SPLK` 2024). Wäre das ungeprüft in die Config gewandert, hätte das
+Epic-Gate zwar das meiste abgefangen — aber Symbole, die zufällig auflösen,
+wären unter dem falschen Etikett „S&P 500" eingezogen. **Für Listen dieser Art
+eine strukturierte Quelle nehmen, keine zusammengefasste Seite.**
+
+**Epic-Gate (Spec F5):** 450 von 503 lösten per direktem `/markets?epics=`-Abruf
+auf (89 %), **53 nicht** und fehlen bewusst — darunter durchaus grosse Namen
+(`EMR`, `DD`, `TEL`, `TT`, `WST`, `STE`). Eine Suche über die Volltextsuche wurde
+nicht versucht: CLAUDE.md warnt ausdrücklich davor, und „lieber ungemappt als
+falsch gemappt" gilt hier genauso wie bei den Sektor-ETFs.
+
+**Eine Handkorrektur:** `FI` ergänzt — die CSV führt Fiserv noch unter dem alten
+`FISV`, Capital.com kennt nur das neue Symbol.
+
+**Gegenprobe:** alle 20 MVP-Ticker enthalten, und **keiner der bisherigen 142
+fällt heraus** — die handgebaute Zwischenliste war durchweg echt.
+
+⚠️ **Der Gap-Mechanismus rettet einen nicht.** Beim Planen kam die Annahme auf,
+man könne 500 Ticker live schalten und `_fill_price_gaps()` fülle die Historie
+nach. Das ist falsch: die Funktion sagt in ihrem eigenen Docstring „Kein
+Nachladen, wenn der Ticker noch gar keine Historie hat", und ihr Scanfenster
+ist `GAP_SCAN_BARS = 220`. Ohne Backfill würde jeder neue Ticker als
+`insufficient bars` übersprungen und sich nach `TICKER_MAX_SKIPS = 20` Läufen
+selbst deaktivieren.
+
+**Backfill durchgeführt** (477 Ticker = 451 Aktien + 7 Rohstoffe/Krypto + 19
+Sektor-ETFs, über `--universe` mit `USE_FULL_SP500=true`):
+
+| | |
+|---|---|
+| Dauer | **8 Minuten** (geschätzt waren 45) |
+| Neue Bars | **429.465** |
+| DB gesamt | 6,2 MB → **60,0 MB**, 475.484 Bars, 477 Ticker |
+| `--report-coverage` | **„Alle Ticker haben genug Historie."** |
+| `predictions` / `outcomes` | **14 / 7 — unverändert** |
+
+Rohstoffe und Krypto sind mit erfasst und aktuell (je ~1002 Bars, letzter
+2026-08-20). Die 60 MB sind für den Release-Artefakt-Transport unkritisch.
+
+⚠️ **Erstmals gegen die produktive `data/tracking.db` gelaufen** statt gegen eine
+Wegwerf-Kopie. Begründung: der Backfill ist rein additiv (nur `price_history`,
+keine `predictions`/`outcomes`), und der Zweck ist genau, den Stand dort zu
+haben. Vorher wurde `data/tracking.db.backup-vor-500er-backfill` angelegt.
+
+**`USE_FULL_SP500` bleibt `false`** — die Liste allein vergrössert nichts.
+⚠️ Vor der Aktivierung fehlt eine **Laufzeitmessung**: bei 142 Tickern dauerte
+`pre_market` bereits 34 min, das Fenster bis `trade_proposals` (16:10) sind
+70 min. Die Kosten sind unkritisch (hochgerechnet ~4,3 € gegen den 6-€-Deckel),
+die Laufzeit ist die bindende Grenze.
+
+**Tests:** 947 grün.
+
 ## Sprint 3D — Learning Modul
 
 ⚠️ **Noch nicht ausgearbeitet — braucht eine eigene Planungssession, bevor die Implementierung
