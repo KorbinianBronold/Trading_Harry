@@ -1,6 +1,23 @@
 # Shares_Future – SP500 CFD Research Tool
 
-**Zuletzt aktualisiert:** 2026-08-21 — 🎯 **Outcome-Qualität: Stop-Distanz,
+**Zuletzt aktualisiert:** 2026-08-21 — 🌐 **Produktivuniversum: 150
+sektor-balancierte Ticker, produktive DB bestückt.** `SP500_PROD_TICKERS` (150)
+ersetzt die 20 MVP-Ticker als Standard; die verifizierte 451er-Liste bleibt als
+Pool. ⚠️ **`USE_FULL_SP500=false` heisst ab jetzt 150, nicht mehr 20** — die
+Umstellung braucht keine Env-Variable. Auswahl: MVP gesetzt, **min. 3 je
+Sub-Sektor** (= `SECTOR_DB_MOMENTUM_MIN_TICKERS`, darunter ist das Momentum-Signal
+strukturell `NULL`), Rest proportional zur Sektorgrösse, innerhalb nach
+Ø Dollar-Volumen. Nicht alle 451, weil `MAX_DEEP_ANALYSIS = 50` Phase 3 deckelt —
+mehr Ticker erzeugen **keine** zusätzlichen Predictions, nur eine andere Auswahl.
+⚠️ **Zwei DBs, die auseinanderdriften:** die produktive ist das Release-Asset
+`db-latest`, nicht `data/tracking.db` — der C.23-Backfill hatte nur die lokale
+Kopie erreicht, produktiv standen weiter 46 Ticker. Jetzt nachgeholt: **129.779
+Bars, 176 Ticker, „Alle Ticker haben genug Historie"**, Predictions/Outcomes
+(43/24) unverändert. Nebenbefund: der `USE_FULL_SP500`-Ausdruck stand **fünffach**
+im Code, jetzt eine Quelle (`universe.stock_universe()`) plus Test dagegen.
+**955 Tests grün.** Details: PROJECT_STATUS **C.24**.
+
+Davor, 2026-08-21 — 🎯 **Outcome-Qualität: Stop-Distanz,
 Risikobudget, Horizont-Labels.** Alle 7 Outcomes waren `sl_hit`, 6 davon an Tag 1
 — der Stop liegt bei 0,39–0,78 einer typischen Tagesspanne und wird vom Rauschen
 erreicht. Neu: `check_stop_distance` (**weich** — hart hätte er alle 14 Signale

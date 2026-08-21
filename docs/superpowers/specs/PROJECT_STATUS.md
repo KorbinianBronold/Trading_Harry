@@ -3334,6 +3334,105 @@ die Laufzeit ist die bindende Grenze.
 
 **Tests:** 947 grün.
 
+⚠️ **Richtigstellung durch C.24:** der Satz „Erstmals gegen die produktive
+`data/tracking.db` gelaufen" ist **falsch**. `data/tracking.db` ist eine lokale
+Kopie; die produktive Datenbank ist das Release-Asset `db-latest`. Der
+C.23-Backfill hat die produktive DB nie erreicht — dort standen weiterhin nur
+46 Ticker mit Historie. Die Zeile „`predictions`/`outcomes` 14 / 7 — unverändert"
+belegt es selbst: die produktive DB führte zu diesem Zeitpunkt **43 / 24**.
+
+### C.24 — Produktivuniversum: 150 sektor-balancierte Ticker (2026-08-21)
+
+Die 451er-Liste aus C.23 bleibt als **verifizierter Pool** bestehen; produktiv
+gefahren werden **150** daraus ausgewählte Ticker (`SP500_PROD_TICKERS`).
+
+**Warum nicht alle 451:** `MAX_DEEP_ANALYSIS = 50` deckelt Phase 3, und bei 142
+Tickern griff dieser Deckel bereits am Anschlag (C.21). Ein grösseres Universum
+erzeugt deshalb **keine zusätzlichen Predictions**, sondern nur eine andere
+Auswahl — aus 451 Kandidaten wäre es ein 11-%-Trichter, dessen Selektion niemand
+mehr nachvollziehen kann. Dazu die Kosten: 20 Ticker kosten gemessen 1,6863 €
+(Mittel aus drei Produktivläufen, Streuung 1,38–2,04 durch adaptives Denken),
+142 Ticker 3,4712 €; linear auf 451 hochgerechnet ~7,4 € gegen einen Deckel von
+6,00 €. ⚠️ Die lineare Rechnung lag bei C.21 schon einmal um Faktor 3,4 daneben —
+verlässlich ist nur eine Messung, und die steht für 451 aus.
+
+**Auswahlregel** (aus den 451, vier Schritte):
+1. Die 20 `SP500_MVP_TICKERS` gesetzt (längste Historie).
+2. Mindestens **3** je Sub-Sektor. Die Zahl ist nicht gegriffen: sie ist
+   `SECTOR_DB_MOMENTUM_MIN_TICKERS`, und darunter liefert
+   `compute_sector_db_momentum()` strukturell `NULL` — der Sub-Sektor trüge
+   gar kein Signal bei.
+3. Restliche Plätze proportional zur Sektorgrösse im S&P 500.
+4. Innerhalb eines Sub-Sektors nach Ø Dollar-Volumen der letzten 60 Bars — bei
+   `HOLD_TARGET="intraday"` mit CFD-Hebel 5 bestimmt Liquidität den Spread.
+
+**Sektor-Zuordnung:** einmaliger `company_profile2`-Abruf über alle 451 Ticker
+(~8 min, kostenlos, rein lesend). **409 gemappt, 42 ungemappt, 0 Fehler.** Die 42
+verteilen sich auf genau fünf Rohwerte — `Media` (16), `Chemicals` (10),
+`Communications` (6), `Packaging` (4), `Telecommunication` (4) — also exakt die,
+die `SECTOR_ALIASES` bewusst nicht mappt. Die Entscheidung „lieber ungemappt als
+falsch gemappt" bestätigt sich damit an echten Daten.
+
+⚠️ Bewusst **nicht** in `fundamentals_cache` geschrieben:
+`save_fundamentals_cache()` ist ein `INSERT OR REPLACE` der ganzen Zeile und
+hätte `earnings_next_date` gelöscht.
+
+**Verteilung** (20 von 21 Sub-Sektoren): Industrials Rest 15, Financials Rest 15,
+Technology Hardware 11, Healthcare Rest 10, Utilities 9, Real Estate 9, Consumer
+Staples 9, Consumer Discretionary Rest 8, Retail 8, Oil & Gas 8, Semiconductors
+7, Banks 6, Transport 6, Biotech 5, Aerospace & Defense 5, Pharma 5, Auto 4,
+MedTech 4, Metals & Mining 4.
+
+⚠️ **GOOGL und META** tragen `finnhubIndustry='Media'` und bleiben ungemappt —
+für Communication führt Capital.com keinen ETF. Sie laufen wie in D6 dokumentiert
+ohne Sektor-Guardrail, sind als MVP-Ticker aber gesetzt.
+⚠️ **„Clean Energy" (ICLN) ist strukturell unbesetzbar:** Finnhub führt FSLR als
+`Semiconductors`, und kein anderer S&P-500-Wert fällt dorthin. Kein Auswahlfehler
+— der Sub-Sektor hat schlicht kein Mitglied im Index.
+
+**Nebenbefund, mitbehoben:** der Ausdruck `SP500_FULL_TICKERS if USE_FULL_SP500
+else ...` stand **fünffach** im Code (`main.py` 2×, `db.py`, `universe.py`,
+`capital_provider.py`). Dieselbe Streuung liess bei `LEARNING_RETENTION_DAYS`
+eine von vier Tabellen auf einer abweichenden Frist stehen. Jetzt eine Quelle:
+`universe.stock_universe()`. Ein Test scannt den Quellbaum und wird rot, sobald
+jemand den Schalter wieder lokal kopiert.
+
+⚠️ **Bedeutungswechsel von `USE_FULL_SP500`:** `false` heisst ab jetzt **150**
+(vorher 20), `true` weiterhin 451. Die Umstellung auf 150 braucht deshalb
+**keine** Env-Variable — sie greift, sobald der Code gepusht ist.
+
+**Backfill gegen die PRODUKTIVE DB** (das Release-Asset, nicht die lokale Kopie):
+
+| | |
+|---|---|
+| Vorher | 46 Ticker mit ≥220 Bars, 46.111 Bars, 6,1 MB |
+| Eingefügt | **129.779 Bars** über 176 Ticker, ~3 min |
+| Nachher | **176 Ticker** (150 Aktien + 7 Rohstoffe/Krypto + 19 ETFs), 175.890 Bars, 21,6 MB |
+| `--report-coverage` | **„Alle Ticker haben genug Historie."** |
+| `predictions` / `outcomes` | **43 / 24 — unverändert** |
+| `news_summaries` / `cutoff_log` | **128 / 60 — unverändert** |
+| `PRAGMA integrity_check` | `ok`, nach dem Upload erneut gegengeprüft |
+
+⚠️ **Die lokale `data/tracking.db` wurde NICHT hochgeladen.** Sie trägt zwar mehr
+Kurshistorie (475.484 Bars aus dem C.23-Backfill), aber deutlich **weniger**
+Trainingsdaten (14/7 Predictions/Outcomes gegen 43/24, 0 statt 128
+`news_summaries`). Ein Upload hätte 29 Predictions, 17 Outcomes und 128
+News-Zusammenfassungen vernichtet — genau die Daten, um die es bei Sprint 3D geht.
+
+**Tests:** 955 grün, 92,76 % Coverage.
+
+⏳ **Offen:** eine **Laufzeitmessung** unter 150 Tickern. Rechnerisch ~35 min
+(CI-Lauf mit 20 Tickern: 15m44s; 142 Ticker: 34 min) gegen ein Fenster von 70 min
+zwischen `pre_market` (13:00 UTC) und `trade_proposals` (14:10 UTC). Der Puffer
+schrumpft, und `concurrency: cancel-in-progress: false` lässt `trade_proposals`
+warten statt starten.
+
+⏳ **Parallelisierung ist noch nicht angefangen:** `CLAUDE_PARALLEL_CALLS = 5`
+steht in `config.py`, wird aber **nirgends gelesen** — im gesamten Produktivcode
+gibt es kein `ThreadPoolExecutor`, kein `asyncio`, kein `threading`. Alle
+Claude-Calls laufen strikt sequenziell. Bei 150 Tickern ist das der grösste
+Laufzeithebel, und `CostTracker` müsste dafür erst thread-safe werden.
+
 ## Sprint 3D — Learning Modul
 
 ⚠️ **Noch nicht ausgearbeitet — braucht eine eigene Planungssession, bevor die Implementierung
