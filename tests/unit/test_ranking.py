@@ -145,16 +145,16 @@ def test_rank_drops_direction_none(in_memory_db, valid_analysis):
 def test_rank_keeps_all_commodities_crypto(in_memory_db):
     db.init_schema(in_memory_db)
     cc = [
-        _analysis("GC=F", asset_class="commodity"),
-        _analysis("SI=F", asset_class="commodity"),
-        _analysis("BTC-USD", asset_class="crypto"),
+        _analysis("GOLD", asset_class="commodity"),
+        _analysis("SILVER", asset_class="commodity"),
+        _analysis("BTCUSD", asset_class="crypto"),
     ]
     out = rank_and_persist(
         conn=in_memory_db, date="2026-05-19", run_type="close",
         stock_analyses=[], commodity_crypto_analyses=cc,
         market_context=_market_ctx(), signal_context={},
     )
-    assert {a["ticker"] for a in out["commodities_crypto"]} == {"GC=F", "SI=F", "BTC-USD"}
+    assert {a["ticker"] for a in out["commodities_crypto"]} == {"GOLD", "SILVER", "BTCUSD"}
 
 
 def test_rank_persists_predictions_with_score_dimensions(in_memory_db, valid_analysis):
@@ -227,13 +227,13 @@ def test_direction_none_is_not_logged_as_guardrail_reject(in_memory_db):
 def test_abstentions_are_counted_in_the_phase_4_summary(in_memory_db, caplog):
     """Am 2026-08-04 verschwanden 8 von 9 Kandidaten lautlos: sie hatten
     direction='none' und wurden ohne Logzeile uebersprungen. Im Log stand genau
-    eine Drop-Begruendung (CL=F) und darunter "0 long, 0 short, 0 persisted" --
+    eine Drop-Begruendung (OIL_CRUDE) und darunter "0 long, 0 short, 0 persisted" --
     die Luecke zwischen 9 Analysen und 1 Begruendung war nicht erklaerbar."""
     import logging
     db.init_schema(in_memory_db)
     abstain = _analysis("NEUTRAL", momentum=8.0)
     abstain["direction"] = "none"
-    cc_abstain = _analysis("GC=F", asset_class="commodity", momentum=8.0)
+    cc_abstain = _analysis("GOLD", asset_class="commodity", momentum=8.0)
     cc_abstain["direction"] = "none"
 
     with caplog.at_level(logging.INFO, logger="shares_future.ranking"):
@@ -272,12 +272,12 @@ def test_commodity_crypto_rejects_are_persisted_too(in_memory_db):
         conn=in_memory_db, date="2026-07-27", run_type="pre_market",
         stock_analyses=[],
         commodity_crypto_analyses=[
-            _analysis("GC=F", asset_class="commodity", intraday=0.2),
+            _analysis("GOLD", asset_class="commodity", intraday=0.2),
         ],
         market_context=_market_ctx(), signal_context={},
     )
     rows = db.load_guardrail_rejects_since(in_memory_db, since="2026-07-27")
-    assert [r["ticker"] for r in rows] == ["GC=F"]
+    assert [r["ticker"] for r in rows] == ["GOLD"]
     assert rows[0]["rule"] == "intraday_range"
 
 
@@ -546,7 +546,7 @@ def test_classify_commodity_never_conflicts():
     """Spec 20.5 #2: Rohstoffe/Krypto werden nie disqualifiziert, auch nicht
     bei gegenlaeufigem Technik-Signal."""
     a = _stock_analysis("long")
-    a["ticker"] = "GC=F"
+    a["ticker"] = "GOLD"
     ctx = {"tech_direction": "short", "tech_strength": 3}
     klasse, strength, rank_score = _classify(a, ctx, cc=True)
     assert klasse == "core"
@@ -570,7 +570,7 @@ def test_classify_zero_analysis_strength_yields_null_not_zero():
 
 def test_classify_commodity_without_tech_signal_gets_null_rank_score():
     a = _stock_analysis("long")
-    a["ticker"] = "SI=F"
+    a["ticker"] = "SILVER"
     klasse, strength, rank_score = _classify(a, {}, cc=True)
     assert klasse == "core"
     assert rank_score is None
@@ -706,15 +706,15 @@ def test_rank_and_persist_commodity_survives_opposing_tech_signal(in_memory_db):
     """Spec 20.5 #2: Rohstoffe/Krypto werden vom Technik-Signal nie verworfen."""
     conn = in_memory_db
     db.init_schema(conn)
-    cc = _analysis("GC=F", momentum=8.0, asset_class="commodity")
+    cc = _analysis("GOLD", momentum=8.0, asset_class="commodity")
     result = rank_and_persist(
         conn=conn, date="2026-08-17", run_type="pre_market",
         stock_analyses=[], commodity_crypto_analyses=[cc],
         market_context=_market_ctx(),
-        signal_context={"GC=F": _ctx(tech_direction="short", tech_strength=2)},
+        signal_context={"GOLD": _ctx(tech_direction="short", tech_strength=2)},
     )
-    assert [a["ticker"] for a in result["commodities_crypto"]] == ["GC=F"]
-    row = conn.execute("SELECT * FROM predictions WHERE ticker='GC=F'").fetchone()
+    assert [a["ticker"] for a in result["commodities_crypto"]] == ["GOLD"]
+    row = conn.execute("SELECT * FROM predictions WHERE ticker='GOLD'").fetchone()
     assert row["candidate_class"] == "core"
 
 
@@ -741,13 +741,13 @@ def test_rank_and_persist_counts_tech_only_abstentions_for_commodities_too(in_me
     Quellen zaehlen, nicht nur stock_analyses."""
     conn = in_memory_db
     db.init_schema(conn)
-    abstained = _analysis("GC=F", momentum=8.0, asset_class="commodity")
+    abstained = _analysis("GOLD", momentum=8.0, asset_class="commodity")
     abstained["direction"] = "none"
     result = rank_and_persist(
         conn=conn, date="2026-08-17", run_type="pre_market",
         stock_analyses=[], commodity_crypto_analyses=[abstained],
         market_context=_market_ctx(),
-        signal_context={"GC=F": _ctx(tech_direction="long", tech_strength=2)},
+        signal_context={"GOLD": _ctx(tech_direction="long", tech_strength=2)},
     )
     assert result["divergence_stats"]["tech_only_abstentions"] == 1
 
@@ -770,7 +770,7 @@ def test_ranking_does_not_mutate_the_input_analyses(in_memory_db):
     conn = in_memory_db
     db.init_schema(conn)
     a = _analysis("AAPL", momentum=8.0)
-    cc = _analysis("GC=F", momentum=8.0, asset_class="commodity")
+    cc = _analysis("GOLD", momentum=8.0, asset_class="commodity")
     keys_before = (set(a.keys()), set(cc.keys()))
 
     rank_and_persist(
@@ -779,7 +779,7 @@ def test_ranking_does_not_mutate_the_input_analyses(in_memory_db):
         market_context=_market_ctx(),
         signal_context={
             "AAPL": _ctx(tech_direction="long", tech_strength=3),
-            "GC=F": _ctx(tech_direction="long", tech_strength=2),
+            "GOLD": _ctx(tech_direction="long", tech_strength=2),
         },
     )
 

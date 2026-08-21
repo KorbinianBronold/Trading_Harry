@@ -393,11 +393,11 @@ def test_loader_never_writes_todays_provisional_bar(tmp_db_path, mocker):
     )
 
     from setup.historical_loader import load_ticker_history
-    load_ticker_history("BTC-USD", db_path=str(tmp_db_path), provider=prov)
+    load_ticker_history("BTCUSD", db_path=str(tmp_db_path), provider=prov)
 
     conn = db.connect(str(tmp_db_path))
     dates = [r["date"] for r in conn.execute(
-        "SELECT date FROM price_history WHERE ticker='BTC-USD'").fetchall()]
+        "SELECT date FROM price_history WHERE ticker='BTCUSD'").fetchall()]
     conn.close()
     assert today not in dates, "Der laufende Tag ist noch nicht final"
     assert yesterday in dates

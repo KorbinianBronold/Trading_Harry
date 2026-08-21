@@ -493,6 +493,66 @@ def _apply_migrations(conn: sqlite3.Connection) -> None:
     conn.commit()
 
     _enforce_one_open_prediction_per_idea(conn)
+    _migrate_legacy_commodity_crypto_tickers(conn)
+
+
+# Rename-Map fuer den yfinance -> Capital.com-Epic-Wechsel (2026-08-21,
+# s. config.py: COMMODITY_TICKERS/CRYPTO_TICKERS fuehren seither die Epics
+# direkt, TICKER_MAP in capital_provider.py kennt die Altlasten nicht mehr).
+_LEGACY_TICKER_RENAME: dict[str, str] = {
+    "GC=F":    "GOLD",
+    "SI=F":    "SILVER",
+    "CL=F":    "OIL_CRUDE",
+    "BTC-USD": "BTCUSD",
+    "ETH-USD": "ETHUSD",
+    "SOL-USD": "SOLUSD",
+    "XRP-USD": "XRPUSD",
+}
+
+# Jede Tabelle, die den Ticker als Fremd-/Primaerschluessel traegt. Eine hier
+# vergessene Tabelle bricht fuer sie den Join zwischen altem und neuem Namen --
+# fuer eine offene Prediction heisst das: die Outcome-Bewertung findet ihre
+# eigene Kurshistorie nie wieder (evaluator.py laedt ueber pred["ticker"]).
+_LEGACY_TICKER_TABLES = (
+    "price_history", "technical_indicators", "news_summaries", "predictions",
+    "skipped_tickers", "fundamentals_cache", "ticker_sectors", "ticker_status",
+    "guardrail_rejects", "cutoff_log",
+)
+
+
+def _migrate_legacy_commodity_crypto_tickers(conn: sqlite3.Connection) -> None:
+    """Benennt die alten yfinance-Ticker (GC=F, BTC-USD, ...) einmalig auf die
+    Capital.com-Epics um, die config.py seit 2026-08-21 direkt fuehrt.
+
+    Idempotent wie _enforce_one_open_prediction_per_idea: die WHERE-Klausel
+    findet nach dem ersten Lauf nichts mehr, jeder Folgelauf ist ein No-Op --
+    der Vorab-Zaehler haelt die Log-Zeile deshalb auch nur beim ersten Mal
+    sichtbar. Muss VOR dem ersten collect() derselben Pipeline laufen, sonst
+    haette z.B. GOLD null historische Bars in price_history und wuerde als
+    'insufficient bars' uebersprungen -- init_schema() laeuft laut Doku als
+    Erstes in pre_market, die Reihenfolge passt von selbst."""
+    old_tickers = list(_LEGACY_TICKER_RENAME)
+    marks = ",".join("?" * len(old_tickers))
+    per_table: dict[str, int] = {}
+    for table in _LEGACY_TICKER_TABLES:
+        n = conn.execute(
+            f"SELECT COUNT(*) AS n FROM {table} WHERE ticker IN ({marks})",
+            old_tickers,
+        ).fetchone()["n"]
+        if n:
+            per_table[table] = n
+    if not per_table:
+        return
+
+    for table in per_table:
+        for old, new in _LEGACY_TICKER_RENAME.items():
+            conn.execute(f"UPDATE {table} SET ticker = ? WHERE ticker = ?", (new, old))
+    conn.commit()
+    log.warning(
+        f"Ticker-Migration (yfinance -> Capital.com-Epic): "
+        f"{sum(per_table.values())} Zeilen umbenannt ueber {len(per_table)} "
+        f"Tabellen: {per_table}"
+    )
 
 
 def _enforce_one_open_prediction_per_idea(conn: sqlite3.Connection) -> None:

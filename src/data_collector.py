@@ -493,7 +493,7 @@ def _gate_phase(tickers: list[str], conn, date: str) -> list[str]:
     sie bleiben trotz inaktivem Status Survivors, nur mit WARNING statt dem
     harten Rauswurf -- das Universum ist hier so klein, dass ein dauerhaft
     fehlender Rohstoff-/Krypto-Wert schwerer wiegt als bei 500 Aktien."""
-    exempt = set(config.COMMODITY_TICKERS.values()) | set(config.CRYPTO_TICKERS.values())
+    exempt = set(config.COMMODITY_TICKERS) | set(config.CRYPTO_TICKERS)
     survivors: list[str] = []
     for t in tickers:
         if db.is_ticker_inactive(conn, t, today=date):

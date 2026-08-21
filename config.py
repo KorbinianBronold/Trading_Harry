@@ -31,11 +31,18 @@ SP500_MVP_TICKERS = [
     "JPM", "V", "UNH", "XOM", "JNJ", "WMT", "MA", "PG", "HD", "LLY",
     "ABBV", "AVGO",
 ]
-COMMODITY_TICKERS = {"Gold": "GC=F", "Silber": "SI=F", "Öl": "CL=F"}
-CRYPTO_TICKERS = {
-    "Bitcoin": "BTC-USD", "Ethereum": "ETH-USD",
-    "Solana": "SOL-USD", "XRP": "XRP-USD",
-}
+# Capital.com-Epics direkt als interne Ticker-Identifier (2026-08-21) -- vorher
+# yfinance-Notation (GC=F, BTC-USD, ...), ein Ueberbleibsel aus der Zeit vor
+# Sprint 3 (yfinance seit 2026-07-09 entfernt). TICKER_MAP musste die alten
+# Strings vor jedem Capital.com-Call uebersetzen; jetzt IST der Ticker der
+# Epic, keine Uebersetzung noetig. Verifiziert per direktem /markets?epics=
+# -Abruf am 2026-08-21: alle sieben TRADEABLE.
+#
+# ⚠️ Migration noetig: bestehende DB-Zeilen (price_history, predictions, ...)
+# tragen noch die alten Strings. src/db.py:_migrate_legacy_commodity_crypto_tickers()
+# benennt sie einmalig um, ausgeloest aus init_schema().
+COMMODITY_TICKERS: list[str] = ["GOLD", "SILVER", "OIL_CRUDE"]
+CRYPTO_TICKERS: list[str] = ["BTCUSD", "ETHUSD", "SOLUSD", "XRPUSD"]
 
 # Sub-Sektor -> Sektor-ETF-Symbol. Bewusst feiner als die 11 GICS-Sektoren: ein
 # Halbleiter-Setup soll gegen SOXX geprüft werden, nicht gegen den breiten XLK,

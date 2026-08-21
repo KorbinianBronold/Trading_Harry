@@ -28,7 +28,7 @@ def _sample_payload() -> dict:
         ],
         "top_short": [],
         "commodities_crypto": [
-            {"ticker": "GC=F", "asset_class": "commodity",
+            {"ticker": "GOLD", "asset_class": "commodity",
              "direction": "long", "current_price": 2380.0,
              "tp_price": 2420.0, "sl_price": 2360.0, "rr_ratio": 2.0,
              "total_score": 6.9, "probability_pct": 58,
@@ -63,7 +63,7 @@ def test_daily_html_renders_all_four_sections():
     # Section 3 (Trends)
     assert "ai-capex-acceleration" in html
     # Section 4 (Commodities/Crypto)
-    assert "GC=F" in html
+    assert "GOLD" in html
     # Footer
     assert "2.84" in html  # cost summary
     assert "BADCO" in html  # skipped
@@ -545,7 +545,7 @@ def test_weekly_renders_core_and_divergence_performance_separately():
             "long_total": 2, "long_correct": 1, "long_avg_pl": -7.5,
             "short_total": 0, "short_correct": 0, "short_avg_pl": 0.0,
             "total_pl_eur": -15.0,
-            "trades": [{"date": "2026-08-13", "ticker": "GC=F",
+            "trades": [{"date": "2026-08-13", "ticker": "GOLD",
                         "direction": "long", "entry_price": 2400.0,
                         "exit_price": 2385.0, "exit_reason": "sl_hit",
                         "profit_loss_eur": -15.0}],
@@ -559,7 +559,7 @@ def test_weekly_renders_core_and_divergence_performance_separately():
     assert "-15.0" in html, "divergence-Gesamt-P/L fehlt"
     assert "13.0" not in html, "core und divergence duerfen nie summiert werden"
     # Beide Trade-Listen sind da.
-    assert "MSFT" in html and "GC=F" in html
+    assert "MSFT" in html and "GOLD" in html
 
 
 def test_weekly_divergence_block_is_visible_even_when_empty():
@@ -693,11 +693,11 @@ def test_commodities_section_renders_non_tradeable_assets_instead_of_dropping_th
     """Der Kern des Bugs: ein Asset ohne handelbares Signal muss trotzdem
     erscheinen -- mit Einschaetzung, nur ohne Handelsempfehlung."""
     html = _section_commodities_crypto([
-        _cc("BTC-USD", direction="none", tradeable=False,
+        _cc("BTCUSD", direction="none", tradeable=False,
             summary="Seitwaerts, kein klares Setup."),
     ])
     assert "Keine Daten" not in html
-    assert "BTC-USD" in html
+    assert "BTCUSD" in html
     assert "Seitwaerts, kein klares Setup." in html
 
 
@@ -705,20 +705,20 @@ def test_commodities_section_suppresses_tp_sl_for_non_tradeable_assets():
     """TP/SL sind eine Handelsempfehlung -- bei einer Enthaltung waeren sie
     eine Aussage, die die Analyse gerade NICHT getroffen hat."""
     html = _section_commodities_crypto([
-        _cc("BTC-USD", direction="none", tradeable=False),
+        _cc("BTCUSD", direction="none", tradeable=False),
     ])
     assert "2420" not in html and "2360" not in html
 
 
 def test_commodities_section_keeps_tp_sl_for_tradeable_assets():
-    html = _section_commodities_crypto([_cc("GC=F", tradeable=True)])
+    html = _section_commodities_crypto([_cc("GOLD", tradeable=True)])
     assert "2420" in html and "2360" in html
 
 
 def test_commodities_section_shows_the_summary_column():
     """Das summary-Feld liefert der v3-Prompt laengst -- es wurde nur nie
     gerendert. Genau das sind die 'Einschaetzungen' in der Mail."""
-    html = _section_commodities_crypto([_cc("GC=F", summary="Zinsen stuetzen.")])
+    html = _section_commodities_crypto([_cc("GOLD", summary="Zinsen stuetzen.")])
     assert "Zinsen stuetzen." in html
 
 

@@ -48,15 +48,12 @@ def _not_in_future(ts: str) -> str:
     return min(parsed, now).strftime("%Y-%m-%dT%H:%M:%S")
 
 
+# Seit 2026-08-21 tragen COMMODITY_TICKERS/CRYPTO_TICKERS die Capital.com-Epics
+# direkt (vorher yfinance-Notation, s. config.py) -- diese Map braucht sie
+# deshalb nicht mehr. BRK-B bleibt: Capital.com fuehrt Berkshire B ohne
+# Bindestrich, das ist keine yfinance-Altlast, sondern eine echte Abweichung.
 TICKER_MAP: dict[str, str] = {
-    "GC=F":    "GOLD",
-    "SI=F":    "SILVER",
-    "CL=F":    "OIL_CRUDE",   # Capital.com epic (not CRUDE_OIL)
-    "BTC-USD": "BTCUSD",
-    "ETH-USD": "ETHUSD",
-    "SOL-USD": "SOLUSD",
-    "XRP-USD": "XRPUSD",
-    "BRK-B":   "BRKB",        # Capital.com epic for Berkshire B
+    "BRK-B": "BRKB",
 }
 
 # Rueckrichtung fuer Phase 1c (B.4): get_open_positions() liefert Epics, wir
@@ -69,11 +66,17 @@ def epic_to_ticker(epic: str) -> str | None:
 
     Gibt None zurueck, wenn das Epic zu keinem Ticker unserer Universen gehoert —
     typisch fuer von Hand eroeffnete Fremdpositionen. Fuer sie existieren keine
-    Indikator-Daten, sie werden vom Aufrufer geloggt und uebersprungen."""
+    Indikator-Daten, sie werden vom Aufrufer geloggt und uebersprungen.
+
+    ⚠️ full_universe(), nicht stock_universe(): seit 2026-08-21 sind Commodities/
+    Crypto ihr eigenes Epic (TICKER_MAP kennt nur noch BRK-B). Mit
+    stock_universe() allein wuerde eine offene Gold-/Oel-/Krypto-Position bei
+    _forced_candidates() (Spec B.4) nicht mehr als Pflicht-Kandidat erkannt --
+    ein stiller Funktionsverlust, kein Absturz."""
     if epic in _EPIC_TO_TICKER:
         return _EPIC_TO_TICKER[epic]
-    from src.universe import stock_universe
-    return epic if epic in set(stock_universe()) else None
+    from src.universe import full_universe
+    return epic if epic in set(full_universe()) else None
 
 
 def _extract_markets(payload: dict) -> list[dict]:

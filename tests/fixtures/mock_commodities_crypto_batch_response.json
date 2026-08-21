@@ -1,7 +1,7 @@
 {
   "results": [
     {
-      "ticker": "GC=F",
+      "ticker": "GOLD",
       "asset_class": "commodity",
       "direction": "long",
       "confidence": "medium",
@@ -31,7 +31,7 @@
       "extra": {"fear_greed_value": 62, "gold_silver_ratio": 80.3, "btc_dominance_pct": null}
     },
     {
-      "ticker": "SI=F",
+      "ticker": "SILVER",
       "asset_class": "commodity",
       "direction": "none",
       "confidence": "low",

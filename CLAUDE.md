@@ -1,6 +1,36 @@
 # Shares_Future – SP500 CFD Research Tool
 
-**Zuletzt aktualisiert:** 2026-08-21 — 🌐 **Produktivuniversum: 150
+**Zuletzt aktualisiert:** 2026-08-21 — 🔧 **yfinance-Reste bei
+Commodities/Crypto entfernt: interne Ticker sind jetzt die echten
+Capital.com-Epics.** `COMMODITY_TICKERS`/`CRYPTO_TICKERS` waren `dict[Name,
+yfinance-Symbol]` (`"Gold": "GC=F"`, ein Überbleibsel aus der Zeit vor Sprint 3)
+und liefen vor jedem Capital.com-Call durch `TICKER_MAP`. Jetzt Listen der Epics
+direkt (`["GOLD", "SILVER", "OIL_CRUDE"]`), wie `SP500_MVP_TICKERS`.
+`TICKER_MAP` schrumpft auf einen Eintrag (`BRK-B`→`BRKB`). Alle sieben live
+gegen `/markets?epics=` verifiziert, `TRADEABLE`. ⚠️ **`ticker` ist kein
+Anzeige-Feld, sondern der Join-Key**, den `evaluator.py` Wochen später nutzt,
+um Kursdaten für die Outcome-Bewertung nachzuladen — ein reiner Code-Swap hätte
+zwei damals offene Predictions (`CL=F`, `SOL-USD`, eine davon produktiv **und**
+lokal) unauffindbar gemacht. Neu: `db._migrate_legacy_commodity_crypto_tickers()`,
+eingehängt in `init_schema()` nach demselben Muster wie die
+Duplikat-Bereinigung — idempotent, benennt alle 10 `ticker`-Spalten
+(`price_history`, `predictions`, `technical_indicators`, `news_summaries`,
+`skipped_tickers`, `fundamentals_cache`, `guardrail_rejects`, `cutoff_log`,
+`ticker_sectors`, `ticker_status`) einmalig um, läuft **automatisch** beim
+nächsten echten Lauf (kein manueller DB-Eingriff nötig). Gegen Kopien beider
+DBs verifiziert: lokal 7068 Zeilen, produktiv 7118 Zeilen umbenannt, beide
+offenen Positionen sauber migriert, `integrity_check: ok`. Nebenbefund:
+`epic_to_ticker()` musste von `stock_universe()` auf `full_universe()`
+erweitert werden — sonst hätte `_forced_candidates()` (Spec B.4) offene
+Gold-/Öl-/Krypto-Positionen nicht mehr als Pflicht-Kandidaten erkannt, ein
+stiller Funktionsverlust ohne Absturz. Das `"name"`-Feld (deutsche
+Anzeigenamen) fällt ersatzlos weg — bereits toter Code stromabwärts, der neue
+Ticker ist selbst lesbar. Prompts bewusst unangetastet (Regel 10: nie editiert,
+nur neu versioniert) — vier aktive Dateien nennen die alten Strings als
+Beispieltext, funktional folgenlos. **955 Tests grün, 92,58 % Coverage.**
+Details: PROJECT_STATUS **C.25**.
+
+Davor, 2026-08-21 — 🌐 **Produktivuniversum: 150
 sektor-balancierte Ticker, produktive DB bestückt.** `SP500_PROD_TICKERS` (150)
 ersetzt die 20 MVP-Ticker als Standard; die verifizierte 451er-Liste bleibt als
 Pool. ⚠️ **`USE_FULL_SP500=false` heisst ab jetzt 150, nicht mehr 20** — die

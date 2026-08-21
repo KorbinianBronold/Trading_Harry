@@ -3433,6 +3433,79 @@ gibt es kein `ThreadPoolExecutor`, kein `asyncio`, kein `threading`. Alle
 Claude-Calls laufen strikt sequenziell. Bei 150 Tickern ist das der grösste
 Laufzeithebel, und `CostTracker` müsste dafür erst thread-safe werden.
 
+### C.25 — Commodities/Crypto: yfinance-Reste entfernt, Capital.com-Epics direkt (2026-08-21)
+
+**Anlass:** Korbinian bemerkte, dass `COMMODITY_TICKERS`/`CRYPTO_TICKERS` in
+yfinance-Notation standen (`"Gold": "GC=F"`) — ein Überbleibsel aus der Zeit vor
+Sprint 3 (yfinance seit 2026-07-09 entfernt), das seither vor jedem
+Capital.com-Call durch `TICKER_MAP` übersetzt wurde. Auftrag: verifizieren, dass
+die Kursdaten wirklich stimmen, und die Reste komplett entfernen.
+
+**Live-Verifikation zuerst:** `TICKER_MAP` wurde am 2026-05-22 (Commit
+`41e6bb0`) einmal gegen die echte API korrigiert (`CL=F`→`OIL_CRUDE`,
+alle vier Krypto-Epics, `BRK-B` ergänzt) — drei Monate alt, ohne laufende
+Absicherung (anders als die Sub-Sektor-ETFs, die `setup/verify_epics.py` hat).
+Direkter `/markets?epics=`-Abruf (nicht Volltextsuche) am 2026-08-21 bestätigt:
+alle sieben lösen weiterhin exakt auf, `TRADEABLE`, kein Drift.
+
+**Umstellung:** `COMMODITY_TICKERS`/`CRYPTO_TICKERS` von `dict[Name, Symbol]`
+auf `list[str]` mit den Capital.com-Epics direkt (`["GOLD", "SILVER",
+"OIL_CRUDE"]` / `["BTCUSD", "ETHUSD", "SOLUSD", "XRPUSD"]`) — wie
+`SP500_MVP_TICKERS`. `TICKER_MAP` schrumpft auf `{"BRK-B": "BRKB"}` (keine
+yfinance-Altlast, sondern eine echte Capital.com-Abweichung, bleibt bestehen).
+Das `"name"`-Feld (deutsche Anzeigenamen, `build_commodity_crypto_inputs()`)
+fällt ersatzlos weg — ein Fork-Check bestätigte: bereits toter Code
+stromabwärts, kein Leser in `commodities_crypto.py`.
+
+⚠️ **`ticker` ist kein Anzeige-Feld, sondern der Join-Key.** `evaluator.py` lädt
+über `pred["ticker"]` Wochen später Kursdaten für die Outcome-Bewertung nach
+(`price_provider.get_intraday_ohlc()` und `db.load_price_history_after()`). Ein
+reiner Code-Swap hätte **zwei damals offene Predictions** (`CL=F` produktiv
+**und** lokal, `SOL-USD` produktiv) unauffindbar gemacht — `TICKER_MAP` kennt
+die alten Strings nicht mehr, `price_history` liefe unter dem neuen Namen weiter.
+
+**Migration statt Handarbeit:** `db._migrate_legacy_commodity_crypto_tickers()`,
+eingehängt in `_apply_migrations()` (aus `init_schema()`) nach demselben Muster
+wie die Duplikat-Bereinigung (`_enforce_one_open_prediction_per_idea`) —
+idempotent (vorheriger Zeilenzähler pro Tabelle, No-Op wenn nichts mehr zu
+migrieren ist), benennt alle 10 Tabellen mit `ticker`-Spalte um
+(`price_history`, `predictions`, `technical_indicators`, `news_summaries`,
+`skipped_tickers`, `fundamentals_cache`, `guardrail_rejects`, `cutoff_log`,
+`ticker_sectors`, `ticker_status`). **Läuft automatisch beim nächsten echten
+Pipelinelauf** — `init_schema()` steht laut C.14 als Erstes in `pre_market`,
+vor jedem `collect()`; kein manueller Eingriff an der produktiven DB nötig,
+anders als beim Ticker-Backfill in C.24.
+
+Gegen Kopien beider DBs verifiziert (nicht nur die lokale — s. die
+Richtigstellung bei C.23/C.24, `data/tracking.db` ≠ produktive DB):
+
+| | lokal | produktiv |
+|---|---|---|
+| Umbenannte Zeilen | 7068 über 6 Tabellen | 7118 über 7 Tabellen |
+| Offene Positionen migriert | `OIL_CRUDE` (ex-`CL=F`) | `OIL_CRUDE`, `SOLUSD` |
+| Zweiter Lauf | No-Op (idempotent bestätigt) | — |
+| `PRAGMA integrity_check` | `ok` | `ok` |
+| `predictions`/`outcomes` | unverändert | 43/24, unverändert |
+
+**Nebenbefund, mitbehoben:** `epic_to_ticker()` (Rückrichtung für
+`_forced_candidates()`, Spec B.4) fiel nach Wegfall der 7 `TICKER_MAP`-Einträge
+auf `stock_universe()` zurück, die Commodities/Crypto nicht enthält — eine
+offene Gold-/Öl-/Krypto-Position wäre künftig **nicht mehr** als
+Pflicht-Kandidat erkannt worden. Stiller Funktionsverlust, kein Absturz, vom
+Fork-Check gefunden. Jetzt `full_universe()`.
+
+⚠️ **Prompts bewusst unangetastet** (Regel 10: nie editiert, nur neu
+versioniert). Vier aktive Dateien (`commodities_crypto_v3.txt`,
+`policy_monitor_v1.txt`, `trend_analyzer_v1.txt`) nennen die alten Strings als
+Beispieltext — funktional folgenlos, das Modell echot den übergebenen Ticker,
+nicht den Prompt-Beispieltext.
+
+**Tests:** alle Referenzen in acht Testdateien plus drei Fixture-JSONs auf die
+neuen Ticker umgestellt (reine Platzhalter, kein Verhalten geändert), zwei
+`capital_provider`-Tests umgebaut (die Übersetzung, die sie prüften, gibt es
+für Commodities/Crypto nicht mehr — ersetzt durch einen Passthrough-Test).
+**955 Tests grün, 92,58 % Coverage.**
+
 ## Sprint 3D — Learning Modul
 
 ⚠️ **Noch nicht ausgearbeitet — braucht eine eigene Planungssession, bevor die Implementierung

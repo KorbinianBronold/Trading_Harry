@@ -14,7 +14,7 @@
       "strength": 6,
       "duration_estimate": "1w",
       "summary": "OPEC+ extended cuts; WTI +3% week (Bloomberg 2026-05-19).",
-      "beneficiary_tickers": ["XOM", "CL=F"],
+      "beneficiary_tickers": ["XOM", "OIL_CRUDE"],
       "negative_tickers": ["DAL"],
       "next_catalyst": "OPEC meeting 2026-06-05"
     }

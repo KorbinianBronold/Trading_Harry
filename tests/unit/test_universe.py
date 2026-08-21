@@ -59,11 +59,11 @@ def test_full_universe_covers_stocks_commodities_crypto_and_etfs(mocker):
     der Bootstrap an ihr vorbei und die Pipeline skippt sie spaeter mangels Bars."""
     mocker.patch.object(config, "SP500_PROD_TICKERS", ["AAPL"])
     mocker.patch.object(config, "USE_FULL_SP500", False)
-    mocker.patch.object(config, "COMMODITY_TICKERS", {"Gold": "GC=F"})
-    mocker.patch.object(config, "CRYPTO_TICKERS", {"Bitcoin": "BTC-USD"})
+    mocker.patch.object(config, "COMMODITY_TICKERS", ["GOLD"])
+    mocker.patch.object(config, "CRYPTO_TICKERS", ["BTCUSD"])
     mocker.patch.object(config, "SUB_SECTOR_ETFS", {"Semis": "SOXX"})
 
-    assert set(full_universe()) == {"AAPL", "GC=F", "BTC-USD", "SOXX"}
+    assert set(full_universe()) == {"AAPL", "GOLD", "BTCUSD", "SOXX"}
 
 
 def test_full_universe_follows_use_full_sp500(mocker):
@@ -72,8 +72,8 @@ def test_full_universe_follows_use_full_sp500(mocker):
     mocker.patch.object(config, "SP500_PROD_TICKERS", ["AAPL"])
     mocker.patch.object(config, "SP500_FULL_TICKERS", ["AAPL", "TSLA", "NFLX"])
     mocker.patch.object(config, "USE_FULL_SP500", True)
-    mocker.patch.object(config, "COMMODITY_TICKERS", {})
-    mocker.patch.object(config, "CRYPTO_TICKERS", {})
+    mocker.patch.object(config, "COMMODITY_TICKERS", [])
+    mocker.patch.object(config, "CRYPTO_TICKERS", [])
     mocker.patch.object(config, "SUB_SECTOR_ETFS", {})
 
     assert set(full_universe()) == {"AAPL", "TSLA", "NFLX"}
@@ -84,8 +84,8 @@ def test_full_universe_has_no_duplicates(mocker):
     doppelter Eintrag wuerde den Ticker zweimal laden — verschwendete Calls."""
     mocker.patch.object(config, "SP500_PROD_TICKERS", ["AAPL"])
     mocker.patch.object(config, "USE_FULL_SP500", False)
-    mocker.patch.object(config, "COMMODITY_TICKERS", {})
-    mocker.patch.object(config, "CRYPTO_TICKERS", {})
+    mocker.patch.object(config, "COMMODITY_TICKERS", [])
+    mocker.patch.object(config, "CRYPTO_TICKERS", [])
     mocker.patch.object(config, "SUB_SECTOR_ETFS",
                         {"MedTech": "XLV", "Pharma": "XLV", "Rest": "XLV"})
 
@@ -107,8 +107,8 @@ def test_real_universe_contains_the_known_groups():
     versehentliches Leeren einer Liste in config.py."""
     universe = set(full_universe())
     assert {"AAPL", "MSFT"} <= universe          # Aktien
-    assert {"GC=F", "CL=F"} <= universe          # Rohstoffe
-    assert {"BTC-USD", "ETH-USD"} <= universe    # Krypto
+    assert {"GOLD", "OIL_CRUDE"} <= universe     # Rohstoffe
+    assert {"BTCUSD", "ETHUSD"} <= universe      # Krypto
     assert {"SOXX", "XLK"} <= universe           # Sub-Sektor-ETFs
 
 
@@ -123,8 +123,8 @@ def test_thin_history_tickers_lists_those_below_the_minimum(tmp_db_path, mocker)
     import config as cfg
     mocker.patch.object(cfg, "SP500_PROD_TICKERS", ["THIN", "FAT"])
     mocker.patch.object(cfg, "USE_FULL_SP500", False)
-    mocker.patch.object(cfg, "COMMODITY_TICKERS", {})
-    mocker.patch.object(cfg, "CRYPTO_TICKERS", {})
+    mocker.patch.object(cfg, "COMMODITY_TICKERS", [])
+    mocker.patch.object(cfg, "CRYPTO_TICKERS", [])
     mocker.patch.object(cfg, "SUB_SECTOR_ETFS", {})
 
     conn = db.connect(str(tmp_db_path)); db.init_schema(conn)
@@ -150,8 +150,8 @@ def test_thin_history_counts_a_ticker_without_any_bars(tmp_db_path, mocker):
     import config as cfg
     mocker.patch.object(cfg, "SP500_PROD_TICKERS", ["GHOST"])
     mocker.patch.object(cfg, "USE_FULL_SP500", False)
-    mocker.patch.object(cfg, "COMMODITY_TICKERS", {})
-    mocker.patch.object(cfg, "CRYPTO_TICKERS", {})
+    mocker.patch.object(cfg, "COMMODITY_TICKERS", [])
+    mocker.patch.object(cfg, "CRYPTO_TICKERS", [])
     mocker.patch.object(cfg, "SUB_SECTOR_ETFS", {})
 
     conn = db.connect(str(tmp_db_path)); db.init_schema(conn)

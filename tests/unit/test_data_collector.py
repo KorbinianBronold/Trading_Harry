@@ -1004,7 +1004,7 @@ def test_gate_phase_exempts_commodities_and_crypto_from_deactivation(in_memory_d
     from src import db
     from src.data_collector import _gate_phase
     init_schema(in_memory_db)
-    gold = next(iter(config.COMMODITY_TICKERS.values()))
+    gold = config.COMMODITY_TICKERS[0]
     for _ in range(config.TICKER_MAX_SKIPS + 1):
         db.log_skipped_ticker(in_memory_db, ticker=gold, date="2026-07-01",
                               run_type="pre_market", reason="x")

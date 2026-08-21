@@ -65,10 +65,8 @@ def test_full_pipeline_writes_predictions_and_sends_email(tmp_path, monkeypatch)
     monkeypatch.setattr(orchestrator, "FinnhubProvider", fake_provider_cls)
     monkeypatch.setattr(orchestrator.config, "SP500_PROD_TICKERS",
                         ["AAPL", "MSFT", "NVDA"])
-    monkeypatch.setattr(orchestrator.config, "COMMODITY_TICKERS",
-                        {"Gold": "GC=F"})
-    monkeypatch.setattr(orchestrator.config, "CRYPTO_TICKERS",
-                        {"Bitcoin": "BTC-USD"})
+    monkeypatch.setattr(orchestrator.config, "COMMODITY_TICKERS", ["GOLD"])
+    monkeypatch.setattr(orchestrator.config, "CRYPTO_TICKERS", ["BTCUSD"])
 
     # Stub Claude calls (one mock per module-level call_claude)
     trend_resp = (FIXTURE_DIR / "mock_trend_response.json").read_text()
@@ -137,8 +135,8 @@ def test_full_pipeline_writes_predictions_and_sends_email(tmp_path, monkeypatch)
         _r(broad_scan_resp_3, web_search_calls=3),            # broad_scan
         _r(policy_resp, web_search_calls=3),                 # policy_monitor
         _r(deep_batch_resp),                                  # deep: 1 Batch (AAPL+MSFT+NVDA)
-        _r(_cc_for("GC=F", "commodity")),                    # cc: 1 Batch (Gold)
-        _r(_cc_for("BTC-USD", "crypto")),                    # cc: 1 Batch (BTC)
+        _r(_cc_for("GOLD", "commodity")),                    # cc: 1 Batch (Gold)
+        _r(_cc_for("BTCUSD", "crypto")),                    # cc: 1 Batch (BTC)
     ]
 
     # Seit Sprint 3B / Plan 2 (B.5) laeuft Phase 4a NACH Phase 4 (Ranking) und
@@ -158,7 +156,7 @@ def test_full_pipeline_writes_predictions_and_sends_email(tmp_path, monkeypatch)
     from src import db as _seed_db
     _seed_conn = _seed_db.connect(str(db_path))
     _seed_db.init_schema(_seed_conn)
-    for _t in ("AAPL", "MSFT", "NVDA", "GC=F", "BTC-USD"):
+    for _t in ("AAPL", "MSFT", "NVDA", "GOLD", "BTCUSD"):
         for _ts, _row in _mock_ohlc().iterrows():
             _seed_db.upsert_price_history(
                 _seed_conn, ticker=_t, date=_ts.strftime("%Y-%m-%d"),

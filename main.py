@@ -61,13 +61,18 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 def build_commodity_crypto_inputs() -> list[dict]:
-    """Returns 7 stub TickerData dicts (name + ticker + asset_class).
-    data_collector populates indicators per ticker; here we list the universe."""
+    """Returns 7 stub TickerData dicts (ticker + asset_class).
+    data_collector populates indicators per ticker; here we list the universe.
+
+    Seit 2026-08-21 kein separates "name"-Feld mehr: der Ticker IST bereits der
+    Capital.com-Epic (GOLD, BTCUSD, ...) und damit selbst lesbar -- die vorher
+    getrennte deutsche Anzeigebezeichnung (Gold, Bitcoin, ...) hatte ohnehin
+    keinen Leser stromabwaerts."""
     out: list[dict] = []
-    for name, t in config.COMMODITY_TICKERS.items():
-        out.append({"ticker": t, "name": name, "asset_class": "commodity"})
-    for name, t in config.CRYPTO_TICKERS.items():
-        out.append({"ticker": t, "name": name, "asset_class": "crypto"})
+    for t in config.COMMODITY_TICKERS:
+        out.append({"ticker": t, "asset_class": "commodity"})
+    for t in config.CRYPTO_TICKERS:
+        out.append({"ticker": t, "asset_class": "crypto"})
     return out
 
 
@@ -500,8 +505,7 @@ def run_pipeline(run_type: str, date: str, db_path: str) -> None:
         for td in cc_tds_raw:
             meta = by_ticker.get(td["ticker"], {})
             cc_tds.append({**td,
-                           "asset_class": meta.get("asset_class", "commodity"),
-                           "name": meta.get("name", td["ticker"])})
+                           "asset_class": meta.get("asset_class", "commodity")})
 
         payload["skipped_tickers"] = [
             r["ticker"] for r in conn.execute(

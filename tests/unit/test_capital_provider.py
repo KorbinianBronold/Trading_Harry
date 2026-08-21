@@ -52,18 +52,6 @@ def test_get_price_history_empty_returns_none(monkeypatch):
     assert CapitalComProvider().get_price_history("AAPL") is None
 
 
-def test_ticker_mapping_gold_uses_GOLD_epic(monkeypatch):
-    monkeypatch.setattr("requests.post", _mock_post)
-    called = []
-    def _capture(url, **kwargs):
-        called.append(url)
-        return _mock_prices_get(url, **kwargs)
-    monkeypatch.setattr("requests.get", _capture)
-    from src.providers.capital_provider import CapitalComProvider
-    CapitalComProvider().get_price_history("GC=F", days=5)
-    assert any("GOLD" in u for u in called), f"GOLD not in {called}"
-
-
 def test_get_open_positions_maps_direction(monkeypatch):
     monkeypatch.setattr("requests.post", _mock_post)
     def _pos(url, **kwargs):
@@ -138,17 +126,11 @@ def test_get_closed_positions_filters_by_action_type(monkeypatch):
     assert closed[0]["ticker"] == "AAPL"
 
 
-@pytest.mark.parametrize("yf_ticker,expected_epic", [
-    ("GC=F",    "GOLD"),
-    ("SI=F",    "SILVER"),
-    ("CL=F",    "OIL_CRUDE"),
-    ("BTC-USD", "BTCUSD"),
-    ("ETH-USD", "ETHUSD"),
-    ("SOL-USD", "SOLUSD"),
-    ("XRP-USD", "XRPUSD"),
-    ("BRK-B",   "BRKB"),
+@pytest.mark.parametrize("ticker,expected_epic", [
+    ("BRK-B", "BRKB"),  # die einzige verbleibende TICKER_MAP-Uebersetzung --
+                        # Capital.com fuehrt Berkshire B ohne Bindestrich.
 ])
-def test_ticker_map_all_epics(monkeypatch, yf_ticker, expected_epic):
+def test_ticker_map_all_epics(monkeypatch, ticker, expected_epic):
     monkeypatch.setattr("requests.post", _mock_post)
     called = []
     def _capture(url, **kwargs):
@@ -156,9 +138,28 @@ def test_ticker_map_all_epics(monkeypatch, yf_ticker, expected_epic):
         return _mock_prices_get(url, **kwargs)
     monkeypatch.setattr("requests.get", _capture)
     from src.providers.capital_provider import CapitalComProvider
-    CapitalComProvider().get_price_history(yf_ticker, days=5)
+    CapitalComProvider().get_price_history(ticker, days=5)
     assert any(expected_epic in u for u in called), \
         f"Expected epic '{expected_epic}' in request URL, got: {called}"
+
+
+@pytest.mark.parametrize("ticker", [
+    "GOLD", "SILVER", "OIL_CRUDE", "BTCUSD", "ETHUSD", "SOLUSD", "XRPUSD",
+])
+def test_commodity_crypto_tickers_pass_through_unmapped(monkeypatch, ticker):
+    """Seit 2026-08-21 (Umstellung von yfinance-Notation) sind diese sieben
+    Ticker bereits Capital.com-Epics -- TICKER_MAP kennt sie nicht mehr,
+    _map() gibt sie unveraendert zurueck."""
+    monkeypatch.setattr("requests.post", _mock_post)
+    called = []
+    def _capture(url, **kwargs):
+        called.append(url)
+        return _mock_prices_get(url, **kwargs)
+    monkeypatch.setattr("requests.get", _capture)
+    from src.providers.capital_provider import CapitalComProvider
+    CapitalComProvider().get_price_history(ticker, days=5)
+    assert any(ticker in u for u in called), \
+        f"Expected '{ticker}' unveraendert in der Request-URL, got: {called}"
 
 
 def test_auth_failed_flag_skips_all_subsequent_calls(monkeypatch):
@@ -318,8 +319,16 @@ def test_every_sector_alias_target_is_a_known_sub_sector():
 
 def test_epic_to_ticker_maps_back():
     from src.providers.capital_provider import epic_to_ticker
-    assert epic_to_ticker("GOLD") == "GC=F"
     assert epic_to_ticker("BRKB") == "BRK-B"
+
+
+def test_epic_to_ticker_passes_through_commodities_and_crypto():
+    """Seit 2026-08-21 ist der Ticker bereits das Epic -- full_universe()
+    (nicht mehr stock_universe()) muss sie erkennen, sonst verliert
+    _forced_candidates() (Spec B.4) offene Gold-/Oel-/Krypto-Positionen."""
+    from src.providers.capital_provider import epic_to_ticker
+    for epic in ("GOLD", "SILVER", "OIL_CRUDE", "BTCUSD", "ETHUSD", "SOLUSD", "XRPUSD"):
+        assert epic_to_ticker(epic) == epic
 
 
 def test_epic_to_ticker_passes_through_unmapped_known_symbols():

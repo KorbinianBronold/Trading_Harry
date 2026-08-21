@@ -20,7 +20,7 @@ def test_render_daily_html_contains_all_sections_in_order():
         ],
         "top_short": [],
         "commodities_crypto": [
-            {"ticker": "GC=F", "asset_class": "commodity",
+            {"ticker": "GOLD", "asset_class": "commodity",
              "direction": "long", "current_price": 2380,
              "tp_price": 2420, "sl_price": 2360, "rr_ratio": 2.0,
              "total_score": 6.9, "probability_pct": 58,

@@ -54,10 +54,10 @@ def _policy() -> dict:
 
 def test_build_batches_groups_by_asset_class():
     tds = [
-        _td("GC=F", "commodity"), _td("SI=F", "commodity"),
-        _td("CL=F", "commodity"),
-        _td("BTC-USD", "crypto"), _td("ETH-USD", "crypto"),
-        _td("SOL-USD", "crypto"), _td("XRP-USD", "crypto"),
+        _td("GOLD", "commodity"), _td("SILVER", "commodity"),
+        _td("OIL_CRUDE", "commodity"),
+        _td("BTCUSD", "crypto"), _td("ETHUSD", "crypto"),
+        _td("SOLUSD", "crypto"), _td("XRPUSD", "crypto"),
     ]
     batches = build_batches(tds)
     sizes = sorted(len(b) for b in batches)
@@ -69,9 +69,9 @@ def test_build_batches_groups_by_asset_class():
 
 
 def test_build_batches_is_deterministic_within_class():
-    tds = [_td("SI=F", "commodity"), _td("GC=F", "commodity")]
+    tds = [_td("SILVER", "commodity"), _td("GOLD", "commodity")]
     batches = build_batches(tds)
-    assert [td["ticker"] for td in batches[0]] == ["GC=F", "SI=F"]
+    assert [td["ticker"] for td in batches[0]] == ["GOLD", "SILVER"]
 
 
 def test_build_batches_empty_input():
@@ -96,7 +96,7 @@ def test_max_tokens_never_falls_below_per_asset_value():
 def test_analyze_batch_returns_one_analysis_per_asset():
     fake = _fake_result(BATCH_FIXTURE.read_text())
     tracker = CostTracker(hard_cap_eur=10.0)
-    batch = [_td("GC=F", "commodity"), _td("SI=F", "commodity")]
+    batch = [_td("GOLD", "commodity"), _td("SILVER", "commodity")]
 
     with patch("src.commodities_crypto.call_claude", return_value=fake) as cc:
         analyses, missing = analyze_batch(
@@ -104,7 +104,7 @@ def test_analyze_batch_returns_one_analysis_per_asset():
             extra_context={"fear_greed_value": 62}, cost_tracker=tracker,
         )
 
-    assert [a["ticker"] for a in analyses] == ["GC=F", "SI=F"]
+    assert [a["ticker"] for a in analyses] == ["GOLD", "SILVER"]
     assert missing == []
     assert cc.call_args.kwargs["stream"] is True
     assert cc.call_args.kwargs["max_tokens"] == max_tokens_for_batch(2)
@@ -113,7 +113,7 @@ def test_analyze_batch_returns_one_analysis_per_asset():
 def test_analyze_batch_bills_cost_tracker():
     fake = _fake_result(BATCH_FIXTURE.read_text())
     tracker = CostTracker(hard_cap_eur=10.0)
-    batch = [_td("GC=F", "commodity"), _td("SI=F", "commodity")]
+    batch = [_td("GOLD", "commodity"), _td("SILVER", "commodity")]
 
     with patch("src.commodities_crypto.call_claude", return_value=fake):
         analyze_batch(
@@ -128,10 +128,10 @@ def test_analyze_batch_keeps_partial_results():
     """Spec 10 (uebernommen von deep_analysis): gelieferte Analysen werden
     IMMER genommen, ein fehlendes Asset wird gemeldet, nicht erfunden."""
     payload = json.loads(BATCH_FIXTURE.read_text())
-    payload["results"] = payload["results"][:1]        # SI=F fehlt
+    payload["results"] = payload["results"][:1]        # SILVER fehlt
     fake = _fake_result(json.dumps(payload))
     tracker = CostTracker(hard_cap_eur=10.0)
-    batch = [_td("GC=F", "commodity"), _td("SI=F", "commodity")]
+    batch = [_td("GOLD", "commodity"), _td("SILVER", "commodity")]
 
     with patch("src.commodities_crypto.call_claude", return_value=fake):
         analyses, missing = analyze_batch(
@@ -139,8 +139,8 @@ def test_analyze_batch_keeps_partial_results():
             extra_context={}, cost_tracker=tracker,
         )
 
-    assert [a["ticker"] for a in analyses] == ["GC=F"]
-    assert missing == ["SI=F"]
+    assert [a["ticker"] for a in analyses] == ["GOLD"]
+    assert missing == ["SILVER"]
 
 
 def test_analyze_batch_raises_on_unparseable_response():
@@ -150,7 +150,7 @@ def test_analyze_batch_raises_on_unparseable_response():
     with patch("src.commodities_crypto.call_claude", return_value=fake):
         with pytest.raises(CommoditiesCryptoError):
             analyze_batch(
-                ticker_datas=[_td("GC=F", "commodity")],
+                ticker_datas=[_td("GOLD", "commodity")],
                 trend_context=_trend(), policy_context=_policy(),
                 extra_context={}, cost_tracker=tracker,
             )
@@ -164,7 +164,7 @@ def test_analyze_batch_raises_when_output_was_truncated():
     with patch("src.commodities_crypto.call_claude", return_value=fake):
         with pytest.raises(BatchTruncatedError, match="max_tokens"):
             analyze_batch(
-                ticker_datas=[_td("GC=F", "commodity"), _td("SI=F", "commodity")],
+                ticker_datas=[_td("GOLD", "commodity"), _td("SILVER", "commodity")],
                 trend_context=_trend(), policy_context=_policy(),
                 extra_context={}, cost_tracker=tracker,
             )
@@ -173,7 +173,7 @@ def test_analyze_batch_raises_when_output_was_truncated():
 def test_analyze_batch_max_tokens_override_is_used():
     fake = _fake_result(BATCH_FIXTURE.read_text())
     tracker = CostTracker(hard_cap_eur=10.0)
-    batch = [_td("GC=F", "commodity"), _td("SI=F", "commodity")]
+    batch = [_td("GOLD", "commodity"), _td("SILVER", "commodity")]
 
     with patch("src.commodities_crypto.call_claude", return_value=fake) as cc:
         analyze_batch(
@@ -191,10 +191,10 @@ def test_analyze_commodities_and_crypto_runs_one_batch_per_asset_class():
     fake = _fake_result(BATCH_FIXTURE.read_text())
     tracker = CostTracker(hard_cap_eur=10.0)
     tds = [
-        _td("GC=F", "commodity"), _td("SI=F", "commodity"),
-        _td("CL=F", "commodity"),
-        _td("BTC-USD", "crypto"), _td("ETH-USD", "crypto"),
-        _td("SOL-USD", "crypto"), _td("XRP-USD", "crypto"),
+        _td("GOLD", "commodity"), _td("SILVER", "commodity"),
+        _td("OIL_CRUDE", "commodity"),
+        _td("BTCUSD", "crypto"), _td("ETHUSD", "crypto"),
+        _td("SOLUSD", "crypto"), _td("XRPUSD", "crypto"),
     ]
 
     with patch("src.commodities_crypto.call_claude", return_value=fake) as cc:
@@ -207,7 +207,7 @@ def test_analyze_commodities_and_crypto_runs_one_batch_per_asset_class():
 
 def test_analyze_commodities_and_crypto_retries_once_then_succeeds():
     tracker = CostTracker(hard_cap_eur=10.0)
-    batch = [_td("GC=F", "commodity"), _td("SI=F", "commodity")]
+    batch = [_td("GOLD", "commodity"), _td("SILVER", "commodity")]
     responses = [
         _fake_result("broken", output_tokens=10, web_search_calls=0),
         _fake_result(BATCH_FIXTURE.read_text()),
@@ -219,12 +219,12 @@ def test_analyze_commodities_and_crypto_retries_once_then_succeeds():
             extra_context={}, cost_tracker=tracker,
         )
     assert cc.call_count == 2
-    assert [a["ticker"] for a in out] == ["GC=F", "SI=F"]
+    assert [a["ticker"] for a in out] == ["GOLD", "SILVER"]
 
 
 def test_analyze_commodities_and_crypto_gives_up_after_two_failures():
     tracker = CostTracker(hard_cap_eur=10.0)
-    batch = [_td("GC=F", "commodity"), _td("SI=F", "commodity")]
+    batch = [_td("GOLD", "commodity"), _td("SILVER", "commodity")]
     responses = [
         _fake_result("broken", output_tokens=10, web_search_calls=0),
         _fake_result("still broken", output_tokens=10, web_search_calls=0),
@@ -240,7 +240,7 @@ def test_analyze_commodities_and_crypto_gives_up_after_two_failures():
 
 def test_truncated_batch_is_retried_with_a_larger_ceiling():
     tracker = CostTracker(hard_cap_eur=10.0)
-    batch = [_td("GC=F", "commodity"), _td("SI=F", "commodity")]
+    batch = [_td("GOLD", "commodity"), _td("SILVER", "commodity")]
     responses = [
         _fake_result(BATCH_FIXTURE.read_text(), output_tokens=8000,
                      stop_reason="max_tokens"),
@@ -261,7 +261,7 @@ def test_analyze_commodities_and_crypto_cost_cap_propagates():
     from src.cost_tracker import CostCapExceeded
     tracker = CostTracker(hard_cap_eur=0.0001)
     fake = _fake_result(BATCH_FIXTURE.read_text())
-    batch = [_td("GC=F", "commodity")]
+    batch = [_td("GOLD", "commodity")]
 
     with patch("src.commodities_crypto.call_claude", return_value=fake):
         with pytest.raises(CostCapExceeded):
@@ -298,7 +298,7 @@ def test_user_message_includes_extra_context_keys():
     tracker = CostTracker(hard_cap_eur=10.0)
     with patch("src.commodities_crypto.call_claude", return_value=fake) as mock_call:
         analyze_batch(
-            ticker_datas=[_td("BTC-USD", "crypto")],
+            ticker_datas=[_td("BTCUSD", "crypto")],
             trend_context=_trend(), policy_context=_policy(),
             extra_context={"fear_greed_value": 62, "btc_dominance_pct": 54.2},
             cost_tracker=tracker,

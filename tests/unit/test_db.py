@@ -1198,7 +1198,7 @@ def test_save_market_context_tolerates_a_sparse_row(in_memory_db):
 
 
 # ---------- oil_price/gold_price/btc_price entfernt (C.16, 2026-08-19) ----------
-# Nie befuellt -- die Rohpreise (GC=F/SI=F/CL=F/BTC-USD/...) liegen bereits
+# Nie befuellt -- die Rohpreise (GOLD/SILVER/OIL_CRUDE/BTCUSD/...) liegen bereits
 # vollstaendig in price_history, ueber dieselbe Capital.com-Pipeline wie die
 # Aktien. Eine zweite Kopie hier haette leicht auseinanderlaufen koennen.
 
@@ -2181,10 +2181,10 @@ def test_load_recent_outcomes_carries_candidate_class(in_memory_db):
     conn = in_memory_db
     db.init_schema(conn)
     _seed_prediction_with_outcome(conn, "AAPL", "long", "core", 10.0)
-    _seed_prediction_with_outcome(conn, "GC=F", "long", "divergence", -5.0)
+    _seed_prediction_with_outcome(conn, "GOLD", "long", "divergence", -5.0)
     rows = db.load_recent_outcomes(conn, "2026-08-01")
     classes = {r["ticker"]: r["candidate_class"] for r in rows}
-    assert classes == {"AAPL": "core", "GC=F": "divergence"}
+    assert classes == {"AAPL": "core", "GOLD": "divergence"}
 
 
 def test_load_revision_verdict_stats_groups_by_candidate_class(in_memory_db):
@@ -2195,7 +2195,7 @@ def test_load_revision_verdict_stats_groups_by_candidate_class(in_memory_db):
     _seed_prediction_with_outcome(
         conn, "AAPL", "long", "core", 10.0, revision_verdict="bestaetigt")
     _seed_prediction_with_outcome(
-        conn, "GC=F", "long", "divergence", -20.0, revision_verdict="bestaetigt")
+        conn, "GOLD", "long", "divergence", -20.0, revision_verdict="bestaetigt")
     rows = db.load_revision_verdict_stats(conn, "2026-08-01")
     by_class = {(r["revision_verdict"], r["candidate_class"]): r for r in rows}
     assert by_class[("bestaetigt", "core")]["n"] == 1
@@ -2223,7 +2223,7 @@ def test_load_revision_effectiveness_splits_by_candidate_class(in_memory_db):
         conn, "AAPL", "long", "core", 10.0, run_type="trade_proposals")
     # confirmed divergence: derselbe Lauftyp, aber divergence
     _seed_prediction_with_outcome(
-        conn, "GC=F", "long", "divergence", -20.0, run_type="trade_proposals")
+        conn, "GOLD", "long", "divergence", -20.0, run_type="trade_proposals")
     result = db.load_revision_effectiveness(conn, "2026-08-01")
     assert set(result.keys()) >= {"core", "divergence", "since"}
     assert result["core"]["confirmed"]["total"] == 1
@@ -2361,19 +2361,19 @@ from src.db import load_news_summaries
 def test_load_news_summaries_filters_by_date_and_source(in_memory_db):
     init_schema(in_memory_db)
     save_news_summaries(in_memory_db, [
-        {"ticker": "GC=F", "date": "2026-05-19", "run_type": "pre_market",
+        {"ticker": "GOLD", "date": "2026-05-19", "run_type": "pre_market",
          "summary": "Gold", "derived_direction": "bullish",
          "source": "commodities_crypto", "market_impact": "medium"},
         {"ticker": "AAPL", "date": "2026-05-19", "run_type": "pre_market",
          "summary": "Aktie", "derived_direction": None,
          "source": "broad_scan", "market_impact": "low"},
-        {"ticker": "SI=F", "date": "2026-05-18", "run_type": "pre_market",
+        {"ticker": "SILVER", "date": "2026-05-18", "run_type": "pre_market",
          "summary": "Vortag", "derived_direction": "bearish",
          "source": "commodities_crypto", "market_impact": "low"},
     ])
     rows = load_news_summaries(
         in_memory_db, date="2026-05-19", source="commodities_crypto")
-    assert [r["ticker"] for r in rows] == ["GC=F"]
+    assert [r["ticker"] for r in rows] == ["GOLD"]
 
 
 def test_load_news_summaries_dedupes_per_ticker_keeping_the_latest(in_memory_db):
@@ -2381,10 +2381,10 @@ def test_load_news_summaries_dedupes_per_ticker_keeping_the_latest(in_memory_db)
     schreiben -- der Abschnitt darf ein Asset trotzdem nur einmal zeigen."""
     init_schema(in_memory_db)
     save_news_summaries(in_memory_db, [
-        {"ticker": "GC=F", "date": "2026-05-19", "run_type": "pre_market",
+        {"ticker": "GOLD", "date": "2026-05-19", "run_type": "pre_market",
          "summary": "alt", "derived_direction": "bullish",
          "source": "commodities_crypto", "market_impact": "medium"},
-        {"ticker": "GC=F", "date": "2026-05-19", "run_type": "trade_proposals",
+        {"ticker": "GOLD", "date": "2026-05-19", "run_type": "trade_proposals",
          "summary": "neu", "derived_direction": "bearish",
          "source": "commodities_crypto", "market_impact": "high"},
     ])
@@ -2564,7 +2564,7 @@ def test_news_summaries_uses_derived_direction_not_sentiment(in_memory_db):
 def test_save_and_load_roundtrip_derived_direction(in_memory_db):
     init_schema(in_memory_db)
     save_news_summaries(in_memory_db, [
-        {"ticker": "GC=F", "date": "2026-05-19", "run_type": "pre_market",
+        {"ticker": "GOLD", "date": "2026-05-19", "run_type": "pre_market",
          "summary": "Gold", "derived_direction": "bullish",
          "source": "commodities_crypto", "market_impact": "medium"},
     ])

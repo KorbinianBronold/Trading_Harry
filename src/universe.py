@@ -39,8 +39,8 @@ def full_universe() -> list[str]:
 
     ordered = [
         *stocks,
-        *config.COMMODITY_TICKERS.values(),
-        *config.CRYPTO_TICKERS.values(),
+        *config.COMMODITY_TICKERS,
+        *config.CRYPTO_TICKERS,
         *sorted(set(config.SUB_SECTOR_ETFS.values())),
     ]
 

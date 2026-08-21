@@ -38,7 +38,7 @@ def test_parse_args_rejects_unknown_run_type():
 def test_build_commodity_crypto_inputs_combines_config_maps():
     inputs = build_commodity_crypto_inputs()
     tickers = {d["ticker"] for d in inputs}
-    expected = set(config.COMMODITY_TICKERS.values()) | set(config.CRYPTO_TICKERS.values())
+    expected = set(config.COMMODITY_TICKERS) | set(config.CRYPTO_TICKERS)
     assert tickers == expected
 
 
@@ -712,7 +712,7 @@ def test_run_trade_proposals_collects_all_tickers(tmp_db_path, mocker):
     assert collect_mock.call_count == 2
     passed = [set(c.kwargs["tickers"]) for c in collect_mock.call_args_list]
     assert set(config.SP500_PROD_TICKERS) in passed
-    cc = set(config.COMMODITY_TICKERS.values()) | set(config.CRYPTO_TICKERS.values())
+    cc = set(config.COMMODITY_TICKERS) | set(config.CRYPTO_TICKERS)
     assert cc in passed
 
 
@@ -765,7 +765,7 @@ def test_forced_candidates_maps_epics_and_skips_foreign(mocker):
         {"ticker": "GOLD"}, {"ticker": "AAPL"}, {"ticker": "PPHE"},
     ]
     from main import _forced_candidates
-    assert _forced_candidates(provider) == {"GC=F", "AAPL"}
+    assert _forced_candidates(provider) == {"GOLD", "AAPL"}
 
 
 def test_forced_candidates_is_empty_when_provider_fails(mocker):
@@ -1593,8 +1593,8 @@ def test_final_close_writes_final_bars_for_tickers_and_etfs(tmp_db_path, mocker)
     mocker.patch("main.config.SP500_PROD_TICKERS", ["AAPL"])
     mocker.patch("main.config.USE_FULL_SP500", False)
     mocker.patch("main.config.SUB_SECTOR_ETFS", {"Semis": "SOXX"})
-    mocker.patch("main.config.COMMODITY_TICKERS", {})
-    mocker.patch("main.config.CRYPTO_TICKERS", {"Bitcoin": "BTC-USD"})
+    mocker.patch("main.config.COMMODITY_TICKERS", [])
+    mocker.patch("main.config.CRYPTO_TICKERS", ["BTCUSD"])
     mocker.patch("main.send_final_close_email")  # C.17: sonst blockiert das Netz-Fixture
 
     from main import run_final_close
@@ -1604,7 +1604,7 @@ def test_final_close_writes_final_bars_for_tickers_and_etfs(tmp_db_path, mocker)
     tickers = {r["ticker"] for r in conn.execute(
         "SELECT DISTINCT ticker FROM price_history").fetchall()}
     conn.close()
-    assert tickers == {"AAPL", "BTC-USD", "SOXX"}
+    assert tickers == {"AAPL", "BTCUSD", "SOXX"}
 
 
 def test_final_close_covers_exactly_the_bootstrap_universe(tmp_db_path, mocker):
@@ -1767,7 +1767,7 @@ def test_opening_price_stays_null_for_commodities_and_crypto(tmp_db_path, mocker
     conn = db.connect(str(tmp_db_path)); db.init_schema(conn)
     _pred_row(conn, ticker="AAPL", entry_price=100.0,
               tp_price=106.0, sl_price=98.0)
-    _pred_row(conn, ticker="BTC-USD", asset_class="crypto",
+    _pred_row(conn, ticker="BTCUSD", asset_class="crypto",
               entry_price=64000.0, tp_price=70000.0, sl_price=62000.0)
     conn.commit(); conn.close()
 
@@ -1777,7 +1777,7 @@ def test_opening_price_stays_null_for_commodities_and_crypto(tmp_db_path, mocker
     # Rohstoffe (cc_tds) -- dieselbe Reihenfolge wie in run_trade_proposals.
     mocker.patch("main.collect", side_effect=[
         ([{"ticker": "AAPL", "price": 101.0}], 0, {}),
-        ([{"ticker": "BTC-USD", "price": 65000.0}], 0, {}),
+        ([{"ticker": "BTCUSD", "price": 65000.0}], 0, {}),
     ])
     mocker.patch("main.fetch_market_context", return_value={"vix_level": 18.0})
     mocker.patch("main.collect_sector_momentum", return_value={})
@@ -1803,9 +1803,9 @@ def test_opening_price_stays_null_for_commodities_and_crypto(tmp_db_path, mocker
     rows = {r["ticker"]: r for r in conn.execute(
         "SELECT * FROM predictions WHERE run_type='trade_proposals'").fetchall()}
     conn.close()
-    assert set(rows) == {"AAPL", "BTC-USD"}, "beide Zeilen muessen abgeloest sein"
+    assert set(rows) == {"AAPL", "BTCUSD"}, "beide Zeilen muessen abgeloest sein"
     assert rows["AAPL"]["price_open"] == 309.09, "Aktie bekommt den echten Open"
-    assert rows["BTC-USD"]["price_open"] is None, (
+    assert rows["BTCUSD"]["price_open"] is None, (
         "24/7-Instrument hat keinen Eroeffnungskurs -- NULL statt erfundenem Wert (E6)")
 
 
@@ -1934,11 +1934,11 @@ def test_signal_context_bundles_tech_signal_and_c1_indicators():
 
 def test_signal_context_defaults_news_strength_to_none_without_a_map():
     from main import _signal_context
-    tds = [{"ticker": "GC=F", "atr_pct": None, "rsi_14": None,
+    tds = [{"ticker": "GOLD", "atr_pct": None, "rsi_14": None,
             "volume_ratio": None, "earnings_in_days": None}]
     ctx = _signal_context(tds, {})
-    assert ctx["GC=F"]["news_strength"] is None
-    assert ctx["GC=F"]["tech_direction"] is None
+    assert ctx["GOLD"]["news_strength"] is None
+    assert ctx["GOLD"]["tech_direction"] is None
 
 
 def test_run_pipeline_passes_signal_context_to_ranking(tmp_db_path, mocker):
@@ -1969,7 +1969,7 @@ def test_load_recent_outcomes_aggregate_separates_divergence(tmp_db_path):
                                   correct_direction_eod, profit_loss_eur)
            VALUES (?, 'long', '2026-08-17', 1, 15.0)""", (core_id,))
     div_id = db.save_prediction(conn, {
-        "date": "2026-08-16", "run_type": "pre_market", "ticker": "GC=F",
+        "date": "2026-08-16", "run_type": "pre_market", "ticker": "GOLD",
         "direction": "long", "entry_price": 2000.0, "tp_price": 2050.0,
         "sl_price": 1980.0, "rr_ratio": 2.5, "candidate_class": "divergence",
     })
@@ -1995,34 +1995,34 @@ from main import _commodities_payload, _commodities_from_morning
 def test_commodities_payload_keeps_all_assets_not_just_the_tradeable_ones():
     """Der Bug: nur ranked[...] landete im Payload, Enthaltungen fielen raus."""
     deep_cc = [
-        {"ticker": "GC=F", "direction": "long", "summary": "Gold zieht an."},
-        {"ticker": "BTC-USD", "direction": "none", "summary": "Kein Setup."},
+        {"ticker": "GOLD", "direction": "long", "summary": "Gold zieht an."},
+        {"ticker": "BTCUSD", "direction": "none", "summary": "Kein Setup."},
     ]
-    ranked_cc = [{"ticker": "GC=F", "direction": "long", "total_score": 7.0}]
+    ranked_cc = [{"ticker": "GOLD", "direction": "long", "total_score": 7.0}]
 
     out = _commodities_payload(deep_cc, ranked_cc)
 
-    assert [a["ticker"] for a in out] == ["GC=F", "BTC-USD"]
+    assert [a["ticker"] for a in out] == ["GOLD", "BTCUSD"]
 
 
 def test_commodities_payload_marks_tradeability_per_asset():
     deep_cc = [
-        {"ticker": "GC=F", "direction": "long"},
-        {"ticker": "BTC-USD", "direction": "none"},
+        {"ticker": "GOLD", "direction": "long"},
+        {"ticker": "BTCUSD", "direction": "none"},
     ]
-    ranked_cc = [{"ticker": "GC=F", "direction": "long", "total_score": 7.0}]
+    ranked_cc = [{"ticker": "GOLD", "direction": "long", "total_score": 7.0}]
 
     by_ticker = {a["ticker"]: a for a in _commodities_payload(deep_cc, ranked_cc)}
 
-    assert by_ticker["GC=F"]["tradeable"] is True
-    assert by_ticker["BTC-USD"]["tradeable"] is False
+    assert by_ticker["GOLD"]["tradeable"] is True
+    assert by_ticker["BTCUSD"]["tradeable"] is False
 
 
 def test_commodities_payload_prefers_the_ranked_row_for_tradeable_assets():
     """Die gerankte Zeile traegt die Anreicherung (rank_score etc.) -- fuer
     handelbare Assets muss sie gewinnen, nicht die rohe Analyse."""
-    deep_cc = [{"ticker": "GC=F", "direction": "long", "total_score": 1.0}]
-    ranked_cc = [{"ticker": "GC=F", "direction": "long", "total_score": 7.0}]
+    deep_cc = [{"ticker": "GOLD", "direction": "long", "total_score": 1.0}]
+    ranked_cc = [{"ticker": "GOLD", "direction": "long", "total_score": 7.0}]
 
     out = _commodities_payload(deep_cc, ranked_cc)
 
@@ -2035,16 +2035,16 @@ def test_commodities_from_morning_reads_summaries_and_current_prices(in_memory_d
     from src import db as _db
     _db.init_schema(in_memory_db)
     _db.save_news_summaries(in_memory_db, [
-        {"ticker": "GC=F", "date": "2026-05-19", "run_type": "pre_market",
+        {"ticker": "GOLD", "date": "2026-05-19", "run_type": "pre_market",
          "summary": "Gold zieht an.", "derived_direction": "bullish",
          "source": "commodities_crypto", "market_impact": "medium"},
     ])
-    snapshots = {"GC=F": {"ticker": "GC=F", "price": 2391.0}}
+    snapshots = {"GOLD": {"ticker": "GOLD", "price": 2391.0}}
 
     out = _commodities_from_morning(in_memory_db, "2026-05-19", snapshots)
 
     assert len(out) == 1
-    assert out[0]["ticker"] == "GC=F"
+    assert out[0]["ticker"] == "GOLD"
     assert out[0]["summary"] == "Gold zieht an."
     assert out[0]["current_price"] == 2391.0
     assert out[0]["tradeable"] is False   # 16:10 gibt keine neue Empfehlung ab

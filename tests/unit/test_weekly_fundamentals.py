@@ -128,7 +128,7 @@ def test_covers_the_full_universe_by_default(in_memory_db, mocker):
     """Ohne explizites universe-Argument laeuft der Vorlauf ueber
     full_universe() -- die eine Quelle des Ticker-Universums."""
     db.init_schema(in_memory_db)
-    mocker.patch("main.full_universe", return_value=["AAPL", "GC=F"])
+    mocker.patch("main.full_universe", return_value=["AAPL", "GOLD"])
     provider = MagicMock()
     provider.get_fundamentals.return_value = _fundamentals()
     provider.get_earnings_calendar.return_value = {"days_to_next": None, "last_beat_pct": None}
