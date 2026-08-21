@@ -246,6 +246,11 @@ def _run_checks(
                 sector_name, cluster_counts.get(sector_name or "", 0)),
             signal_checks.check_earnings(
                 direction, earnings_in_days, enforce=enforce),
+            # Spec G1/G3: in BEIDEN Laeufen erhoben, immer weich. Sammelt die
+            # Verteilung, damit STOP_MIN_INTRADAY_RANGE_FRAC nach ~30 Outcomes
+            # eine Messung ist statt einer Annahme.
+            signal_checks.check_stop_distance(
+                analysis.get("sl_pct"), analysis.get("intraday_range_pct")),
         ) if r is not None
     ]
 

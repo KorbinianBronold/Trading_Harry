@@ -342,6 +342,23 @@ TICKER_RETRY_AFTER_DAYS = 30
 LEARNING_RETENTION_DAYS = 730
 
 RR_RATIO_DEFAULT = 2.0
+# Spec G1/G2 (2026-08-21): ab welchem Bruchteil der typischen Tagesschwankung
+# ein Stop als "ausserhalb des Rauschens" gilt. Anlass: alle sieben vorliegenden
+# Outcomes waren sl_hit, SECHS davon an Tag 1, und der Stop lag bei 0,39-0,78
+# einer Tagesspanne -- keiner darueber.
+#
+# ⚠️ UNBESTAETIGTER STARTWERT, und der Check dazu ist bewusst WEICH. Mit dieser
+# Schwelle haette ein harter Check alle 14 damals vorliegenden Signale verworfen.
+# Wer ihn scharf stellt, OHNE vorher die Verteilung in guardrail_rejects
+# anzusehen, schaltet die Pipeline ab. Nach ~30 Outcomes ist die Zahl messbar.
+STOP_MIN_INTRADAY_RANGE_FRAC = 0.8
+
+# Spec G4: ab welchem Anteil des Morgen-Risikobudgets ein Setup um 16:10 als
+# aufgebraucht gilt. HART durchgesetzt -- anders als oben ist hier nicht die
+# Schwelle die offene Frage: bei drei Vierteln verbrauchtem Budget ist die
+# Praemisse des Morgens widerlegt, bevor die Position eroeffnet wurde.
+STOP_BUDGET_SPENT_MAX = 0.75
+
 RR_RATIO_MIN_HARD = 1.5
 MOMENTUM_LONG_MIN = 6.0
 MOMENTUM_SHORT_MAX = 4.0

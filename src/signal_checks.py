@@ -80,6 +80,80 @@ def compute_relative_strength(
     return own - etf
 
 
+def check_stop_distance(
+    sl_pct: float | None, intraday_range_pct: float | None,
+) -> CheckResult | None:
+    """Meldet, wenn der Stop INNERHALB der typischen Tagesschwankung liegt.
+
+    Anlass (2026-08-21): alle sieben vorliegenden Outcomes waren sl_hit, SECHS
+    davon an Tag 1. Gemessen an intraday_range_pct lag der Stop bei 0,39-0,78
+    einer typischen Tagesspanne -- kein einziger darueber. Ein Einstieg mitten
+    in der Sitzung hat den Rest der Tagesspanne vor sich, und die deckt den Stop
+    ab: er wird vom RAUSCHEN erreicht, bevor die These sich bewaehren kann.
+
+    Gemessen an intraday_range_pct, NICHT an ATR: die ATR enthaelt die
+    Uebernacht-Luecke, der Stop konkurriert aber gegen die Intraday-Bewegung.
+
+    ⚠️ IMMER WEICH (enforced=False), und das ist keine Bequemlichkeit: mit der
+    Startschwelle haette ein harter Check ALLE 14 damals vorliegenden Signale
+    verworfen -- eine Abschaltung, keine Kalibrierung. Welche Schwelle richtig
+    ist, weiss heute niemand; der Check sammelt erst die Verteilung
+    (guardrail_rejects mit enforced=0, sichtbar in der Wochenmail), damit sie
+    nach ~30 Outcomes eine MESSUNG ist statt einer Annahme. Dasselbe Muster wie
+    SECTOR_GUARDRAIL_STRICT."""
+    if sl_pct is None or not intraday_range_pct:
+        return None
+    frac = abs(sl_pct) / abs(intraday_range_pct)
+    if frac >= config.STOP_MIN_INTRADAY_RANGE_FRAC:
+        return None
+    return CheckResult(
+        rule="stop_inside_noise",
+        detail=(f"Stop bei {frac:.2f} der typischen Tagesspanne "
+                f"(SL {abs(sl_pct):.2f} % gegen Range {abs(intraday_range_pct):.2f} %, "
+                f"Schwelle {config.STOP_MIN_INTRADAY_RANGE_FRAC})"),
+        enforced=False,
+    )
+
+
+def check_stop_budget_spent(
+    entry_price: float | None, sl_price: float | None,
+    current_price: float | None, enforce: bool = False,
+) -> CheckResult | None:
+    """Verwirft ein Signal, dessen Risikobudget vor der Eroeffnung aufgebraucht ist.
+
+    Der Morgenlauf definiert mit (entry - sl) ein Risikobudget. Laeuft der Kurs
+    bis 16:10 dagegen, ist ein Teil davon schon weg, BEVOR die Position
+    ueberhaupt eroeffnet wird. Ab STOP_BUDGET_SPENT_MAX ist die Praemisse des
+    Morgens widerlegt.
+
+    ⚠️ Warum nicht ueber die R/R-Ratio: weil R/R = Ertrag / RESTrisiko rechnet,
+    STEIGT die Kennzahl, je naeher der Kurs an den Stop rueckt -- und der
+    Guardrail prueft nur eine Untergrenze. NVDA wurde am 2026-08-19 so mit
+    'R/R 26,2' als exzellentes Setup freigegeben und stand dabei 0,11 % vor
+    seinem Stop; es wurde noch am selben Tag ausgestoppt. Ein Deckel auf die
+    R/R waere ein Symptomfix an einer abgeleiteten Kennzahl -- das verbrauchte
+    Budget beschreibt direkt, was schiefgeht.
+
+    Richtungsneutral (Spec G5): bei einem Short liegt der Stop UEBER dem Entry,
+    die Rechnung spiegelt sich. Ein Vorzeichenfehler traefe sonst nur eine
+    Richtung und bliebe lange unentdeckt."""
+    if entry_price is None or sl_price is None or current_price is None:
+        return None
+    budget = entry_price - sl_price          # long: > 0, short: < 0
+    if budget == 0:
+        return None
+    spent = (entry_price - current_price) / budget
+    if spent <= config.STOP_BUDGET_SPENT_MAX:
+        return None
+    return CheckResult(
+        rule="stop_too_close",
+        detail=(f"{spent:.0%} des Risikobudgets verbraucht, bevor die Position "
+                f"eroeffnet ist (Kurs {current_price:.2f}, Stop {sl_price:.2f}, "
+                f"Morgen-Entry {entry_price:.2f})"),
+        enforced=enforce,
+    )
+
+
 def check_cluster(sector_name: str | None, count: int) -> CheckResult | None:
     """Warnt, wenn ab config.SECTOR_CLUSTER_WARN_AT Signale im selben Sub-Sektor
     liegen. Immer weich: Klumpenrisiko ist eine Positionsgroessen-Frage, keine

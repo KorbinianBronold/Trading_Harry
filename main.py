@@ -1067,6 +1067,17 @@ def _revalidate_all(
                 enforce=True),
             signal_checks.check_opening_gap(
                 pred["entry_price"], snapshot.get("price")),
+            # Spec G1/G3: derselbe weiche Check wie um 15:00, damit die
+            # Statistik beide Entscheidungspunkte abdeckt.
+            signal_checks.check_stop_distance(
+                pred["sl_pct"], snapshot.get("intraday_range_pct")),
+            # Spec G4: HART. Ist das Morgen-Risikobudget vor der Eroeffnung
+            # aufgebraucht, ist die Praemisse widerlegt -- und die R/R-Huerde
+            # faengt das NICHT, sie belohnt Naehe zum Stop sogar (NVDA wurde mit
+            # 'R/R 26,2' freigegeben, 0,11 % vor dem Stop).
+            signal_checks.check_stop_budget_spent(
+                pred["entry_price"], pred["sl_price"],
+                snapshot.get("price"), enforce=True),
         ) if c is not None]
 
         # E4: auch der 16:10-Lauf persistiert JEDEN angeschlagenen Check — sonst

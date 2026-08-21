@@ -296,3 +296,80 @@ def test_check_earnings_respects_enforce_false():
 def test_check_earnings_just_outside_threshold_does_not_fire():
     from src.signal_checks import check_earnings
     assert check_earnings("long", 3, enforce=True) is None
+
+
+# ---------- Stop-Distanz (Spec G1-G5, 2026-08-21) --------------------------
+# Anlass: alle 7 Outcomes waren sl_hit, 6 davon an TAG 1. Gemessen an
+# intraday_range_pct liegt der Stop bei 0,39-0,78 einer typischen
+# Tagesschwankung -- das Rauschen erreicht ihn, bevor die These sich bewaehrt.
+
+from src.signal_checks import check_stop_distance, check_stop_budget_spent
+
+
+def test_stop_inside_the_noise_band_is_flagged_but_never_enforced():
+    """Spec G2: WEICH. Ein harter Check haette alle 14 Bestands-Signale
+    verworfen -- das waere eine Abschaltung, keine Kalibrierung."""
+    c = check_stop_distance(sl_pct=0.96, intraday_range_pct=2.12)
+
+    assert c is not None
+    assert c.enforced is False, "der Check darf NIE blockieren (G2)"
+    assert "0.45" in c.detail or "0,45" in c.detail
+
+
+def test_stop_outside_the_noise_band_is_silent():
+    c = check_stop_distance(sl_pct=2.50, intraday_range_pct=2.12)
+    assert c is None
+
+
+def test_stop_distance_is_silent_without_an_intraday_range():
+    assert check_stop_distance(sl_pct=1.0, intraday_range_pct=None) is None
+    assert check_stop_distance(sl_pct=None, intraday_range_pct=2.0) is None
+
+
+def test_stop_distance_uses_the_absolute_value():
+    """sl_pct kommt in den Daten auch negativ vor (GC=F: -0.61)."""
+    c = check_stop_distance(sl_pct=-0.61, intraday_range_pct=1.58)
+    assert c is not None and c.enforced is False
+
+
+# --- Teil B: Restabstand zum Stop, HART ---
+
+def test_spent_stop_budget_is_rejected_long():
+    """Der echte NVDA-Fall, der den Befund ausgeloest hat: um 16:10 stand der
+    Kurs 0,11 % vor dem Stop und wurde mit 'R/R 26,2' freigegeben."""
+    c = check_stop_budget_spent(
+        entry_price=221.06, sl_price=218.94, current_price=219.19, enforce=True)
+
+    assert c is not None
+    assert c.enforced is True
+    assert c.rule == "stop_too_close"
+
+
+def test_spent_stop_budget_is_rejected_short():
+    """Spec G5: richtungsneutral -- ein Vorzeichenfehler traefe nur eine Seite."""
+    # Short: Stop LIEGT UEBER dem Entry. Budget 4.0, verbraucht 3.2 (80 %).
+    c = check_stop_budget_spent(
+        entry_price=100.0, sl_price=104.0, current_price=103.2, enforce=True)
+
+    assert c is not None and c.enforced is True
+
+
+def test_fresh_setup_passes_in_both_directions():
+    assert check_stop_budget_spent(
+        entry_price=100.0, sl_price=98.0, current_price=99.8, enforce=True) is None
+    assert check_stop_budget_spent(
+        entry_price=100.0, sl_price=102.0, current_price=100.2, enforce=True) is None
+
+
+def test_stop_budget_boundary_is_not_rejected():
+    """Genau auf der Schwelle (75 %) noch durchlassen -- erst darueber greifen."""
+    # Budget 4.0, verbraucht 3.0 = exakt 0.75
+    assert check_stop_budget_spent(
+        entry_price=100.0, sl_price=96.0, current_price=97.0, enforce=True) is None
+
+
+def test_stop_budget_is_silent_without_prices():
+    assert check_stop_budget_spent(
+        entry_price=None, sl_price=98.0, current_price=99.0, enforce=True) is None
+    assert check_stop_budget_spent(
+        entry_price=100.0, sl_price=100.0, current_price=99.0, enforce=True) is None
