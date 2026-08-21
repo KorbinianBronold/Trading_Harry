@@ -80,6 +80,57 @@ def _walk_forward_hit(
     return "timeout", last_close, len(bars)
 
 
+def horizon_labels(
+    ohlc, entry: float, tp: float, sl: float, direction: str,
+    includes_signal_day: bool = True,
+) -> list[dict]:
+    """Beschriftet EINE Prediction ueber mehrere Haltedauern (Spec G6).
+
+    Heute wird jede Prediction auf EINEN Ausgang reduziert: 'sl_hit an Tag 1'.
+    Von den sechs Tag-1-Stopps, die diesen Umbau ausgeloest haben, weiss deshalb
+    niemand, ob die These an Tag 3 aufgegangen waere -- die Bars liegen in
+    price_history, die Information wird nur weggeworfen. Diese Funktion holt sie
+    zurueck: je Handelstag eine Zeile mit Schlusskurs, Rendite, ob TP/SL BIS
+    DAHIN gefallen waeren und ob die Richtung zu dem Zeitpunkt stimmte.
+
+    ⚠️ Rein BEOBACHTEND. Aendert nichts an TP/SL, nichts an der Auswertung,
+    nichts an outcomes -- die Zeilen beschreiben nur, was gewesen waere. Damit
+    kann Sprint 3D messen, welcher Horizont fuer welchen Signaltyp der beste ist,
+    statt dass jemand ihn festlegt.
+
+    ⚠️ tp_hit_by/sl_hit_by sind KUMULATIV ('bis einschliesslich Tag N'), nicht
+    'an Tag N': die Frage lautet 'haette ich bis dahin gehalten?'. Ein Treffer an
+    Tag 2 steht deshalb auch an Tag 3, 4 und 5.
+
+    Weniger Bars als MAX_HOLD_DAYS liefern weniger Zeilen statt zu werfen -- eine
+    frische Prediction hat noch keine fuenf Tage Historie."""
+    out: list[dict] = []
+    tp_seen = sl_seen = False
+    for day, (_, bar) in enumerate(
+            ohlc.iloc[:MAX_HOLD_DAYS].iterrows(), start=1):
+        if direction == "long":
+            tp_seen = tp_seen or bar["High"] >= tp
+            sl_seen = sl_seen or bar["Low"] <= sl
+            ret = (float(bar["Close"]) - entry) / entry * 100.0
+        else:
+            tp_seen = tp_seen or bar["Low"] <= tp
+            sl_seen = sl_seen or bar["High"] >= sl
+            ret = (entry - float(bar["Close"])) / entry * 100.0
+        out.append({
+            "horizon_days": day,
+            "close_price": round(float(bar["Close"]), 4),
+            "return_pct": round(ret, 4),
+            "tp_hit_by": int(tp_seen),
+            "sl_hit_by": int(sl_seen),
+            "correct_direction": int(ret > 0),
+            # ⚠️ Sagt, was "Tag 1" bedeutet: mit synthetischer Bar ab
+            # Signalzeitpunkt (True, Live-Pfad) oder ab D+1 (False, Backfill
+            # ohne Provider). Ohne das waeren die Horizonte still verschoben.
+            "includes_signal_day": includes_signal_day,
+        })
+    return out
+
+
 def _profit_loss_eur(
     entry: float, exit_price: float | None, direction: str,
 ) -> float | None:
@@ -106,7 +157,11 @@ def _bar_sequence(conn, price_provider, pred) -> "pd.DataFrame | None":
     Sequenz bei D+1 -- die Prediction wird dadurch nicht schlechter behandelt."""
     frames = []
     start = signal_time_utc(pred["run_type"], pred["date"])
-    if start is not None:
+    # price_provider=None ist ein zulaessiger Aufruf (Backfill, Spec G7): dann
+    # gibt es keine Intraday-Verdichtung und die Sequenz beginnt bei D+1 -- genau
+    # der Fall, den der Docstring oben schon als unschaedlich beschreibt.
+    # Explizit statt ueber eine AttributeError-Warnung je Ticker.
+    if start is not None and price_provider is not None:
         try:
             intraday = price_provider.get_intraday_ohlc(
                 pred["ticker"], start, day_end_utc(pred["date"]))
@@ -166,6 +221,22 @@ def evaluate_open_predictions(
             ohlc, direction=pred["direction"],
             tp=float(pred["tp_price"]), sl=float(pred["sl_price"]),
         )
+
+        # Spec G6: die Horizont-Labels IMMER schreiben, auch wenn die Prediction
+        # unten noch offen bleibt ('pending') -- sie beschreiben, was bis heute
+        # gewesen waere, und wachsen mit jedem Lauf um einen Tag. Rein
+        # beobachtend, ohne Einfluss auf reason/exit_price.
+        if pred["entry_price"]:
+            # Ob Element 1 die synthetische Signaltag-Bar ist, weiss nur
+            # _bar_sequence -- an der Laenge gegen die reinen Folgetage erkennbar.
+            later = db.load_price_history_after(conn, pred["ticker"], pred["date"])
+            with_signal_day = len(ohlc) > (0 if later is None else len(later))
+            db.save_outcome_horizons(conn, pred["id"], horizon_labels(
+                ohlc, entry=float(pred["entry_price"]),
+                tp=float(pred["tp_price"]), sl=float(pred["sl_price"]),
+                direction=pred["direction"],
+                includes_signal_day=with_signal_day,
+            ))
 
         if reason == "pending":
             # Das Fenster laeuft noch. Die Prediction bleibt offen und wird beim

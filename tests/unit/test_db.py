@@ -2602,3 +2602,43 @@ def test_migration_is_idempotent(in_memory_db):
     cols = {r["name"] for r in in_memory_db.execute(
         "PRAGMA table_info(news_summaries)")}
     assert "derived_direction" in cols
+
+
+# ---------- outcome_horizons (Spec G6/G7) ----------------------------------
+from src.db import save_outcome_horizons, load_outcome_horizons
+
+
+def test_outcome_horizons_roundtrip(in_memory_db):
+    init_schema(in_memory_db)
+    save_outcome_horizons(in_memory_db, prediction_id=7, rows=[
+        {"horizon_days": 1, "close_price": 101.0, "return_pct": 1.0,
+         "tp_hit_by": 0, "sl_hit_by": 0, "correct_direction": 1},
+        {"horizon_days": 2, "close_price": 104.0, "return_pct": 4.0,
+         "tp_hit_by": 1, "sl_hit_by": 0, "correct_direction": 1},
+    ])
+
+    rows = load_outcome_horizons(in_memory_db, prediction_id=7)
+
+    assert [r["horizon_days"] for r in rows] == [1, 2]
+    assert rows[1]["tp_hit_by"] == 1
+
+
+def test_saving_horizons_twice_does_not_duplicate(in_memory_db):
+    """Spec G7: der Backfill muss idempotent sein."""
+    init_schema(in_memory_db)
+    row = [{"horizon_days": 1, "close_price": 101.0, "return_pct": 1.0,
+            "tp_hit_by": 0, "sl_hit_by": 0, "correct_direction": 1}]
+    save_outcome_horizons(in_memory_db, prediction_id=7, rows=row)
+    save_outcome_horizons(in_memory_db, prediction_id=7, rows=row)
+
+    assert len(load_outcome_horizons(in_memory_db, prediction_id=7)) == 1
+
+
+def test_outcome_horizons_are_scoped_per_prediction(in_memory_db):
+    init_schema(in_memory_db)
+    r = [{"horizon_days": 1, "close_price": 1.0, "return_pct": 1.0,
+          "tp_hit_by": 0, "sl_hit_by": 0, "correct_direction": 1}]
+    save_outcome_horizons(in_memory_db, prediction_id=1, rows=r)
+    save_outcome_horizons(in_memory_db, prediction_id=2, rows=r)
+
+    assert len(load_outcome_horizons(in_memory_db, prediction_id=1)) == 1

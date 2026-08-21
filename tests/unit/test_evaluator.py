@@ -436,3 +436,108 @@ def test_missing_intraday_data_falls_back_to_the_next_day(in_memory_db, mocker):
     row = in_memory_db.execute(
         "SELECT * FROM outcomes WHERE prediction_id=?", (pid,)).fetchone()
     assert row["exit_reason"] == "tp_hit", "der Tagesbar von D+1 traegt den Treffer"
+
+
+# ---------- Horizont-Labels (Spec G6/G7, 2026-08-21) -----------------------
+# Heute wird jede Prediction auf EINEN Ausgang reduziert. Von den 6 Tag-1-Stopps
+# weiss niemand, ob die These an Tag 3 aufgegangen waere -- die Bars liegen in
+# price_history, die Information wird nur weggeworfen. Mit Horizont-Labels lernt
+# 3D "richtig, aber Stop zu eng" statt "These falsch".
+
+from src.evaluator import horizon_labels
+
+
+def _bars(closes, highs=None, lows=None):
+    import pandas as pd
+    n = len(closes)
+    return pd.DataFrame({
+        "Open":  closes,
+        "High":  highs if highs else [c + 1 for c in closes],
+        "Low":   lows if lows else [c - 1 for c in closes],
+        "Close": closes,
+        "Volume": [1_000_000] * n,
+    })
+
+
+def test_horizon_labels_returns_one_row_per_day():
+    out = horizon_labels(_bars([101, 102, 103, 104, 105]),
+                         entry=100.0, tp=120.0, sl=80.0, direction="long")
+    assert [r["horizon_days"] for r in out] == [1, 2, 3, 4, 5]
+
+
+def test_horizon_labels_computes_return_per_day():
+    out = horizon_labels(_bars([110, 120]), entry=100.0, tp=999.0, sl=1.0,
+                         direction="long")
+    assert out[0]["return_pct"] == 10.0
+    assert out[1]["return_pct"] == 20.0
+
+
+def test_horizon_labels_return_is_signed_for_shorts():
+    """Ein Short gewinnt, wenn der Kurs FAELLT."""
+    out = horizon_labels(_bars([90]), entry=100.0, tp=1.0, sl=999.0,
+                         direction="short")
+    assert out[0]["return_pct"] == 10.0
+
+
+def test_hits_are_cumulative_not_per_day():
+    """Spec G7: die Frage lautet 'haette ich bis dahin gehalten?' -- ein Treffer
+    an Tag 2 muss auch an Tag 3, 4, 5 gesetzt sein."""
+    out = horizon_labels(_bars([100, 100, 100], highs=[100, 130, 100],
+                               lows=[99, 99, 99]),
+                         entry=100.0, tp=125.0, sl=50.0, direction="long")
+    assert [r["tp_hit_by"] for r in out] == [0, 1, 1]
+
+
+def test_sl_hit_is_cumulative_too():
+    out = horizon_labels(_bars([100, 100], highs=[101, 101], lows=[99, 70]),
+                         entry=100.0, tp=200.0, sl=75.0, direction="long")
+    assert [r["sl_hit_by"] for r in out] == [0, 1]
+
+
+def test_correct_direction_per_horizon():
+    """Die eigentliche 3D-Frage: an welchem Tag lag die These richtig?"""
+    out = horizon_labels(_bars([98, 103]), entry=100.0, tp=999.0, sl=1.0,
+                         direction="long")
+    assert out[0]["correct_direction"] == 0
+    assert out[1]["correct_direction"] == 1
+
+
+def test_fewer_bars_yield_fewer_rows_without_raising():
+    """Eine frische Prediction hat noch keine 5 Bars -- das ist kein Fehler."""
+    out = horizon_labels(_bars([101]), entry=100.0, tp=120.0, sl=80.0,
+                         direction="long")
+    assert len(out) == 1
+
+
+def test_empty_bars_yield_no_rows():
+    out = horizon_labels(_bars([]), entry=100.0, tp=1.0, sl=1.0, direction="long")
+    assert out == []
+
+
+def test_bar_sequence_without_a_provider_starts_at_d_plus_one(in_memory_db):
+    """Spec G7: der Backfill laeuft ohne Provider -- kein Intraday-Teil, kein
+    Fehler, Sequenz ab D+1."""
+    from src.evaluator import _bar_sequence
+    from src import db as _db
+    _db.init_schema(in_memory_db)
+    for d, c in (("2026-05-20", 101.0), ("2026-05-21", 102.0)):
+        _db.upsert_price_history(in_memory_db, ticker="AAPL", date=d,
+                                 open_=c, high=c + 1, low=c - 1, close=c,
+                                 volume=1000, source="test")
+    pred = {"ticker": "AAPL", "date": "2026-05-19", "run_type": "pre_market"}
+
+    seq = _bar_sequence(in_memory_db, None, pred)
+
+    assert seq is not None and len(seq) == 2
+
+
+def test_horizon_labels_flag_marks_what_day_one_means():
+    """⚠️ Ohne dieses Feld bedeutet 'Tag 1' im Live-Pfad (Bar ab Signalzeit)
+    etwas anderes als im Backfill (D+1) -- 3D lernte die Horizonte verschoben."""
+    live = horizon_labels(_bars([101]), entry=100.0, tp=200.0, sl=1.0,
+                          direction="long")
+    back = horizon_labels(_bars([101]), entry=100.0, tp=200.0, sl=1.0,
+                          direction="long", includes_signal_day=False)
+
+    assert live[0]["includes_signal_day"] is True
+    assert back[0]["includes_signal_day"] is False

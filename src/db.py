@@ -48,6 +48,24 @@ CREATE TABLE IF NOT EXISTS technical_indicators (
     UNIQUE(ticker, date)
 );
 
+-- Spec G6 (2026-08-21): dieselbe Prediction ueber mehrere Haltedauern
+-- beschriftet. Eigene Tabelle statt 5x4 Spalten in outcomes: die natuerliche
+-- Form fuer "dieselbe Groesse ueber mehrere Horizonte", und unabhaengig von
+-- MAX_HOLD_DAYS. Rein BEOBACHTEND -- aendert nichts an outcomes.
+CREATE TABLE IF NOT EXISTS outcome_horizons (
+    prediction_id INTEGER NOT NULL,
+    horizon_days INTEGER NOT NULL,
+    close_price REAL, return_pct REAL,
+    tp_hit_by INTEGER, sl_hit_by INTEGER, correct_direction INTEGER,
+    -- ⚠️ Ohne dieses Feld bedeutet "Tag 1" zwei verschiedene Dinge: der Live-
+    -- Pfad zaehlt die synthetische Bar AB SIGNALZEITPUNKT als Tag 1, ein
+    -- Backfill ohne Provider beginnt bei D+1. 3D wuerde die Horizonte sonst
+    -- still gegeneinander verschoben lernen.
+    includes_signal_day INTEGER NOT NULL DEFAULT 1,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(prediction_id, horizon_days)
+);
+
 CREATE TABLE IF NOT EXISTS news_summaries (
     ticker TEXT, date TEXT NOT NULL, run_type TEXT,
     summary TEXT NOT NULL,
@@ -1130,6 +1148,38 @@ def load_news_summaries(
         (date, source),
     ).fetchall()
     return [dict(r) for r in rows]
+
+
+def save_outcome_horizons(
+    conn: sqlite3.Connection, prediction_id: int, rows: list[dict],
+) -> None:
+    """Schreibt die Horizont-Labels EINER Prediction (Spec G6).
+
+    INSERT OR REPLACE auf (prediction_id, horizon_days): der Backfill muss
+    idempotent sein, und eine spaetere Neuauswertung soll korrigieren statt zu
+    verdoppeln."""
+    if not rows:
+        return
+    conn.executemany(
+        """INSERT OR REPLACE INTO outcome_horizons
+           (prediction_id, horizon_days, close_price, return_pct,
+            tp_hit_by, sl_hit_by, correct_direction, includes_signal_day)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+        [(prediction_id, r["horizon_days"], r.get("close_price"),
+          r.get("return_pct"), r.get("tp_hit_by"), r.get("sl_hit_by"),
+          r.get("correct_direction"),
+          1 if r.get("includes_signal_day", True) else 0) for r in rows],
+    )
+    conn.commit()
+
+
+def load_outcome_horizons(
+    conn: sqlite3.Connection, prediction_id: int,
+) -> list[dict]:
+    """Horizont-Labels einer Prediction, nach Haltedauer sortiert."""
+    return [dict(r) for r in conn.execute(
+        """SELECT * FROM outcome_horizons WHERE prediction_id = ?
+            ORDER BY horizon_days""", (prediction_id,))]
 
 
 def skip_reason_counts(

@@ -1,6 +1,16 @@
 # Shares_Future – SP500 CFD Research Tool
 
-**Zuletzt aktualisiert:** 2026-08-20 — 🔭 **Zirkularität behoben, Universum auf
+**Zuletzt aktualisiert:** 2026-08-21 — 🎯 **Outcome-Qualität: Stop-Distanz,
+Risikobudget, Horizont-Labels.** Alle 7 Outcomes waren `sl_hit`, 6 davon an Tag 1
+— der Stop liegt bei 0,39–0,78 einer typischen Tagesspanne und wird vom Rauschen
+erreicht. Neu: `check_stop_distance` (**weich** — hart hätte er alle 14 Signale
+verworfen), `check_stop_budget_spent` (**hart**, 16:10 — die R/R-Hürde belohnt
+Nähe zum Stop, NVDA ging mit „R/R 26,2" durch und stand 0,11 % vor dem Stop), und
+`outcome_horizons`: dieselbe Prediction über 1–5 Tage beschriftet, 0 € und
+rückwirkend nachrüstbar. Erster Befund: eine als `sl_hit` gewertete These war an
+4 von 5 Tagen richtig. **947 Tests grün.** Details: PROJECT_STATUS **C.22**.
+
+Davor, 2026-08-20 — 🔭 **Zirkularität behoben, Universum auf
 142 Ticker.** `news_summaries.sentiment` hiess so, trug aber die aus der
 **gewählten Richtung** rückabgeleitete Kodierung — als „Nachrichtensignal"
 ausgewertet hätte 3D das Modell mit seiner eigenen Ausgabe korreliert. Jetzt
@@ -434,6 +444,14 @@ Die Pipeline-Phasen lassen sich an `main.py:run_pipeline()` ablesen.
   `trade_proposals` 16:10) schreiben deshalb per `INSERT OR REPLACE` auf `(ticker, date)`
   **wertgleiche** Zeilen. Genau das machte den `close`-Lauf um 22:30 überflüssig — die
   Annahme „abends stehen aktuellere Indikatoren drin" ist konstruktionsbedingt falsch.
+- ⚠️ **Ein Outcome ist EIN Ausgang — die Horizont-Labels sind die andere Hälfte.**
+  `outcomes` reduziert jede Prediction auf ein Ergebnis (`sl_hit` an Tag 1);
+  `outcome_horizons` hält daneben fest, was an Tag 1–5 gewesen wäre. Ohne das
+  lernt 3D „These falsch", wo in Wahrheit „These richtig, Stop zu eng" steht —
+  nachgewiesen an einer Zeile, die an 4 von 5 Tagen richtig lag.
+  ⚠️ **`includes_signal_day` sagt, was „Tag 1" bedeutet**: der Live-Pfad zählt
+  die synthetische Bar ab Signalzeitpunkt, ein Backfill ohne Provider beginnt bei
+  D+1. Wer die Spalte beim Auswerten ignoriert, vergleicht verschobene Horizonte.
 - ⚠️ **Was eine Prediction wusste, steht IN der Prediction — nicht im Cache.**
   `fundamentals_cache` hält nur eine Zeile je Ticker (`INSERT OR REPLACE`,
   7-Tage-TTL) und hat **keine Historie**. Fundamental-Rohwerte, Analysten-Konsens

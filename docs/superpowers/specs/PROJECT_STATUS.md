@@ -3214,6 +3214,62 @@ bindende Grenze, nicht die Kosten.
 sonst niemand prüft (keine Duplikate, MVP-Ticker enthalten, die vier
 nicht-auflösenden ausgeschlossen, `WARN < MAX`).
 
+### C.22 — Outcome-Qualität: Stop-Distanz, Risikobudget, Horizont-Labels (2026-08-21)
+
+Nach C.20 (Merkmale) und C.21 (Zirkularität) der dritte Teil derselben
+Voraussetzung: die **Labels** müssen stimmen.
+Spec: `2026-08-21-outcome-qualitaet-design.md` (Entscheidungen G1–G7).
+
+**Anlass:** Alle 7 Outcomes waren `sl_hit`, **6 davon an Tag 1**.
+
+⚠️ **Zwei eigene Diagnosen erwiesen sich beim Nachrechnen als falsch** und
+stehen hier, damit sie nicht wiederkehren:
+
+- ❌ „Der SL ist zu eng gesetzt." Er ist intraday-eng **by design** — der
+  v2-Prompt verlangt wörtlich „Intraday ist das einzige akzeptierte Ziel".
+- ❌ „Das 5-Tage-Fenster reisst intraday-enge Stopps." 6 von 7 fielen an Tag 1.
+
+✅ **Zutreffend:** gemessen an `intraday_range_pct` liegt der Stop bei
+**0,39–0,78 einer typischen Tagesspanne**, keiner darüber. Er wird vom
+**Rauschen** erreicht, bevor die These sich bewähren kann.
+
+**A — `check_stop_distance`, weich (G1–G3).** Erhoben in beiden Läufen, schreibt
+`guardrail_rejects` mit `enforced=0`. ⚠️ **Hart hätte er alle 14 vorliegenden
+Signale verworfen** — eine Abschaltung, keine Kalibrierung. Gegenprobe an den
+echten Daten: 14 von 14 hätten gemeldet. `STOP_MIN_INTRADAY_RANGE_FRAC = 0.8`
+ist ein **unbestätigter Startwert**; wer ihn scharf stellt, ohne die Verteilung
+anzusehen, schaltet die Pipeline ab.
+
+**B — `check_stop_budget_spent`, hart, nur 16:10 (G4/G5).** Die R/R-Hürde fängt
+den Fall **nicht** — sie belohnt Nähe zum Stop sogar: weil `R/R = Ertrag /
+Restrisiko` rechnet und der Guardrail nur eine Untergrenze prüft, stieg NVDA am
+2026-08-19 auf **26,2** und wurde freigegeben, **0,11 % vor seinem Stop**.
+Geprüft wird stattdessen das verbrauchte Morgen-Risikobudget
+(`STOP_BUDGET_SPENT_MAX = 0.75`). Gegenprobe an den echten Zeilen: **NVDA (88 %)
+und GC=F (75 %) wären beide abgelehnt worden** — beide wurden ausgestoppt.
+
+**C — Horizont-Labels, neue Tabelle `outcome_horizons` (G6/G7).** Je Prediction
+und Handelstag eine Zeile: Schlusskurs, Rendite, ob TP/SL **bis dahin** gefallen
+wären, ob die Richtung stimmte. Rein beobachtend, **0 € Zusatzkosten**, kein
+Claude-Call. Anders als die Fundamental-Rohwerte (C.20) **rückwirkend
+nachrüstbar** — die Bars liegen in `price_history`; `setup/backfill_horizons.py`
+labelt idempotent nach.
+
+**Was die Labels sofort zeigen** (3 nachbeschriftete Predictions, alle als
+`sl_hit` gewertet): **#1 HD short war an 4 von 5 Tagen richtig und hätte bis
+Tag 5 den TP erreicht.** Die These war gut, der Stop zu eng — genau die
+Information, die bisher weggeworfen wurde. #2 PG dagegen war ab Tag 2 wirklich
+falsch. Ohne die Labels sähen beide identisch aus.
+
+⚠️ **Dabei gefunden und behoben: „Tag 1" bedeutete zweierlei.** Der Live-Pfad
+zählt die synthetische Bar **ab Signalzeitpunkt** als Tag 1, ein Backfill ohne
+Provider beginnt bei **D+1**. Ohne Kennzeichnung hätte 3D die Horizonte still
+gegeneinander verschoben gelernt. Neue Spalte `includes_signal_day` hält den
+Unterschied fest; `_bar_sequence()` toleriert `price_provider=None` jetzt
+explizit statt über eine AttributeError-Warnung je Ticker.
+
+**Tests:** 947 grün.
+
 ## Sprint 3D — Learning Modul
 
 ⚠️ **Noch nicht ausgearbeitet — braucht eine eigene Planungssession, bevor die Implementierung
