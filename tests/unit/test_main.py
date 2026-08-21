@@ -711,7 +711,7 @@ def test_run_trade_proposals_collects_all_tickers(tmp_db_path, mocker):
     # zwei Aufrufe: SP500 und Commodities/Crypto
     assert collect_mock.call_count == 2
     passed = [set(c.kwargs["tickers"]) for c in collect_mock.call_args_list]
-    assert set(config.SP500_MVP_TICKERS) in passed
+    assert set(config.SP500_PROD_TICKERS) in passed
     cc = set(config.COMMODITY_TICKERS.values()) | set(config.CRYPTO_TICKERS.values())
     assert cc in passed
 
@@ -1590,7 +1590,7 @@ def test_final_close_writes_final_bars_for_tickers_and_etfs(tmp_db_path, mocker)
     prov.get_ohlc_after.side_effect = lambda t, *a, **k: _bar(100.0)
     mocker.patch("main.CapitalComProvider", return_value=prov)
     mocker.patch("main.evaluate_open_predictions", return_value=0)
-    mocker.patch("main.config.SP500_MVP_TICKERS", ["AAPL"])
+    mocker.patch("main.config.SP500_PROD_TICKERS", ["AAPL"])
     mocker.patch("main.config.USE_FULL_SP500", False)
     mocker.patch("main.config.SUB_SECTOR_ETFS", {"Semis": "SOXX"})
     mocker.patch("main.config.COMMODITY_TICKERS", {})
@@ -1651,7 +1651,7 @@ def test_final_close_treats_a_missing_bar_as_normal(tmp_db_path, mocker):
     prov.get_ohlc_after.return_value = None          # keine Bar, kein Fehler
     mocker.patch("main.CapitalComProvider", return_value=prov)
     mocker.patch("main.evaluate_open_predictions", return_value=0)
-    mocker.patch("main.config.SP500_MVP_TICKERS", ["AAPL"])
+    mocker.patch("main.config.SP500_PROD_TICKERS", ["AAPL"])
     mocker.patch("main.config.USE_FULL_SP500", False)
     mocker.patch("main.config.SUB_SECTOR_ETFS", {})
     mocker.patch("main.build_commodity_crypto_inputs", return_value=[])

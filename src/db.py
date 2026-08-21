@@ -1763,8 +1763,8 @@ def load_final_bar_date(conn: sqlite3.Connection) -> str | None:
 def load_sector_mapping_coverage(conn: sqlite3.Connection) -> dict:
     """Anteil der Ticker mit Sub-Sektor-Zuordnung. B.10 nennt eine stabil hohe
     Quote als Voraussetzung dafuer, SECTOR_GUARDRAIL_STRICT auf True zu stellen."""
-    universe = (config.SP500_FULL_TICKERS if config.USE_FULL_SP500
-                else config.SP500_MVP_TICKERS)
+    from src.universe import stock_universe
+    universe = stock_universe()
     marks = ",".join("?" * len(universe))
     row = conn.execute(
         f"""SELECT COUNT(*) AS n FROM ticker_sectors

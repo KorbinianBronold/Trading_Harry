@@ -1,10 +1,15 @@
 """One-time 3-year historical data pull via Capital.com.
 
 Usage:
-    python setup/historical_loader.py --all          # loads SP500_MVP_TICKERS
+    python setup/historical_loader.py --all          # loads SP500_MVP_TICKERS (20)
     python setup/historical_loader.py --universe     # stocks + commodities + crypto + ETFs
-    python setup/historical_loader.py --full-sp500   # loads SP500_FULL_TICKERS (~500)
+    python setup/historical_loader.py --full-sp500   # loads SP500_FULL_TICKERS (451)
     python setup/historical_loader.py --tickers AAPL MSFT NVDA
+
+⚠️ --universe folgt USE_FULL_SP500 (ueber universe.full_universe()): ohne die
+Variable sind das die 150 Produktivticker plus Rohstoffe, Krypto und ETFs,
+mit USE_FULL_SP500=true die volle S&P-500-Liste. --all und --full-sp500 lesen
+ihre Liste dagegen fest, unabhaengig vom Schalter.
 
 Each ticker: get_price_history(days=1095) → INSERT OR IGNORE into price_history.
 """

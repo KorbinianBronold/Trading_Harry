@@ -72,9 +72,8 @@ def epic_to_ticker(epic: str) -> str | None:
     Indikator-Daten, sie werden vom Aufrufer geloggt und uebersprungen."""
     if epic in _EPIC_TO_TICKER:
         return _EPIC_TO_TICKER[epic]
-    known = set(config.SP500_FULL_TICKERS if config.USE_FULL_SP500
-                else config.SP500_MVP_TICKERS)
-    return epic if epic in known else None
+    from src.universe import stock_universe
+    return epic if epic in set(stock_universe()) else None
 
 
 def _extract_markets(payload: dict) -> list[dict]:

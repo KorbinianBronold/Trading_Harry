@@ -27,7 +27,7 @@ from src.market_context import fetch_market_context, MarketContextError
 from src.portfolio_check import check_open_positions
 from src.ranking import rank_and_persist
 from src.evaluator import evaluate_open_predictions
-from src.universe import full_universe, thin_history_tickers
+from src.universe import full_universe, stock_universe, thin_history_tickers
 from src import signal_checks
 from src.revalidation import revalidate_one, RevalidationError
 from src.email_sender import (
@@ -477,7 +477,7 @@ def run_pipeline(run_type: str, date: str, db_path: str) -> None:
 
         current_phase = "data_collection"
         # Phase 1 — Stocks data
-        _tickers = config.SP500_FULL_TICKERS if config.USE_FULL_SP500 else config.SP500_MVP_TICKERS
+        _tickers = stock_universe()
         sp500_tds, skipped_sp, sp500_sidecar = collect(
             tickers=_tickers,
             price_provider=price_provider,
@@ -861,8 +861,7 @@ def run_trade_proposals(date: str, db_path: str) -> None:
         payload["market_context"] = market_ctx
 
         current_phase = "data_collection"
-        _tickers = (config.SP500_FULL_TICKERS if config.USE_FULL_SP500
-                    else config.SP500_MVP_TICKERS)
+        _tickers = stock_universe()
         sp_tds, _, _ = collect(
             tickers=_tickers, price_provider=price_provider,
             earnings_provider=earnings_provider,

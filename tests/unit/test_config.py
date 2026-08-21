@@ -1,6 +1,32 @@
 """Invarianten der Konfiguration, die sonst niemand prueft."""
 import config
 
+# ---------- Produktivuniversum (2026-08-21) ---------------------------------
+
+def test_prod_list_has_the_agreed_size():
+    """150 sektor-balancierte Ticker. Die Zahl ist eine Kostenentscheidung:
+    142 Ticker massen 3,4712 EUR (C.21) gegen MAX_COST_PER_RUN_EUR = 6,00."""
+    assert len(config.SP500_PROD_TICKERS) == 150
+
+
+def test_prod_list_has_no_duplicates():
+    assert len(config.SP500_PROD_TICKERS) == len(set(config.SP500_PROD_TICKERS))
+
+
+def test_prod_list_contains_every_mvp_ticker():
+    """Die MVP-Ticker haben die laengste Historie und duerfen nicht
+    herausfallen."""
+    assert set(config.SP500_MVP_TICKERS) <= set(config.SP500_PROD_TICKERS)
+
+
+def test_prod_list_is_a_subset_of_the_verified_pool():
+    """Jeder Produktivticker ist per direktem Epic-Abruf gegen Capital.com
+    verifiziert -- die Pruefung steckt in SP500_FULL_TICKERS. Ein Ticker
+    ausserhalb des Pools waere ungeprueft und koennte mangels Kursen als
+    'insufficient bars' durchfallen."""
+    assert set(config.SP500_PROD_TICKERS) <= set(config.SP500_FULL_TICKERS)
+
+
 # ---------- Universum + Kostendeckel (Spec F4/F5/F7) ------------------------
 
 def test_full_sp500_list_has_no_duplicates():

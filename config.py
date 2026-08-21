@@ -391,7 +391,64 @@ CAPITAL_COM_IDENTIFIER = os.getenv("CAPITAL_COM_IDENTIFIER")  # account email/lo
 CAPITAL_COM_PASSWORD   = os.getenv("CAPITAL_COM_PASSWORD")
 CAPITAL_COM_BASE_URL   = "https://demo-api-capital.backend-capital.com"
 
+# ⚠️ Diese Variable wird an GENAU EINER Stelle ausgewertet:
+# src/universe.py:stock_universe(). Bis 2026-08-21 stand der Ausdruck
+# "SP500_FULL_TICKERS if USE_FULL_SP500 else ..." fuenffach im Code (main.py 2x,
+# db.py, universe.py, capital_provider.py) -- dieselbe Streuung, die bei
+# LEARNING_RETENTION_DAYS eine von vier Tabellen auf einer abweichenden Frist
+# stehen liess. Ein Test (test_universe.py) haelt die Einzelquelle fest.
 USE_FULL_SP500 = os.getenv("USE_FULL_SP500", "false").lower() == "true"
+
+# ---------------------------------------------------------------------------
+# Produktivuniversum: 150 Ticker, sektor-balanciert (2026-08-21).
+#
+# Ausgewaehlt aus den 451 verifizierten SP500_FULL_TICKERS nach vier Regeln:
+#   1. Die 20 SP500_MVP_TICKERS sind gesetzt (laengste Historie).
+#   2. Jeder Sub-Sektor bekommt mindestens SECTOR_DB_MOMENTUM_MIN_TICKERS (3).
+#      Die Zahl ist nicht gegriffen: darunter liefert compute_sector_db_momentum()
+#      strukturell NULL, der Sub-Sektor traegt also gar kein Signal bei.
+#   3. Die restlichen Plaetze proportional zur Sektorgroesse im S&P 500.
+#   4. Innerhalb eines Sub-Sektors entscheidet das durchschnittliche
+#      Dollar-Volumen der letzten 60 Bars -- bei HOLD_TARGET="intraday" mit
+#      CFD-Hebel 5 bestimmt Liquiditaet den Spread und die Ausfuehrungsqualitaet.
+#
+# Verteilung ueber die Sub-Sektoren:
+#   Financials Rest 15, Industrials Rest 15, Technology Hardware 11
+#   Healthcare Rest 10, Consumer Staples 9, Real Estate 9
+#   Utilities 9, Consumer Discretionary Rest 8, Oil & Gas 8
+#   Retail 8, Semiconductors 7, Banks 6
+#   Transport 6, Aerospace & Defense 5, Biotech 5
+#   Pharma 5, Auto 4, MedTech 4
+#   Metals & Mining 4
+#
+# ⚠️ GOOGL und META tragen bei Finnhub `Media` und bleiben damit ungemappt --
+# fuer Communication fuehrt Capital.com keinen ETF (s. SUB_SECTOR_ETFS). Sie
+# laufen bewusst ohne Sektor-Guardrail (D6), sind als MVP-Ticker aber gesetzt.
+#
+# ⚠️ "Clean Energy" (ICLN) bleibt leer: Finnhub fuehrt FSLR als `Semiconductors`,
+# und kein anderer S&P-500-Wert faellt dort hinein. Der Sub-Sektor ist mit
+# diesem Universum strukturell unbesetzbar -- kein Auswahlfehler.
+#
+# ⚠️ Wer diese Liste aendert, braucht VORHER den Backfill:
+# setup/historical_loader.py --universe. Ein Ticker ohne Historie wird als
+# 'insufficient bars' uebersprungen und deaktiviert sich nach TICKER_MAX_SKIPS.
+# ---------------------------------------------------------------------------
+SP500_PROD_TICKERS: list[str] = SP500_MVP_TICKERS + [
+    "ABNB", "ABT", "ADBE", "ADP", "AEE", "AEP", "ALL", "AMAT", "AMD",
+    "AMGN", "AMT", "APH", "APP", "APTV", "AXP", "AZO", "BA", "BKNG",
+    "BLK", "BMY", "BNY", "C", "CASY", "CAT", "CEG", "CL", "CMI", "COF",
+    "COHR", "COIN", "COP", "COR", "COST", "CVX", "D", "DAL", "DASH", "DE",
+    "DELL", "DHI", "DHR", "DLR", "DUK", "ELV", "EME", "EOG", "EQIX",
+    "ESS", "ETN", "F", "FANG", "FCX", "FDX", "GE", "GILD", "GLW", "GM",
+    "GS", "GWW", "HCA", "HLT", "HOOD", "HUM", "IBM", "IDXX", "INTC",
+    "ISRG", "KMB", "KO", "LMT", "MAR", "MCD", "MCK", "MCO", "MLM", "MNST",
+    "MPC", "MRK", "MRVL", "MS", "MSCI", "MTB", "MTD", "MU", "NEE", "NEM",
+    "NOC", "NSC", "NUE", "NVR", "O", "ORCL", "PANW", "PEP", "PH", "PLD",
+    "PLTR", "PM", "PNC", "PSA", "PSX", "PWR", "RCL", "REGN", "SBUX", "SO",
+    "SPG", "SPGI", "STLD", "STX", "SYK", "TDG", "TJX", "TMO", "UBER",
+    "ULTA", "UNP", "UPS", "URI", "USB", "VLO", "VRT", "VRTX", "VST",
+    "WAT", "WDC", "WEC", "WELL", "WFC", "ZTS",
+]
 
 # Vollstaendiges Aktien-Universum (Spec F4/F5; 2026-08-21 von 142 auf 451).
 # Quelle: die S&P-500-Konstituentenliste als CSV

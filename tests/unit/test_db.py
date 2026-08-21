@@ -1848,7 +1848,7 @@ def test_sector_mapping_coverage_counts_mapped_tickers(in_memory_db):
     in_memory_db.commit()
     out = db.load_sector_mapping_coverage(in_memory_db)
     assert out["mapped"] == 1
-    assert out["total"] == len(config.SP500_MVP_TICKERS)
+    assert out["total"] == len(config.SP500_PROD_TICKERS)
     assert 0.0 <= out["pct"] <= 100.0
 
 

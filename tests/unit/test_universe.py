@@ -7,13 +7,57 @@ zusammenbaut, faellt ein neu aufgenommener Ticker irgendwo durch — genau der
 Fall, der am 2026-08-04 drei gruene, aber leere Laeufe erzeugt hat.
 """
 import config
-from src.universe import full_universe
+from src.universe import full_universe, stock_universe
+
+
+# ---------- stock_universe(): die EINE Auswertung von USE_FULL_SP500 ----------
+
+def test_stock_universe_defaults_to_the_production_list(mocker):
+    """Ohne USE_FULL_SP500 faehrt das System die Produktivliste, nicht die
+    volle S&P-500-Liste."""
+    mocker.patch.object(config, "SP500_PROD_TICKERS", ["AAPL", "MSFT"])
+    mocker.patch.object(config, "SP500_FULL_TICKERS", ["AAPL", "MSFT", "ZZZ"])
+    mocker.patch.object(config, "USE_FULL_SP500", False)
+
+    assert stock_universe() == ["AAPL", "MSFT"]
+
+
+def test_stock_universe_follows_use_full_sp500(mocker):
+    mocker.patch.object(config, "SP500_PROD_TICKERS", ["AAPL", "MSFT"])
+    mocker.patch.object(config, "SP500_FULL_TICKERS", ["AAPL", "MSFT", "ZZZ"])
+    mocker.patch.object(config, "USE_FULL_SP500", True)
+
+    assert stock_universe() == ["AAPL", "MSFT", "ZZZ"]
+
+
+def test_no_module_reimplements_the_use_full_sp500_switch():
+    """⚠️ Bis 2026-08-21 stand `SP500_FULL_TICKERS if USE_FULL_SP500 else ...`
+    fuenffach im Code. Dieselbe Streuung liess bei LEARNING_RETENTION_DAYS eine
+    von vier Tabellen auf einer abweichenden Frist stehen. Wer den Ausdruck
+    erneut lokal kopiert, macht diesen Test rot."""
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[2]
+    # config.py definiert die Variable, src/universe.py wertet sie aus. Jede
+    # weitere Datei, die sie nennt, baut sich eine eigene Kopie des Schalters.
+    allowed = {"config.py", "universe.py"}
+    offenders = []
+    for path in [*root.glob("*.py"), *(root / "src").rglob("*.py")]:
+        if path.name in allowed:
+            continue
+        if "USE_FULL_SP500" in path.read_text(encoding="utf-8"):
+            offenders.append(str(path.relative_to(root)))
+
+    assert not offenders, (
+        f"USE_FULL_SP500 ausserhalb von src/universe.py gelesen: {offenders}. "
+        f"Nutze stattdessen universe.stock_universe()."
+    )
 
 
 def test_full_universe_covers_stocks_commodities_crypto_and_etfs(mocker):
     """Das Universum ist die Vereinigung aller vier Gruppen — fehlt eine, laeuft
     der Bootstrap an ihr vorbei und die Pipeline skippt sie spaeter mangels Bars."""
-    mocker.patch.object(config, "SP500_MVP_TICKERS", ["AAPL"])
+    mocker.patch.object(config, "SP500_PROD_TICKERS", ["AAPL"])
     mocker.patch.object(config, "USE_FULL_SP500", False)
     mocker.patch.object(config, "COMMODITY_TICKERS", {"Gold": "GC=F"})
     mocker.patch.object(config, "CRYPTO_TICKERS", {"Bitcoin": "BTC-USD"})
@@ -25,7 +69,7 @@ def test_full_universe_covers_stocks_commodities_crypto_and_etfs(mocker):
 def test_full_universe_follows_use_full_sp500(mocker):
     """Bei USE_FULL_SP500=True zieht der Bootstrap die grosse Liste — sonst
     haette Sprint 3F 480 Ticker ohne Historie."""
-    mocker.patch.object(config, "SP500_MVP_TICKERS", ["AAPL"])
+    mocker.patch.object(config, "SP500_PROD_TICKERS", ["AAPL"])
     mocker.patch.object(config, "SP500_FULL_TICKERS", ["AAPL", "TSLA", "NFLX"])
     mocker.patch.object(config, "USE_FULL_SP500", True)
     mocker.patch.object(config, "COMMODITY_TICKERS", {})
@@ -38,7 +82,7 @@ def test_full_universe_follows_use_full_sp500(mocker):
 def test_full_universe_has_no_duplicates(mocker):
     """Mehrere Sub-Sektoren teilen sich einen ETF (MedTech/Pharma -> XLV). Ein
     doppelter Eintrag wuerde den Ticker zweimal laden — verschwendete Calls."""
-    mocker.patch.object(config, "SP500_MVP_TICKERS", ["AAPL"])
+    mocker.patch.object(config, "SP500_PROD_TICKERS", ["AAPL"])
     mocker.patch.object(config, "USE_FULL_SP500", False)
     mocker.patch.object(config, "COMMODITY_TICKERS", {})
     mocker.patch.object(config, "CRYPTO_TICKERS", {})
@@ -77,7 +121,7 @@ def test_thin_history_tickers_lists_those_below_the_minimum(tmp_db_path, mocker)
     from src.data_collector import MIN_BARS_RSI
     from src.universe import thin_history_tickers
     import config as cfg
-    mocker.patch.object(cfg, "SP500_MVP_TICKERS", ["THIN", "FAT"])
+    mocker.patch.object(cfg, "SP500_PROD_TICKERS", ["THIN", "FAT"])
     mocker.patch.object(cfg, "USE_FULL_SP500", False)
     mocker.patch.object(cfg, "COMMODITY_TICKERS", {})
     mocker.patch.object(cfg, "CRYPTO_TICKERS", {})
@@ -104,7 +148,7 @@ def test_thin_history_counts_a_ticker_without_any_bars(tmp_db_path, mocker):
     from src import db
     from src.universe import thin_history_tickers
     import config as cfg
-    mocker.patch.object(cfg, "SP500_MVP_TICKERS", ["GHOST"])
+    mocker.patch.object(cfg, "SP500_PROD_TICKERS", ["GHOST"])
     mocker.patch.object(cfg, "USE_FULL_SP500", False)
     mocker.patch.object(cfg, "COMMODITY_TICKERS", {})
     mocker.patch.object(cfg, "CRYPTO_TICKERS", {})

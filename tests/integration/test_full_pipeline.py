@@ -63,7 +63,7 @@ def test_full_pipeline_writes_predictions_and_sends_email(tmp_path, monkeypatch)
 
     monkeypatch.setattr(orchestrator, "CapitalComProvider", fake_provider_cls)
     monkeypatch.setattr(orchestrator, "FinnhubProvider", fake_provider_cls)
-    monkeypatch.setattr(orchestrator.config, "SP500_MVP_TICKERS",
+    monkeypatch.setattr(orchestrator.config, "SP500_PROD_TICKERS",
                         ["AAPL", "MSFT", "NVDA"])
     monkeypatch.setattr(orchestrator.config, "COMMODITY_TICKERS",
                         {"Gold": "GC=F"})
