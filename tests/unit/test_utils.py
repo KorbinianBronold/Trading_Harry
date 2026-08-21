@@ -242,6 +242,32 @@ def test_extract_json_blob_raises_on_no_opening_brace():
         extract_json_blob("just text without any braces", _DemoError)
 
 
+def test_extract_json_blob_tolerates_raw_newlines_inside_strings():
+    """⚠️ Riss am 2026-08-21 den kompletten pre_market-Lauf ab (Phase 0 ist laut
+    Spec § 3 fatal): Claude lieferte im trend_analyzer einen mehrzeiligen Text,
+    ohne die Zeilenumbrueche zu escapen. Der JSON-Decoder laeuft per Default
+    strict und verbietet rohe Steuerzeichen IN Strings.
+
+    Betrifft alle neun extract_json_blob-Aufrufer, nicht nur Phase 0, und tritt
+    nicht-deterministisch auf -- ein sauberer Lauf beweist nichts (dieselbe
+    Lehre wie beim adaptiven Denken, C.18)."""
+    text = '{"macro_summary": "Erste Zeile\nZweite Zeile", "n": 1}'
+    assert extract_json_blob(text, _DemoError) == {
+        "macro_summary": "Erste Zeile\nZweite Zeile", "n": 1}
+
+
+def test_extract_json_blob_tolerates_raw_tabs_inside_strings():
+    text = '{"note": "Spalte\teins"}'
+    assert extract_json_blob(text, _DemoError) == {"note": "Spalte\teins"}
+
+
+def test_extract_json_blob_still_rejects_genuinely_broken_json():
+    """strict=False lockert nur Steuerzeichen in Strings -- echte Syntaxfehler
+    muessen weiterhin auffallen, sonst verschluckt der Parser Modellfehler."""
+    with pytest.raises(_DemoError, match="Could not parse JSON"):
+        extract_json_blob('{"a": 1, "b":}', _DemoError)
+
+
 def test_extract_json_blob_ignores_trailing_commentary():
     # Simulates Claude appending explanation text after the JSON
     text = (

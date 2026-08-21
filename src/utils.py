@@ -226,7 +226,22 @@ _JSON_FENCE_RE = re.compile(r"```(?:json)?\s*(\{.*\})\s*```", re.DOTALL)
 def extract_json_blob(text: str, error_cls: Type[Exception]) -> dict:
     """Tolerate ```json ... ``` fences, leading prose, and trailing text/commentary.
     Uses raw_decode so any content after the closing } is silently ignored.
-    Raises the caller-provided error_cls on failure."""
+    Raises the caller-provided error_cls on failure.
+
+    ⚠️ `strict=False` ist nicht kosmetisch: der Default-Decoder verbietet rohe
+    Steuerzeichen INNERHALB von Strings, und Claude liefert gelegentlich einen
+    mehrzeiligen Text, ohne die Zeilenumbrueche zu escapen. Am 2026-08-21 riss
+    genau das den kompletten pre_market-Lauf ab -- im trend_analyzer, und
+    Phase 0 ist laut Spec § 3 fatal fuer den ganzen Lauf.
+
+    Die Lockerung betrifft ausschliesslich Steuerzeichen in Strings; echte
+    Syntaxfehler (fehlender Wert, offene Klammer) werfen weiterhin. Das ist
+    Absicht -- ein Parser, der Modellfehler verschluckt, waere die schlimmere
+    Fehlerklasse.
+
+    ⚠️ Tritt nicht-deterministisch auf: derselbe Prompt liefert mal escapte,
+    mal rohe Umbrueche. Ein sauberer Lauf beweist hier nichts (dieselbe Lehre
+    wie beim adaptiven Denken, C.18). Gilt fuer alle neun Aufrufer."""
     m = _JSON_FENCE_RE.search(text)
     if m:
         text = m.group(1)
@@ -234,7 +249,7 @@ def extract_json_blob(text: str, error_cls: Type[Exception]) -> dict:
     if start < 0:
         raise error_cls("No JSON object found in response")
     try:
-        obj, _ = json.JSONDecoder().raw_decode(text, start)
+        obj, _ = json.JSONDecoder(strict=False).raw_decode(text, start)
         return obj
     except json.JSONDecodeError as e:
         raise error_cls(f"Could not parse JSON: {e}") from e
