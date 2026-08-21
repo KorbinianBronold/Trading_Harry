@@ -3506,6 +3506,127 @@ neuen Ticker umgestellt (reine Platzhalter, kein Verhalten geändert), zwei
 für Commodities/Crypto nicht mehr — ersetzt durch einen Passthrough-Test).
 **955 Tests grün, 92,58 % Coverage.**
 
+### C.26 — Erster Produktivlauf mit 150 Tickern: gemessen statt geschätzt (2026-08-21)
+
+C.24 und C.25 gingen am selben Tag live. Der erste geplante Lauf **scheiterte**,
+der Nachlauf lief sauber durch — beides zusammen ist die erste echte Messung des
+150er-Universums.
+
+#### Der Fehlschlag: `extract_json_blob` und der strikte Decoder
+
+Der `pre_market`-Lauf um 13:40 UTC brach nach 50 Sekunden in **Phase 0** ab:
+
+```
+TrendAnalyzerError: Could not parse JSON:
+Invalid control character at: line 7 column 58 (char 172)
+```
+
+**Ursache:** `json.JSONDecoder()` läuft per Default `strict=True` und verbietet
+rohe Steuerzeichen **innerhalb** von JSON-Strings. Claude schrieb im
+`trend_analyzer` einen mehrzeiligen Absatz, ohne die Umbrüche zu escapen. Zeile 7
+des Prompt-Schemas ist `"summary": "<one paragraph, max 400 chars>"` — das
+einzige Freitextfeld, in dem das plausibel ist. Laut Spec § 3 ist Phase 0 fatal
+für den ganzen Lauf; die Pipeline stand, bevor ein einziger Ticker gesammelt war.
+
+**Fix** (`f39c902`): `json.JSONDecoder(strict=False)`. Lockert ausschliesslich
+Steuerzeichen in Strings; echte Syntaxfehler werfen weiterhin — ein eigener Test
+pinnt das, denn ein Parser, der Modellfehler verschluckt, wäre die schlimmere
+Fehlerklasse. Der Fehler wurde zuerst reproduziert, dann drei Tests rot gestellt
+(mit **derselben** Meldung wie in Produktion), dann behoben.
+
+⚠️ **Betrifft alle neun `extract_json_blob`-Aufrufer**, nicht nur Phase 0:
+`trend_analyzer`, `market_context`, `revalidation`, `portfolio_check`,
+`broad_scan`, `deep_analysis` (2×), `commodities_crypto`, `quick_filter` (tot).
+⚠️ **Nicht-deterministisch** — derselbe Prompt liefert mal escapte, mal rohe
+Umbrüche. `trend_analyzer` lief seit Monaten unverändert. Dieselbe Lehre wie beim
+adaptiven Denken (C.18): **ein sauberer Lauf beweist nichts**, nur ein Test hält.
+
+⚠️ **Nicht durch C.24/C.25 verursacht:** der Traceback zeigt `trend_analyzer`, der
+weder Ticker noch Universum berührt. Die Ticker-Migration lief im selben Lauf
+korrekt durch — ihre Logzeile steht zwei Zeilen über dem Fehler.
+
+#### Messung `pre_market` (150 Aktien + 7 Rohstoffe/Krypto)
+
+**37 min 23 s** (14:50:14 → 15:27:37 UTC), **3,5950 €**, Mail zugestellt.
+
+| Phase | Ergebnis | kumuliert |
+|---|---|---|
+| 0 Trends | 7 Trends | 0,248 € |
+| 1 Daten | **150 ok, 0 skipped** (+ 7 CC ok) | — |
+| 2 Broad Scan | 150 gescannt | 0,467 € |
+| 2a Cutoff | **50 von 150** (`MAX_DEEP_ANALYSIS`) | — |
+| 2b Fundamentals | 50 geprüft, 42× `medium→high` | — |
+| Policy Monitor | level=medium, 3 Events | 0,711 € |
+| 3 Tiefenanalyse | **50/50**, 7 Batches `[8,8,8,8,8,8,2]` | 3,225 € |
+| 3b Rohstoffe/Krypto | 7 Analysen, 2 Batches `[3,4]` | 3,574 € |
+| 4 Ranking | 10 long, 5 short, 3 CC (aus 57 Analysen, 31 enthalten) | — |
+| 4a Portfolio | 4 Empfehlungen | 3,595 € |
+
+**Die Schätzungen aus C.24 haben gehalten:**
+
+| | geschätzt | gemessen |
+|---|---|---|
+| Kosten | ~3,6 € | **3,5950 €** |
+| Laufzeit | ~35 min | **37 min** |
+| Cutoff | 50 von 150 | **50 von 150** |
+
+#### Messung `trade_proposals`
+
+**8 min 19 s** (16:10:04 → 16:18:23 UTC), **0,7584 €**, Mail zugestellt.
+18 offene Morgensignale re-validiert, 7 Portfolio-Empfehlungen.
+
+**E3 (Ablösung) erstmals in dieser Grössenordnung verifiziert:** 7 `pre_market`-
+Zeilen auf `superseded`, 7 neue `trade_proposals`-Zeilen — **keine Duplikate**,
+der partielle UNIQUE-Index musste nicht eingreifen. Die 16:10-Urteile fielen
+streng aus (`policy_risk_level` stieg von `medium` auf `high`):
+
+| Urteil | Anzahl |
+|---|---|
+| verworfen | 9 |
+| geschwächt | 7 |
+| gedreht | 2 |
+
+#### Was damit live bestätigt ist
+
+- **150 Ticker, 0 Skips** von 157 Instrumenten — der C.24-Backfill war vollständig
+- **Capital.com-Epics** laufen durch die ganze Kette: Kursabruf → Analyse →
+  Ranking → Ablösung → Persistierung (`OIL_CRUDE`, `ETHUSD`, `SOLUSD` in
+  `predictions`), kein Rückfall auf die alte Notation
+- **Migration idempotent in Produktion** — beim zweiten Lauf fehlt die Logzeile,
+  also No-Op wie gegen die DB-Kopien vorhergesagt
+- **JSON-Fix greift** — Phase 0 lief durch, genau die Stelle, die vorher abriss
+
+#### ⚠️ Tageskosten liegen an der Warnschwelle
+
+`pre_market` + `trade_proposals` = **4,3534 €** gegen
+`COST_WARN_THRESHOLD_EUR = 4,50` und `MAX_COST_PER_RUN_EUR = 6,00`. Der harte
+Deckel ist komfortabel, aber der Normalbetrieb liegt **dauerhaft dicht an der
+Warnschwelle**. Wer das Universum weiter vergrössert, hebt zuerst diese Zahl an
+oder senkt `MAX_DEEP_ANALYSIS`.
+
+#### ⚠️ Parallelisierung: jetzt gibt es die Datengrundlage
+
+**Phase 3 verbraucht 27 min 21 s der 37 min — 73 % der Gesamtlaufzeit.** Die
+sieben Batches liefen strikt sequenziell, je 3–5 Minuten
+(14:56:12 → 15:23:33). `CLAUDE_PARALLEL_CALLS = 5` steht in `config.py`, wird
+aber **nirgends gelesen**; im Produktivcode gibt es kein `ThreadPoolExecutor`,
+kein `asyncio`, kein `threading`. Bei 5 parallelen Batches wären es rechnerisch
+~6 statt 27 Minuten, der Gesamtlauf fiele auf **~16 min**.
+
+⚠️ Voraussetzung: `CostTracker` ist **nicht thread-safe**. Dieses Projekt hat
+bereits zweimal Kosten still falsch gezählt (Cache-Doppelabzug,
+`web_search_calls`) — eine Race Condition dort wäre die dritte.
+
+#### ⚠️ Cron-Verspätung ist reproduzierbar, nicht zufällig
+
+Die GitHub-Actions-Crons feuern hier systematisch **35–40 min zu spät**:
+`trade_proposals` startete am 19.08. um 14:45, am 20.08. um 14:47 und am 21.08.
+um 14:47 UTC — geplant ist 14:10. Für das 70-min-Fenster zwischen `pre_market`
+und `trade_proposals` ist das unkritisch (beide verschieben sich mit), aber es
+heisst: **die im Workflow notierten Zeiten sind Soll-, keine Ist-Zeiten.**
+
+**Tests:** 958 grün (3 neue für den JSON-Fix).
+
 ## Sprint 3D — Learning Modul
 
 ⚠️ **Noch nicht ausgearbeitet — braucht eine eigene Planungssession, bevor die Implementierung

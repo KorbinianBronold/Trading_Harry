@@ -1,6 +1,23 @@
 # Shares_Future – SP500 CFD Research Tool
 
-**Zuletzt aktualisiert:** 2026-08-21 — 🔧 **yfinance-Reste bei
+**Zuletzt aktualisiert:** 2026-08-21 — 📊 **Erster Produktivlauf mit 150 Tickern
+gemessen: 37 min, 3,5950 €, 0 Skips.** Der erste geplante Lauf **scheiterte** in
+Phase 0: `json.JSONDecoder()` läuft per Default `strict=True` und verbietet rohe
+Steuerzeichen **in** Strings — Claude schrieb im `trend_analyzer` einen Absatz mit
+echtem Zeilenumbruch statt `\n`, und Phase 0 ist laut Spec § 3 fatal. Fix:
+`strict=False` (`utils.extract_json_blob`), betrifft **alle neun Aufrufer**, tritt
+**nicht-deterministisch** auf. Der Nachlauf lief sauber: **150 ok / 0 skipped** von
+157 Instrumenten, Cutoff 50/150, `trade_proposals` 8 min / 0,7584 € mit 7 sauberen
+E3-Ablösungen (keine Duplikate). Die C.24-Schätzungen hielten (3,6 € → **3,5950 €**;
+35 min → **37 min**). ⚠️ **Phase 3 frisst 73 % der Laufzeit** (27 von 37 min,
+7 sequenzielle Batches) — damit existiert erstmals die Datengrundlage für die
+Parallelisierung; `CLAUDE_PARALLEL_CALLS = 5` ist weiterhin **tot** und
+`CostTracker` **nicht thread-safe**. ⚠️ Tageskosten **4,3534 €** liegen dicht an
+`COST_WARN_THRESHOLD_EUR = 4,50`. ⚠️ Die Actions-Crons feuern reproduzierbar
+**35–40 min zu spät** — die Zeiten im Workflow sind Soll-, keine Ist-Zeiten.
+**958 Tests grün.** Details: PROJECT_STATUS **C.26**.
+
+Davor, 2026-08-21 — 🔧 **yfinance-Reste bei
 Commodities/Crypto entfernt: interne Ticker sind jetzt die echten
 Capital.com-Epics.** `COMMODITY_TICKERS`/`CRYPTO_TICKERS` waren `dict[Name,
 yfinance-Symbol]` (`"Gold": "GC=F"`, ein Überbleibsel aus der Zeit vor Sprint 3)
@@ -454,6 +471,20 @@ Die Pipeline-Phasen lassen sich an `main.py:run_pipeline()` ablesen.
   **nur bei exakt diesem Wert**. Ein fehlendes Feld (v1-Ergebnis) oder ein unbekannter
   Wert fällt auf die strenge Regel zurück. Eine thin-Dimension wird **behalten**, nicht
   weggelassen: stilles Weglassen war in diesem Projekt wiederholt eine Diagnose-Falle.
+- ⚠️ **`extract_json_blob()` parst mit `strict=False` — das ist kein Stil, sondern
+  ein Fix.** Der Default-Decoder verbietet rohe Steuerzeichen **innerhalb** von
+  JSON-Strings; Claude liefert aber gelegentlich einen mehrzeiligen Text, ohne die
+  Umbrüche zu escapen. Am 2026-08-21 riss genau das den `pre_market`-Lauf ab
+  (`trend_analyzer`, Phase 0 — laut Spec § 3 fatal für den ganzen Lauf).
+  Betroffen sind **alle neun Aufrufer**, nicht nur Phase 0. Die Lockerung gilt
+  ausschliesslich für Steuerzeichen in Strings; echte Syntaxfehler werfen weiter,
+  und ein Test pinnt das — ein Parser, der Modellfehler verschluckt, wäre die
+  schlimmere Fehlerklasse.
+  ⚠️ **Nicht-deterministisch, wie das adaptive Denken:** derselbe Prompt liefert
+  mal escapte, mal rohe Umbrüche, und `trend_analyzer` lief davor monatelang
+  unauffällig. Ein sauberer Lauf beweist hier nichts — nur der Test hält. Wer eine
+  neue Claude-Antwort selbst parst, nimmt `extract_json_blob()` und baut nicht
+  `json.loads()` daneben.
 - ⚠️ **`usage`-Felder, die das SDK nicht selbst modelliert, sind zweimal eine Falle** —
   beide Male hat es dieselbe Zahl still auf 0 gehalten:
   1. `server_tool_use` ist ein **`dict`**, kein Objekt (`Usage.model_config` hat
