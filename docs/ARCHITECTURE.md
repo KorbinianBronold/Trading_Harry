@@ -1062,8 +1062,17 @@ keine DB-Abhängigkeit ausser einer Leseabfrage.
 
 | Funktion | Zweck |
 |---|---|
-| `full_universe()` | Aktien (MVP oder voll) + Rohstoffe + Krypto + Sub-Sektor-ETFs, dedupliziert, stabile Reihenfolge |
+| `stock_universe()` | Nur die Aktien — **die einzige Stelle, die `USE_FULL_SP500` auswertet** (150 produktiv / 451 voll) |
+| `full_universe()` | `stock_universe()` + Rohstoffe + Krypto + Sub-Sektor-ETFs, dedupliziert, stabile Reihenfolge |
 | `thin_history_tickers(conn)` | Universums-Ticker mit weniger als `MIN_BARS_RSI` Bars |
+
+⚠️ **`stock_universe()` ist seit 2026-08-21 die Einzelquelle des Schalters**
+(PROJECT_STATUS C.24). Vorher stand `SP500_FULL_TICKERS if USE_FULL_SP500
+else ...` **fünffach** im Code (`main.py` 2×, `db.py`, `universe.py`,
+`capital_provider.py`) — dieselbe Streuung, die bei `LEARNING_RETENTION_DAYS`
+eine von vier Tabellen auf einer abweichenden Frist stehen liess. Ein Test
+(`test_universe.py`) scannt den Quellbaum und wird rot, sobald jemand den
+Ausdruck wieder lokal kopiert.
 
 **Warum ein eigenes Modul.** Drei Stellen brauchen exakt dieselbe Liste:
 `main.run_final_close()` (der einzige Schreiber von `price_history`),
@@ -1483,7 +1492,15 @@ Plan: `docs/superpowers/plans/2026-05-21-sprint2-plan1-capital-provider-db-incre
   die Modus-Gruppe ist `required=True` (Aufruf ohne Flag ist ein Fehler, kein Default-Pull).
   Seit 2026-08-08 ausserdem `--universe` (voller Backfill über `universe.full_universe()`)
   und `--report-coverage` (Bars je Ticker, markiert alles unter `MIN_BARS_RSI`).
-- **500-Ticker Scaling** – `USE_FULL_SP500`-Flag (Ticker-Liste noch Stub, s. Bug B-03)
+- **Universums-Skalierung** – `USE_FULL_SP500` wählt zwischen `SP500_PROD_TICKERS`
+  (150, sektor-balanciert, der Produktivstand seit 2026-08-21) und
+  `SP500_FULL_TICKERS` (451 verifizierte Ticker). Der frühere Stub-Zustand
+  (Bug B-03) ist seit C.21/C.23 erledigt; die 150er-Auswahl beschreibt C.24.
+  ⚠️ Ausgewertet wird das Flag an **genau einer** Stelle:
+  `universe.stock_universe()`. Bis 2026-08-21 stand der Ausdruck fünffach im
+  Code — ein Test (`test_universe.py`) hält die Einzelquelle jetzt fest.
+  ⚠️ Die Universumsgrösse ist **nicht** die Zahl der Tiefenanalysen:
+  `MAX_DEEP_ANALYSIS = 50` deckelt Phase 3 unabhängig davon.
 
 ---
 

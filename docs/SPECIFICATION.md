@@ -551,8 +551,9 @@ def calculate_tp_sl(atr_pct):
 Immer analysiert, kein Filter, eigener Prompt.
 
 ```python
-COMMODITY_TICKERS: list[str] = ["GOLD", "SILVER", "OIL_CRUDE"]
-CRYPTO_TICKERS: list[str] = ["BTCUSD", "ETHUSD", "SOLUSD", "XRPUSD"]
+COMMODITY_TICKERS = {"Gold": "GC=F", "Silber": "SI=F", "Öl": "CL=F"}
+CRYPTO_TICKERS    = {"Bitcoin": "BTC-USD", "Ethereum": "ETH-USD",
+                     "Solana": "SOL-USD", "XRP": "XRP-USD"}
 
 def get_fear_greed():
     r = requests.get("https://api.alternative.me/fng/", timeout=5)
@@ -999,8 +1000,9 @@ DIMENSION_WEIGHTS = {
     "policy_risk":        0.08,
 }
 
-COMMODITY_TICKERS: list[str] = ["GOLD", "SILVER", "OIL_CRUDE"]
-CRYPTO_TICKERS: list[str] = ["BTCUSD", "ETHUSD", "SOLUSD", "XRPUSD"]
+COMMODITY_TICKERS = {"Gold": "GC=F", "Silber": "SI=F", "Öl": "CL=F"}
+CRYPTO_TICKERS    = {"Bitcoin": "BTC-USD", "Ethereum": "ETH-USD",
+                     "Solana": "SOL-USD", "XRP": "XRP-USD"}
 
 MAX_COST_PER_RUN_EUR  = 2.00
 CLAUDE_PARALLEL_CALLS = 5

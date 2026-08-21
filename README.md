@@ -39,14 +39,22 @@ DB-Mount überschrieben, sodass nichts in `data/tracking.db` landet.
 
 ## Was macht Shares_Future?
 
-Analysiert je Lauf **46 Instrumente**:
+Analysiert je Lauf **176 Instrumente**:
 
 | Gruppe | Umfang |
 |---|---|
-| Aktien | **20** (MVP-Liste). `USE_FULL_SP500` existiert, `SP500_FULL_TICKERS` ist aber noch ein Stub — die volle Liste kommt mit Sprint 3F |
-| Rohstoffe | 3 — Gold, Silber, Öl |
-| Krypto | 4 — BTC, ETH, SOL, XRP |
+| Aktien | **150** (`SP500_PROD_TICKERS`, sektor-balanciert aus den 451 verifizierten Tickern). `USE_FULL_SP500=true` schaltet auf die volle Liste (451) |
+| Rohstoffe | 3 — `GOLD`, `SILVER`, `OIL_CRUDE` |
+| Krypto | 4 — `BTCUSD`, `ETHUSD`, `SOLUSD`, `XRPUSD` |
 | Sub-Sektor-ETFs | 19 — nur als Momentum-Referenz, nie selbst analysiert |
+
+⚠️ In die **teure Tiefenanalyse** (Phase 3) gehen davon höchstens
+`MAX_DEEP_ANALYSIS = 50` — ein grösseres Universum erzeugt deshalb keine
+zusätzlichen Predictions, sondern eine bessere Auswahl aus einem grösseren Pool.
+
+⚠️ Die Ticker der Rohstoffe/Krypto **sind** die Capital.com-Epics (seit
+2026-08-21, PROJECT_STATUS C.25) — vorher stand dort yfinance-Notation
+(`GC=F`, `BTC-USD`), die vor jedem Call übersetzt werden musste.
 
 Jedes Asset wird über 8 Dimensionen bewertet — Market Environment, Company Quality,
 Valuation, Momentum, Risk, Sector Trend, Catalyst, Policy Risk. **Keine feste

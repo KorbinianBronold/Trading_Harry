@@ -763,6 +763,13 @@ nirgends gelesen wird — dieselbe Klasse Attrappe wie die Tabelle `prompt_versi
 
 Finnhub hat für `GC=F` oder `BTC-USD` nichts. Phase 2b entfällt für sie ersatzlos.
 
+> ⚠️ **Schreibweise überholt (2026-08-21, PROJECT_STATUS C.25):** die
+> Rohstoff-/Krypto-Ticker heissen jetzt `GOLD`, `SILVER`, `OIL_CRUDE`,
+> `BTCUSD`, `ETHUSD`, `SOLUSD`, `XRPUSD` — die Capital.com-Epics direkt statt
+> der früheren yfinance-Notation. Betrifft **nur die Schreibweise**; die
+> Aussage dieses Abschnitts und alle weiteren `GC=F`/`SI=F`-Nennungen in
+> diesem Dokument gelten unverändert.
+
 ⚠️ **Nebenwirkung, die heute schon besteht:** `_classify_data_quality()` zählt
 `pe_ratio`, `market_cap_b` und `sector` als peripher — bei Rohstoffen sind alle drei immer
 `None`. Sie erreichen damit **nie `data_quality='high'`**, sondern höchstens `'medium'`.
