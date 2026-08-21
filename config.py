@@ -393,37 +393,71 @@ CAPITAL_COM_BASE_URL   = "https://demo-api-capital.backend-capital.com"
 
 USE_FULL_SP500 = os.getenv("USE_FULL_SP500", "false").lower() == "true"
 
-# Erweitertes Aktien-Universum (Spec F4/F5, 2026-08-20). War bis dahin ein Stub
-# auf SP500_MVP_TICKERS -- USE_FULL_SP500 haette also gar nichts vergroessert.
+# Vollstaendiges Aktien-Universum (Spec F4/F5; 2026-08-21 von 142 auf 451).
+# Quelle: die S&P-500-Konstituentenliste als CSV
+# (github.com/datasets/s-and-p-500-companies), 503 Symbole, Punktnotation auf
+# unsere Konvention normalisiert (BRK.B -> BRK-B).
 #
-# ⚠️ JEDES Symbol hier ist am 2026-08-20 per DIREKTEM Epic-Abruf gegen
-# Capital.com verifiziert (/markets?epics=, nicht ueber die Volltextsuche --
-# die liefert laut SUB_SECTOR_ETFS-Kommentar zu jedem Kuerzel irgendetwas).
-# Vier Kandidaten loesten NICHT auf und fehlen bewusst: BK, EA, EMR, MMC.
-# Ein Ticker ohne Kurse wuerde als 'insufficient bars' uebersprungen, zaehlte
-# Richtung TICKER_MAX_SKIPS und deaktivierte sich selbst -- lieber weglassen.
+# ⚠️ JEDES Symbol ist per DIREKTEM Epic-Abruf gegen Capital.com verifiziert
+# (/markets?epics=), ausdruecklich NICHT ueber die Volltextsuche -- die liefert
+# laut SUB_SECTOR_ETFS-Kommentar zu jedem Kuerzel irgendetwas.
+# 450 von 503 loesten auf (89 %), 53 nicht; sie fehlen bewusst. Ein Ticker ohne
+# Kurse wuerde als 'insufficient bars' uebersprungen, zaehlte Richtung
+# TICKER_MAX_SKIPS und deaktivierte sich selbst.
+# Nicht auffindbar: ACGL AIZ AMCR APO ARES ATO AXON BALL BF-B BG BLDR BRO CPAY
+# CRH CRL CTVA DD EG EMR EVRG FDXF FERG FICO FISV FITB FIX FLEX GEV HONA HUBB
+# HWM IEX J KVUE LHX LYB NTRS PCG PSKY Q RVTY SNDK SOLV STE TEL TKO TT TYL VLTO
+# WBD WRB WST XYZ
+# Einzige Handkorrektur: FI ergaenzt -- die CSV fuehrt Fiserv noch als FISV,
+# Capital.com kennt nur das neue Symbol.
 #
-# ⚠️ Diese Liste ist NICHT der vollstaendige S&P 500. Sie sind 142 liquide
-# Large Caps (20 MVP + 122 verifizierte), bewusst als Zwischenschritt: 7x
-# Datendurchsatz fuer ~4,92 EUR je Lauf, ohne die Voraussetzungen von Sprint 3F
-# (Parallelisierung, thread-sicherer CostTracker). Der Sprung auf 500 laege bei
-# ~9,88 EUR und ungemessener Laufzeit.
-#
-# ⚠️ Neue Ticker brauchen VOR der Aufnahme historical_loader.py, sonst fehlen
-# die Bars (CLAUDE.md). Reihenfolge: verifizieren -> laden -> --report-coverage
-# -> erst dann USE_FULL_SP500=true.
+# ⚠️ Die Liste alleine vergroessert nichts: es braucht USE_FULL_SP500=true UND
+# vorher den Backfill (historical_loader.py). Der Gap-Mechanismus in
+# data_collector._fill_price_gaps() legt KEINE Historie an -- er fuellt nur
+# Loecher in vorhandener; sein eigener Docstring sagt das.
 SP500_FULL_TICKERS: list[str] = SP500_MVP_TICKERS + [
-    "ABT", "ADBE", "ADI", "AEP", "AIG", "AMAT", "AMD", "AMGN", "AMT",
-    "ANET", "APD", "AXP", "BA", "BAC", "BKNG", "BLK", "BMY", "BSX", "C",
-    "CAT", "CB", "CDNS", "CI", "CL", "CMCSA", "CMG", "COF", "COP", "COST",
-    "CRM", "CSCO", "CSX", "CVS", "CVX", "D", "DE", "DG", "DHR", "DIS",
-    "DUK", "ELV", "EOG", "EQIX", "ETN", "FCX", "GD", "GE", "GILD", "GIS",
-    "GS", "HCA", "HON", "IBM", "INTC", "INTU", "ISRG", "ITW", "KLAC", "KMB",
-    "KO", "LIN", "LMT", "LOW", "LRCX", "MCD", "MDLZ", "MDT", "MET", "MMM",
-    "MO", "MPC", "MRK", "MS", "MU", "NEE", "NFLX", "NKE", "NOC", "NOW",
-    "NSC", "NUE", "O", "ORCL", "OXY", "PANW", "PEP", "PFE", "PGR", "PLD",
-    "PM", "PNC", "PSX", "QCOM", "REGN", "RTX", "SBUX", "SCHW", "SHW", "SLB",
-    "SNPS", "SO", "SPG", "SPGI", "SYK", "SYY", "T", "TFC", "TGT", "TJX",
-    "TMO", "TMUS", "TXN", "UBER", "UNP", "UPS", "USB", "VLO", "VRTX", "VZ",
-    "WFC", "YUM", "ZTS",
+    "A", "ABNB", "ABT", "ACN", "ADBE", "ADI", "ADM", "ADP", "ADSK", "AEE",
+    "AEP", "AES", "AFL", "AIG", "AJG", "AKAM", "ALB", "ALGN", "ALL", "ALLE",
+    "AMAT", "AMD", "AME", "AMGN", "AMP", "AMT", "ANET", "AON", "AOS", "APA",
+    "APD", "APH", "APP", "APTV", "ARE", "AVY", "AWK", "AXP", "AZO", "BA",
+    "BAC", "BAX", "BBY", "BDX", "BEN", "BIIB", "BKNG", "BKR", "BLK", "BMY",
+    "BNY", "BR", "BSX", "BX", "BXP", "C", "CAH", "CARR", "CASY", "CAT",
+    "CB", "CBOE", "CBRE", "CCI", "CCL", "CDNS", "CDW", "CEG", "CF", "CFG",
+    "CHD", "CHRW", "CHTR", "CI", "CIEN", "CINF", "CL", "CLX", "CMCSA",
+    "CME", "CMG", "CMI", "CMS", "CNC", "CNP", "COF", "COHR", "COIN", "COO",
+    "COP", "COR", "COST", "CPRT", "CPT", "CRM", "CRWD", "CSCO", "CSGP",
+    "CSX", "CTAS", "CTSH", "CVNA", "CVS", "CVX", "D", "DAL", "DASH", "DDOG",
+    "DE", "DECK", "DELL", "DG", "DGX", "DHI", "DHR", "DIS", "DLR", "DLTR",
+    "DOC", "DOV", "DOW", "DPZ", "DRI", "DTE", "DUK", "DVA", "DVN", "DXCM",
+    "EBAY", "ECHO", "ECL", "ED", "EFX", "EIX", "EL", "ELV", "EME", "EOG",
+    "EQIX", "EQT", "ERIE", "ES", "ESS", "ETN", "ETR", "EW", "EXC", "EXE",
+    "EXPD", "EXPE", "EXR", "F", "FANG", "FAST", "FCX", "FDS", "FDX", "FE",
+    "FFIV", "FI", "FIS", "FOX", "FOXA", "FRT", "FSLR", "FTNT", "FTV", "GD",
+    "GDDY", "GE", "GEHC", "GEN", "GILD", "GIS", "GL", "GLW", "GM", "GNRC",
+    "GOOG", "GPC", "GPN", "GRMN", "GS", "GWW", "HAL", "HAS", "HBAN", "HCA",
+    "HIG", "HII", "HLT", "HON", "HOOD", "HPE", "HPQ", "HRL", "HSIC", "HST",
+    "HSY", "HUM", "IBKR", "IBM", "ICE", "IDXX", "IFF", "INCY", "INTC",
+    "INTU", "INVH", "IP", "IQV", "IR", "IRM", "ISRG", "IT", "ITW", "IVZ",
+    "JBHT", "JBL", "JCI", "JKHY", "KDP", "KEY", "KEYS", "KHC", "KIM", "KKR",
+    "KLAC", "KMB", "KMI", "KO", "KR", "L", "LDOS", "LEN", "LH", "LII",
+    "LIN", "LITE", "LMT", "LNT", "LOW", "LRCX", "LULU", "LUV", "LVS", "LYV",
+    "MAA", "MAR", "MAS", "MCD", "MCHP", "MCK", "MCO", "MDLZ", "MDT", "MET",
+    "MGM", "MKC", "MLM", "MMM", "MNST", "MO", "MOS", "MPC", "MPWR", "MRK",
+    "MRNA", "MRSH", "MRVL", "MS", "MSCI", "MSI", "MTB", "MTD", "MU", "NCLH",
+    "NDAQ", "NDSN", "NEE", "NEM", "NFLX", "NI", "NKE", "NOC", "NOW", "NRG",
+    "NSC", "NTAP", "NUE", "NVR", "NWS", "NWSA", "NXPI", "O", "ODFL", "OKE",
+    "OMC", "ON", "ORCL", "ORLY", "OTIS", "OXY", "PANW", "PAYX", "PCAR",
+    "PEG", "PEP", "PFE", "PFG", "PGR", "PH", "PHM", "PKG", "PLD", "PLTR",
+    "PM", "PNC", "PNR", "PNW", "PODD", "PPG", "PPL", "PRU", "PSA", "PSX",
+    "PTC", "PWR", "PYPL", "QCOM", "RCL", "RDDT", "REG", "REGN", "RF", "RJF",
+    "RL", "RMD", "ROK", "ROL", "ROP", "ROST", "RSG", "RTX", "SBAC", "SBUX",
+    "SCHW", "SHW", "SJM", "SLB", "SMCI", "SNA", "SNPS", "SO", "SPG", "SPGI",
+    "SRE", "STLD", "STT", "STX", "STZ", "SW", "SWK", "SWKS", "SYF", "SYK",
+    "SYY", "T", "TAP", "TDG", "TDY", "TECH", "TER", "TFC", "TGT", "TJX",
+    "TMO", "TMUS", "TPL", "TPR", "TRGP", "TRMB", "TROW", "TRV", "TSCO",
+    "TSN", "TTD", "TTWO", "TXN", "TXT", "UAL", "UBER", "UDR", "UHS", "ULTA",
+    "UNP", "UPS", "URI", "USB", "VEEV", "VICI", "VLO", "VMC", "VMRK",
+    "VRSK", "VRSN", "VRT", "VRTX", "VST", "VTR", "VTRS", "VZ", "WAB", "WAT",
+    "WDAY", "WDC", "WEC", "WELL", "WFC", "WM", "WMB", "WSM", "WTW", "WY",
+    "WYNN", "XEL", "XYL", "YUM", "ZBH", "ZBRA", "ZTS",
 ]
