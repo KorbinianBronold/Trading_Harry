@@ -21,3 +21,5 @@ notes
 data/logs/
 graphify-out/
 backup*
+# Lern-/Debug-Notebook: laeuft gegen echte APIs und eine DB-Kopie, gehoert nicht ins Repo.
+random/pipeline_walkthrough.ipynb
