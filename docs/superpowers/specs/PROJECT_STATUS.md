@@ -3848,9 +3848,9 @@ nicht verloren gehen.**
 | `ZoneInfo("Europe/Berlin")` überall | Märkte schließen um Berliner Zeit; Crons in Berlin-Zeit geplant |
 | Capital.com Session-Level Auth | Ein Session-Object pro Run (lazy init); nicht je Request neu authentifizieren |
 | Fundamentals 7-Tage-Cache in SQLite | Finnhub Free hat Limits; Fundamentals ändern sich selten |
-| `extract_json_blob()` mit `raw_decode` | Claude hängt oft Text nach dem JSON; JSONDecoder.raw_decode toleriert das |
+| `extract_json_blob()` mit `raw_decode` + `strict=False` | Claude hängt oft Text nach dem JSON an (`raw_decode` toleriert das) und escapet mehrzeilige Strings gelegentlich nicht (`strict=False` toleriert rohe Steuerzeichen **in** Strings, s. C.26). Echte Syntaxfehler werfen weiter, ein Test pinnt das. |
 | DB-Persistenz via GitHub Releases (`db-latest`) | Kein externer Storage nötig; funktioniert mit kostenlosen GH Actions |
-| **8 Score-Dimensionen mit festem Gewicht** | market_env 10%, company 18%, valuation 12%, momentum 22%, risk 10%, sector 10%, catalyst 10%, policy 8% — nicht ändern ohne A/B-Test. Der kombinierte `ranking_score` aus 3C kommt **zusätzlich** dazu, ersetzt `total_score` nicht. |
+| **8 Score-Dimensionen einzeln persistiert, keine Gewichtung im Code** | Market Environment, Company Quality, Valuation, Momentum, Risk, Sector Trend, Catalyst, Policy Risk werden je einzeln gespeichert. Eine Gewichtung zu einem Gesamtscore findet **nicht** statt — `score_total()` und `config.DIMENSION_WEIGHTS` sind seit Plan 3b entfernt (C.13). Sortierschlüssel ist `rank_score = analysis_strength × tech_strength` (Spec § 5.2/5.4). Welche Dimension predictet, misst Sprint 3D — nicht per Annahme wieder eine Gewichtung einführen. |
 | **Portfolio-Sektion zuerst in der Mail** | Direkt umsetzbar beim Aufwachen. Gilt unabhängig davon, dass Phase 4a ab 3B *nach* Phase 4 ausgeführt wird. |
 | `CostCapExceeded` bricht Phasen ab, sendet trotzdem Mail | Partielle Ergebnisse sind besser als gar keine |
 | **Sektor-ETFs nur verifiziert aufnehmen** | Jedes Symbol in `config.SUB_SECTOR_ETFS` muss per `setup/verify_epics.py` bestätigt sein: exakter Epic-Treffer, TRADEABLE, Instrumentenname gegengelesen. Capital.coms Marktsuche ist eine Volltextsuche und liefert zu jedem Kürzel irgendetwas — ungeprüft übernommen ergab das u.a. KBE→KB Home und PPH→PPHE Hotel Group. Lieber ungemappt als falsch gemappt. |
@@ -3891,13 +3891,17 @@ nicht verloren gehen.**
    `⚠️ HISTORISCH`-Banner. Diese Dateien nicht mehr bearbeiten; stattdessen neue Plan-Datei anlegen.
 
 10. **Prompt-Dateien versionieren** — neue Prompt-Versionen immer in `prompts/` mit
-    Version-Suffix (`_v2.txt`), nie alte überschreiben ohne DB-Eintrag in `prompt_versions`.
+    Version-Suffix (`_v2.txt`), alte **nie** überschreiben. `prompt_versions` ist eine tote
+    Tabelle (nie gelesen/geschrieben), A/B-Testing existiert nicht — ein Wechsel ist eine
+    Code-Änderung (Modul-Import), kein DB-Eintrag. Aktiv: `deep_analysis_v2`,
+    `commodities_crypto_v3` (s. C.15/C.16).
 
-11. **`extract_json_blob()` für alle Claude-Antworten nutzen** — nie direkt
-    `json.loads(result.text)` ohne den raw_decode-Wrapper.
+11. **`extract_json_blob()` für alle Claude-Antworten nutzen** — nie `json.loads(result.text)`
+    daneben bauen. Parst mit `raw_decode` + `strict=False` (Trailing-Text **und** rohe
+    Steuerzeichen in Strings, s. C.26); echte Syntaxfehler werfen weiter, ein Test pinnt das.
 
-12. **Kosten im Auge behalten** — `MAX_COST_PER_RUN_EUR = 4.00`; teure neue Phasen immer mit
-    `CostTracker` integrieren.
+12. **Kosten im Auge behalten** — `MAX_COST_PER_RUN_EUR = 6.00`,
+    `COST_WARN_THRESHOLD_EUR = 4.50`; teure neue Phasen immer mit `CostTracker` integrieren.
 
 13. **Neuen Code immer dokumentieren** — jedes neue File bekommt eine Modul-Beschreibung, jede
     neue Funktion einen 1-2-Satz-Docstring (Standard seit Commit `e3b6e86`).
@@ -3907,3 +3911,62 @@ nicht verloren gehen.**
     werden bewusst erst in einem finalen Durchgang aktualisiert, wenn Sprint 3 abgeschlossen ist.
     Nicht unaufgefordert anfassen. `CLAUDE.md`, `PROJECT_STATUS.md` und `docs/ARCHITECTURE.md`
     dagegen immer aktuell halten.
+
+---
+
+## 6. Design-Invarianten — Langfassung (aus CLAUDE.md ausgelagert 2026-09-01)
+
+CLAUDE.md trägt diese Regeln seit dem 2026-09-01-Trim nur noch als Einzeiler mit
+Verweis hierher. Die Kurzform dort genügt, um eine drohende Verletzung zu erkennen;
+die Begründung — und damit die Möglichkeit, Randfälle zu beurteilen — steht hier.
+Alle übrigen Punkte der früheren CLAUDE.md-Sektion „Wichtige Designentscheidungen"
+sind bereits oben abgedeckt (Sprint-Abschnitte C.x / P2.x / P3.x / M.x, Abschnitt 4,
+B.3 / B.7 / B.10) und bekamen in CLAUDE.md nur einen Verweis auf die jeweilige Stelle.
+
+### 6.1 — Sub-Sektor-Batching: der Sub-Sektor ist unteilbar
+
+Phase 3 analysiert gebatcht nach Sub-Sektor, nicht je Ticker. Ein Sub-Sektor ist
+eine **unteilbare Einheit**, die per First-Fit-Decreasing in Batches bis
+`BATCH_SIZE_DEEP` gepackt wird — zerrissen wird er nur, wenn er den Wert allein
+überschreitet. Grund: die Vergleichbarkeit innerhalb **eines** Prompts ist der
+Punkt der Übung; ein halber Sub-Sektor in zwei Calls verliert genau die.
+`BATCH_SIZE_DEEP = 8` ist ein unbestätigter Startwert, kein Messergebnis. Ein
+abgeschnittener Batch (`stop_reason == "max_tokens"`) gilt als Fehler und wird
+**nie** teilverwertet; Fehlerpfad: einmal wiederholen → einmal halbieren → aufgeben,
+**jeder** Versuch mit angehobener Decke (`BatchTruncatedError`), nie identisch
+wiederholen. Die Token-Budget-Mechanik (grosszügiger Pro-Ticker-Wert, kleine
+Reserve, per Test gepinnt: `max_tokens_for_batch(n) / n >= TOKENS_PER_TICKER_DEEP`
+für alle n) und warum ein **fester** Reserve-Term die Formel regressiv macht: C.9 /
+C.10. Phase 3b (Commodities/Crypto) batcht seit C.15 analog nach `asset_class`, mit
+bewusst schlankerem Fehlerpfad (einmal wiederholen, **kein** Halbieren).
+
+### 6.2 — Technisches Signal: die drei Ablesungen sind bewusste Entscheidungen
+
+Das technische Signal ist **deterministisch im Code** (`src/technical_signal.py`),
+kein Claude-Call. Drei Teilindikatoren stimmen ab; ADX **moduliert die Stärke**
+(weak deckelt auf 1, strong gibt +1), **filtert aber nie die Richtung**. Die drei
+Ablesungen sind bewusst so gewählt — welche besser predictet, misst Sprint 3D:
+
+- RSI als **Momentum** (nicht als Überkauft/Überverkauft-Schwelle)
+- MACD über das **Histogramm** (nicht über die Signallinien-Kreuzung)
+- Kurs über SMA50 **und** über SMA200 — **keine** SMA50-vs-SMA200-Kreuzung
+
+`technical_indicators` trägt 17 Indikatoren, von denen zunächst nur vier etwas
+steuern; der Rest läuft mit, damit 3D Historie hat statt bei null zu beginnen (C.6).
+
+### 6.3 — `evidence_quality: "thin"` wirkt nur beim exakten Wert
+
+`evidence_quality: "thin"` umgeht die Zwei-Belege-Pflicht der Guardrails — aber
+**nur bei exakt diesem String**. Ein fehlendes Feld (v1-Ergebnis) oder ein
+unbekannter Wert fällt auf die strenge Regel zurück. Eine thin-Dimension wird
+**behalten**, nicht weggelassen: stilles Weglassen war in diesem Projekt
+wiederholt eine Diagnose-Falle. Die zugehörige Prompt-Konsistenz (`deep_analysis_v2`
+/ `commodities_crypto_v3` dürfen nicht zum Auffüllen einer dünnen Dimension drängen):
+C.12, Befund 3.
+
+### 6.4 — Eine Prediction ist erst ab dem Folgetag eine offene Position
+
+Vorher ist sie ein **Vorschlag**. Ohne diese Abgrenzung prüft Phase 4a
+(Portfolio-Check) die Signale desselben Laufs gegen ihre eigene, Sekunden alte
+Analyse. Betrifft die zwei Bedeutungen von „offene Position" (Phase 1c vs.
+Phase 4a) — s. P2.10, Befund 1.
