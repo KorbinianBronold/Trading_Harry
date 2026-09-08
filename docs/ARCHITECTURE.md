@@ -466,14 +466,33 @@ Tagesaktueller Marktzustand (einmalig pro Run).
 ```python
 def fetch_market_context(date, run_type, cost_tracker, price_provider=None) -> dict:
     """
-    1 Sonnet + web_search Call. Alle Keys immer vorhanden, nicht belegbare Werte None:
-    {vix_level, vix_source, advance_decline_ratio, market_regime,
+    1 Sonnet + web_search Call -- nur im Morgenlauf (pre_market). Alle Keys immer
+    vorhanden (CONTEXT_KEYS), nicht belegbare Werte None:
+    {sp500_change_pct, vix_level, vix_source, advance_decline_ratio, market_regime,
      sector_rotation_in, sector_rotation_out, macro_summary}
+    """
+
+def vix_only_context(date, price_provider) -> dict:
+    """
+    Derselbe Schluesselsatz OHNE Claude-Call: nur vix_level/vix_source (Capital.com),
+    alles andere None. Der 16:10-Lauf nutzt ausschliesslich diesen Weg (C.28).
     """
 ```
 
 **VIX-Präzedenz:** Der numerische Capital.com-Bar schlägt Claudes recherchierte
-Zahl; `vix_source` weist aus, welche Quelle gewonnen hat.
+Zahl; `vix_source` weist aus, welche Quelle gewonnen hat — seit C.28 auch in der
+Tabelle (`market_context.vix_source`). Capital.com notiert einen VIX-**Future**-CFD,
+~1,3 Punkte über Spot (P2.12); bei der Schwelle 25 ist die Quelle keine Nebensache.
+
+**Seit C.28 (2026-09-08):** `advance_decline_ratio` wird nicht mehr erhoben (nie eine
+belegbare S&P-500-Quelle, seit 13.08. immer NULL, kein Abnehmer ausser einer
+Mail-Kontextzeile) — der Schlüssel bleibt, immer None. Neu erhoben wird
+`sp500_change_pct` (Spalte seit Plan 1, war nie befüllt). Im Prompt: Regime über
+Kriterien verankert, Rotation auf die 11 GICS-Sektoren begrenzt, Bezugsrahmen je
+`run_type` (vorbörslich = Vortagesschluss + Overnight), `macro_summary` englisch und
+ohne VIX-Zahl. Um 16:10 gibt es **keinen** zweiten Claude-Call mehr: der einzige dort
+entscheidende Wert ist der VIX (`check_vix`, `enforce=True`); Rotation/Makro für den
+Portfolio-Check kommen aus der Morgenzeile (`db.load_market_context()`).
 
 **Warum None statt Schätzung:** Die Werte steuern nachgelagert harte Risikofilter
 (VIX > 25 nur noch `confidence='high'`, VIX > 35 keine neuen Longs). Ein geratener
@@ -1107,8 +1126,11 @@ SQLite-Schema + Persistence.
   vollständig in `price_history`, dieselbe Capital.com-Pipeline wie die Aktien) und mit
   `fear_greed_value`/`policy_risk_level` per Backfill befüllt (`update_market_context_extras()`,
   s. Helpers unten) — beide Werte entstehen erst in Phase 3/3b, lange nach
-  `save_market_context()` in Phase 0b. `sp500_change_pct` bleibt unverändert `NULL`
-  (kein Ticker dafür definiert, offen gelassen).
+  `save_market_context()` in Phase 0b. `sp500_change_pct` wird seit C.28 vom
+  Phase-0b-Prompt erhoben (vorher nie befüllt); `vix_source` ist seit C.28 eine Spalte
+  (Migrations-Guard); `advance_decline_ratio` bleibt als Spalte, wird aber nicht mehr
+  erhoben (immer NULL). Die `trade_proposals`-Zeile trägt seit C.28 nur `vix_level`/
+  `vix_source` — kein zweiter Claude-Call um 16:10 (`vix_only_context()`).
 - `skipped_tickers` – Ereignis-Log je übersprungenem Ticker mit Grund; trägt die
   Weekly-Auswertung und die Deaktivierung
 - `trend_analyses` – Phase-0-Ausgaben

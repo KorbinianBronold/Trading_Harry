@@ -23,7 +23,8 @@ from src.deep_analysis import run_policy_monitor, analyze_batches
 from src.commodities_crypto import (
     analyze_commodities_and_crypto, fetch_fear_greed,
 )
-from src.market_context import fetch_market_context, MarketContextError
+from src.market_context import (fetch_market_context, vix_only_context,
+                                MarketContextError)
 from src.portfolio_check import check_open_positions
 from src.ranking import rank_and_persist
 from src.evaluator import evaluate_open_predictions
@@ -851,18 +852,18 @@ def run_trade_proposals(date: str, db_path: str) -> None:
     }
 
     try:
-        market_ctx = {"vix_level": None, "advance_decline_ratio": None,
-                      "market_regime": None}
-        try:
-            market_ctx = fetch_market_context(
-                date=date, run_type="trade_proposals", cost_tracker=cost_tracker,
-                price_provider=price_provider,
-            )
-            db.save_market_context(
-                conn, {**market_ctx, "date": date, "run_type": "trade_proposals"})
-        except MarketContextError as e:
-            log.warning(f"Markt-Kontext nicht ermittelbar, Run laeuft ohne: {e}")
+        # C.28 / Option 2 (2026-09-08): um 16:10 kein Claude-Marktkontext-Call
+        # mehr. Der einzige Wert, der hier entscheidet, ist der VIX (check_vix
+        # mit enforce=True in _revalidate_all), und der kommt deterministisch
+        # von Capital.com. Regime/Rotation/Makro-Satz des zweiten Calls las nie
+        # ein Prozess ausser dem Portfolio-Check -- der bekommt den Morgen-
+        # kontext aus der DB (s. unten). Die 16:10-Zeile traegt bewusst NUR den
+        # VIX: Morgenwerte hierher zu kopieren gaebe sie als Messung aus.
+        market_ctx = vix_only_context(date=date, price_provider=price_provider)
+        db.save_market_context(
+            conn, {**market_ctx, "date": date, "run_type": "trade_proposals"})
         payload["market_context"] = market_ctx
+        morning_ctx = db.load_market_context(conn, date=date, run_type="pre_market")
 
         current_phase = "data_collection"
         _tickers = stock_universe()
@@ -946,15 +947,16 @@ def run_trade_proposals(date: str, db_path: str) -> None:
         # trend_context die ROHE Phase-0-Antwort ist (die Felder stehen dort als
         # Top-Level-Keys). trend_analyses persistiert diese Felder nie — nur die
         # Pro-Trend-Spalten —, load_trend_context() kann sie also nicht
-        # rekonstruieren. Der frisch erhobene Markt-Kontext liefert inhaltlich
-        # den naechstliegenden Ersatz (anderer Claude-Call, dieselbe Frage nach
-        # Rotation/Makrolage): hier eingemischt, damit der Portfolio-Check nicht
-        # aermer dasteht als am Morgen.
+        # rekonstruieren. Ersatz ist die Morgenzeile aus market_context (anderer
+        # Claude-Call, dieselbe Frage nach Rotation/Makrolage): hier eingemischt,
+        # damit der Portfolio-Check nicht aermer dasteht als am Morgen. Seit
+        # C.28 aus der DB statt aus einem zweiten bezahlten Call; fehlt die
+        # Morgenzeile, bleiben die drei Felder None.
         trend_ctx = {
             **(db.load_trend_context(conn, date) or {}),
-            "sector_rotation_in": market_ctx.get("sector_rotation_in"),
-            "sector_rotation_out": market_ctx.get("sector_rotation_out"),
-            "macro_summary": market_ctx.get("macro_summary"),
+            "sector_rotation_in": morning_ctx.get("sector_rotation_in"),
+            "sector_rotation_out": morning_ctx.get("sector_rotation_out"),
+            "macro_summary": morning_ctx.get("macro_summary"),
         }
         payload["portfolio_recs"] = check_open_positions(
             conn=conn, today=date, run_type="trade_proposals",

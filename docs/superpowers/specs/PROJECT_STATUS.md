@@ -1257,6 +1257,8 @@ nie einer**. Einziger Konsument im gesamten Code ist `email_sender.py:415`
 Docstring dort sagt es ebenfalls. Es läuft also nicht ein Check leer, sondern eine
 Kontextzeile bleibt leer. Vor Sprint 3C ist zu entscheiden, ob die A/D-Ratio eine echte
 Quelle bekommt (Provider statt Websuche) oder ersatzlos entfällt.
+✅ **Entschieden 2026-09-08 (C.28): ersatzlos gestrichen.** Der Prompt erhebt sie nicht
+mehr; Dict-Schlüssel und Spalte bleiben (immer NULL), damit Schema und Mail stabil sind.
 
 **3. VIX-Widerspruch — die Guardrail rechnet mit dem richtigen Wert.**
 `market_context.py:96-98` bevorzugt den Capital.com-Wert und fällt nur ersatzweise auf
@@ -3679,12 +3681,17 @@ falsch** und wurde nach Prüfung der Datenflüsse zurückgenommen:
 mehr. Ebenso falsch war die Kostenangabe im Review („spart 0,27 €"): das Feld ist
 ein paar Output-Tokens innerhalb eines ohnehin laufenden Calls, kein eigener Call.
 
-Damit gilt: **zwei getrennte Signale, keines ersetzt das andere.** Autorität ist
-geteilt — `market_context.sector_rotation_in/out` wird persistiert und ist der
-Wert für Auswertung und Guardrails; `trend_analyzer.sector_rotation` ist reiner
+Damit gilt: **zwei getrennte Signale, keines ersetzt das andere.**
+`market_context.sector_rotation_in/out` wird persistiert und ist Prompt-Kontext für
+Phase 2 und den 16:10-Portfolio-Check; `trend_analyzer.sector_rotation` ist reiner
 Prompt-Kontext für die Phasen 2/3/3b/4a und wird nirgends gespeichert. Wer sie
 zusammenführen will, muss zuerst `market_context` bis in `analyze_batches()`
 durchreichen.
+
+⚠️ **Korrektur (C.28, 2026-09-08):** Hier stand ursprünglich, der
+`market_context`-Wert sei „maßgeblich für Auswertung und Guardrails". Das war
+falsch — **kein Check in `signal_checks.py` liest Rotation, Regime oder Breite**;
+der einzige Marktkontext-Wert in einem Guardrail ist `vix_level` (`check_vix`).
 
 **B5 — der Abbruchgrund wurde weggeworfen.** Der Prompt fordert bei leerer
 Trendliste eine Begründung in `trend_summary` an. `analyze_trends()` warf aber
@@ -3729,6 +3736,80 @@ offengelegte Melde-Schwelle 7 kann Häufung bei `strength = 7` erzeugen —
 Verteilung in `trend_analyses` nach den nächsten Läufen ansehen.
 
 **Tests:** 964 grün (2 neue Vertragstests, Katalysator-Test verschärft).
+
+### C.28 — Prompt-Review `market_context_v1`: Phase 0b neu geschnitten, 16:10 ohne zweiten Call (2026-09-08)
+
+Zweiter Durchgang des Prompt-Reviews (nach C.27), geprüft gegen Projektziel, Spec,
+alle Datenflüsse bis zum letzten Konsumenten und aus Marktanalysten-Sicht.
+Grundlage: der volle Call vom 02.09. (Walkthrough), die vier historischen
+`market_context`-Zeilen, die Spec-Entscheidung B.3/D2 und P2.11 Befund 2.
+
+**Urteil:** Der Schritt ist richtig — ein Marktregime-Check vor der Einzeltitel-
+Analyse ist Standard, und der VIX-Guardrail ist der einzige harte Risikofilter des
+Systems. Der Prompt war es zur Hälfte: von sechs Feldern war eines seit dem 13.08.
+nachweislich immer NULL, eines wurde nie befüllt, drei erreichten nie einen Menschen.
+
+**Feld für Feld:**
+- `vix_level` — gut gebaut (Capital.com deterministisch, Claude nur Fallback). Aber
+  `vix_source` wurde nie persistiert; bei ~1,3 Punkten Future-Spot-Offset (P2.12
+  Befund 3) und Schwelle 25 ist die Quelle keine Nebensache. → Spalte mit
+  Migrations-Guard; `vix_source` ist jetzt auch None, wenn keine Quelle lieferte
+  (vorher stand „claude" neben einem NULL-Wert).
+- `advance_decline_ratio` — seit 13.08. in jedem Lauf NULL (P2.11 Befund 2, dort
+  vertagt, nie entschieden). Der Call vom 02.09. zeigt warum: die Websuche liefert
+  NYSE-Breite (anderes Universum), das Modell lehnte sie weisungsgemäß ab. Einziger
+  Abnehmer war eine Mail-Kontextzeile. → **ersatzlos gestrichen** (D3).
+- `market_regime` — ohne Kriterien („genau einer von …"). Als Lernfeature
+  (`predictions.market_regime`) ist ein undefiniertes Label Rauschen. → im Prompt
+  über Regeln verankert (S&P-Richtung × VIX-Band × Sektorführung), analog zu den
+  `strength`-Ankern aus C.27.
+- `sector_rotation_in/out` — dritte Rotationsquelle neben `trend_analyzer` und dem
+  deterministischen `sector_momentum`; am 18.08. lieferte derselbe Tag 70 Minuten
+  später eine andere Antwort (Websuch-Rauschen, keine Marktbewegung). **Kein
+  Guardrail liest sie.** → auf die 11 GICS-Sektoren begrenzt, max. drei je Richtung,
+  Bezug ausdrücklich die Sektorperformance der Referenzsitzung.
+- `macro_summary` — erreicht **keine** Mail; einzige Leser sind englischsprachige
+  Prompts (broad_scan, portfolio_check). Nannte am 02.09. „VIX 16,34" (Spot), während
+  17,67 (Future) persistiert wurde. → englisch (D2), eine Zeile, keine VIX-Zahl.
+- `sp500_change_pct` — Spalte seit Plan 1, kein einziger Schreiber, immer NULL:
+  ausgerechnet die Basiszahl jeder Marktlage fehlte. → wird jetzt erhoben und
+  persistiert.
+- Bezugsrahmen fehlte: `pre_market` läuft um 09:00 ET **vor** der Eröffnung, „aktuell"
+  war mehrdeutig. → der Prompt unterscheidet Vortagesschluss + Overnight (pre_market)
+  von der laufenden Sitzung (trade_proposals).
+
+**D1 — der 16:10-Zweitcall (Option 2 gewählt).** `run_trade_proposals` rief
+`fetch_market_context` ein zweites Mal — ~0,27 €, gemessen ~85 % der 16:10-Kosten
+(`cost_tracking`: 0,29 € Ø). Bis zum letzten Konsumenten verfolgt: `_revalidate_all`
+liest nur `vix_level` (Capital.com, deterministisch); `revalidation.py` und
+`trade_proposals_v1.txt` kennen weder Regime noch Rotation; die abgelöste Prediction
+kopiert `market_regime` aus der Morgenzeile; einziger Leser des Claude-Anteils war der
+Portfolio-Check — in beiden bisherigen 16:10-Läufen ohne eine einzige Empfehlung.
+→ `vix_only_context()` (kein Claude), Morgenkontext für den Portfolio-Check aus
+`db.load_market_context()`. Die 16:10-Zeile trägt bewusst **nur** den VIX —
+Morgenwerte zu kopieren gäbe sie als 16:10-Messung aus. Bewusst **nicht** gemacht:
+den Post-Open-Zustand in die Re-Validierung bringen. Das wäre ein eigener
+Design-Schritt mit Umbau von `trade_proposals_v1`; kommt er, kehrt der 16:10-Call
+mit einem echten Leser zurück.
+
+**Korrektur an C.27:** „maßgeblich für Auswertung und Guardrails" war falsch (s. dort).
+
+**Prompt-Sprache:** `market_context_v1.txt` ist jetzt durchgehend englisch (vorher
+deutsche Anweisungen, englische Schlüssel, deutsche Ausgabe) — passt zu
+`trend_analyzer_v1` und zu den einzigen Lesern der Ausgabe.
+
+**Tests:** 973 grün (10 neue: `vix_only_context` ×2, gemeinsamer Schlüsselsatz,
+Vertragstest `market_context_v1` per Mutation verifiziert, Migration + Roundtrip
+`vix_source`/`sp500_change_pct`, 16:10 ohne Claude-Call, VIX-only-Zeile,
+Morgen-Rotation im Portfolio-Check, fehlende Morgenzeile). Ein Parametrize-Fall
+entfernt (Kostenabbruch in einer Phase, die keinen Call mehr hat). Integrationstest
+pinnt end-to-end, dass eine vom Modell gelieferte A/D nicht mehr persistiert wird.
+Coverage 92,64 %.
+
+**Offen:** Die neuen Prompt-Regeln (Regime-Kriterien, GICS-Liste, S&P-Zahl,
+Bezugsrahmen) sind noch nicht gegen die echte API gemessen — der nächste
+`pre_market`-Lauf zeigt es. Nachtrag `random/pipeline_walkthrough.ipynb`: die
+Phase-0b-Zelle bleibt unverändert gültig (Morgenpfad).
 
 ## Sprint 3D — Learning Modul
 

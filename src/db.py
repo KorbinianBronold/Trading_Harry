@@ -91,6 +91,7 @@ CREATE TABLE IF NOT EXISTS market_context (
     fear_greed_value INTEGER, policy_risk_level TEXT,
     sector_rotation_in TEXT, sector_rotation_out TEXT, macro_summary TEXT,
     advance_decline_ratio REAL,
+    vix_source TEXT,
     UNIQUE(date, run_type)
 );
 
@@ -354,6 +355,12 @@ def _apply_migrations(conn: sqlite3.Connection) -> None:
     ).fetchall()}
     if "advance_decline_ratio" not in mc_cols:
         conn.execute("ALTER TABLE market_context ADD COLUMN advance_decline_ratio REAL")
+    # C.28 (2026-09-08): Capital.com notiert einen VIX-Future-CFD, ~1,3 Punkte
+    # ueber Spot (P2.12 Befund 3). Bei der harten Schwelle 25 muss im Nachhinein
+    # erkennbar sein, welche Quelle den persistierten Wert lieferte -- bis
+    # dahin stand vix_source nur im Dict, nie in der Tabelle.
+    if "vix_source" not in mc_cols:
+        conn.execute("ALTER TABLE market_context ADD COLUMN vix_source TEXT")
 
     # C.16 (2026-08-19): oil_price/gold_price/btc_price waren nie befuellt --
     # die Rohpreise liegen bereits vollstaendig in price_history (GC=F/SI=F/
@@ -1134,6 +1141,7 @@ def save_market_context(conn: sqlite3.Connection, row: dict) -> None:
         "date", "run_type", "sp500_change_pct", "vix_level", "market_regime",
         "fear_greed_value", "policy_risk_level", "sector_rotation_in",
         "sector_rotation_out", "macro_summary", "advance_decline_ratio",
+        "vix_source",
     ]
     placeholders = ", ".join(["?"] * len(cols))
     conn.execute(
@@ -1142,6 +1150,21 @@ def save_market_context(conn: sqlite3.Connection, row: dict) -> None:
         [row.get(c) for c in cols],
     )
     conn.commit()
+
+
+def load_market_context(conn: sqlite3.Connection, date: str, run_type: str) -> dict:
+    """Liest die market_context-Zeile eines Laufs als Dict (alle Spalten);
+    {} wenn es keine gibt.
+
+    Eingefuehrt mit C.28: der 16:10-Lauf erhebt keinen eigenen Claude-Kontext
+    mehr und holt Rotation und Makro-Satz fuer den Portfolio-Check aus der
+    Morgenzeile. {} statt Exception -- ein fehlender Morgenkontext (Phase 0b
+    scheiterte) darf den Nachmittagslauf nicht kosten."""
+    row = conn.execute(
+        "SELECT * FROM market_context WHERE date = ? AND run_type = ?",
+        (date, run_type),
+    ).fetchone()
+    return dict(row) if row else {}
 
 
 def update_market_context_extras(

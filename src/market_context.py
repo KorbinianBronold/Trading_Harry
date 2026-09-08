@@ -1,9 +1,19 @@
 """Phase 0b: tagesaktueller Marktkontext.
 
-Ein Claude-Call mit Websuche liefert VIX, Advance/Decline-Ratio, Marktregime und
-Sektor-Rotation als strukturiertes JSON. Der VIX wird bevorzugt numerisch von
-Capital.com genommen (deterministisch); Claudes Wert dient nur als Rueckfallebene,
-falls das Epic keine Bars liefert.
+Ein Claude-Call mit Websuche liefert S&P-500-Tagesaenderung, Marktregime,
+Sektor-Rotation und einen Makro-Einzeiler als strukturiertes JSON. Der VIX wird
+bevorzugt numerisch von Capital.com genommen (deterministisch); Claudes Wert
+dient nur als Rueckfallebene, falls das Epic keine Bars liefert.
+
+Seit C.28 (2026-09-08) zwei Erhebungswege mit identischem Schluesselsatz:
+  * fetch_market_context() -- der Claude-Call, nur im Morgenlauf (pre_market)
+  * vix_only_context()     -- deterministisch, fuer den 16:10-Lauf: dort
+    entscheidet ausschliesslich der VIX (check_vix mit enforce=True), der
+    zweite Claude-Call speiste ausser einer DB-Zeile nichts
+Die Advance/Decline-Ratio wird nicht mehr erhoben (P2.11 Befund 2, entschieden
+in C.28): per Websuche gab es nie eine belegbare S&P-500-spezifische Quelle, der
+Wert war seit dem 13.08. in jedem Lauf NULL und hatte keinen Abnehmer ausser
+einer Mail-Kontextzeile. Der Schluessel bleibt (None), Schema und Mail bleiben stabil.
 
 Nicht belegbare Werte bleiben None. Das ist Absicht und kein Mangel: die Zahlen
 steuern nachgelagert harte Risikofilter (VIX > 25 nur noch confidence='high',
@@ -36,6 +46,18 @@ MODEL = config.CLAUDE_MODEL_SONNET
 # und kappte beim naechsten Lauf). Die Decke kostet nur, was sie nutzt.
 MAX_TOKENS = 6144
 VALID_REGIMES = {"risk_on", "risk_off", "neutral"}
+
+# Alle Schluessel, auf die sich Aufrufer verlassen duerfen -- in beiden
+# Erhebungswegen identisch. Wer hier etwas ergaenzt, ergaenzt es fuer beide.
+CONTEXT_KEYS = (
+    "sp500_change_pct", "vix_level", "vix_source", "advance_decline_ratio",
+    "market_regime", "sector_rotation_in", "sector_rotation_out", "macro_summary",
+)
+
+
+def _empty_context() -> dict:
+    """Vollstaendiges Kontext-Dict, alle Werte None."""
+    return {k: None for k in CONTEXT_KEYS}
 
 
 class MarketContextError(RuntimeError):
@@ -78,10 +100,10 @@ def fetch_market_context(
 ) -> dict:
     """Ermittelt den Marktkontext fuer `date` und gibt ein validiertes Dict zurueck.
 
-    Keys: vix_level, vix_source, advance_decline_ratio, market_regime,
-    sector_rotation_in, sector_rotation_out, macro_summary. Alle Keys sind immer
-    vorhanden, nicht belegbare Werte sind None. Raises MarketContextError, wenn
-    die Antwort nicht als JSON lesbar ist."""
+    Keys: CONTEXT_KEYS. Alle Keys sind immer vorhanden, nicht belegbare Werte
+    sind None; advance_decline_ratio ist seit C.28 immer None (nicht mehr
+    erhoben). Raises MarketContextError, wenn die Antwort nicht als JSON lesbar
+    ist."""
     user_msg = (
         f"Heutiges Datum: {date} (Run: {run_type}).\n"
         "Ermittle den aktuellen US-Marktkontext und antworte mit dem JSON-Objekt "
@@ -104,12 +126,20 @@ def fetch_market_context(
     vix_capital = _vix_from_capital(price_provider, date)
     vix_claude = _as_float(parsed.get("vix_level"))
     vix_level = vix_capital if vix_capital is not None else vix_claude
-    vix_source = "capital.com" if vix_capital is not None else "claude"
+    # vix_source wird seit C.28 persistiert -- "claude" ohne Wert waere eine
+    # Falschaussage in der Tabelle, deshalb None, wenn keine Quelle lieferte.
+    if vix_capital is not None:
+        vix_source = "capital.com"
+    elif vix_claude is not None:
+        vix_source = "claude"
+    else:
+        vix_source = None
 
     out = {
+        **_empty_context(),          # setzt u.a. advance_decline_ratio = None (C.28)
+        "sp500_change_pct":      _as_float(parsed.get("sp500_change_pct")),
         "vix_level":             vix_level,
         "vix_source":            vix_source,
-        "advance_decline_ratio": _as_float(parsed.get("advance_decline_ratio")),
         "market_regime":         regime,
         "sector_rotation_in":    parsed.get("sector_rotation_in"),
         "sector_rotation_out":   parsed.get("sector_rotation_out"),
@@ -117,6 +147,23 @@ def fetch_market_context(
     }
     log.info(
         f"Markt-Kontext: VIX={out['vix_level']} ({vix_source}), "
-        f"A/D={out['advance_decline_ratio']}, Regime={out['market_regime']}"
+        f"S&P={out['sp500_change_pct']}%, Regime={out['market_regime']}"
     )
+    return out
+
+
+def vix_only_context(date: str, price_provider) -> dict:
+    """Marktkontext ohne Claude-Call: nur der VIX, deterministisch von Capital.com.
+
+    Fuer den 16:10-Lauf (C.28, Option 2). Dort entscheidet ausschliesslich der
+    VIX -- check_vix mit enforce=True ist der einzige harte Guardrail-Moment
+    des Tages -- und der braucht keine Websuche. Regime, Rotation und
+    Makro-Satz bleiben None: sie werden hier nicht erhoben und sollen in der
+    16:10-Zeile auch nicht als erhoben erscheinen. Den Morgenkontext fuer den
+    Portfolio-Check laedt der Aufrufer ueber db.load_market_context()."""
+    out = _empty_context()
+    vix = _vix_from_capital(price_provider, date)
+    out["vix_level"] = vix
+    out["vix_source"] = "capital.com" if vix is not None else None
+    log.info(f"Markt-Kontext (16:10, ohne Claude): VIX={vix}")
     return out

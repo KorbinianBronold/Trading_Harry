@@ -121,10 +121,17 @@ Kurzform zum Erkennen einer drohenden Verletzung; Begründung und Randfälle in
   MACD-Histogramm, Kurs vs. SMA50 **und** SMA200 — keine Kreuzung); ADX moduliert
   die Stärke, **nie** die Richtung. → §6.2
 - Sektor-Momentum = **zwei getrennte** Signale (ETF + DB-Ø), nie verrechnet. → B.3.1
-- Sektor-**Rotation** gibt es ebenfalls doppelt und geteilt: `market_context` ist
-  persistiert und maßgeblich, `trend_analyzer` ist nur Prompt-Kontext. Nicht
-  zusammenführen, ohne `market_context` bis in `analyze_batches()` durchzureichen —
-  sonst sieht Phase 3 gar keine Rotation mehr. → C.27
+- Sektor-**Rotation** gibt es doppelt: `market_context` (persistiert; Prompt-Kontext für
+  Phase 2 und den 16:10-Portfolio-Check) und `trend_analyzer` (nur Prompt-Kontext für
+  Phase 2/3/3b/4a). **Kein Guardrail liest Rotation, Regime oder Breite** — der einzige
+  Marktkontext-Wert in einem Check ist `vix_level` (`check_vix`). Nicht zusammenführen,
+  ohne `market_context` bis in `analyze_batches()` durchzureichen — sonst sieht Phase 3
+  gar keine Rotation mehr. → C.27 / C.28
+- Um 16:10 gibt es **keinen** Claude-Marktkontext-Call: `vix_only_context()` holt den VIX
+  deterministisch, Rotation/Makro für den Portfolio-Check kommen aus der Morgenzeile
+  (`db.load_market_context`). Die 16:10-Zeile trägt bewusst nur den VIX.
+  `advance_decline_ratio` wird nicht mehr erhoben (Schlüssel bleibt, immer None);
+  `sp500_change_pct` und `vix_source` werden seit C.28 persistiert. → C.28
 - `SECTOR_ALIASES` → 21 Sub-Sektoren; Unbekanntes bleibt ungemappt (WARN), nie
   Sammeleimer — lieber ungemappt als falsch gemappt. → B.10
 - B.3-Checks in **beiden** Läufen erhoben, nur 16:10 durchgesetzt (`enforce`).

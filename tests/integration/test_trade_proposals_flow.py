@@ -36,7 +36,7 @@ def test_vix_blocks_at_1610_but_not_at_1500(tmp_db_path, mocker):
     pid = _morning_long(conn)
     conn.commit(); conn.close()
 
-    mocker.patch("main.fetch_market_context", return_value={"vix_level": 40.0})
+    mocker.patch("main.vix_only_context", return_value={"vix_level": 40.0})
     _mock_16_10(mocker, price=101.0,
                 verdict={"verdict": "bestaetigt", "probability_pct": 71,
                          "reason": "ok"})
@@ -61,7 +61,7 @@ def test_exactly_one_open_signal_survives_the_revision(tmp_db_path, mocker):
     _morning_long(conn)
     conn.commit(); conn.close()
 
-    mocker.patch("main.fetch_market_context", return_value={"vix_level": 18.0})
+    mocker.patch("main.vix_only_context", return_value={"vix_level": 18.0})
     _mock_16_10(mocker, price=101.0,
                 verdict={"verdict": "bestaetigt", "probability_pct": 71,
                          "reason": "ok"})
@@ -84,7 +84,7 @@ def test_evaluator_closes_exactly_one_outcome(tmp_db_path, mocker):
     _morning_long(conn)
     conn.commit(); conn.close()
 
-    mocker.patch("main.fetch_market_context", return_value={"vix_level": 18.0})
+    mocker.patch("main.vix_only_context", return_value={"vix_level": 18.0})
     _mock_16_10(mocker, price=101.0,
                 verdict={"verdict": "bestaetigt", "probability_pct": 71,
                          "reason": "ok"})

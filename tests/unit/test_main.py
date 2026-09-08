@@ -700,7 +700,8 @@ def _stub_trade_proposals_side_phases(mocker) -> None:
     Portfolio-Check) — die beiden Geruest-Tests unten pruefen nur die
     Kurs-Erfassung bzw. den Mailversand (Task 14) und sollen dafuer nicht
     wirklich Claude oder Capital.com anfassen."""
-    mocker.patch("main.fetch_market_context", return_value={"vix_level": 18.0})
+    mocker.patch("main.vix_only_context",
+                 return_value={"vix_level": 18.0, "vix_source": "capital.com"})
     mocker.patch("main.collect_sector_momentum", return_value={})
     mocker.patch("main.run_policy_monitor",
                  return_value={"policy_risk_level": "low", "events": []})
@@ -1197,7 +1198,8 @@ def test_revalidation_failure_leaves_the_row_untouched(tmp_db_path, mocker):
     mocker.patch("main.CapitalComProvider", return_value=MagicMock())
     mocker.patch("main.FinnhubProvider", return_value=MagicMock())
     mocker.patch("main.collect", return_value=([{"ticker": "AAPL", "price": 101.0}], 0, {}))
-    mocker.patch("main.fetch_market_context", return_value={"vix_level": 18.0})
+    mocker.patch("main.vix_only_context",
+                 return_value={"vix_level": 18.0, "vix_source": "capital.com"})
     mocker.patch("main.collect_sector_momentum", return_value={})
     mocker.patch("main.run_policy_monitor", return_value={"policy_risk_level": "low",
                                                          "events": []})
@@ -1235,7 +1237,8 @@ def test_skipped_ticker_is_never_superseded_on_a_stale_price(tmp_db_path, mocker
     mocker.patch("main.FinnhubProvider", return_value=MagicMock())
     # AAPL wurde uebersprungen -> taucht in der Ergebnisliste nicht auf.
     mocker.patch("main.collect", return_value=([], 1, {}))
-    mocker.patch("main.fetch_market_context", return_value={"vix_level": 18.0})
+    mocker.patch("main.vix_only_context",
+                 return_value={"vix_level": 18.0, "vix_source": "capital.com"})
     mocker.patch("main.collect_sector_momentum", return_value={})
     mocker.patch("main.run_policy_monitor", return_value={"policy_risk_level": "low",
                                                          "events": []})
@@ -1268,7 +1271,8 @@ def _tp_run_mocks(mocker, prices):
     mocker.patch("main.CapitalComProvider", return_value=MagicMock())
     mocker.patch("main.FinnhubProvider", return_value=MagicMock())
     mocker.patch("main.collect", return_value=(prices, 0, {}))
-    mocker.patch("main.fetch_market_context", return_value={"vix_level": 18.0})
+    mocker.patch("main.vix_only_context",
+                 return_value={"vix_level": 18.0, "vix_source": "capital.com"})
     mocker.patch("main.collect_sector_momentum", return_value={})
     mocker.patch("main.run_policy_monitor", return_value={"policy_risk_level": "low",
                                                          "events": []})
@@ -1342,8 +1346,10 @@ def test_cost_cap_keeps_the_already_checked_signals(tmp_db_path, mocker):
     assert summary["aborted_at_phase"] == "revalidation"
 
 
+# C.28: die market_context-Phase hat um 16:10 keinen Claude-Call mehr
+# (vix_only_context, deterministisch) -- ein CostCapExceeded kann dort nicht
+# mehr entstehen, der frühere Parametrize-Fall ist damit gegenstandslos.
 @pytest.mark.parametrize("phase,target", [
-    ("market_context",  "main.fetch_market_context"),
     ("data_collection", "main.collect"),
     ("sector_momentum", "main.collect_sector_momentum"),
     ("policy_monitor",  "main.run_policy_monitor"),
@@ -1362,7 +1368,8 @@ def test_cost_abort_reports_the_right_phase(tmp_db_path, mocker, phase, target):
 
     mocker.patch("main.CapitalComProvider", return_value=MagicMock())
     mocker.patch("main.FinnhubProvider", return_value=MagicMock())
-    mocker.patch("main.fetch_market_context", return_value={"vix_level": 18.0})
+    mocker.patch("main.vix_only_context",
+                 return_value={"vix_level": 18.0, "vix_source": "capital.com"})
     mocker.patch("main.collect", return_value=([{"ticker": "AAPL", "price": 101.0}], 0, {}))
     mocker.patch("main.collect_sector_momentum", return_value={})
     mocker.patch("main.run_policy_monitor",
@@ -1389,20 +1396,25 @@ def test_cost_abort_reports_the_right_phase(tmp_db_path, mocker, phase, target):
 
 def test_portfolio_check_sees_sector_rotation_from_market_context(tmp_db_path, mocker):
     """load_trend_context() kann sector_rotation/trend_summary nicht rekonstruieren
-    (trend_analyses persistiert sie nie) -- der frisch erhobene Markt-Kontext
+    (trend_analyses persistiert sie nie) -- die MORGENZEILE aus market_context
     liefert aber sector_rotation_in/out und macro_summary, und die werden am
     Aufrufort in den Trend-Kontext gemischt, den der Portfolio-Check sieht.
-    Sonst bekaeme der 16:10-Lauf einen strikt aermeren Prompt als der Morgenlauf."""
+    Sonst bekaeme der 16:10-Lauf einen strikt aermeren Prompt als der Morgenlauf.
+    Seit C.28 aus der DB statt aus einem zweiten bezahlten Call."""
     from src import db
-    conn = db.connect(str(tmp_db_path)); db.init_schema(conn); conn.close()
+    conn = db.connect(str(tmp_db_path)); db.init_schema(conn)
+    db.save_market_context(conn, {
+        "date": "2026-07-30", "run_type": "pre_market",
+        "vix_level": 18.0, "sector_rotation_in": "Utilities",
+        "sector_rotation_out": "Technology", "macro_summary": "nervoes",
+    })
+    conn.close()
 
     mocker.patch("main.CapitalComProvider", return_value=MagicMock())
     mocker.patch("main.FinnhubProvider", return_value=MagicMock())
     mocker.patch("main.collect", return_value=([], 0, {}))
-    mocker.patch("main.fetch_market_context", return_value={
-        "vix_level": 18.0, "sector_rotation_in": "Utilities",
-        "sector_rotation_out": "Technology", "macro_summary": "nervoes",
-    })
+    mocker.patch("main.vix_only_context",
+                 return_value={"vix_level": 18.0, "vix_source": "capital.com"})
     mocker.patch("main.collect_sector_momentum", return_value={})
     mocker.patch("main.run_policy_monitor",
                  return_value={"policy_risk_level": "low", "events": []})
@@ -1430,15 +1442,18 @@ def test_portfolio_check_still_works_with_a_real_morning_trend_context(tmp_db_pa
         "beneficiary_tickers": ["NVDA"], "negative_tickers": [],
         "next_catalyst": "x",
     })
+    db.save_market_context(conn, {
+        "date": "2026-07-30", "run_type": "pre_market",
+        "vix_level": 18.0, "sector_rotation_in": "Utilities",
+        "sector_rotation_out": "Technology", "macro_summary": "nervoes",
+    })
     conn.close()
 
     mocker.patch("main.CapitalComProvider", return_value=MagicMock())
     mocker.patch("main.FinnhubProvider", return_value=MagicMock())
     mocker.patch("main.collect", return_value=([], 0, {}))
-    mocker.patch("main.fetch_market_context", return_value={
-        "vix_level": 18.0, "sector_rotation_in": "Utilities",
-        "sector_rotation_out": "Technology", "macro_summary": "nervoes",
-    })
+    mocker.patch("main.vix_only_context",
+                 return_value={"vix_level": 18.0, "vix_source": "capital.com"})
     mocker.patch("main.collect_sector_momentum", return_value={})
     mocker.patch("main.run_policy_monitor",
                  return_value={"policy_risk_level": "low", "events": []})
@@ -1501,7 +1516,8 @@ def test_opening_gap_reaches_the_revalidation_prompt(tmp_db_path, mocker):
     mocker.patch("main.CapitalComProvider", return_value=MagicMock())
     mocker.patch("main.FinnhubProvider", return_value=MagicMock())
     mocker.patch("main.collect", return_value=([{"ticker": "AAPL", "price": 104.0}], 0, {}))
-    mocker.patch("main.fetch_market_context", return_value={"vix_level": 18.0})
+    mocker.patch("main.vix_only_context",
+                 return_value={"vix_level": 18.0, "vix_source": "capital.com"})
     mocker.patch("main.collect_sector_momentum", return_value={})
     mocker.patch("main.run_policy_monitor", return_value={"policy_risk_level": "low",
                                                           "events": []})
@@ -1790,7 +1806,8 @@ def test_opening_price_stays_null_for_commodities_and_crypto(tmp_db_path, mocker
         ([{"ticker": "AAPL", "price": 101.0}], 0, {}),
         ([{"ticker": "BTCUSD", "price": 65000.0}], 0, {}),
     ])
-    mocker.patch("main.fetch_market_context", return_value={"vix_level": 18.0})
+    mocker.patch("main.vix_only_context",
+                 return_value={"vix_level": 18.0, "vix_source": "capital.com"})
     mocker.patch("main.collect_sector_momentum", return_value={})
     mocker.patch("main.run_policy_monitor", return_value={"policy_risk_level": "low",
                                                          "events": []})
@@ -2092,3 +2109,90 @@ def test_signal_context_carries_the_fundamentals_for_freezing():
     assert ctx["debt_equity"] == 1.4
     assert ctx["analyst_consensus"] == "buy"
     assert ctx["analyst_consensus_period"] == "2026-08-01"
+
+
+# ---------- C.28 / Option 2: 16:10 ohne zweiten Claude-Marktkontext-Call ----------
+
+
+def _run_1610_minimal(tmp_db_path, mocker):
+    mocker.patch("main.CapitalComProvider", return_value=MagicMock())
+    mocker.patch("main.FinnhubProvider", return_value=MagicMock())
+    mocker.patch("main.collect", return_value=([], 0, {}))
+    _stub_trade_proposals_side_phases(mocker)
+    mocker.patch("main.send_trade_proposals_email")
+    from main import run_trade_proposals
+    run_trade_proposals(date="2026-07-30", db_path=str(tmp_db_path))
+
+
+def test_run_trade_proposals_makes_no_market_context_claude_call(tmp_db_path, mocker):
+    """Der zweite fetch_market_context() kostete ~0,27 EUR/Tag und speiste
+    ausser einer DB-Zeile nichts: Re-Validierung und Mail lesen nur den VIX
+    (Capital.com), der Portfolio-Check bekommt den Morgenkontext aus der DB."""
+    fetch = mocker.patch("main.fetch_market_context")
+    _run_1610_minimal(tmp_db_path, mocker)
+    fetch.assert_not_called()
+
+
+def test_run_trade_proposals_persists_a_vix_only_row(tmp_db_path, mocker):
+    """Die 16:10-Zeile traegt bewusst NUR den VIX. Morgenwerte hierher zu
+    kopieren gaebe sie als 16:10-Messung aus, die sie nicht sind."""
+    _run_1610_minimal(tmp_db_path, mocker)
+
+    import sqlite3
+    conn = sqlite3.connect(str(tmp_db_path)); conn.row_factory = sqlite3.Row
+    row = conn.execute("SELECT * FROM market_context WHERE date=? AND run_type=?",
+                       ("2026-07-30", "trade_proposals")).fetchone()
+    assert row is not None
+    assert row["vix_level"] == 18.0
+    assert row["vix_source"] == "capital.com"
+    assert row["market_regime"] is None
+    assert row["sector_rotation_in"] is None
+    assert row["macro_summary"] is None
+
+
+def test_run_trade_proposals_portfolio_check_gets_the_morning_rotation(tmp_db_path, mocker):
+    """Der einzige Leser von Rotation/Makro um 16:10 ist der Portfolio-Check.
+    Er bekommt jetzt die Morgenzeile aus der DB -- nicht aermer als vorher,
+    nur nicht mehr aus einem zweiten bezahlten Call."""
+    from src import db
+    conn = db.connect(str(tmp_db_path)); db.init_schema(conn)
+    db.save_market_context(conn, {
+        "date": "2026-07-30", "run_type": "pre_market",
+        "vix_level": 17.0, "vix_source": "capital.com",
+        "sector_rotation_in": "Energy", "sector_rotation_out": "Technology",
+        "macro_summary": "oil shock",
+    })
+    conn.close()
+
+    mocker.patch("main.CapitalComProvider", return_value=MagicMock())
+    mocker.patch("main.FinnhubProvider", return_value=MagicMock())
+    mocker.patch("main.collect", return_value=([], 0, {}))
+    _stub_trade_proposals_side_phases(mocker)
+    cop = mocker.patch("main.check_open_positions", return_value=[])
+    mocker.patch("main.send_trade_proposals_email")
+
+    from main import run_trade_proposals
+    run_trade_proposals(date="2026-07-30", db_path=str(tmp_db_path))
+
+    trend_ctx = cop.call_args.kwargs["trend_context"]
+    assert trend_ctx["sector_rotation_in"] == "Energy"
+    assert trend_ctx["sector_rotation_out"] == "Technology"
+    assert trend_ctx["macro_summary"] == "oil shock"
+
+
+def test_run_trade_proposals_survives_a_missing_morning_context(tmp_db_path, mocker):
+    """Scheiterte Phase 0b am Morgen, gibt es keine Morgenzeile -- der
+    16:10-Lauf muss trotzdem durchlaufen; der Portfolio-Check vertraegt None."""
+    mocker.patch("main.CapitalComProvider", return_value=MagicMock())
+    mocker.patch("main.FinnhubProvider", return_value=MagicMock())
+    mocker.patch("main.collect", return_value=([], 0, {}))
+    _stub_trade_proposals_side_phases(mocker)
+    cop = mocker.patch("main.check_open_positions", return_value=[])
+    mocker.patch("main.send_trade_proposals_email")
+
+    from main import run_trade_proposals
+    run_trade_proposals(date="2026-07-30", db_path=str(tmp_db_path))
+
+    trend_ctx = cop.call_args.kwargs["trend_context"]
+    assert trend_ctx.get("sector_rotation_in") is None
+    assert trend_ctx.get("macro_summary") is None

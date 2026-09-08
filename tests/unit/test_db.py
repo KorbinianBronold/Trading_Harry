@@ -2642,3 +2642,56 @@ def test_outcome_horizons_are_scoped_per_prediction(in_memory_db):
     save_outcome_horizons(in_memory_db, prediction_id=2, rows=r)
 
     assert len(load_outcome_horizons(in_memory_db, prediction_id=1)) == 1
+
+
+# ---------- C.28: vix_source persistiert, Morgenkontext ladbar ----------
+
+
+def test_migration_adds_vix_source_to_a_legacy_market_context(tmp_path):
+    """Capital.com notiert einen VIX-Future-CFD, ~1,3 Punkte ueber Spot (P2.12
+    Befund 3). Bei der harten Schwelle 25 muss im Nachhinein erkennbar sein,
+    welche Quelle den persistierten Wert lieferte -- bis C.28 stand vix_source
+    nur im Dict, nie in der Tabelle. Die Migration muss auf einer ALTEN Tabelle
+    greifen, nicht nur auf einer frisch angelegten."""
+    from src import db
+    path = str(tmp_path / "old.db")
+    conn = db.connect(path)
+    conn.executescript("""
+        CREATE TABLE market_context (
+            date TEXT NOT NULL, run_type TEXT NOT NULL,
+            sp500_change_pct REAL, vix_level REAL, market_regime TEXT,
+            fear_greed_value INTEGER, policy_risk_level TEXT,
+            sector_rotation_in TEXT, sector_rotation_out TEXT, macro_summary TEXT,
+            advance_decline_ratio REAL,
+            UNIQUE(date, run_type)
+        );
+    """)
+    conn.commit()
+
+    db.init_schema(conn)
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(market_context)")}
+    assert "vix_source" in cols
+
+    db.init_schema(conn)   # idempotent: zweiter Lauf darf nicht an ALTER scheitern
+
+
+def test_market_context_roundtrip_carries_vix_source_and_sp500_change(in_memory_db):
+    """save -> load muss die beiden C.28-Felder tragen; ein fehlender Lauf
+    liefert {} statt einer Exception -- der 16:10-Lauf darf an einem
+    fehlenden Morgenkontext nicht sterben."""
+    from src.db import init_schema, save_market_context, load_market_context
+    init_schema(in_memory_db)
+    save_market_context(in_memory_db, {
+        "date": "2026-09-08", "run_type": "pre_market",
+        "vix_level": 17.67, "vix_source": "capital.com",
+        "sp500_change_pct": -0.71, "market_regime": "risk_off",
+        "sector_rotation_in": "Energy", "macro_summary": "oil shock",
+    })
+
+    row = load_market_context(in_memory_db, date="2026-09-08", run_type="pre_market")
+    assert row["vix_source"] == "capital.com"
+    assert row["sp500_change_pct"] == -0.71
+    assert row["market_regime"] == "risk_off"
+    assert row["sector_rotation_in"] == "Energy"
+    assert load_market_context(in_memory_db, date="2026-09-08",
+                               run_type="trade_proposals") == {}

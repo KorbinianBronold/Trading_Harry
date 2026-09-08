@@ -125,7 +125,10 @@ def test_full_pipeline_writes_predictions_and_sends_email(tmp_path, monkeypatch)
     # Integrationstest den Markt-Kontext wirklich durchlaeuft (Parsen +
     # DB-Schreiben) statt ihn wegzustubben.
     market_ctx_resp = json.dumps({
-        "vix_level": 17.8, "advance_decline_ratio": 1.6,
+        "vix_level": 17.8, "sp500_change_pct": -0.4,
+        # A/D bleibt im Mock: der Test beweist unten, dass sie seit C.28 auch
+        # end-to-end NICHT mehr persistiert wird, selbst wenn das Modell sie schickt.
+        "advance_decline_ratio": 1.6,
         "market_regime": "risk_on", "sector_rotation_in": "Technology",
         "sector_rotation_out": "Utilities", "macro_summary": "Ruhig.",
     })
@@ -198,8 +201,10 @@ def test_full_pipeline_writes_predictions_and_sends_email(tmp_path, monkeypatch)
     # Phase 0b hat geschrieben, und die Predictions tragen den echten Kontext
     # statt der frueher hardcodierten None-Werte.
     ctx = conn.execute("SELECT * FROM market_context WHERE date='2026-05-19'").fetchone()
-    assert ctx["advance_decline_ratio"] == 1.6      # aus Claudes JSON
+    assert ctx["sp500_change_pct"] == -0.4          # aus Claudes JSON (seit C.28 erhoben)
     assert ctx["market_regime"] == "risk_on"        # dito
+    assert ctx["advance_decline_ratio"] is None     # C.28: nicht mehr erhoben -- auch nicht, wenn geliefert
+    assert ctx["vix_source"] == "capital.com"       # C.28: Quelle jetzt in der Tabelle
     # Der VIX kommt NICHT aus Claudes 17.8, sondern aus dem (hier gefakten)
     # Capital.com-Bar: der numerische Wert schlaegt den recherchierten.
     vix_from_provider = float(_mock_ohlc()["Close"].iloc[-1])
