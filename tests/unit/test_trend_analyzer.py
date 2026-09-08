@@ -193,3 +193,64 @@ def test_user_message_names_the_tradeable_universe(in_memory_db):
     assert "BTCUSD" in user_msg               # Krypto
     assert "GOLD" in user_msg                 # Rohstoff
     assert "XLF" not in user_msg              # Sektor-ETF: nie handelbar, nur Momentum
+
+
+# ---------- Vertragstest: prompts/trend_analyzer_v1.txt ----------
+
+
+PROMPT_V1 = Path(__file__).parent.parent.parent / "prompts" / "trend_analyzer_v1.txt"
+
+
+def test_trend_analyzer_v1_pins_contract():
+    """Seit Regel 10 (2026-09-08) wird diese Datei direkt editiert -- das hier ist
+    das Netz, das einen Edit auffaengt, der stillschweigend Code bricht. Keine
+    Stilpruefung, nur die Stellen, auf die sich Code verlaesst:
+      * die TBD/ISO-Datum-Konvention -- generate_daily_briefing() filtert darauf
+      * 'TRADEABLE UNIVERSE' -- analyze_trends() referenziert den Begriff in der
+        User-Nachricht, der Prompt bindet die Ticker-Listen daran
+      * die Ankerstufen samt Melde-Schwelle 7 -- der >= 7-Filter der Mail haengt
+        an einer Skala, die diese Bedeutung auch behauptet
+      * das trends/strength/summary-Schema -- analyze_trends() persistiert es"""
+    text = PROMPT_V1.read_text()
+
+    # Schema, das analyze_trends() parst und persistiert
+    for key in ('"trends"', '"strength"', '"summary"', '"next_catalyst"',
+                '"beneficiary_tickers"', '"negative_tickers"', '"trend_summary"'):
+        assert key in text, f"Schema-Schluessel {key} fehlt im Prompt"
+
+    # TBD-Konvention (B1): entweder exakt TBD oder ISO-Datum, nie gemischt
+    assert '"TBD"' in text
+    assert "ISO date" in text
+    assert "Never mix" in text
+
+    # Universums-Bindung (B2): beide Seiten benutzen denselben Begriff
+    assert "TRADEABLE UNIVERSE" in text
+
+    # Ankerstufen (B3) inkl. der Schwelle, auf die die Mail filtert
+    assert "strength >= 7" in text
+
+    # Leere Trendliste ist der fatale Abbruchpfad -- die Anweisung, den Grund in
+    # trend_summary zu erklaeren, ist das Einzige, was ihn diagnostizierbar macht
+    assert "empty" in text and "trend_summary" in text
+
+
+def test_prompt_and_user_message_share_the_universe_marker():
+    """Der Prompt verweist auf 'the TRADEABLE UNIVERSE listed in the user
+    message'; analyze_trends() muss den Marker also auch wirklich schreiben.
+    Bricht, wenn eine Seite umformuliert wird und die andere nicht."""
+    from unittest.mock import patch as _patch
+    from src.db import init_schema as _init
+    import sqlite3
+
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    _init(conn)
+    fake = _fake_claude_result(FIXTURE_PATH.read_text())
+    tracker = CostTracker(hard_cap_eur=10.0)
+
+    with _patch("src.utils.call_claude", return_value=fake) as mock_call:
+        analyze_trends(conn=conn, date="2026-05-19",
+                       run_type="pre_market", cost_tracker=tracker)
+
+    assert "TRADEABLE UNIVERSE" in mock_call.call_args.kwargs["user"]
+    assert "TRADEABLE UNIVERSE" in PROMPT_V1.read_text()

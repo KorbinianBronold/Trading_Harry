@@ -3706,6 +3706,30 @@ Test reproduziert.
 sich an die Universums-Liste und die Ankerstufen hält, zeigt erst der nächste
 Lauf.
 
+#### Nachtrag (2026-09-08, Selbst-Review der C.27-Änderungen)
+
+Drei Restbefunde aus dem Review der eigenen Fixes, alle behoben:
+
+- **Katalysator-Filter positiv statt negativ:** der B1-Fix prüfte nur „kein TBD" —
+  ein regelwidrig datumslos formulierter Katalysator („FOMC meeting soon") wäre
+  wieder durchgerutscht. `generate_daily_briefing()` verlangt jetzt ein
+  ISO-Datum (`\d{4}-\d{2}-\d{2}`) im String; das deckt beide Fehlformen mit einer
+  Regel ab.
+- **Vertragstest nachgezogen:** `test_trend_analyzer_v1_pins_contract` pinnt
+  Schema-Schlüssel, TBD/ISO-Konvention, `TRADEABLE UNIVERSE` (beidseitig, auch
+  gegen die User-Nachricht aus `analyze_trends()`) und die Melde-Schwelle 7.
+  Per Mutation verifiziert (Regel entfernt → Test rot).
+- **`duration_estimate`-Buckets waren nach dem 1-5d-Edit deckungsgleich** („1w"
+  = 5 Handelstage ⊂ „1-5d"): jetzt `'1-2d' / '3-5d' / '1m+'` mit „pick the
+  closest" und dem Hinweis, dass das Feld die Lebensdauer des *Trends* misst,
+  nicht des Trades. Reine Anzeige (DB + Mail-Karte), kein Logik-Konsument.
+
+Beobachtungsposten daraus (nicht geändert, nur notiert): die im Prompt
+offengelegte Melde-Schwelle 7 kann Häufung bei `strength = 7` erzeugen —
+Verteilung in `trend_analyses` nach den nächsten Läufen ansehen.
+
+**Tests:** 964 grün (2 neue Vertragstests, Katalysator-Test verschärft).
+
 ## Sprint 3D — Learning Modul
 
 ⚠️ **Noch nicht ausgearbeitet — braucht eine eigene Planungssession, bevor die Implementierung

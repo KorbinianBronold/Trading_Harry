@@ -738,6 +738,11 @@ def test_briefing_skips_catalysts_without_a_usable_date():
         {"name": "a", "strength": 8, "summary": "s", "next_catalyst": "TBD"},
         {"name": "b", "strength": 8, "summary": "s",
          "next_catalyst": "FOMC meeting September 2026 TBD"},
+        {"name": "b2", "strength": 8, "summary": "s",
+         # Regelwidrig, aber moeglich: weder TBD noch Datum. Ein reiner
+         # TBD-Substring-Check liesse das durch -- der Vertrag verlangt einen
+         # Termin, also wird positiv auf ein ISO-Datum geprueft.
+         "next_catalyst": "FOMC meeting soon"},
         {"name": "c", "strength": 8, "summary": "s",
          "next_catalyst": "US CPI 2026-09-11"},
     ]}

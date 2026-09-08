@@ -13,6 +13,7 @@ Plus a footer with yesterday's outcomes, skipped tickers, disclaimer, costs.
 Weekly mail is a shorter HTML body with the same delivery infra."""
 import html
 import logging
+import re
 from typing import Any
 
 import requests
@@ -67,11 +68,13 @@ def generate_daily_briefing(trend_context: dict, policy_context: dict) -> list[s
             break
     for t in (trend_context.get("trends") or []):
         cat = t.get("next_catalyst")
-        # Vorkommen statt Gleichheit: das Modell mischt Beschreibung und Platzhalter
-        # ("FOMC meeting September 2026 TBD", 2026-09-02). Ein exakter Vergleich
-        # liess den Hybrid durch, und die Mail meldete einen Katalysator, der gar
-        # keinen verwertbaren Termin trug.
-        if cat and "tbd" not in cat.lower():
+        # Positiv auf einen Termin pruefen statt negativ auf "TBD": das Modell
+        # mischte Beschreibung und Platzhalter ("FOMC meeting September 2026 TBD",
+        # 2026-09-02) und kann ebenso datumslos ohne TBD formulieren ("FOMC
+        # meeting soon"). Der Bullet verspricht einen Katalysator-TERMIN -- also
+        # kommt nur durch, was ein ISO-Datum traegt. Das deckt beide Fehlformen
+        # mit einer Regel ab.
+        if cat and re.search(r"\d{4}-\d{2}-\d{2}", cat):
             bullets.append(f"Naechster Katalysator: {cat[:60]}")
             break
     return bullets[:6]

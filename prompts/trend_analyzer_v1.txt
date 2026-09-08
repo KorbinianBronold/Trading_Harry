@@ -12,7 +12,8 @@ Output ONLY a single JSON object, no prose before or after, with this EXACT shap
     {
       "name": "<short kebab-case label, e.g. 'ai-capex-acceleration'>",
       "strength": <integer 1-10, use the anchored scale below>,
-      "duration_estimate": "<one of: '1-5d', '1w', '1m+'>",
+      "duration_estimate": "<one of: '1-2d', '3-5d', '1m+' — pick the closest;
+        this is the expected lifetime of the TREND, not of any trade>",
       "summary": "<single line, no line breaks, max 400 chars, includes a source attribution>",
       "beneficiary_tickers": ["TICK1", "TICK2"],
       "negative_tickers": ["TICK3"],
