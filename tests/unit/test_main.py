@@ -354,15 +354,26 @@ def test_run_final_close_sends_email_even_with_zero_evaluations(tmp_db_path, moc
 
 
 def test_prompts_contain_intraday_focus():
-    from pathlib import Path
-    prompt_dir = Path("prompts")
-    for name in [
-        "deep_analysis_v1.txt",
-        "commodities_crypto_v1.txt",
-        "portfolio_check_v1.txt",
-    ]:
-        text = (prompt_dir / name).read_text()
-        assert "Intraday-Horizont" in text, f"{name} missing intraday focus paragraph"
+    """Intraday ist das primaere UND einzige Ziel (2026-07-17, s. PROJECT_STATUS) --
+    jeder Prompt, der eine Handelsrichtung empfiehlt, muss das Framing tragen.
+
+    Geprueft werden die im Modul GELADENEN Prompt-Konstanten, nicht Dateinamen:
+    bis 2026-09-08 stand hier eine feste Liste mit v1-Dateien, die seit Plan 3a /
+    C.15 kein Modul mehr laedt -- der Test lief gruen gegen toten Text, waehrend
+    die aktiven v2/v3-Prompts ungeprueft blieben. Seit Regel 10 (Prompts duerfen
+    ueberschrieben werden) waere genau das die Luecke, durch die der
+    Intraday-Fokus still aus einem aktiven Prompt verschwindet."""
+    from src import deep_analysis, commodities_crypto, portfolio_check
+
+    loaded = {
+        "deep_analysis":      deep_analysis.DEEP_SYSTEM_PROMPT,
+        "commodities_crypto": commodities_crypto.SYSTEM_PROMPT,
+        "portfolio_check":    portfolio_check.SYSTEM_PROMPT,
+    }
+    for module_name, text in loaded.items():
+        assert "Intraday-Horizont" in text, (
+            f"{module_name}: der geladene Prompt hat den Intraday-Absatz verloren"
+        )
 
 
 from freezegun import freeze_time
