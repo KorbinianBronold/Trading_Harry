@@ -724,3 +724,26 @@ def test_commodities_section_shows_the_summary_column():
 
 def test_commodities_section_still_says_keine_daten_only_when_truly_empty():
     assert "Keine Daten" in _section_commodities_crypto([])
+
+
+def test_briefing_skips_catalysts_without_a_usable_date():
+    """B1: der Prompt erlaubt 'TBD' fuer unbekannte Termine, das Modell mischt aber
+    (im Lauf vom 02.09.: 'FOMC meeting September 2026 TBD'). Ein exakter
+    Stringvergleich auf 'TBD' laesst diesen Hybrid durch, und die Tagesmail meldet
+    einen Katalysator ohne verwertbares Datum. Geprueft wird das Vorkommen, nicht
+    die Gleichheit."""
+    from src.email_sender import generate_daily_briefing
+
+    trend_context = {"trends": [
+        {"name": "a", "strength": 8, "summary": "s", "next_catalyst": "TBD"},
+        {"name": "b", "strength": 8, "summary": "s",
+         "next_catalyst": "FOMC meeting September 2026 TBD"},
+        {"name": "c", "strength": 8, "summary": "s",
+         "next_catalyst": "US CPI 2026-09-11"},
+    ]}
+    bullets = generate_daily_briefing(trend_context, {})
+    catalyst = [b for b in bullets if b.startswith("Naechster Katalysator")]
+
+    assert len(catalyst) == 1
+    assert "2026-09-11" in catalyst[0], f"falscher Katalysator gewaehlt: {catalyst}"
+    assert "TBD" not in catalyst[0]

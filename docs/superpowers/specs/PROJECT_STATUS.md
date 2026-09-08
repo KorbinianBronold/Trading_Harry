@@ -3627,6 +3627,85 @@ heisst: **die im Workflow notierten Zeiten sind Soll-, keine Ist-Zeiten.**
 
 **Tests:** 958 grün (3 neue für den JSON-Fix).
 
+### C.27 — Prompt-Review `trend_analyzer_v1`: fünf Befunde behoben (2026-09-08)
+
+Erster Durchgang eines systematischen Prompt-Reviews (Prompt für Prompt, geprüft
+gegen Projektziel, Spec und aus Marktanalysten-Sicht). Grundlage war ein echter
+Walkthrough-Lauf vom 02.09. (3 Ticker, 7 Calls, 1,18 €), an dem sich die Befunde
+belegen liessen statt sie zu vermuten.
+
+**B1 — `TBD` war nicht eindeutig definiert.** Der Prompt sagte „if a catalyst is
+unknown, write 'TBD'", ohne zu regeln, ob `TBD` das ganze Feld ersetzt. Das Modell
+lieferte den Hybrid `"FOMC meeting September 2026 TBD"`. Der Filter in
+`generate_daily_briefing()` prüfte `cat != "TBD"` — exakter Stringvergleich, der
+Hybrid rutschte durch und stand als Katalysator **ohne verwertbaren Termin** in der
+Tagesmail. Zwei Seiten gefixt: der Prompt verlangt jetzt entweder exakt `"TBD"`
+oder ein Ende auf ISO-Datum (und weist darauf hin, dass FOMC/CPI/NFP/OPEC einen
+öffentlichen Kalender haben, also nachschlagbar sind); der Filter prüft auf
+**Vorkommen** statt Gleichheit.
+
+**B2 — Phase 0 kannte das Universum nicht.** Der Prompt verlangte „valid SP500
+symbols" (500 Namen), das System kennt aber nur 157 handelbare Werte. Im Lauf
+nannte das Modell **UAL und CCL** — beide existieren in der Pipeline nicht.
+Relevant, weil `generate_daily_briefing()` `beneficiary_tickers[0]` in die Mail
+schreibt: ein Ticker ausserhalb des Universums wäre eine Empfehlung ins Leere.
+Ursache ist strukturell — Phase 0 läuft vor der Datensammlung und bekam bis dahin
+**nur das Datum**. Jetzt baut `analyze_trends()` die handelbare Liste
+(`stock_universe()` + Rohstoffe + Krypto = 157) in die User-Nachricht.
+Sektor-ETFs bleiben bewusst draussen: sie tragen nur Momentum, auf sie entsteht
+nie eine Prediction. Kosten: ~700 Input-Tokens ≈ 0,002 € pro Lauf.
+
+**B3 — `strength` war unverankert, steuerte aber eine harte Schwelle.**
+`strength: 1-10` ohne jede Definition, während `generate_daily_briefing()` hart
+auf `>= 7` filtert, um zu entscheiden, was in „Was heute zählt" erscheint. Eine
+undefinierte Ordinalskala driftet zwischen Läufen — der Mailinhalt schwankte aus
+einem Grund, der nichts mit dem Markt zu tun hat. Der Prompt trägt jetzt fünf
+Ankerstufen (9-10 „bewegt mehrere Sektoren" … 1-2 „Hintergrundrauschen") und
+benennt ausdrücklich, dass 7 die Melde-Schwelle ist.
+
+⚠️ Bewusst **nicht** auf 0–10 vereinheitlicht (wie im Review zunächst
+vorgeschlagen): ein Trend mit Stärke 0 ist kein Trend, und ein Skalenwechsel
+mitten in der Historie machte alte `trend_analyses`-Zeilen unvergleichbar. Die
+Abweichung zu den 0–10-Dimensionen in `deep_analysis` ist kosmetisch — die messen
+etwas anderes.
+
+**B4 — doppelte Sektor-Rotation: bleibt bestehen, ist jetzt dokumentiert.**
+`trend_analyzer` liefert `sector_rotation.into/out_of`, `market_context` liefert
+`sector_rotation_in/out` — zwei Claude-Calls, dieselbe Frage. Der Review empfahl
+zunächst, das Feld aus `trend_analyzer` zu entfernen. **Diese Empfehlung war
+falsch** und wurde nach Prüfung der Datenflüsse zurückgenommen:
+`analyze_batches()` bekommt `trend_context` und `policy_context`, aber **keinen
+`market_context`** — Phase 3, die teuerste Phase, sähe danach gar keine Rotation
+mehr. Ebenso falsch war die Kostenangabe im Review („spart 0,27 €"): das Feld ist
+ein paar Output-Tokens innerhalb eines ohnehin laufenden Calls, kein eigener Call.
+
+Damit gilt: **zwei getrennte Signale, keines ersetzt das andere.** Autorität ist
+geteilt — `market_context.sector_rotation_in/out` wird persistiert und ist der
+Wert für Auswertung und Guardrails; `trend_analyzer.sector_rotation` ist reiner
+Prompt-Kontext für die Phasen 2/3/3b/4a und wird nirgends gespeichert. Wer sie
+zusammenführen will, muss zuerst `market_context` bis in `analyze_batches()`
+durchreichen.
+
+**B5 — der Abbruchgrund wurde weggeworfen.** Der Prompt fordert bei leerer
+Trendliste eine Begründung in `trend_summary` an. `analyze_trends()` warf aber
+eine **feste** Meldung und las das Feld nie — und da `trend_summary` nirgends
+persistiert wird (s. `db.py:1096`), war die angeforderte Diagnose verloren.
+Ausgerechnet im fatalsten Fehlerfall des Systems (Spec § 3: Phase 0 bricht den
+ganzen Lauf ab) stand in der Alert-Mail nicht, woran. Die Begründung hängt jetzt
+an der Exception.
+
+**Regeländerung im selben Zug:** Prompts dürfen seit heute überschrieben werden
+(Regel 10) — B1/B2/B3 gingen deshalb direkt in `trend_analyzer_v1.txt`, ohne
+neue Versionsdatei.
+
+**Tests:** 962 grün (4 neue: Abbruchgrund vorhanden/fehlend, Universum im
+User-Prompt, Katalysator-Filter). Alle drei Code-Befunde wurden vorher als roter
+Test reproduziert.
+
+**Offen:** Der Effekt ist noch nicht gegen die echte API gemessen — ob das Modell
+sich an die Universums-Liste und die Ankerstufen hält, zeigt erst der nächste
+Lauf.
+
 ## Sprint 3D — Learning Modul
 
 ⚠️ **Noch nicht ausgearbeitet — braucht eine eigene Planungssession, bevor die Implementierung

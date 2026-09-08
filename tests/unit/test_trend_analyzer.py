@@ -131,3 +131,65 @@ def test_analyze_trends_uses_web_search_tool_in_request(in_memory_db):
     assert kwargs["model"] == config.CLAUDE_MODEL_SONNET
     assert kwargs["tools"] is not None
     assert any(t.get("name") == "web_search" for t in kwargs["tools"])
+
+
+# ---------- B5: Abbruchgrund sichtbar machen ----------
+
+
+def test_empty_trends_error_carries_the_models_own_explanation(in_memory_db):
+    """Der Prompt fordert bei leerer Trendliste ausdruecklich eine Begruendung in
+    `trend_summary` an. Phase 0 ist fatal (Spec 3) -- wenn der Lauf daran stirbt,
+    muss diese Begruendung in der Fehlermeldung stehen, sonst ist sie verloren:
+    `trend_summary` wird nirgends persistiert."""
+    init_schema(in_memory_db)
+    fake = _fake_claude_result(json.dumps({
+        "trends": [],
+        "sector_rotation": {"into": [], "out_of": []},
+        "trend_summary": "Alle Quellen hinter Paywall, keine belastbare Evidenz.",
+    }))
+    tracker = CostTracker(hard_cap_eur=10.0)
+
+    with patch("src.utils.call_claude", return_value=fake):
+        with pytest.raises(TrendAnalyzerError) as excinfo:
+            analyze_trends(conn=in_memory_db, date="2026-05-19",
+                           run_type="pre_market", cost_tracker=tracker)
+
+    assert "Paywall" in str(excinfo.value)
+
+
+def test_empty_trends_error_survives_a_missing_explanation(in_memory_db):
+    """Liefert das Modell gar keine Begruendung, muss der Abbruch trotzdem
+    sauber greifen -- kein KeyError, kein 'None' im Text."""
+    init_schema(in_memory_db)
+    fake = _fake_claude_result(json.dumps({"trends": []}))
+    tracker = CostTracker(hard_cap_eur=10.0)
+
+    with patch("src.utils.call_claude", return_value=fake):
+        with pytest.raises(TrendAnalyzerError, match="empty") as excinfo:
+            analyze_trends(conn=in_memory_db, date="2026-05-19",
+                           run_type="pre_market", cost_tracker=tracker)
+
+    assert "None" not in str(excinfo.value)
+
+
+# ---------- B2: das handelbare Universum steht im Prompt ----------
+
+
+def test_user_message_names_the_tradeable_universe(in_memory_db):
+    """Phase 0 bekommt sonst keinerlei Systemwissen: ohne die Liste nennt das
+    Modell S&P-500-Ticker, die es bei uns gar nicht gibt (im Lauf vom 02.09.
+    waren UAL und CCL dabei). Die Ticker-Listen sind der maschinenlesbare Teil
+    der Antwort -- sie muessen auf das zeigen, was die Pipeline handeln kann."""
+    init_schema(in_memory_db)
+    fake = _fake_claude_result(FIXTURE_PATH.read_text())
+    tracker = CostTracker(hard_cap_eur=10.0)
+
+    with patch("src.utils.call_claude", return_value=fake) as mock_call:
+        analyze_trends(conn=in_memory_db, date="2026-05-19",
+                       run_type="pre_market", cost_tracker=tracker)
+
+    user_msg = mock_call.call_args.kwargs["user"]
+    assert "AAPL" in user_msg                 # Aktie aus stock_universe()
+    assert "BTCUSD" in user_msg               # Krypto
+    assert "GOLD" in user_msg                 # Rohstoff
+    assert "XLF" not in user_msg              # Sektor-ETF: nie handelbar, nur Momentum

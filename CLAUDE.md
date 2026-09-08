@@ -121,6 +121,10 @@ Kurzform zum Erkennen einer drohenden Verletzung; Begründung und Randfälle in
   MACD-Histogramm, Kurs vs. SMA50 **und** SMA200 — keine Kreuzung); ADX moduliert
   die Stärke, **nie** die Richtung. → §6.2
 - Sektor-Momentum = **zwei getrennte** Signale (ETF + DB-Ø), nie verrechnet. → B.3.1
+- Sektor-**Rotation** gibt es ebenfalls doppelt und geteilt: `market_context` ist
+  persistiert und maßgeblich, `trend_analyzer` ist nur Prompt-Kontext. Nicht
+  zusammenführen, ohne `market_context` bis in `analyze_batches()` durchzureichen —
+  sonst sieht Phase 3 gar keine Rotation mehr. → C.27
 - `SECTOR_ALIASES` → 21 Sub-Sektoren; Unbekanntes bleibt ungemappt (WARN), nie
   Sammeleimer — lieber ungemappt als falsch gemappt. → B.10
 - B.3-Checks in **beiden** Läufen erhoben, nur 16:10 durchgesetzt (`enforce`).
