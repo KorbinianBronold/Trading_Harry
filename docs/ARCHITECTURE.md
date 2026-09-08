@@ -1291,9 +1291,23 @@ wird angelegt und **nie benutzt** — sie gehört zu Sprint 3D.
 
 ⚠️ `prompts/portfolio_check_v1.txt` ist verwaist: genutzt wird v2. Dasselbe gilt seit
 Plan 3a für `deep_analysis_v1.txt`, und seit C.15 für `commodities_crypto_v1.txt`
-**und** `commodities_crypto_v2.txt` (genutzt wird jetzt v3) — sie liegen
-**absichtlich unangetastet** daneben (Regel 10: Prompts werden nie überschrieben, eine
-neue Version ist eine neue Datei). Tests pinnen, dass v1/v2 unverändert bleiben.
+**und** `commodities_crypto_v2.txt` (genutzt wird jetzt v3).
+
+**Seit 2026-09-08 dürfen Prompts überschrieben werden** (PROJECT_STATUS Regel 10, geändert).
+Eine Änderung geht direkt in die aktive Datei; eine neue `_vN.txt` ist erlaubt, aber nicht
+mehr Pflicht. Das Version-Suffix ist damit nur noch ein Dateiname. Womit eine konkrete
+Prediction erzeugt wurde, ist nur über `git log -p prompts/<datei>` plus dem `date` der
+Prediction rekonstruierbar.
+
+Zwei Testarten hängen daran, sie sind **nicht** dasselbe:
+- **Vertragstests** (`test_deep_analysis_v2_pins_contract`,
+  `test_commodities_crypto_v3_pins_contract`) prüfen, dass die **aktive** Datei die
+  Schlüssel enthält, auf die der Parser sich verlässt (`"results"`, `"evidence_quality"`,
+  `"thin"`, Polaritätsregel). Sie werden durch die Regeländerung **wichtiger**, nicht
+  überflüssig: sie sind das Netz, das eine Prompt-Bearbeitung auffängt, die den Vertrag bricht.
+- **`*_untouched`-Tests** (`test_deep_analysis_v1_untouched`,
+  `test_commodities_crypto_v2_untouched`) erzwangen ausschließlich die **alte** Regel und
+  bewachen heute nur noch verwaiste Dateien.
 
 ⚠️ Die Prompts werden **auf Modulebene** gelesen, nicht je Aufruf. Eine geänderte
 Prompt-Datei wirkt erst nach einem Neustart des Prozesses.

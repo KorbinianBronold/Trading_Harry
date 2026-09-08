@@ -102,8 +102,11 @@ Kurzform zum Erkennen einer drohenden Verletzung; Begründung und Randfälle in
   teilverwerten. `BATCH_SIZE_DEEP = 8` ist ein Startwert. → §6.1
 - `usage.server_tool_use` ist ein `dict` und fehlt im Stream-Pfad — Websuchen über
   die Content-Blöcke zählen. → C.9 / C.11
-- Prompts nur über Dateinamen versioniert, **nie** überschreiben; `prompt_versions`
-  ist tot, kein A/B-Testing. Aktiv: `deep_analysis_v2`, `commodities_crypto_v3`.
+- Prompts **dürfen überschrieben** werden (seit 2026-09-08; vorher: nie editieren, nur
+  neue `_vN.txt`). Eine neue Versionsdatei ist erlaubt, aber nie Pflicht. Folge: der
+  Prompt-Stand zu einer Prediction steht **nur in der Git-Historie**
+  (`git log -p prompts/<datei>`), nicht mehr im Dateinamen. `prompt_versions` ist tot,
+  kein A/B-Testing. → PROJECT_STATUS Regel 10
 
 **Analyse / Ranking / Guardrails**
 - 8 Score-Dimensionen einzeln persistiert, **keine** Gewichtung im Code

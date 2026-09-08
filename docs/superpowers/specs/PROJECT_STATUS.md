@@ -3890,11 +3890,30 @@ nicht verloren gehen.**
 9. **Historische Plan-Dateien** — `docs/superpowers/plans/` enthält abgeschlossene Pläne mit
    `⚠️ HISTORISCH`-Banner. Diese Dateien nicht mehr bearbeiten; stattdessen neue Plan-Datei anlegen.
 
-10. **Prompt-Dateien versionieren** — neue Prompt-Versionen immer in `prompts/` mit
-    Version-Suffix (`_v2.txt`), alte **nie** überschreiben. `prompt_versions` ist eine tote
-    Tabelle (nie gelesen/geschrieben), A/B-Testing existiert nicht — ein Wechsel ist eine
-    Code-Änderung (Modul-Import), kein DB-Eintrag. Aktiv: `deep_analysis_v2`,
-    `commodities_crypto_v3` (s. C.15/C.16).
+10. **Prompt-Dateien dürfen überschrieben werden** — *(geändert 2026-09-08 auf Entscheidung
+    von Korbinian; vorher galt: alte Versionen **nie** editieren, nur neue `_vN.txt` anlegen)*.
+    Änderungen gehen direkt in die bestehende Datei. Eine neue Versionsdatei anzulegen bleibt
+    erlaubt, ist aber **nie Pflicht** — auch nicht bei inhaltlich großen Umbauten.
+
+    ⚠️ **Folge, die man kennen muss:** Das Version-Suffix (`_v1`, `_v2`, `_v3`) ist damit ein
+    historischer Dateiname, keine Aussage mehr über den Inhalt. Womit eine konkrete Prediction
+    erzeugt wurde, steht **ausschließlich in der Git-Historie** — Rekonstruktion über
+    `git log -p prompts/<datei>` plus dem `date` der Prediction-Zeile. Die Datei selbst zeigt
+    immer nur den heutigen Stand. Wer das für das Lernmodul dauerhaft braucht, muss den
+    Prompt-Text zum Entscheidungszeitpunkt mitspeichern (Kandidat für Sprint 3D, s. `audit_log`).
+
+    Unverändert: `prompt_versions` ist eine tote Tabelle (nie gelesen/geschrieben), A/B-Testing
+    existiert nicht — welche Datei ein Modul lädt, ist eine Code-Änderung (Modul-Import), kein
+    DB-Eintrag.
+
+    Aktiv geladen: `trend_analyzer_v1`, `broad_scan_v1`, `deep_analysis_v2`, `policy_monitor_v1`,
+    `commodities_crypto_v3`, `market_context_v1`, `portfolio_check_v2`, `trade_proposals_v1`
+    (+ `quick_filter_v1`, toter Code). Nicht mehr geladen und seit dieser Regeländerung reine
+    Altlast: `deep_analysis_v1`, `commodities_crypto_v1/v2`, `portfolio_check_v1`.
+
+    Ältere Abschnitte dieses Dokuments (u. a. C.15/C.16, P2.x, Sprint-3B-Einträge) begründen
+    Entscheidungen noch mit der alten Regel — sie beschreiben, was **damals** galt, und werden
+    nicht rückwirkend umgeschrieben.
 
 11. **`extract_json_blob()` für alle Claude-Antworten nutzen** — nie `json.loads(result.text)`
     daneben bauen. Parst mit `raw_decode` + `strict=False` (Trailing-Text **und** rohe
