@@ -499,6 +499,17 @@ Schlüssel sieht; `macro_summary` bleibt ein eigener Key. Die 16:10-Mail-Sektion
 zeigt nur, was der Kontext trägt (VIX); der A/D-Zweig ist entfernt, die Tagesmail zeigt
 die Marktlage seit C.30 als Zeile im Kopf.
 
+**Seit C.31 (2026-09-10):** Die Regime-Regel definiert die Sektorgruppen einmal
+(defensiv: Utilities, Consumer Staples, Health Care; zyklisch: IT, Consumer
+Discretionary, Industrials, Financials, Energy, Materials; Real Estate und
+Communication Services bewusst in keiner Gruppe) und kennt im `risk_off`-Zweig als
+dritte hinreichende Bedingung „zyklische Sektoren am Tabellenende" — vorher blieb ein
+Down-Tag ohne VIX > 20 und ohne führende Defensive immer `neutral` (Ölschock 10.09.).
+Die Rotationsregel nennt die häufigsten GICS-Fehlzuordnungen (Alphabet/Meta/Netflix =
+Communication Services, Amazon/Tesla = Consumer Discretionary, Visa/Mastercard =
+Financials). Kein Konsument liest Rotation oder Regime als Guardrail — reine
+Metadaten (`predictions.market_regime`, Mail-Zeile).
+
 **Warum None statt Schätzung:** Die Werte steuern nachgelagert harte Risikofilter
 (VIX > 25 nur noch `confidence='high'`, VIX > 35 keine neuen Longs). Ein geratener
 Wert wäre dort schlimmer als gar keiner.

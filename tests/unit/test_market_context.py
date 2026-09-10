@@ -201,7 +201,10 @@ def test_market_context_v1_pins_contract():
       * die Feldnamen, die fetch_market_context() liest
       * advance_decline_ratio ist seit C.28 gestrichen und darf nicht zurueckkommen
       * die Rotation ist auf die 11 GICS-Sektoren begrenzt
-      * Bezugsrahmen je run_type, englische Einzeiler-Makrozeile ohne VIX-Zahl (D2)"""
+      * Bezugsrahmen je run_type, englische Einzeiler-Makrozeile ohne VIX-Zahl (D2)
+      * C.31: risk_off kennt "zyklische Sektoren am Tabellenende" (sonst bleibt ein
+        Down-Tag ohne VIX-Spike immer neutral) und die GICS-Zuordnung einzelner
+        Aktien (Alphabet = Communication Services, nicht IT)"""
     from pathlib import Path
     from src.market_context import VALID_REGIMES
     text = (Path(__file__).parent.parent.parent / "prompts" / "market_context_v1.txt").read_text()
@@ -223,3 +226,8 @@ def test_market_context_v1_pins_contract():
     assert "English" in text                                     # D2
     assert "null" in text                                        # lieber null als geraten
     assert "VIX" in text and "macro_summary" in text
+
+    # C.31: der risk_off-Zweig braucht eine Bedingung, die ein Down-Tag ohne
+    # VIX-Spike erfuellen kann; und Alphabet darf nicht als IT gebucht werden.
+    assert "lagging" in text
+    assert "Alphabet" in text and "Communication Services" in text

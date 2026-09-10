@@ -3898,6 +3898,62 @@ Keine DB-Migration.
 Mail-Tests, 6 parametrisierte `_split_sectors`-Fälle, 1 Live-Test; 4 Rotationstests auf die
 Listenform umgestellt. Coverage 92,64 %.
 
+### C.31 — `market_context_v1`: Regime-Regel schließt die Sektorlücke, GICS-Zuordnung einzelner Aktien (2026-09-10)
+
+Befund von Korbinian aus dem Live-Call vom 10.09. (`pre_market`), zwei Punkte:
+
+1. **Die Regime-Regel aus C.28 kannte nur 7 der 11 GICS-Sektoren** — drei defensive
+   (Utilities, Consumer Staples, Health Care), vier zyklische (IT, Consumer Discretionary,
+   Industrials, Financials). Energy, Materials, Real Estate und Communication Services
+   kamen in keiner Liste vor. Der Tag: Ölschock durch die US-Iran-Eskalation, S&P −0,48 %
+   (dritter Verlusttag), 10J-Rendite auf Dreijahreshoch, Energy klar führend, VIX 16,3 →
+   das Modell lieferte regelkonform `neutral`. Fachlich ein risk_off-Tag.
+2. **Alphabet wurde Information Technology zugerechnet.** Alphabet, Meta und Netflix sind
+   seit der GICS-Reform 2018 Communication Services.
+
+**Prüfung des Vorschlags (Energy/Materials in die zyklische Liste):** als Klassifikation
+richtig, aber der Fall bliebe `neutral`. Der `risk_off`-Zweig prüfte nur „VIX > 20 ODER
+Defensive führend" — eine Liste, in der Energy nicht vorkommt, ändert daran nichts.
+Die eigentliche Lücke ist eine **Asymmetrie**: `risk_on` hatte mit „VIX < 20" eine
+Bedingung, die an fast jedem Auf-Tag erfüllt ist; `risk_off` verlangte eine
+Stressbedingung. Down-Tage ohne VIX-Spike fielen damit fast immer auf `neutral` — für
+ein Lernfeature (`predictions.market_regime`) eine schiefe Labelverteilung.
+
+**Änderung (nur Prompt, kein Code):**
+- Sektorgruppen einmal definiert, mit „leading/lagging" = Tabellenspitze/-ende der
+  Sektorperformance der Referenzsitzung. Defensiv unverändert; zyklisch **+ Energy,
+  Materials**. **Real Estate** (zinssensitiv) und **Communication Services** (gemischt:
+  Alphabet/Meta wachstumsnah, Telekom defensiv) ausdrücklich in **keiner** Gruppe —
+  eine benannte Lücke statt einer stillen; kein Zwang, alle 11 unterzubringen.
+- `risk_off`: dritte hinreichende Bedingung **„zyklische Sektoren am Tabellenende"**
+  (Spiegelbild von „Defensive führend"), plus der Satz: Energy oder Materials führend
+  bei fallendem Index (Ölschock, Kriegsprämie, Inflationsangst) ist eine
+  risk_off-Signatur, kein zyklischer Lead. Damit ist der 10.09. `risk_off` (S&P down,
+  IT am Ende). Diese Klausel geht über die Aufgabenstellung hinaus — ohne sie erfüllt
+  die Änderung ihren Zweck nicht.
+- `risk_on`: nur die Listenerweiterung; „VIX < 20" bleibt.
+- Rotationsregel: GICS-Zuordnung einzelner Aktien — Alphabet/Meta/Netflix =
+  Communication Services (2018), **Amazon/Tesla = Consumer Discretionary, Visa/Mastercard
+  = Financials (2023)** (die zwei Paare über die Aufgabe hinaus: häufigste Verwechslungen).
+
+**Konsumenten unverändert (verifiziert):** `VALID_REGIMES` und die Parser-Schlüssel gleich;
+`market_regime` geht nur nach `predictions.market_regime` (`ranking.py`), wird beim Ablösen
+kopiert (`main.py`) und in der Mail-Zeile gezeigt. Kein Guardrail. Regel-15-Sweep: kein
+anderer Prompt zitiert Regime-Regel oder Sektorlisten; ARCHITECTURE nachgezogen.
+
+**Vergleichbarkeit:** Die Regel ist erst seit C.28 (08.09.) verankert — zwei Tage Historie
+unter der alten Fassung, vernachlässigbar. Labelmenge unverändert.
+
+**Tests:** 984 grün, 15 übersprungen, Coverage 92,64 % — keine neuen Tests, zwei neue
+Asserts im Vertragstest (`lagging`-Klausel, Alphabet-Hinweis), beide per Mutation
+verifiziert (Wort ersetzt → Test rot, restauriert → grün).
+
+**Offen:** nicht gegen die echte API gemessen. Der Live-Test aus C.30 prüft weiterhin nur
+die notwendige Bedingung (Vorzeichen des S&P-Tages); die neue hinreichende Bedingung ist
+ohne Sektordaten nicht prüfbar. Beobachtungsposten: Verteilung von `market_regime` über
+die nächsten Läufe — die Ergänzung soll `neutral` auf Down-Tagen seltener machen, nicht
+`risk_off` zum Default.
+
 ## Sprint 3D — Learning Modul
 
 ⚠️ **Noch nicht ausgearbeitet — braucht eine eigene Planungssession, bevor die Implementierung

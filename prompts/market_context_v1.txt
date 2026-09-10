@@ -31,19 +31,33 @@ Field rules:
   trade_proposals). Number with one or two decimals. Not verifiable -> null.
 - vix_level: CBOE VIX spot level as a number. Not verifiable -> null. The
   pipeline prefers its own VIX quote and uses yours only as a fallback.
-- market_regime: exactly one of "risk_on", "risk_off", "neutral", by these rules:
-    "risk_off"  S&P 500 down on the reference session AND (VIX above 20 OR
-                defensive sectors — Utilities, Consumer Staples, Health Care —
-                leading)
-    "risk_on"   S&P 500 up on the reference session AND (VIX below 20 OR
-                cyclical/growth sectors — Information Technology, Consumer
-                Discretionary, Industrials, Financials — leading)
+- market_regime: exactly one of "risk_on", "risk_off", "neutral", by these rules.
+  Sector groups used below ("leading" / "lagging" = top / bottom of the sector
+  performance table for the reference session):
+    defensive = Utilities, Consumer Staples, Health Care
+    cyclical  = Information Technology, Consumer Discretionary, Industrials,
+                Financials, Energy, Materials
+    Real Estate is rate-sensitive and belongs to neither group. Communication
+    Services is mixed (Alphabet and Meta trade like growth, telecoms like
+    defensives) and belongs to neither group — a known gap, do not force it in.
+    "risk_off"  S&P 500 down on the reference session AND at least one of:
+                VIX above 20; defensive sectors leading; cyclical sectors
+                lagging. Energy or Materials leading while the index falls
+                (oil supply shock, war premium, inflation scare) is a risk_off
+                signature, not a cyclical lead.
+    "risk_on"   S&P 500 up on the reference session AND at least one of:
+                VIX below 20; cyclical sectors leading.
     "neutral"   anything else, including mixed signals or missing data
 - sector_rotation_in / sector_rotation_out: comma-separated GICS sector names
   from this list ONLY — Energy, Materials, Industrials, Consumer Discretionary,
   Consumer Staples, Health Care, Financials, Information Technology,
   Communication Services, Utilities, Real Estate. At most three per field,
   ranked by relative performance on the reference session. Unclear -> null.
+  Attribute single stocks to their actual GICS sector, not to colloquial
+  "tech": Alphabet, Meta and Netflix are Communication Services (since the
+  2018 GICS reform), Amazon and Tesla are Consumer Discretionary, Visa and
+  Mastercard are Financials (since 2023). A well-known tech name's move is
+  not automatically an Information Technology move.
 - macro_summary: ONE line in English, no line breaks, max 300 characters — the
   one or two facts that explain the regime. Do NOT quote the VIX level here:
   the pipeline stores its own VIX from a different source, and two numbers in
