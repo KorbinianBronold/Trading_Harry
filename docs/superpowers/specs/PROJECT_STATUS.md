@@ -4070,6 +4070,79 @@ Produktivlauf: Zahl der Kandidaten, die **nur** über den technischen Weg qualif
 (`cutoff_log`: `news_strength = 0`, `tech_strength >= 2`, `forced = 0`), und ob die
 Sortierung sie hinter News- und Vorbörsen-Kandidaten einreiht.
 
+### C.34 — Phase-1b-Review (Rohstoffe/Krypto): Epics live verifiziert, Öl von WTI auf Brent umgestellt (2026-09-10)
+
+Vierter Durchgang des Pipeline-Reviews. Phase 1b läuft über dieselbe `collect()` wie die
+Aktien (`build_commodity_crypto_inputs()` liefert nur Ticker + `asset_class`), der Code
+ist damit identisch geprüft — die Befunde betreffen, was für Rohstoffe und Krypto an
+diesem Aktien-Pfad nicht passt (unten). Zwei Entscheidungen von Korbinian umgesetzt.
+
+**Epics gegen Capital.com verifiziert (Sammelabruf `/markets?epics=`, der Sweep-Pfad):**
+`GOLD` 4375.95 · `SILVER` 65.705 · `OIL_CRUDE` 96.753 („Crude Oil Spot" = WTI) ·
+`OIL_BRENT` 102.077 („Brent Oil Spot", COMMODITIES, TRADEABLE) · `BTCUSD` 77680 ·
+`ETHUSD` 2455 · `SOLUSD` 100.6 · `XRPUSD` 1.37. Alle acht laufen ohne `TICKER_MAP`
+durch (Ticker = Epic). **Werkzeug-Artefakt:** `setup/verify_epics.py --symbols` meldet
+für `OIL_CRUDE`/`OIL_BRENT` „KEIN TREFFER" — es sucht über den Namens-Endpunkt und
+verlangt den Epic exakt unter den Namens-Treffern; für Öl-Epics, deren String kein
+Namensbestandteil ist, ist es blind. Für Rohstoffe den Sammelabruf nutzen (s. o.).
+
+**Öl: `OIL_CRUDE` → `OIL_BRENT` (Entscheidung Korbinian).** `config.COMMODITY_TICKERS`
+umgestellt; Tests (`test_universe`, `test_capital_provider` ×2, `test_commodities_crypto`
+×2) und die Trend-Fixture nachgezogen; roter Test zuerst (`OIL_BRENT` im Universum,
+`OIL_CRUDE` nicht mehr). **Nicht umbenannt:** die `OIL_CRUDE`-Zeilen in `price_history`,
+`predictions`, `technical_indicators` — Brent ist ein anderes Instrument, WTI-Historie
+bleibt WTI-Historie; `db._LEGACY_TICKER_RENAME` (`CL=F` → `OIL_CRUDE`) bleibt ebenfalls
+richtig. Eine noch offene `OIL_CRUDE`-Position (falls in `db-latest`) läuft über Phase 1c
+weiter — der Epic existiert bei Capital.com, der Sweep liefert Kurse, Phase 4a bewertet sie
+bis zum Schluss. **Lokale DB:** `historical_loader.py --tickers OIL_BRENT` → 999 Bars
+(2023-05-25 bis 2026-09-09).
+
+⚠️ **Deployment-Schritt (Korbinian):** `db-latest` hat keine `OIL_BRENT`-Historie. Ohne
+sie wird Brent im nächsten `pre_market` still übersprungen (`insufficient bars`; der
+Thin-History-Guard ist eine Mehrheitsregel, er bricht wegen eines Tickers nicht ab) und
+Gap-Fill legt keine Historie an (B-12). Nach dem Push einmal den Workflow **`bootstrap-db`**
+dispatchen: er zieht `db-latest`, lädt `--universe` per `INSERT OR IGNORE` (holt nur
+Brent neu) und lädt die DB wieder hoch.
+
+**Regel-15-Sweep (Prompts):** kein Prompt nennt `OIL_CRUDE`; „oil" steht generisch in
+`trend_analyzer_v1`, `market_context_v1`, `commodities_crypto_v3` (OPEC/Geopolitik-Linse)
+und bleibt für Brent richtig. **Einzige Ausnahme:** `prompts/policy_monitor_v1.txt`
+Zeile 30 im **uncommitteten** Arbeitsbaum-Diff vom 01.09. nennt `OIL_CRUDE` — laut
+Absprache unangetastet, wird beim Policy-Monitor-Schritt mit dem Diff zusammen behandelt.
+README nennt `OIL_CRUDE` weiter (Finaldurchgang).
+
+**Tests:** 992 grün, 15 übersprungen, Coverage 92,79 %.
+
+**Befunde Phase 1b (offen, Entscheidung Korbinian):**
+- **F11 — Sonntagsbars der Rohstoffe verzerren Range und ATR.** Capital.com liefert für
+  `GOLD`/`SILVER`/Öl eine Tagesbar für Sonntag (Sitzungsbeginn 23:00 UTC, also eine
+  Stunde), `final_close` (täglich 00:15 UTC) schreibt sie. Lokale DB seit 09/2025: Gold
+  Sonntag Ø 0,96 % Spanne, 67 % der Sonntage unter 1 %, gegen Ø 2,47 % Mo–Fr; Öl 1,56 %
+  vs. 4,35 %; Silber 1,81 % vs. 5,38 %. `intraday_range_pct` mittelt die letzten **5
+  Bars** — an Montag- und Dienstagsläufen ist der Sonntag dabei und drückt den Wert um
+  ~20–30 %; in ruhigen Phasen kippt Gold damit unter den Guardrail
+  `min_intraday_range_pct = 1.0` (falsche Ablehnung). ATR-14 enthält zwei Sonntagsbars,
+  `price_change_5d` zählt „5 Bars" = 4 Handelstage. Krypto ist davon **nicht** betroffen
+  (Sa/So sind echte Sitzungen, BTC Sa Ø 1,89 %). Optionen: Sonntagsbars für
+  `COMMODITY_TICKERS` in `final_close` nicht schreiben (+ einmalige Bereinigung), oder
+  beim Laden der Indikator-Historie herausfiltern.
+- **F12 — Rohstoffe/Krypto tragen immer `data_quality = "medium"` und `sector =
+  "Unknown"`.** `_classify_data_quality` stuft nach `pe_ratio`/`market_cap_b`/`sector` ab,
+  die es für Gold nie gibt. Claude sieht in Phase 3b für jedes Asset jeden Tag „medium"
+  und „Unknown" — ein Aktien-Label ohne Bedeutung für die Asset-Klasse. Hängt mit F5
+  zusammen.
+- **F13 — Der Wochenjob fragt Finnhub für Rohstoffe/Krypto.** `_update_weekly_fundamentals`
+  iteriert `full_universe()`, holt für die 7 Assets Profil/Kennzahlen/Empfehlungen/Earnings
+  (leer) und schreibt eine `fundamentals_cache`-Zeile aus `None`. Vier Calls je Asset je
+  Woche, ohne Nutzen. Kandidat: Rohstoffe/Krypto im Wochenjob überspringen.
+- **F14 — Guardrails und Signal-Checks sind aktienkalibriert, gelten aber für alle
+  Asset-Klassen.** `min_intraday_range_pct = 1.0` (Gold liegt in ruhigen Phasen darunter,
+  s. F11), VIX ≥ 35 sperrt neue Longs auch für Gold (Safe-Haven-Logik läuft entgegen) und
+  Krypto. Fachlich diskussionswürdig, aber ein Phase-4-Thema; hier nur notiert.
+- **F15 — Krypto rechnet auf Kalendertagen.** 220 Bars = ~7 Monate (Aktien: ~10,5
+  Monate), SMA200 = 200 Kalendertage. Konsistent innerhalb der Asset-Klasse, nur beim
+  Vergleich mit Aktien-Schwellen zu bedenken. Nur notiert.
+
 ## Sprint 3D — Learning Modul
 
 ⚠️ **Noch nicht ausgearbeitet — braucht eine eigene Planungssession, bevor die Implementierung

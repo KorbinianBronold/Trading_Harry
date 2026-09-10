@@ -144,7 +144,7 @@ def test_ticker_map_all_epics(monkeypatch, ticker, expected_epic):
 
 
 @pytest.mark.parametrize("ticker", [
-    "GOLD", "SILVER", "OIL_CRUDE", "BTCUSD", "ETHUSD", "SOLUSD", "XRPUSD",
+    "GOLD", "SILVER", "OIL_BRENT", "BTCUSD", "ETHUSD", "SOLUSD", "XRPUSD",
 ])
 def test_commodity_crypto_tickers_pass_through_unmapped(monkeypatch, ticker):
     """Seit 2026-08-21 (Umstellung von yfinance-Notation) sind diese sieben
@@ -327,7 +327,7 @@ def test_epic_to_ticker_passes_through_commodities_and_crypto():
     (nicht mehr stock_universe()) muss sie erkennen, sonst verliert
     _forced_candidates() (Spec B.4) offene Gold-/Oel-/Krypto-Positionen."""
     from src.providers.capital_provider import epic_to_ticker
-    for epic in ("GOLD", "SILVER", "OIL_CRUDE", "BTCUSD", "ETHUSD", "SOLUSD", "XRPUSD"):
+    for epic in ("GOLD", "SILVER", "OIL_BRENT", "BTCUSD", "ETHUSD", "SOLUSD", "XRPUSD"):
         assert epic_to_ticker(epic) == epic
 
 

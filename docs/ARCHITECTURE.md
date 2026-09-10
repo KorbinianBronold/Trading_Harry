@@ -265,7 +265,7 @@ DB-Close.
 ┌─────────────────────────────────────────────────────────────────┐
 │      PHASE 3b: COMMODITIES & CRYPTO (7 Fixed Assets)             │
 │  Input: trend_context, policy_context, Fear&Greed Index         │
-│  Assets: Gold, Silver, Oil, BTC, ETH, SOL, XRP                  │
+│  Assets: Gold, Silver, Brent, BTC, ETH, SOL, XRP                │
 │  Claude: Sonnet × 7 Calls + web_search                          │
 │  Output: list[{ticker="Gold", direction, scores{8}, ...}]       │
 │  Extra Context: fear_greed_value, btc_dominance_pct, ratio      │
@@ -743,10 +743,11 @@ class CapitalComProvider(DataProvider):
     Rate Limit: 600 Calls/Min
     ENV: CAPITAL_COM_API_KEY, CAPITAL_COM_PASSWORD
     
-    Ticker-Mapping:
-    - SP500-Ticker: direkt übergeben
-    - Gold="GOLD", Silber="SILVER", Öl="CRUDE_OIL"
-    - BTC="BITCOIN", ETH="ETHEREUM", SOL="SOLANA", XRP="XRP"
+    Ticker-Mapping (Stand C.34, 2026-09-10):
+    - SP500-Ticker: direkt übergeben (TICKER_MAP nur für Ausnahmen wie BRK-B)
+    - Rohstoffe/Krypto: Ticker = Epic, kein Mapping — Gold="GOLD", Silber="SILVER",
+      Öl="OIL_BRENT" (Brent Oil Spot; bis 2026-09-10 "OIL_CRUDE" = WTI),
+      BTC="BTCUSD", ETH="ETHUSD", SOL="SOLUSD", XRP="XRPUSD"
     """
     def get_price_history(ticker, days) -> pd.DataFrame: ...
     def get_ohlc_after(ticker, start_date, end_date) -> pd.DataFrame: ...
@@ -776,7 +777,7 @@ Phase 2b) ruft sie nie, das ist die Aufgabenteilung aus Spec § 18.1c.
 
 ### 5. **`src/commodities_crypto.py`** (Phase 3b)
 
-7 feste Assets (Gold, Silver, Oil, BTC, ETH, SOL, XRP). Seit C.15 (2026-08-19)
+7 feste Assets (Gold, Silver, Brent — seit C.34 statt WTI —, BTC, ETH, SOL, XRP). Seit C.15 (2026-08-19)
 gebatcht nach `asset_class` (Commodities: 3, Crypto: 4) statt 7 Einzelcalls — die
 7 Assets selbst sind weiterhin ungefiltert (Spec § 6), nur die Call-Struktur änderte
 sich.
@@ -1455,7 +1456,7 @@ heute = 2026-05-20, run_type = "pre_market"
 [Phase 3b] analyze_commodities_and_crypto()      # seit C.15 (2026-08-19): Batch statt 1 Call/Asset
   → build_batches() gruppiert nach asset_class (Commodities: 3, Crypto: 4)
   → Sonnet × 2 Calls (1 pro Batch) + web_search, gestreamt
-  ← 7 Assets (Gold, Silver, Oil, BTC, ETH, SOL, XRP)
+  ← 7 Assets (Gold, Silver, Brent, BTC, ETH, SOL, XRP)
   ✓ costs ~0.35 EUR (unveraendert, weniger Calls != weniger Tokens)
 
   ↓

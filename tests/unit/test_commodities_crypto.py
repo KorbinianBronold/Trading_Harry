@@ -55,7 +55,7 @@ def _policy() -> dict:
 def test_build_batches_groups_by_asset_class():
     tds = [
         _td("GOLD", "commodity"), _td("SILVER", "commodity"),
-        _td("OIL_CRUDE", "commodity"),
+        _td("OIL_BRENT", "commodity"),
         _td("BTCUSD", "crypto"), _td("ETHUSD", "crypto"),
         _td("SOLUSD", "crypto"), _td("XRPUSD", "crypto"),
     ]
@@ -192,7 +192,7 @@ def test_analyze_commodities_and_crypto_runs_one_batch_per_asset_class():
     tracker = CostTracker(hard_cap_eur=10.0)
     tds = [
         _td("GOLD", "commodity"), _td("SILVER", "commodity"),
-        _td("OIL_CRUDE", "commodity"),
+        _td("OIL_BRENT", "commodity"),
         _td("BTCUSD", "crypto"), _td("ETHUSD", "crypto"),
         _td("SOLUSD", "crypto"), _td("XRPUSD", "crypto"),
     ]

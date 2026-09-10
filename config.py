@@ -41,7 +41,12 @@ SP500_MVP_TICKERS = [
 # ⚠️ Migration noetig: bestehende DB-Zeilen (price_history, predictions, ...)
 # tragen noch die alten Strings. src/db.py:_migrate_legacy_commodity_crypto_tickers()
 # benennt sie einmalig um, ausgeloest aus init_schema().
-COMMODITY_TICKERS: list[str] = ["GOLD", "SILVER", "OIL_CRUDE"]
+# Capital.com-Epics (seit 2026-08-21 direkt, kein TICKER_MAP). Oel seit 2026-09-10
+# Brent ("Brent Oil Spot", OIL_BRENT) statt WTI ("Crude Oil Spot", OIL_CRUDE) --
+# Entscheidung Korbinian, C.34. OIL_CRUDE-Zeilen in der DB bleiben WTI-Historie
+# und werden NICHT umbenannt (anderes Instrument). Neuer Ticker braucht erst
+# setup/historical_loader.py --tickers OIL_BRENT (Gap-Fill legt keine Historie an).
+COMMODITY_TICKERS: list[str] = ["GOLD", "SILVER", "OIL_BRENT"]
 CRYPTO_TICKERS: list[str] = ["BTCUSD", "ETHUSD", "SOLUSD", "XRPUSD"]
 
 # Sub-Sektor -> Sektor-ETF-Symbol. Bewusst feiner als die 11 GICS-Sektoren: ein

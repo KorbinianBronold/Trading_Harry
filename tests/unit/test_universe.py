@@ -107,7 +107,8 @@ def test_real_universe_contains_the_known_groups():
     versehentliches Leeren einer Liste in config.py."""
     universe = set(full_universe())
     assert {"AAPL", "MSFT"} <= universe          # Aktien
-    assert {"GOLD", "OIL_CRUDE"} <= universe     # Rohstoffe
+    assert {"GOLD", "SILVER", "OIL_BRENT"} <= universe   # Rohstoffe (Brent seit 2026-09-10)
+    assert "OIL_CRUDE" not in universe                     # WTI abgeloest, bleibt nur DB-Historie
     assert {"BTCUSD", "ETHUSD"} <= universe      # Krypto
     assert {"SOXX", "XLK"} <= universe           # Sub-Sektor-ETFs
 
