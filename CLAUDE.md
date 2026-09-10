@@ -4,7 +4,7 @@ Automatisiertes Research-Tool: tägliche Analyse von S&P-500-Aktien, Rohstoffen
 (Gold, Silber, Öl) und Krypto (BTC, ETH, SOL, XRP). **Kein automatisches Trading**
 — nur Research und Paper-Trading-Simulation (`SIMULATION_ONLY = True`, hardcoded).
 Fixe Rahmenwerte: Long/Short getrennt, `HOLD_TARGET = "intraday"` /
-`MAX_HOLD_DAYS = 5`, `SP500_MIN_ATR_PCT = 2.0`, `ZoneInfo("Europe/Berlin")` überall.
+`MAX_HOLD_DAYS = 5`, `ZoneInfo("Europe/Berlin")` überall.
 Stack/Env/Verzeichnisbaum: `requirements.txt` / `.env.example` / Repo (nicht doppelt).
 Pipeline-Phasen: `main.py:run_pipeline()`.
 

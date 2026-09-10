@@ -7,6 +7,7 @@ in src/indicators.py -- dieses Modul importiert sie nur noch.
 """
 import logging
 import time
+from dataclasses import dataclass
 from datetime import date as _date_cls, timedelta
 from typing import Any
 
@@ -50,7 +51,19 @@ from src.providers.base import DataProvider
 from src import db, technical_signal
 import config
 
+# Die Batch-Pause in collect() zaehlt Capital.com-CALLS, nicht Ticker (F8,
+# 2026-09-10): der einzige Call der 1c-Schleife ist das Gap-Nachladen, und das
+# feuert nur bei erkannter Luecke. Alle 30 Ticker fix zu schlafen kostete bei
+# 150 Tickern ~48 s Leerlauf je Lauf, ohne dass ein einziger Request fiel.
 BATCH_PAUSE_EVERY = 30
+
+
+@dataclass
+class GapFillStats:
+    """Zaehlt die Capital.com-Aufrufe des Luecken-Nachladens ueber einen
+    collect()-Lauf. Gezaehlt wird der VERSUCH -- auch eine leere oder
+    fehlerhafte Antwort hat einen Request des Rate-Limits verbraucht."""
+    calls: int = 0
 
 
 def _apply_fundamentals_to_td(td: dict, fundamentals: dict, date: str) -> None:
@@ -192,9 +205,12 @@ def _first_gap_day(have: set[str], oldest: str, newest: str, date: str) -> str |
 
 def _fill_price_gaps(
     ticker: str, price_provider: DataProvider, conn, date: str,
+    stats: GapFillStats | None = None,
 ) -> int:
     """Laedt fehlende Bars bis `date` nach und gibt die Anzahl neu eingefuegter
-    Zeilen zurueck.
+    Zeilen zurueck. Jeder Provider-Aufruf wird zusaetzlich in `stats` gemeldet
+    (F8) -- der Rueckgabewert bleibt die reine Bar-Zahl, ein Fehlversuch ist
+    dort 0, im Zaehler aber ein Call.
 
     Kein Nachladen, wenn der Ticker noch gar keine Historie hat (das uebernimmt
     setup/historical_loader.py) oder wenn nur der heutige Bar fehlt — der ist zur
@@ -229,6 +245,8 @@ def _fill_price_gaps(
         f"{ticker}: Luecke erkannt — ab {start} fehlen Handelstage "
         f"(letzter Bar {newest}). Lade nach."
     )
+    if stats is not None:
+        stats.calls += 1
     try:
         df = price_provider.get_ohlc_after(ticker, anchor, date)
     except Exception as e:
@@ -356,6 +374,7 @@ def _process_ticker(
     date: str,
     run_type: str,
     premarket_price: float | None = None,
+    gap_stats: GapFillStats | None = None,
 ) -> tuple[dict, dict] | None:
     """Runs the full Phase-1 pipeline for one ticker: ensures today's bar exists,
     computes indicators from the last 220 DB days, and reads fundamentals/earnings
@@ -375,8 +394,9 @@ def _process_ticker(
     (Phase 2b, ab Task 10 verdrahtet). Der Parameter bleibt fuer eine stabile
     Schnittstelle zu collect() stehen, statt den Aufrufer und alle bestehenden
     Tests fuer eine Zwischen-Task umzubauen."""
-    # Step 1: Luecken schliessen (Spec B.8)
-    _fill_price_gaps(ticker, price_provider, conn, date)
+    # Step 1: Luecken schliessen (Spec B.8). `gap_stats` meldet collect(), ob
+    # dabei ein Capital.com-Call fiel -- daran haengt die Batch-Pause (F8).
+    _fill_price_gaps(ticker, price_provider, conn, date, stats=gap_stats)
 
     # Step 2: Load last 220 days from DB for indicator calculation
     df = db.load_price_history_from_db(conn, ticker, as_of_date=date, limit=220)
@@ -569,14 +589,18 @@ def collect(
     Claude-Prompts json.dumps't, ein zusaetzlicher Key dort aenderte
     Ticker-Auswahl und Scoring.
 
-    Die Batch-Pause (BATCH_PAUSE_EVERY) sitzt weiterhin um die 1c-Schleife --
-    die ruft ueber _fill_price_gaps() weiter je Ticker bei Capital.com an. Der
-    Sweep braucht keine eigene Pause (Spec 4.3.2)."""
+    Die Batch-Pause sitzt um die 1c-Schleife, weil nur die ueber
+    _fill_price_gaps() bei Capital.com anruft -- und seit F8 (2026-09-10)
+    zaehlt sie genau diese Calls: nach je BATCH_PAUSE_EVERY Nachlade-Versuchen
+    CAPITAL_COM_BATCH_PAUSE Sekunden, nie nach dem letzten Survivor, und ohne
+    Luecke gar nicht. Der Sweep braucht keine eigene Pause (Spec 4.3.2)."""
     survivors = _gate_phase(tickers, conn, date)
     premarket_prices = _sweep_phase(survivors, price_provider)
 
     results: list[dict] = []
     sidecar: dict[str, dict] = {}
+    gap_stats = GapFillStats()
+    calls_at_last_pause = 0
     for i, t in enumerate(survivors):
         out = _process_ticker(
             ticker=t,
@@ -586,6 +610,7 @@ def collect(
             date=date,
             run_type=run_type,
             premarket_price=premarket_prices.get(t),
+            gap_stats=gap_stats,
         )
         if out is not None:
             td, sidecar_entry = out
@@ -595,12 +620,15 @@ def collect(
             results.append(td)
             sidecar[t] = sidecar_entry
 
-        if (i + 1) % BATCH_PAUSE_EVERY == 0 and (i + 1) < len(survivors):
+        calls_since_pause = gap_stats.calls - calls_at_last_pause
+        if calls_since_pause >= BATCH_PAUSE_EVERY and (i + 1) < len(survivors):
             log.info(
-                f"Batch pause: processed {i + 1}/{len(survivors)} tickers, "
+                f"Batch pause: {gap_stats.calls} Gap-Fill-Calls nach "
+                f"{i + 1}/{len(survivors)} tickers, "
                 f"sleeping {config.CAPITAL_COM_BATCH_PAUSE}s"
             )
             time.sleep(config.CAPITAL_COM_BATCH_PAUSE)
+            calls_at_last_pause = gap_stats.calls
 
     # len(tickers) - len(results) statt eines eigenen Zaehlers: identisch mit
     # der Summe aus Gate-Rauswuerfen und 1c-Skips, aber ohne zwei Zaehler

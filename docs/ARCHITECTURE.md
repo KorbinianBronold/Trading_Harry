@@ -346,6 +346,8 @@ def collect(
 | **1b Sweep** | `_sweep_phase()` | **ein** Batch-Call für die Live-Kurse aller Survivors. Provider ohne Batch-Unterstützung werfen `NotImplementedError`, der Sweep fängt das ab und liefert ein leeres Dict — dann fällt jeder Ticker auf seinen letzten finalen Close zurück, **keiner wird deswegen übersprungen**. Über 20 % Survivors ohne Live-Kurs → WARNING |
 | **1c/1d** | `_process_ticker()` | Indikatoren aus den letzten 220 DB-Bars, Technik-Signal, Fundamentals **nur aus dem Cache**. Übernimmt den Sweep-Kurs statt selbst anzufragen |
 
+Die einzigen Capital.com-Calls der 1c-Schleife sind die Gap-Fills (`_fill_price_gaps()`, nur bei erkannter Lücke). Die Batch-Pause (`BATCH_PAUSE_EVERY = 30`, `config.CAPITAL_COM_BATCH_PAUSE = 12 s`) zählt seit 2026-09-10 (C.32) **diese Calls**, nicht die Ticker-Position: `_fill_price_gaps()` meldet jeden Versuch in `GapFillStats`, `collect()` schläft nach je 30 Versuchen, nie nach dem letzten Survivor. Ohne Lücke schläft ein Lauf gar nicht — vorher fix alle 30 Ticker, bei 150 Tickern ~48 s Leerlauf.
+
 **Der dritte Rückgabewert ist der Sidecar** — ein Dict `ticker → {premarket_change_pct,
 tech_direction, tech_agreement, tech_adx_band, tech_strength}`. Er existiert, weil `td`
 unverändert in vier Claude-Prompts serialisiert wird; s. „Sidecar-Invariante" unten und
@@ -1480,7 +1482,7 @@ TOTAL: ~3.50 EUR
 ## Invarianten (Never Violated)
 
 1. **SIMULATION_ONLY=True** – Niemals echte Order-Ausführung
-2. **CFD-Kurzfristfokus** – hold_days ≤ 5 (`config.MAX_HOLD_DAYS`); `guardrails.py`, `evaluator.py`, `portfolio_check.py` und `db.py` referenzieren seit 2026-07-17 alle denselben Wert statt eigener hardcodierter Konstanten (Bug B-06 behoben). intraday_range ≥ 1%; SP500_MIN_ATR_PCT = 2.0
+2. **CFD-Kurzfristfokus** – hold_days ≤ 5 (`config.MAX_HOLD_DAYS`); `guardrails.py`, `evaluator.py`, `portfolio_check.py` und `db.py` referenzieren seit 2026-07-17 alle denselben Wert statt eigener hardcodierter Konstanten (Bug B-06 behoben). intraday_range ≥ 1 % (`guardrails.min_intraday_range_pct`, einziger Volatilitätsfilter; `SP500_MIN_ATR_PCT`/`SP500_MIN_MARKET_CAP_B` waren nie verdrahtet und sind seit 2026-09-10 entfernt, s. PROJECT_STATUS C.32)
 3. **Phase 0 ist fatal** – TrendAnalyzerError → no email
 4. **Billing vor Parse** – `cost_tracker.add_from_result()` VOR JSON-Extraktion
 5. **Guardrail-Pflicht** – Vor Phase 4 Ranking MÜSSEN alle Analysen durch Checks

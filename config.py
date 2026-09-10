@@ -254,8 +254,6 @@ SECTOR_ALIASES: dict[str, str] = {
     #   -> nur Bergbau ist ueber XME abgedeckt, Chemie laeuft voellig anders.
 }
 
-SP500_MIN_MARKET_CAP_B = 5
-SP500_MIN_ATR_PCT = 2.0
 MAX_HOLD_DAYS = 5
 HOLD_TARGET = "intraday"
 # Sprint 3C / Analyse-Pipeline-Umbau, Plan 2 (Trichter), Task 10: 80 -> 50 und

@@ -609,6 +609,58 @@ def test_collect_pauses_between_batches(in_memory_db):
     assert len(batch_calls) >= 1
 
 
+def test_collect_does_not_pause_when_no_gap_fill_call_was_made(in_memory_db):
+    """F8 (Phase-1-Review 2026-09-10): die Batch-Pause schuetzt Capital.com vor
+    den Gap-Fill-Calls der 1c-Schleife -- der Sweep hat seine eigene
+    429-Behandlung, die Indikatoren rechnen lokal. Ohne erkannte Luecke macht
+    _fill_price_gaps() keinen Call, dann darf collect() auch nicht schlafen.
+    Vorher fix alle 30 Ticker 12 s: bei 150 Tickern ~48 s Leerlauf je Lauf."""
+    init_schema(in_memory_db)
+    # Historie endet am Handelstag VOR dem Lauftag, alle Wochentage vorhanden:
+    # weder innenliegende noch hintere Luecke -> kein get_ohlc_after-Call.
+    df = _df_monotonic_up(80)                     # letzte Zeile 2025-04-22 (Di)
+    pp = _good_provider(df)
+    ep = _earnings_provider()
+    tickers = [f"T{i}" for i in range(BATCH_PAUSE_EVERY + 1)]
+    for t in tickers:
+        _seed_price_history(in_memory_db, t, df)
+
+    with patch("src.data_collector.time.sleep") as sleep_mock:
+        collect(
+            tickers=tickers, price_provider=pp, earnings_provider=ep,
+            conn=in_memory_db, date="2025-04-23", run_type="pre_market",
+        )
+
+    pp.get_ohlc_after.assert_not_called()          # Vorbedingung: wirklich 0 Calls
+    sleep_mock.assert_not_called()
+
+
+def test_collect_pause_counts_gap_fill_calls_not_tickers(in_memory_db):
+    """Die Pause zaehlt Capital.com-Calls, nicht Ticker-Positionen: 31 Survivors,
+    von denen nur 29 eine Luecke haben, loesen keine Pause aus. Erst der
+    BATCH_PAUSE_EVERY-te Call schlaeft (s. test_collect_pauses_between_batches,
+    dort ruft jeder Ticker)."""
+    init_schema(in_memory_db)
+    with_gap = _df_monotonic_up(80)               # endet 2025-04-22 -> Luecke bis 04-30
+    without_gap = _df_monotonic_up(85)            # endet 2025-04-29 -> lueckenlos
+    pp = _good_provider(without_gap)
+    ep = _earnings_provider()
+    tickers = [f"T{i}" for i in range(BATCH_PAUSE_EVERY + 1)]
+    for i, t in enumerate(tickers):
+        _seed_price_history(
+            in_memory_db, t, with_gap if i < BATCH_PAUSE_EVERY - 1 else without_gap,
+        )
+
+    with patch("src.data_collector.time.sleep") as sleep_mock:
+        collect(
+            tickers=tickers, price_provider=pp, earnings_provider=ep,
+            conn=in_memory_db, date="2025-04-30", run_type="pre_market",
+        )
+
+    assert pp.get_ohlc_after.call_count == BATCH_PAUSE_EVERY - 1
+    sleep_mock.assert_not_called()
+
+
 from src import db as _db
 from datetime import date as _date, timedelta
 

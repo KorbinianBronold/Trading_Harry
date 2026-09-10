@@ -3954,6 +3954,73 @@ ohne Sektordaten nicht prüfbar. Beobachtungsposten: Verteilung von `market_regi
 die nächsten Läufe — die Ergänzung soll `neutral` auf Down-Tagen seltener machen, nicht
 `risk_off` zum Default.
 
+### C.32 — Phase-1-Review: totes Config-Paar entfernt (F7), Batch-Pause zählt Calls statt Ticker (F8) (2026-09-10)
+
+Dritter Durchgang des Pipeline-Reviews (nach C.27/C.28/C.31 für Phase 0/0b), Reihenfolge
+wie `main.py:run_pipeline()`, je Phase aus Code-Sicht und aus Marktanalysten-Sicht.
+Phase 1 (`data_collector.py`, `indicators.py`, `technical_signal.py`): die Code-Logik ist
+sauber, die Befunde betreffen Sinnhaftigkeit. Zwei kleine umgesetzt, der Rest wartet auf
+Entscheidung (Liste unten).
+
+**F7 — `SP500_MIN_ATR_PCT = 2.0` / `SP500_MIN_MARKET_CAP_B = 5` entfernt (Cleanup).**
+Beide standen in `config.py`, hatten aber keinen Leser (grep über `src/`, `main.py`,
+`tests/`, `setup/`). CLAUDE.md nannte den ATR-Wert unter „Fixe Rahmenwerte", ARCHITECTURE
+unter den Invarianten — beides bereinigt. README und SPECIFICATION nennen die Werte noch
+(bekannt veraltet, Finaldurchgang). Regel-15-Sweep: kein Prompt zitiert eine ATR- oder
+Market-Cap-Schwelle (`deep_analysis_v2`/`broad_scan_v1` nennen ATR nur als „nicht dein
+Job").
+**Offen als Design-Option:** ein ATR-Mindestfilter für CFD-Kurzfristtrades wäre fachlich
+naheliegend — der einzige Volatilitätsfilter heute ist `guardrails.min_intraday_range_pct
+= 1.0`, und der greift erst nach Phase 3, nicht im Trichter. Bewusst **nicht** verdrahtet:
+das wäre eine Verhaltensänderung im Trichter und braucht eine eigene Entscheidung.
+
+**F8 — Batch-Pause zählt Gap-Fill-Calls, nicht Ticker.** `collect()` schlief nach jedem
+30. Ticker 12 s (`BATCH_PAUSE_EVERY` / `config.CAPITAL_COM_BATCH_PAUSE`), auch wenn
+`_fill_price_gaps()` keinen einzigen Capital.com-Call gemacht hatte — die Pause stammt aus
+der yfinance-Zeit, als jeder Ticker ein Abruf war. Heute ist der einzige Call der
+1c-Schleife das Gap-Nachladen, und das feuert nur bei erkannter Lücke; bei 150 Tickern
+~48 s Leerlauf je Lauf. Neu: `GapFillStats` zählt jeden Nachlade-**Versuch** (auch eine
+leere oder fehlerhafte Antwort hat einen Request verbraucht), `_process_ticker()` reicht
+das Objekt durch, `collect()` schläft nach je 30 Versuchen, nie nach dem letzten Survivor.
+Der int-Rückgabewert von `_fill_price_gaps()` (Bar-Zahl) ist unverändert, alle bestehenden
+Tests unangetastet. Sweep unverändert (eigene 429-Behandlung, Spec 4.3.3). Kein Prompt
+betroffen.
+
+**Tests:** 986 grün, 15 übersprungen, Coverage 92,67 %. Zwei neue Tests, beide rot vor
+der Änderung: ohne Lücke kein `time.sleep`; 31 Survivors mit 29 Calls keine Pause.
+
+**Offen aus dem Phase-1-Review (Entscheidung Korbinian):**
+- **F1** `technical_signal.compute()`: bei `adx_band == "weak"` (ADX ≤ `ADX_WEAK_BELOW`)
+  wird `strength` fix auf 1 gesetzt, auch bei 3/3-Einigkeit. `cutoff_candidates()`
+  verlangt `tech_strength >= TECH_MIN_FOR_DEEP` (= 2). In Seitwärtsregimen ist der
+  technische Weg nach Phase 3 damit für **jeden** Ticker zu — nur News
+  (`news_strength >= 1`) oder Pflicht-Kandidaten kommen durch. §6.2 „ADX moduliert die
+  Stärke, nie die Richtung" gilt isoliert; in Kombination mit dem Cutoff filtert ADX den
+  Ticker. Optionen: `weak` → `agreement − 1` statt fix 1; oder `TECH_MIN_FOR_DEEP`
+  senken — welche Variante besser predictet, ist eine 3D-Messfrage.
+- **F2** `td["macd_signal"]` (`compute_macd_signal`) meldet nur eine Kreuzung in den
+  letzten zwei Bars und steht deshalb in ~87 % der `technical_indicators`-Zeilen auf
+  `neutral`. Claude sieht dieses Feld in `td`, während `technical_signal._vote_macd()`
+  das Histogramm-Vorzeichen nutzt — zwei MACD-Wahrheiten je Ticker. Vorschlag: gleicher
+  Schlüssel, Bedeutung = Histogramm-Vorzeichen. Regel 15: kein Prompt erklärt
+  `macd_signal` heute, die Werte-Strings tragen die Bedeutung; die Spalte
+  `technical_indicators.macd_signal` wechselt dann ab Stichtag die Semantik.
+- **F3** `volume_ratio`/OBV basieren auf Capital.com-Volumen (CFD-Broker-Fluss, kein
+  Börsenvolumen); Claude bekommt `volume_ratio` ohne diese Einordnung.
+- **F4 zu prüfen:** decken die Capital.com-Tagesbars nur die reguläre Sitzung ab? Mit
+  Extended Hours wären `atr_pct` und `intraday_range_pct` überhöht (Stop-Distanz-Check).
+  Einmal AAPL-High/Low eines Tages gegen Börsenwerte legen.
+- **F5** `data_quality` vermischt „Fundamentals fehlen" und „kurze Historie"
+  (`above_sma200` fehlt unter 200 Bars) — beides `medium`.
+- **F6** `earnings_in_days = None` lässt eine Aktie ohne Warnung durch; das Feld hängt
+  allein am Sonntagsjob. In `db-latest` prüfen:
+  `SELECT COUNT(*), SUM(earnings_next_date IS NOT NULL) FROM fundamentals_cache;` —
+  „unbekannt" wäre bei einer Aktie eine weiche Warnung wert (Phase-4-Thema).
+- **F9** `td["price"]` ist live (Premarket-Sweep), `price_change_*` sind T-1; `td` trägt
+  keinen Marker dafür. Bei den Prompt-Reviews von Phase 2/3 prüfen, ob die Feldbedeutung
+  erklärt ist.
+- **F10** `bb_position` ist auf 0..1 gekappt — ein Ausbruch liest sich wie eine Berührung.
+
 ## Sprint 3D — Learning Modul
 
 ⚠️ **Noch nicht ausgearbeitet — braucht eine eigene Planungssession, bevor die Implementierung
