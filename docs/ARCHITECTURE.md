@@ -70,8 +70,8 @@ je Methodenaufruf, sowie `tech_strength` + 180-Tage-Retention bei `cutoff_log`.
 ✅ **Der Trichter ist live**: `quick_filter.py` ist aus `run_pipeline()` verschwunden
 (Modul 3 unten als „ersetzt" markiert), `broad_scan.py` + `cutoff_candidates()` (Modul 3b)
 + `run_phase_2b()` laufen und sind gegen echte Daten gemessen (3,3551 EUR, günstiger als
-der alte Weg). `run_weekly()` füllt `fundamentals_cache` + `earnings_next_date` fürs ganze
-Universum. Plan 2 ist damit abgeschlossen; als Nächstes Plan 3 (Analyse & Ranking).
+der alte Weg). `run_weekly()` füllt `fundamentals_cache` + `earnings_next_date` für alle
+Aktien des Universums (Rohstoffe/Krypto nie, C.35). Plan 2 ist damit abgeschlossen; als Nächstes Plan 3 (Analyse & Ranking).
 Stand: PROJECT_STATUS **C.7** und **C.8**.
 
 Davor, 2026-08-15 — Live-Verifikation von Plan 2 (Sprint 3B) abgeschlossen
@@ -772,6 +772,13 @@ nur den Methodenaufruf und hätte das Limit effektiv verdreifacht; im Wochenlauf
 ~120 Requests/min gegen ein 60/min-Limit gewesen (Abschluss-Review, PROJECT_STATUS C.8/R2).
 `get_earnings_calendar()` läuft **nur dort** — der Tageslauf (`fetch_missing_fundamentals()`,
 Phase 2b) ruft sie nie, das ist die Aufgabenteilung aus Spec § 18.1c.
+
+⚠️ **Rohstoffe/Krypto bekommen nie Fundamentals (C.35, 2026-09-10):** Finnhub löst `GOLD` als
+die Aktie Gold.com Inc auf (PE, Market Cap, Earnings, Branche „Distributors", Alias Retail).
+`universe.is_commodity_or_crypto()` ist die eine Frage an vier Stellen: Gate-Ausnahme (1a),
+Cache-Lesung in `_process_ticker()` (1), `fetch_missing_fundamentals()` (2b) und der Wochenlauf,
+der zusätzlich per `db.purge_non_equity_fundamentals()` Altbestand in `fundamentals_cache` und
+`ticker_sectors` entfernt — `db-latest` heilt damit am nächsten Sonntag von selbst.
 
 ---
 
