@@ -829,6 +829,12 @@ def _persist_revision(
     }, verdict=verdict["verdict"])
 
 
+def _split_sectors(raw: str | None) -> list[str]:
+    """Kommaseparierten Sektor-String aus market_context in die Listenform des
+    trend_analyzer bringen (C.30). None oder leer -> []."""
+    return [s.strip() for s in (raw or "").split(",") if s.strip()]
+
+
 def run_trade_proposals(date: str, db_path: str) -> None:
     """Run-Type trade_proposals (16:10 Berlin): prueft die pre_market-Signale nach
     dem Opening-Rauschen billig nach und loest sie ab.
@@ -951,11 +957,17 @@ def run_trade_proposals(date: str, db_path: str) -> None:
         # Claude-Call, dieselbe Frage nach Rotation/Makrolage): hier eingemischt,
         # damit der Portfolio-Check nicht aermer dasteht als am Morgen. Seit
         # C.28 aus der DB statt aus einem zweiten bezahlten Call; fehlt die
-        # Morgenzeile, bleiben die drei Felder None.
+        # Morgenzeile, sind die Listen leer und macro_summary None.
+        # C.30: dieselbe FORM wie die rohe Phase-0-Antwort am Morgen
+        # (sector_rotation.into/out_of als Listen) -- der Portfolio-Check soll
+        # nicht je nach Uhrzeit andere Schluessel sehen. macro_summary bleibt ein
+        # eigener Key: es ist nicht trend_summary, sondern die Marktlage.
         trend_ctx = {
             **(db.load_trend_context(conn, date) or {}),
-            "sector_rotation_in": morning_ctx.get("sector_rotation_in"),
-            "sector_rotation_out": morning_ctx.get("sector_rotation_out"),
+            "sector_rotation": {
+                "into":   _split_sectors(morning_ctx.get("sector_rotation_in")),
+                "out_of": _split_sectors(morning_ctx.get("sector_rotation_out")),
+            },
             "macro_summary": morning_ctx.get("macro_summary"),
         }
         payload["portfolio_recs"] = check_open_positions(

@@ -3848,6 +3848,56 @@ aber genau solche Reste sollen ab jetzt nicht mehr liegen bleiben. Nicht angefas
 Altlast-Dateien (`deep_analysis_v1`, `commodities_crypto_v1/v2`, `portfolio_check_v1`).
 Tests und Dateien sind Kandidaten zum Entfernen — nicht unaufgefordert gelöscht (Regel 8).
 
+### C.30 — Nachfolge aus dem market_context-Review: Marktlage sichtbar, Rotationsform, Test-Hygiene, Live-Test (2026-09-10)
+
+Vier Punkte aus der Prüfung einer extern formulierten Aufgabenliste — die war zu zwei
+Dritteln durch C.28 bereits erledigt; hier die offenen Reste.
+
+1. **Toter A/D-Zweig entfernt, Marktlage in der Tagesmail.** `_section_market_warnings()`
+   las `advance_decline_ratio`, das seit C.28 nie mehr einen Wert trägt. Gemeinsamer Kern
+   ist jetzt `_market_line()` (VIX · S&P 500 ±x % · Regime; nur belegte Werte). Die
+   16:10-Mail behält ihre Sektion (zeigt dort nur den VIX — mehr trägt `vix_only_context`
+   nicht). Neu: die **Tagesmail** zeigt die Marktlage als Zeile im Kopf, direkt unter dem
+   Briefing. Bis dahin war sie für den Leser unsichtbar, obwohl VIX und Regime harte
+   Guardrails steuern. Bewusst keine `<h2>`-Sektion: Portfolio bleibt die erste Sektion
+   (Invariante); ein Test pinnt die Zeile vor dem ersten `<h2>`. Wording bleibt bei den
+   vorhandenen Begriffen (Marktlage, VIX, S&P 500, Regime).
+
+2. **Rotationsform angeglichen (16:10-Pfad).** Morgens sah der Portfolio-Check die rohe
+   Phase-0-Antwort (`sector_rotation: {into: [], out_of: []}`), um 16:10 die flachen
+   Strings aus der Morgenzeile — je nach Uhrzeit andere Schlüssel im selben Prompt.
+   `main._split_sectors()` baut die Strings jetzt in die Listenform um; `macro_summary`
+   bleibt eigener Key (es ist nicht `trend_summary`). Fehlt die Morgenzeile: leere Listen.
+   Nicht angeglichen ist das **Vokabular** — `market_context` nutzt seit C.28 GICS-Namen
+   („Information Technology"), `trend_analyzer` freie Namen. Prompt-Thema, kein Formthema.
+
+3. **Tote Test-Assertions bereinigt.** `test_main.py` prüfte `advance_decline_ratio == 0.8`
+   aus einem gemockten Kontext — grün nur, weil der Mock `fetch_market_context` umging;
+   jetzt `sp500_change_pct`. `VERDICT_PAYLOAD` (16:10-Mail-Test) trug A/D 0.7; jetzt
+   `vix_source`. Ein neuer Test pinnt, dass ein A/D-Wert in einer alten Payload **nicht**
+   mehr gerendert wird.
+
+4. **Live-Test für `market_regime`** (`tests/live/test_market_context_live.py`, Marker
+   `live_api`, nur mit `--run-live`). Die Klassifikation macht das Modell — ein Unit-Test
+   kann sie nicht prüfen. Der Live-Test macht einen echten Call gegen den aktiven Prompt
+   und prüft **innere Widerspruchsfreiheit**, keinen Golden Value: Regime ∈ {risk_on,
+   risk_off, neutral}; `risk_on` nur bei positivem, `risk_off` nur bei negativem S&P-Tag
+   (die notwendige Bedingung der Prompt-Regeln — die hinreichende, VIX-Band ODER
+   Sektorführung, ist ohne Sektordaten nicht prüfbar); Rotation nur aus den 11
+   GICS-Sektoren, max. drei; `macro_summary` einzeilig; A/D immer None.
+   `price_provider=None`, damit der geprüfte VIX Claudes eigener ist — der, gegen den das
+   Modell sein Regime gebildet hat. ~0,27 € pro Aufruf, nicht deterministisch, bewusst
+   nicht Teil der normalen Suite:
+   `pytest tests/live -m live_api --run-live -k market_context`.
+   Damit ist der „Offen"-Punkt aus C.28 (Prompt-Regeln nicht gegen die echte API gemessen)
+   **messbar** — gemessen ist er noch nicht.
+
+Keine DB-Migration.
+
+**Tests:** 984 grün, 15 übersprungen (der neue Live-Test ohne `--run-live`). Neu: 5
+Mail-Tests, 6 parametrisierte `_split_sectors`-Fälle, 1 Live-Test; 4 Rotationstests auf die
+Listenform umgestellt. Coverage 92,64 %.
+
 ## Sprint 3D — Learning Modul
 
 ⚠️ **Noch nicht ausgearbeitet — braucht eine eigene Planungssession, bevor die Implementierung

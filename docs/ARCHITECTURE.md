@@ -492,7 +492,12 @@ Kriterien verankert, Rotation auf die 11 GICS-Sektoren begrenzt, Bezugsrahmen je
 `run_type` (vorbörslich = Vortagesschluss + Overnight), `macro_summary` englisch und
 ohne VIX-Zahl. Um 16:10 gibt es **keinen** zweiten Claude-Call mehr: der einzige dort
 entscheidende Wert ist der VIX (`check_vix`, `enforce=True`); Rotation/Makro für den
-Portfolio-Check kommen aus der Morgenzeile (`db.load_market_context()`).
+Portfolio-Check kommen aus der Morgenzeile (`db.load_market_context()`) — seit C.30 in
+**derselben Form** wie die rohe Phase-0-Antwort (`sector_rotation: {into, out_of}` als
+Listen, `main._split_sectors()`), damit der Portfolio-Check morgens und um 16:10 dieselben
+Schlüssel sieht; `macro_summary` bleibt ein eigener Key. Die 16:10-Mail-Sektion „Marktlage"
+zeigt nur, was der Kontext trägt (VIX); der A/D-Zweig ist entfernt, die Tagesmail zeigt
+die Marktlage seit C.30 als Zeile im Kopf.
 
 **Warum None statt Schätzung:** Die Werte steuern nachgelagert harte Risikofilter
 (VIX > 25 nur noch `confidence='high'`, VIX > 35 keine neuen Longs). Ein geratener
@@ -960,6 +965,9 @@ def render_daily_html(
     trends: list[dict],
 ) -> str:
     """
+    Kopf (keine Sektion): Briefing-Box "Was heute zaehlt" + EINE Marktlage-Zeile
+    (VIX, S&P-500-Tagesaenderung, Regime) aus dem morgendlichen market_context
+    (C.30). Portfolio bleibt die erste Sektion.
     4 Sektionen (in dieser Reihenfolge):
       1. Portfolio-Empfehlungen (Phase 4a: HALTEN/SCHLIESSEN/ANPASSEN)
       2. Stock Rankings (Top-10 Long + Top-10 Short)

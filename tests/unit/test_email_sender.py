@@ -343,7 +343,7 @@ def test_send_returns_none_when_no_id_comes_back(mocker):
 VERDICT_PAYLOAD = {
     "date": "2026-07-30", "run_type": "trade_proposals",
     "briefing": [], "portfolio_recs": [], "commodities_crypto": [],
-    "market_context": {"vix_level": 28.4, "advance_decline_ratio": 0.7},
+    "market_context": {"vix_level": 28.4, "vix_source": "capital.com"},
     "cost_summary": {"total_eur": 0.61, "cache_hit_rate": 0.0, "input_tokens": 1,
                      "output_tokens": 1, "web_search_calls": 2,
                      "aborted_at_phase": None},
@@ -752,3 +752,65 @@ def test_briefing_skips_catalysts_without_a_usable_date():
     assert len(catalyst) == 1
     assert "2026-09-11" in catalyst[0], f"falscher Katalysator gewaehlt: {catalyst}"
     assert "TBD" not in catalyst[0]
+
+
+# ---------- C.30: Marktlage in beiden Mails, A/D-Zweig entfernt ----------
+
+
+def _daily_payload(**overrides):
+    base = {
+        "date": "2026-09-08", "run_type": "pre_market",
+        "briefing": ["Oelschock"], "portfolio_recs": [], "top_long": [], "top_short": [],
+        "commodities_crypto": [], "trends": [], "skipped_tickers": [],
+        "market_context": {}, "yesterday_outcomes": {}, "cost_summary": {},
+    }
+    base.update(overrides)
+    return base
+
+
+def test_market_line_renders_vix_sp500_and_regime():
+    from src.email_sender import _market_line
+    line = _market_line({"vix_level": 17.67, "sp500_change_pct": -0.71,
+                         "market_regime": "risk_off"})
+    assert "VIX 17.67" in line
+    assert "S&amp;P 500 -0.71 %" in line
+    assert "Regime risk_off" in line
+
+
+def test_market_line_shows_only_what_is_known():
+    from src.email_sender import _market_line
+    assert _market_line({"vix_level": 28.4, "sp500_change_pct": None,
+                         "market_regime": None}) == "VIX 28.4"
+    assert _market_line({}) == ""
+
+
+def test_market_warnings_ignore_a_retired_advance_decline_value():
+    """C.28: A/D wird nicht mehr erhoben. Steht der Schluessel dennoch in einer
+    (alten) Payload, darf er nicht gerendert werden -- der Zweig ist weg."""
+    from src.email_sender import _section_market_warnings
+    html = _section_market_warnings({"vix_level": 28.4, "advance_decline_ratio": 0.7})
+    assert "VIX 28.4" in html
+    assert "A/D" not in html
+    assert "0.7" not in html
+
+
+def test_daily_mail_shows_the_morning_market_line_in_the_header():
+    """Bis C.30 war die Marktlage in der Tagesmail unsichtbar, obwohl VIX und
+    Regime harte Guardrails steuern. Sie steht jetzt als Zeile im Kopf, unter
+    dem Briefing -- Portfolio bleibt die erste SEKTION (Invariante)."""
+    from src.email_sender import render_daily_html
+    html = render_daily_html(_daily_payload(market_context={
+        "vix_level": 17.67, "vix_source": "capital.com",
+        "sp500_change_pct": -0.71, "market_regime": "risk_off",
+    }))
+    assert "Marktlage" in html
+    assert "S&amp;P 500 -0.71 %" in html
+    assert "risk_off" in html
+    assert html.index("Marktlage") < html.index("<h2>"), "Marktlage gehoert in den Kopf"
+
+
+def test_daily_mail_without_market_context_has_no_market_line():
+    from src.email_sender import render_daily_html
+    assert "Marktlage" not in render_daily_html(_daily_payload(market_context={}))
+    assert "Marktlage" not in render_daily_html(_daily_payload(market_context={
+        "vix_level": None, "sp500_change_pct": None, "market_regime": None}))

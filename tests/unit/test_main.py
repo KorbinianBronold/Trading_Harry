@@ -76,7 +76,7 @@ def _mock_all_other_phases(mocker) -> list[str]:
                              ]}}]
     fake_cc = []
     fake_market_ctx = {"vix_level": 18.0, "vix_source": "capital.com",
-                       "advance_decline_ratio": 1.2, "market_regime": "risk_on",
+                       "sp500_change_pct": 0.9, "market_regime": "risk_on",
                        "sector_rotation_in": None, "sector_rotation_out": None,
                        "macro_summary": None}
 
@@ -418,7 +418,7 @@ def _stub_pipeline(mocker) -> None:
 
 _CTX = {
     "vix_level": 23.4, "vix_source": "capital.com",
-    "advance_decline_ratio": 0.8, "market_regime": "risk_off",
+    "sp500_change_pct": -0.4, "market_regime": "risk_off",
     "sector_rotation_in": "Utilities", "sector_rotation_out": "Technology",
     "macro_summary": "nervoes",
 }
@@ -446,7 +446,7 @@ def test_pipeline_persists_market_context_and_passes_it_to_ranking(tmp_db_path, 
     row = conn.execute(
         "SELECT * FROM market_context WHERE date='2026-07-27'").fetchone()
     assert row["vix_level"] == 23.4
-    assert row["advance_decline_ratio"] == 0.8
+    assert row["sp500_change_pct"] == -0.4          # C.28: A/D wird nicht mehr erhoben
     assert row["run_type"] == "pre_market"
     conn.close()
 
@@ -1425,8 +1425,10 @@ def test_portfolio_check_sees_sector_rotation_from_market_context(tmp_db_path, m
     run_trade_proposals(date="2026-07-30", db_path=str(tmp_db_path))
 
     passed_trend_ctx = mock_portfolio.call_args.kwargs["trend_context"]
-    assert passed_trend_ctx["sector_rotation_in"] == "Utilities"
-    assert passed_trend_ctx["sector_rotation_out"] == "Technology"
+    # C.30: dieselbe Form wie die rohe Phase-0-Antwort am Morgen
+    assert passed_trend_ctx["sector_rotation"] == {
+        "into": ["Utilities"], "out_of": ["Technology"]}
+    assert "sector_rotation_in" not in passed_trend_ctx
     assert passed_trend_ctx["macro_summary"] == "nervoes"
 
 
@@ -1465,7 +1467,7 @@ def test_portfolio_check_still_works_with_a_real_morning_trend_context(tmp_db_pa
 
     passed_trend_ctx = mock_portfolio.call_args.kwargs["trend_context"]
     assert passed_trend_ctx["trends"][0]["name"] == "ai-capex-acceleration"
-    assert passed_trend_ctx["sector_rotation_in"] == "Utilities"
+    assert passed_trend_ctx["sector_rotation"]["into"] == ["Utilities"]
 
 
 # ---------- Review-Fix 2: signal_changes hat auf jedem Pfad dieselben Schluessel ----------
@@ -2175,8 +2177,7 @@ def test_run_trade_proposals_portfolio_check_gets_the_morning_rotation(tmp_db_pa
     run_trade_proposals(date="2026-07-30", db_path=str(tmp_db_path))
 
     trend_ctx = cop.call_args.kwargs["trend_context"]
-    assert trend_ctx["sector_rotation_in"] == "Energy"
-    assert trend_ctx["sector_rotation_out"] == "Technology"
+    assert trend_ctx["sector_rotation"] == {"into": ["Energy"], "out_of": ["Technology"]}
     assert trend_ctx["macro_summary"] == "oil shock"
 
 
@@ -2194,5 +2195,24 @@ def test_run_trade_proposals_survives_a_missing_morning_context(tmp_db_path, moc
     run_trade_proposals(date="2026-07-30", db_path=str(tmp_db_path))
 
     trend_ctx = cop.call_args.kwargs["trend_context"]
-    assert trend_ctx.get("sector_rotation_in") is None
+    assert trend_ctx["sector_rotation"] == {"into": [], "out_of": []}
     assert trend_ctx.get("macro_summary") is None
+
+
+# ---------- C.30: Rotations-Strings -> trend_analyzer-Form ----------
+
+
+@pytest.mark.parametrize("raw,expected", [
+    (None, []),
+    ("", []),
+    ("Energy", ["Energy"]),
+    ("Energy, Health Care", ["Energy", "Health Care"]),
+    ("Energy,Health Care,", ["Energy", "Health Care"]),
+    ("  Utilities  ", ["Utilities"]),
+])
+def test_split_sectors_normalises_the_comma_string(raw, expected):
+    """market_context liefert Rotation als kommaseparierten String, der
+    Portfolio-Check sieht morgens aber die Array-Form aus trend_analyzer --
+    der 16:10-Pfad muss exakt dieselbe Form bauen."""
+    from main import _split_sectors
+    assert _split_sectors(raw) == expected

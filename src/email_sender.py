@@ -3,7 +3,9 @@
 Error-Mail: send_error_email() is called by main.py on any unhandled exception.
 It replaces the normal run email so the user is informed via the same channel.
 
-Daily mail is rendered as four sections in this fixed order:
+Daily mail: a header (the "Was heute zaehlt" briefing box plus ONE Marktlage
+line -- VIX, S&P 500 change, regime; C.30) followed by four sections in this
+fixed order:
   1. Portfolio-Empfehlungen (Phase 4a) — directly actionable on market open
   2. Aktien Top-10 Long + Top-10 Short
   3. Trends (dark cards)
@@ -335,6 +337,7 @@ def render_daily_html(payload: dict) -> str:
         f'<h1>Shares_Future — {_h(payload.get("date"))} '
         f'({_h(payload.get("run_type"))})</h1>'
         + _section_briefing(payload.get("briefing") or [])
+        + _section_market_line(payload.get("market_context") or {})
         + _section_portfolio(payload.get("portfolio_recs") or [])
         + _section_stocks(
             payload.get("top_long") or [], payload.get("top_short") or [],
@@ -549,18 +552,42 @@ def _section_signal_changes(changes: list[dict]) -> str:
     )
 
 
-def _section_market_warnings(ctx: dict) -> str:
-    """VIX und Marktbreite als Kontextzeile. Die Marktbreite wird nur
-    durchgereicht — B.3 weist ihr ausdruecklich nur 'Kontext / Warnung' zu."""
-    vix, ad = ctx.get("vix_level"), ctx.get("advance_decline_ratio")
-    if vix is None and ad is None:
-        return ""
+def _market_line(ctx: dict) -> str:
+    """'VIX 17.67 &middot; S&amp;P 500 -0.71 % &middot; Regime risk_off' -- nur
+    belegte Werte, leerer String wenn keiner. Gemeinsamer Kern fuer Tages- und
+    16:10-Mail. Die A/D-Ratio wird seit C.28 nicht mehr erhoben und hier bewusst
+    ignoriert, auch wenn eine alte Payload den Schluessel noch traegt."""
     parts = []
+    vix = ctx.get("vix_level")
     if vix is not None:
         parts.append(f'VIX {_h(vix)}')
-    if ad is not None:
-        parts.append(f'A/D-Ratio {_h(ad)}')
-    return f'<h2>Marktlage</h2><p>{" &middot; ".join(parts)}</p>'
+    spx = ctx.get("sp500_change_pct")
+    if spx is not None:
+        try:
+            parts.append(f'S&amp;P 500 {float(spx):+.2f} %')
+        except (TypeError, ValueError):
+            pass
+    regime = ctx.get("market_regime")
+    if regime:
+        parts.append(f'Regime {_h(regime)}')
+    return " &middot; ".join(parts)
+
+
+def _section_market_warnings(ctx: dict) -> str:
+    """Marktlage als eigene Sektion der 16:10-Mail. Um 16:10 traegt der Kontext
+    nur den VIX (vix_only_context, C.28) -- die Zeile zeigt, was da ist."""
+    line = _market_line(ctx)
+    return f'<h2>Marktlage</h2><p>{line}</p>' if line else ""
+
+
+def _section_market_line(ctx: dict) -> str:
+    """Marktlage als Zeile im KOPF der Tagesmail, direkt unter dem Briefing.
+    Bis C.30 war sie dort unsichtbar, obwohl VIX und Regime harte Guardrails
+    steuern. Bewusst keine <h2>-Sektion: Portfolio bleibt die erste Sektion
+    (dokumentierte Invariante)."""
+    line = _market_line(ctx)
+    return (f'<p style="margin:0 0 16px 0;"><b>Marktlage:</b> {line}</p>'
+            if line else "")
 
 
 def render_trade_proposals_html(payload: dict) -> str:

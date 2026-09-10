@@ -165,7 +165,8 @@ Kurzform zum Erkennen einer drohenden Verletzung; Begründung und Randfälle in
 
 **Mail & Sonstiges**
 - Resend: `2xx` heisst nur „angenommen"; echter Zustellstatus über `GET /emails/{id}`.
-  Portfolio-Sektion **zuerst** in der Mail.
+  Portfolio-Sektion **zuerst** in der Mail; davor nur der Kopf (Briefing-Box + eine
+  Marktlage-Zeile: VIX, S&P-Tagesänderung, Regime — keine Sektion). → C.30
 - `random/` ist Korbinians interner Ordner — **nie** anfassen, nie in Aufräum-,
   Doku- oder Toter-Code-Betrachtungen aufnehmen.
 - Neuen Code dokumentieren (Modul-Docstring, 1–2-Satz-Funktions-Docstring). Tests
