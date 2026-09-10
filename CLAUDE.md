@@ -102,11 +102,18 @@ Kurzform zum Erkennen einer drohenden Verletzung; Begründung und Randfälle in
   teilverwerten. `BATCH_SIZE_DEEP = 8` ist ein Startwert. → §6.1
 - `usage.server_tool_use` ist ein `dict` und fehlt im Stream-Pfad — Websuchen über
   die Content-Blöcke zählen. → C.9 / C.11
-- Prompts **dürfen überschrieben** werden (seit 2026-09-08; vorher: nie editieren, nur
-  neue `_vN.txt`). Eine neue Versionsdatei ist erlaubt, aber nie Pflicht. Folge: der
-  Prompt-Stand zu einer Prediction steht **nur in der Git-Historie**
-  (`git log -p prompts/<datei>`), nicht mehr im Dateinamen. `prompt_versions` ist tot,
-  kein A/B-Testing. → PROJECT_STATUS Regel 10
+- Prompts werden **direkt in der aktiven Datei** angepasst — **keine neuen `_vN.txt`**
+  (seit 2026-09-10; davor 2026-09-08: überschreiben erlaubt, neue Version optional; davor:
+  nie editieren). Das Suffix im Dateinamen ist nur noch ein Name. Der Prompt-Stand zu einer
+  Prediction steht **nur in der Git-Historie** (`git log -p prompts/<datei>`).
+  `prompt_versions` ist tot, kein A/B-Testing. → PROJECT_STATUS Regel 10
+- **Prompts gehören zu jeder Änderung.** Wer Code, Config, Schema, Spec, Cron oder
+  Universum ändert, prüft **im selben Schritt** alle Dateien in `prompts/` — Ticker/Epics,
+  Uhrzeiten und Bezugsrahmen, Run-Type-Namen, JSON-Schlüssel, zitierte Schwellen
+  (`strength >= 7`, VIX 20/25/35, `1-5d`), Sektor-/Regime-Listen, Modellnamen, Sprache.
+  `grep -rn "<Bezeichner>" prompts/` ist Pflicht; die `*_pins_contract`-Tests fangen nur
+  Parser-Schlüssel, keine Beispieltexte oder Zahlen. Präzedenzfall: C.25 stellte die
+  Ticker im Code um, die Prompts nannten `GC=F`/`BTC-USD` monatelang weiter. → Regel 15
 
 **Analyse / Ranking / Guardrails**
 - 8 Score-Dimensionen einzeln persistiert, **keine** Gewichtung im Code

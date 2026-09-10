@@ -16,7 +16,7 @@ Output ONLY a single JSON object, no prose before or after, with this EXACT shap
 {
   "results": [
     {
-      "ticker": "<the input symbol, e.g. 'GC=F' or 'BTC-USD'>",
+      "ticker": "<the input symbol, e.g. 'GOLD' or 'BTCUSD'>",
       "asset_class": "<'commodity' | 'crypto'>",
       "direction": "<'long' | 'short' | 'none'>",
       "confidence": "<'low' | 'medium' | 'high'>",

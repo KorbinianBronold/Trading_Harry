@@ -1315,11 +1315,18 @@ wird angelegt und **nie benutzt** — sie gehört zu Sprint 3D.
 Plan 3a für `deep_analysis_v1.txt`, und seit C.15 für `commodities_crypto_v1.txt`
 **und** `commodities_crypto_v2.txt` (genutzt wird jetzt v3).
 
-**Seit 2026-09-08 dürfen Prompts überschrieben werden** (PROJECT_STATUS Regel 10, geändert).
-Eine Änderung geht direkt in die aktive Datei; eine neue `_vN.txt` ist erlaubt, aber nicht
-mehr Pflicht. Das Version-Suffix ist damit nur noch ein Dateiname. Womit eine konkrete
-Prediction erzeugt wurde, ist nur über `git log -p prompts/<datei>` plus dem `date` der
-Prediction rekonstruierbar.
+**Prompts werden direkt in der aktiven Datei angepasst — keine neuen Versionsdateien**
+(PROJECT_STATUS Regel 10; seit 2026-09-08 überschreibbar, seit 2026-09-10 ohne neue
+`_vN.txt`). Das Version-Suffix ist nur noch ein Dateiname. Womit eine konkrete Prediction
+erzeugt wurde, ist nur über `git log -p prompts/<datei>` plus dem `date` der Prediction
+rekonstruierbar.
+
+**Prompts gehören zu jeder Änderung** (Regel 15, seit 2026-09-10): Code-, Config-, Schema-,
+Spec-, Cron- oder Universums-Änderungen ziehen **immer** eine Prüfung aller Dateien in
+`prompts/` nach sich — Ticker/Epics, Uhrzeiten, Run-Types, JSON-Schlüssel, zitierte
+Schwellen, Sektor-/Regime-Listen, Modellnamen, Sprache. Die `*_pins_contract`-Tests
+fangen nur die Schlüssel, an denen Code hängt; Beispieltexte und Zahlen prüft niemand
+automatisch — deshalb `grep -rn "<Bezeichner>" prompts/` bei jeder Änderung.
 
 Zwei Testarten hängen daran, sie sind **nicht** dasselbe:
 - **Vertragstests** (`test_deep_analysis_v2_pins_contract`,
@@ -1329,7 +1336,9 @@ Zwei Testarten hängen daran, sie sind **nicht** dasselbe:
   überflüssig: sie sind das Netz, das eine Prompt-Bearbeitung auffängt, die den Vertrag bricht.
 - **`*_untouched`-Tests** (`test_deep_analysis_v1_untouched`,
   `test_commodities_crypto_v2_untouched`) erzwangen ausschließlich die **alte** Regel und
-  bewachen heute nur noch verwaiste Dateien.
+  bewachen heute nur noch verwaiste Dateien — seit Regel 10 (2026-09-10: keine neuen
+  Versionen) sind sie samt den vier Altlast-Dateien (`deep_analysis_v1`,
+  `commodities_crypto_v1/v2`, `portfolio_check_v1`) Kandidaten zum Entfernen.
 
 ⚠️ Die Prompts werden **auf Modulebene** gelesen, nicht je Aufruf. Eine geänderte
 Prompt-Datei wirkt erst nach einem Neustart des Prozesses.

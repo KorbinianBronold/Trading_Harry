@@ -1709,7 +1709,9 @@ Guardrails (unverändert).
 
 **Umsetzung:** Prompt-Änderung in `deep_analysis` + `commodities_crypto`. Laut Regel 10
 (Abschnitt 5) bedeutet das **neue Prompt-Versionen `*_v2.txt`** plus Eintrag in der
-`prompt_versions`-Tabelle — die v1-Dateien werden nicht überschrieben.
+`prompt_versions`-Tabelle — die v1-Dateien werden nicht überschrieben. *(Stand damals.
+Seit 2026-09-08 gilt das Gegenteil, seit 2026-09-10 verschärft: die aktive Datei wird
+direkt angepasst, neue Versionsdateien gibt es nicht mehr — Regel 10/15.)*
 
 ### C.4 — Technischer Pre-Filter vor Phase 2
 
@@ -3060,7 +3062,8 @@ belegt, stand aber in keinem gültigen Dokument — dieser Eintrag schliesst die
   Kurs und Einschätzung, aber **ohne TP/SL** — die sind eine Handelsempfehlung, und
   genau die hat die Analyse dort nicht gegeben. Neue Spalte „Einschätzung": das
   `summary`-Feld liefert der v3-Prompt längst, es wurde nur nie gerendert (Prompts
-  blieben unangetastet, Regel 10).
+  blieben unangetastet, damalige Regel 10 — seit 2026-09-10 wären sie direkt angepasst
+  worden, Regel 15).
 
 **Tests:** 13 neue (5 Renderer, 5 in `test_main.py`, 3 für `load_news_summaries`).
 **900 Tests grün.**
@@ -3496,11 +3499,17 @@ offene Gold-/Öl-/Krypto-Position wäre künftig **nicht mehr** als
 Pflicht-Kandidat erkannt worden. Stiller Funktionsverlust, kein Absturz, vom
 Fork-Check gefunden. Jetzt `full_universe()`.
 
-⚠️ **Prompts bewusst unangetastet** (Regel 10: nie editiert, nur neu
+⚠️ **Prompts bewusst unangetastet** (damalige Regel 10: nie editiert, nur neu
 versioniert). Vier aktive Dateien (`commodities_crypto_v3.txt`,
 `policy_monitor_v1.txt`, `trend_analyzer_v1.txt`) nennen die alten Strings als
 Beispieltext — funktional folgenlos, das Modell echot den übergebenen Ticker,
 nicht den Prompt-Beispieltext.
+
+→ **Nachtrag 2026-09-10 (C.29):** Genau dieser Fall ist der Präzedenzfall für Regel 15
+(„Prompts gehören zu jeder Änderung"). Die alten Strings sind inzwischen raus:
+`trend_analyzer_v1` (Korbinian, 08.09.), `market_context_v1` (C.28, neu geschrieben),
+`commodities_crypto_v3` (C.29). `policy_monitor_v1` trägt dieselbe Korrektur als
+unkommittierte Änderung von Korbinian.
 
 **Tests:** alle Referenzen in acht Testdateien plus drei Fixture-JSONs auf die
 neuen Ticker umgestellt (reine Platzhalter, kein Verhalten geändert), zwei
@@ -3811,6 +3820,34 @@ Bezugsrahmen) sind noch nicht gegen die echte API gemessen — der nächste
 `pre_market`-Lauf zeigt es. Nachtrag `random/pipeline_walkthrough.ipynb`: die
 Phase-0b-Zelle bleibt unverändert gültig (Morgenpfad).
 
+### C.29 — Regel 15: Prompts gehören zu jeder Änderung; keine neuen Prompt-Versionen (2026-09-10)
+
+Entscheidung von Korbinian, ausgelöst durch den Befund aus C.25: die Ticker wurden im Code
+auf Capital.com-Epics umgestellt, die Prompts nannten `GC=F`/`BTC-USD` monatelang weiter,
+weil die damalige Regel 10 Prompt-Edits ausschloss. Zwei Konsequenzen:
+
+1. **Regel 15 (neu):** Jede Änderung an Code, Config, Schema, Spec, Cron oder Universum
+   zieht im selben Schritt eine Prüfung aller Dateien in `prompts/` nach sich — Ticker/Epics,
+   Uhrzeiten und Bezugsrahmen, Run-Type-Namen, JSON-Schlüssel, zitierte Schwellen,
+   Sektor-/Regime-Listen, Modellnamen, Sprache. Nicht auf Zuruf, sondern als Teil der
+   Definition of Done. Werkzeug: `grep -rn "<Bezeichner>" prompts/`; die
+   `*_pins_contract`-Tests fangen nur Parser-Schlüssel.
+2. **Regel 10 verschärft:** keine neuen `_vN.txt` mehr — die aktive Datei wird angepasst.
+
+Sätze, die Prompt-Änderungen ausschlossen, sind aus den maßgeblichen Dokumenten entfernt
+(CLAUDE.md, Regel 10, ARCHITECTURE); historische Einträge (C.3-Einleitung, C.19, C.25)
+tragen einen Hinweis auf die Regeländerung, statt umgeschrieben zu werden.
+
+**Sofort angewendet:** `commodities_crypto_v3.txt` nannte im Schema-Beispiel noch
+`'GC=F' or 'BTC-USD'` — jetzt `'GOLD' or 'BTCUSD'`. Kein Konsument liest den Beispieltext,
+aber genau solche Reste sollen ab jetzt nicht mehr liegen bleiben. Nicht angefasst:
+`quick_filter_v1.txt` („hold 1-3 trading days") — toter Code, das Modul wird nie aufgerufen.
+
+**Offen (Entscheidung Korbinian):** `test_deep_analysis_v1_untouched` und
+`test_commodities_crypto_v2_untouched` erzwingen die alte Regel und bewachen nur die vier
+Altlast-Dateien (`deep_analysis_v1`, `commodities_crypto_v1/v2`, `portfolio_check_v1`).
+Tests und Dateien sind Kandidaten zum Entfernen — nicht unaufgefordert gelöscht (Regel 8).
+
 ## Sprint 3D — Learning Modul
 
 ⚠️ **Noch nicht ausgearbeitet — braucht eine eigene Planungssession, bevor die Implementierung
@@ -4074,10 +4111,13 @@ nicht verloren gehen.**
 9. **Historische Plan-Dateien** — `docs/superpowers/plans/` enthält abgeschlossene Pläne mit
    `⚠️ HISTORISCH`-Banner. Diese Dateien nicht mehr bearbeiten; stattdessen neue Plan-Datei anlegen.
 
-10. **Prompt-Dateien dürfen überschrieben werden** — *(geändert 2026-09-08 auf Entscheidung
-    von Korbinian; vorher galt: alte Versionen **nie** editieren, nur neue `_vN.txt` anlegen)*.
-    Änderungen gehen direkt in die bestehende Datei. Eine neue Versionsdatei anzulegen bleibt
-    erlaubt, ist aber **nie Pflicht** — auch nicht bei inhaltlich großen Umbauten.
+10. **Prompt-Dateien werden direkt angepasst — keine neuen Versionen** — *(2026-09-08 auf
+    Entscheidung von Korbinian: überschreiben erlaubt, neue Version optional; **verschärft
+    2026-09-10: keine neuen `_vN.txt` mehr**; davor galt: alte Versionen nie editieren, nur
+    neue Datei anlegen)*. Änderungen gehen direkt in die bestehende, vom Modul geladene
+    Datei — auch bei inhaltlich großen Umbauten. Eine neue Versionsdatei anzulegen ist
+    **nicht mehr vorgesehen**; welche Datei ein Modul lädt, ändert sich nur noch, wenn ein
+    Prompt ganz neu entsteht.
 
     ⚠️ **Folge, die man kennen muss:** Das Version-Suffix (`_v1`, `_v2`, `_v3`) ist damit ein
     historischer Dateiname, keine Aussage mehr über den Inhalt. Womit eine konkrete Prediction
@@ -4095,9 +4135,10 @@ nicht verloren gehen.**
     (+ `quick_filter_v1`, toter Code). Nicht mehr geladen und seit dieser Regeländerung reine
     Altlast: `deep_analysis_v1`, `commodities_crypto_v1/v2`, `portfolio_check_v1`.
 
-    Ältere Abschnitte dieses Dokuments (u. a. C.15/C.16, P2.x, Sprint-3B-Einträge) begründen
-    Entscheidungen noch mit der alten Regel — sie beschreiben, was **damals** galt, und werden
-    nicht rückwirkend umgeschrieben.
+    Ältere Abschnitte dieses Dokuments (u. a. C.3-Einleitung, C.15/C.16, C.19, C.25, P2.x)
+    begründen Entscheidungen noch mit der alten Regel — sie beschreiben, was **damals** galt,
+    und tragen seit 2026-09-10 einen Hinweis auf die Regeländerung, statt umgeschrieben zu
+    werden.
 
 11. **`extract_json_blob()` für alle Claude-Antworten nutzen** — nie `json.loads(result.text)`
     daneben bauen. Parst mit `raw_decode` + `strict=False` (Trailing-Text **und** rohe
@@ -4114,6 +4155,20 @@ nicht verloren gehen.**
     werden bewusst erst in einem finalen Durchgang aktualisiert, wenn Sprint 3 abgeschlossen ist.
     Nicht unaufgefordert anfassen. `CLAUDE.md`, `PROJECT_STATUS.md` und `docs/ARCHITECTURE.md`
     dagegen immer aktuell halten.
+
+15. **Prompts gehören zu jeder Änderung** — *(seit 2026-09-10, Entscheidung von Korbinian)*.
+    Wer Code, Config, Schema, Spec, Zeitplan oder Universum ändert, prüft **im selben Schritt**
+    alle Dateien in `prompts/`, ob sie die Änderung mittragen müssen — nicht auf Zuruf, sondern
+    als fester Teil der Definition of Done, gleichrangig mit Tests und Doku.
+    Typische Treffer: Ticker-Symbole/Epics (C.25 stellte sie im Code um, die Prompts nannten
+    `GC=F`/`BTC-USD` monatelang weiter), Uhrzeiten und Bezugsrahmen (`pre_market` = 09:00 ET,
+    vor der Eröffnung), Run-Type-Namen, JSON-Schlüssel, die ein Parser liest, im Prompt zitierte
+    Schwellen und Konstanten (`strength >= 7`, VIX 20/25/35, `MAX_HOLD_DAYS` als `1-5d`),
+    Sektor-/Regime-Listen, Modellnamen, das handelbare Universum, Sprache der Ausgabe.
+    Vorgehen: `grep -rn "<geänderter Bezeichner>" prompts/` plus Lesen der betroffenen Datei —
+    die `*_pins_contract`-Tests fangen nur die Schlüssel, an denen Code hängt, nicht
+    Beispieltexte, Zahlen oder Formulierungen. Eine Änderung, die einen Prompt berührt, geht
+    direkt in die aktive Datei (Regel 10) und wird im Commit genannt.
 
 ---
 
