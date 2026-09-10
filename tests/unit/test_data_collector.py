@@ -1535,6 +1535,20 @@ def test_fetch_missing_fundamentals_fetches_and_persists_cache_misses(in_memory_
     assert row["sector"] == "Technology"
 
 
+def test_fetch_missing_fundamentals_never_asks_finnhub_for_commodities_or_crypto(in_memory_db):
+    """C.35: Phase 2b ist der zweite Schreiber von fundamentals_cache -- dieselbe
+    Sperre wie im Wochenjob, sonst kommt Gold.com Inc ueber die Hintertuer."""
+    from src import db
+    init_schema(in_memory_db)
+    ep = MagicMock()
+    ep.get_fundamentals.return_value = {"pe_ratio": 16.7, "sector": "Distributors"}
+
+    fetch_missing_fundamentals(["GOLD", "BTCUSD", "AAPL"], ep, in_memory_db, date="2026-09-10")
+
+    ep.get_fundamentals.assert_called_once_with("AAPL")
+    assert db.get_cached_fundamentals(in_memory_db, "GOLD", today="2026-09-10") is None
+
+
 def test_fetch_missing_fundamentals_skips_tickers_already_cached(in_memory_db):
     """Ein Cache-Hit braucht keinen Finnhub-Call -- sonst waere die Funktion
     selbst die Kostenquelle, die Task 7 aus Phase 1 herausloest."""
@@ -1670,6 +1684,34 @@ def test_fetch_missing_fundamentals_does_not_override_a_freshly_fetched_earnings
     row = in_memory_db.execute(
         "SELECT * FROM fundamentals_cache WHERE ticker='AAPL'").fetchone()
     assert row["earnings_next_date"] == "2026-09-15"
+
+
+def test_process_ticker_ignores_a_stock_fundamentals_row_for_a_commodity(in_memory_db):
+    """C.35, Gurt und Hosentraeger: selbst wenn eine Gold.com-Zeile im Cache
+    liegt (Altbestand in db-latest), darf das td fuer den Rohstoff GOLD keine
+    Aktienfelder tragen und kein Sub-Sektor-Mapping entstehen."""
+    from src import db
+    init_schema(in_memory_db)
+    df = _df_monotonic_up(250)
+    _seed_price_history(in_memory_db, "GOLD", df)
+    _seed_fundamentals_cache(in_memory_db, "GOLD", fetched_date="2026-05-19",
+                             sector="Distributors", earnings_next_date="2026-07-13",
+                             pe_ratio=16.7, market_cap_b=1.43)
+
+    out = _process_ticker(
+        ticker="GOLD", price_provider=_good_provider(df), earnings_provider=_earnings_provider(),
+        conn=in_memory_db, date="2026-05-19", run_type="pre_market",
+        premarket_price=float(df["Close"].iloc[-1]),
+    )
+
+    assert out is not None
+    td, _ = out
+    assert td["pe_ratio"] is None
+    assert td["market_cap_b"] is None
+    assert td["sector"] == "Unknown"
+    assert td["earnings_in_days"] is None
+    assert td["data_quality"] == "medium"
+    assert db.get_ticker_sector(in_memory_db, "GOLD") is None
 
 
 def test_fetch_missing_fundamentals_not_wired_into_process_ticker(in_memory_db):

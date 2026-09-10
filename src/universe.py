@@ -63,3 +63,12 @@ def thin_history_tickers(conn) -> list[str]:
         ).fetchall()
     }
     return [t for t in full_universe() if counts.get(t, 0) < MIN_BARS_RSI]
+
+
+def is_commodity_or_crypto(ticker: str) -> bool:
+    """True fuer die festen Rohstoff-/Krypto-Epics (config.COMMODITY_TICKERS,
+    config.CRYPTO_TICKERS) -- die EINE Frage, die vier Stellen stellen: Gate-
+    Ausnahme (Phase 1a), Cache-Lesung (Phase 1), Nachladen (Phase 2b) und der
+    Wochenjob. Finnhub kennt keine Rohstoffe, loest aber `GOLD` als die Aktie
+    Gold.com Inc auf (C.35) -- deshalb bekommen diese Klassen nie Fundamentals."""
+    return ticker in config.COMMODITY_TICKERS or ticker in config.CRYPTO_TICKERS

@@ -4194,6 +4194,38 @@ etwaigen `ticker_sectors`-Eintrags in `db-latest`.
 2,07 ohne Sonntag. Auffällig: der 07.09. (Montag) mit 1,10 % ist ebenfalls dünn — ob Capital.com
 die Montagsbar an der UTC-Grenze ebenfalls anschneidet, wäre der nächste Prüfpunkt.
 
+### C.35 — Rohstoffe/Krypto bekommen keine Fundamentals mehr: Finnhub-Kollision `GOLD` = Gold.com Inc behoben (2026-09-10)
+
+Fix zu F13 aus dem Phase-1b-Walkthrough (C.34 Nachtrag), Entscheidung von Korbinian („ja
+fixe"). Vier Stellen, eine Frage: `universe.is_commodity_or_crypto(ticker)` (neu in
+`src/universe.py`, der einen Ticker-Quelle) — Gate-Ausnahme (1a, vorher lokales
+`exempt`-Set), Cache-Lesung (1), Nachladen (2b), Wochenjob.
+
+**Änderungen (TDD, fünf neue Tests, alle rot zuerst):**
+- `_update_weekly_fundamentals()` überspringt Rohstoffe/Krypto **und** ruft vorher
+  `db.purge_non_equity_fundamentals()` (neu): löscht `fundamentals_cache`- und
+  `ticker_sectors`-Zeilen dieser Ticker, idempotent, WARNING bei Treffern. Damit heilt
+  `db-latest` am nächsten Sonntag von selbst — kein Hand-SQL, keine Migration.
+- `fetch_missing_fundamentals()` (Phase 2b, der zweite Schreiber) überspringt sie ebenso.
+- `_process_ticker()` liest für sie keinen Cache (Gurt und Hosenträger gegen Altbestand):
+  `td` trägt `pe_ratio`/`market_cap_b`/`earnings_in_days` = None, `sector` = Unknown,
+  `data_quality` = medium; `_map_sector()` bekommt None und legt kein Retail-Mapping an.
+- Bestehender Test `test_covers_the_full_universe_by_default` pinnte „alle Ticker werden
+  abgefragt" (inkl. GOLD) — auf „alle **Aktien**" gezogen.
+
+**Nicht geändert:** `commodities_crypto_v3` (Regel-15-Sweep: kein Prompt erwartet
+Fundamentals für Rohstoffe; die Dimension `valuation` ist dort als Makro-Linse definiert).
+F12 (immer `medium`/`Unknown`) bleibt als eigener Befund offen — dieser Fix macht das
+Verhalten nur konsistent, nicht sinnvoller.
+
+**Walkthrough:** `random/pipeline_walkthrough.ipynb` hat nach der 1b-Zelle zwei neue
+Zellen (Rohstoff-`td` + Sidecar), analog zu Phase 1 — die Felder oben sind damit im
+Notebook sichtbar.
+
+**Tests:** 997 grün, 15 übersprungen, Coverage 92,83 %. Nicht live gemessen; Beobachtungsposten: erster
+Sonntagsjob nach dem Deploy sollte im Log `Altbestand-Zeile(n) ... entfernt (C.35)` zeigen,
+falls `db-latest` die Gold.com-Zeile trägt.
+
 ## Sprint 3D — Learning Modul
 
 ⚠️ **Noch nicht ausgearbeitet — braucht eine eigene Planungssession, bevor die Implementierung

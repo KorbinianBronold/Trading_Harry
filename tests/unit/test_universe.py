@@ -158,3 +158,15 @@ def test_thin_history_counts_a_ticker_without_any_bars(tmp_db_path, mocker):
     conn = db.connect(str(tmp_db_path)); db.init_schema(conn)
     assert thin_history_tickers(conn) == ["GHOST"]
     conn.close()
+
+
+def test_is_commodity_or_crypto_knows_the_seven_fixed_assets():
+    """C.35: die EINE Frage, die Gate (1a), Cache-Lesung (1), Nachladen (2b) und
+    Wochenjob stellen -- Finnhub kennt keine Rohstoffe und loest GOLD als die
+    Aktie Gold.com Inc auf."""
+    from src.universe import is_commodity_or_crypto
+    assert is_commodity_or_crypto("GOLD")
+    assert is_commodity_or_crypto("OIL_BRENT")
+    assert is_commodity_or_crypto("BTCUSD")
+    assert not is_commodity_or_crypto("AAPL")
+    assert not is_commodity_or_crypto("XLK")      # Sektor-ETF ist keine der beiden Klassen

@@ -28,7 +28,7 @@ from src.market_context import (fetch_market_context, vix_only_context,
 from src.portfolio_check import check_open_positions
 from src.ranking import rank_and_persist
 from src.evaluator import evaluate_open_predictions
-from src.universe import full_universe, stock_universe, thin_history_tickers
+from src.universe import full_universe, stock_universe, thin_history_tickers, is_commodity_or_crypto
 from src import signal_checks
 from src.revalidation import revalidate_one, RevalidationError
 from src.email_sender import (
@@ -1249,9 +1249,27 @@ def _update_weekly_fundamentals(
 
     Nicht fatal: ein API-Fehler bei einem Ticker (oder ein leeres Ergebnis --
     get_fundamentals() faengt eigene Fehler intern ab und liefert dann {})
-    ueberspringt nur diesen, der Lauf macht mit den uebrigen weiter."""
+    ueberspringt nur diesen, der Lauf macht mit den uebrigen weiter.
+
+    Rohstoffe/Krypto (universe.is_commodity_or_crypto) werden uebersprungen und
+    ihre etwaigen Altbestand-Zeilen entfernt (C.35, s. u.)."""
+    tickers = list(universe if universe is not None else full_universe())
+    # C.35: Rohstoffe/Krypto bekommen keinen Finnhub-Call -- Finnhub kennt keine
+    # Rohstoffe und loest GOLD als die Aktie Gold.com Inc auf (PE, Market Cap,
+    # Earnings einer Aktie landeten in der Zeile des Rohstoffs und ungefiltert
+    # im Phase-3b-Prompt). Altbestand wird hier bei jedem Lauf weggeraeumt,
+    # damit db-latest ohne Hand-SQL heilt.
+    non_equity = [t for t in tickers if is_commodity_or_crypto(t)]
+    purged = db.purge_non_equity_fundamentals(conn, non_equity)
+    if purged:
+        log.warning(
+            f"Weekly fundamentals pre-run: {purged} Altbestand-Zeile(n) fuer "
+            f"Rohstoffe/Krypto entfernt (C.35)"
+        )
     updated = skipped = failed = 0
-    for ticker in universe if universe is not None else full_universe():
+    for ticker in tickers:
+        if is_commodity_or_crypto(ticker):
+            continue
         cached = db.get_cached_fundamentals(conn, ticker, today=date)
         if cached is not None and cached.get("earnings_next_date"):
             skipped += 1

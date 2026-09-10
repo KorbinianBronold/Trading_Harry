@@ -1590,6 +1590,28 @@ def get_cached_fundamentals(
     return dict(row) if row else None
 
 
+def purge_non_equity_fundamentals(conn: sqlite3.Connection, tickers: list[str]) -> int:
+    """Loescht fundamentals_cache- und ticker_sectors-Zeilen der genannten
+    Rohstoff-/Krypto-Ticker und gibt die Zahl geloeschter Zeilen zurueck (C.35).
+
+    Finnhub kennt keine Rohstoffe, loest aber GOLD als die Aktie Gold.com Inc
+    auf; der Wochenjob schrieb deren Kennzahlen in die Zeile des Rohstoffs, und
+    _map_sector() ordnete Gold ueber 'Distributors' dem Sub-Sektor Retail zu.
+    Der Wochenjob ruft dies bei jedem Lauf -- Altbestand in db-latest heilt so
+    am naechsten Sonntag ohne Hand-SQL. Idempotent."""
+    if not tickers:
+        return 0
+    marks = ",".join("?" * len(tickers))
+    n = conn.execute(
+        f"DELETE FROM fundamentals_cache WHERE ticker IN ({marks})", list(tickers)
+    ).rowcount
+    n += conn.execute(
+        f"DELETE FROM ticker_sectors WHERE ticker IN ({marks})", list(tickers)
+    ).rowcount
+    conn.commit()
+    return n
+
+
 def save_fundamentals_cache(
     conn: sqlite3.Connection,
     ticker: str,

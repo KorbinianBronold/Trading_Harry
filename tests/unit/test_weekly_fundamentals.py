@@ -126,9 +126,10 @@ def test_an_empty_fundamentals_response_is_not_persisted(in_memory_db):
 
 def test_covers_the_full_universe_by_default(in_memory_db, mocker):
     """Ohne explizites universe-Argument laeuft der Vorlauf ueber
-    full_universe() -- die eine Quelle des Ticker-Universums."""
+    full_universe() -- die eine Quelle des Ticker-Universums. Seit C.35 nur
+    noch die Aktien darin: GOLD ist ein Rohstoff und bekommt keinen Call."""
     db.init_schema(in_memory_db)
-    mocker.patch("main.full_universe", return_value=["AAPL", "GOLD"])
+    mocker.patch("main.full_universe", return_value=["AAPL", "MSFT", "GOLD"])
     provider = MagicMock()
     provider.get_fundamentals.return_value = _fundamentals()
     provider.get_earnings_calendar.return_value = {"days_to_next": None, "last_beat_pct": None}
@@ -136,3 +137,49 @@ def test_covers_the_full_universe_by_default(in_memory_db, mocker):
     _update_weekly_fundamentals(in_memory_db, date="2026-08-15", provider=provider)
 
     assert provider.get_fundamentals.call_count == 2
+    assert {c.args[0] for c in provider.get_fundamentals.call_args_list} == {"AAPL", "MSFT"}
+
+
+# ---------- C.35: Rohstoffe/Krypto bekommen keine Fundamentals ----------
+
+
+def test_skips_commodities_and_crypto(in_memory_db):
+    """C.35 (Phase-1b-Walkthrough): Finnhub loest GOLD als Gold.com Inc (NYSE)
+    auf; der Wochenjob schrieb deren PE/Market Cap/Earnings in die Cache-Zeile
+    des ROHSTOFFS, Phase 3b gab sie ungefiltert an Claude. Rohstoffe und Krypto
+    bekommen keinen Finnhub-Call und keine Zeile."""
+    db.init_schema(in_memory_db)
+    provider = MagicMock()
+    provider.get_fundamentals.return_value = _fundamentals(
+        pe_ratio=16.7, market_cap_b=1.43, sector="Distributors")
+    provider.get_earnings_calendar.return_value = {"days_to_next": 55, "last_beat_pct": None}
+
+    _update_weekly_fundamentals(in_memory_db, date="2026-09-13", provider=provider,
+                                universe=["AAPL", "GOLD", "BTCUSD"])
+
+    provider.get_fundamentals.assert_called_once_with("AAPL")
+    rows = {r["ticker"] for r in in_memory_db.execute("SELECT ticker FROM fundamentals_cache")}
+    assert rows == {"AAPL"}
+
+
+def test_purges_stale_non_equity_rows(in_memory_db):
+    """Selbstheilung fuer db-latest: eine bereits geschriebene Gold.com-Zeile
+    (und ihre Retail-Sektorzuordnung) verschwindet beim naechsten Sonntagsjob,
+    ohne Hand-SQL."""
+    db.init_schema(in_memory_db)
+    db.save_fundamentals_cache(in_memory_db, "GOLD",
+                               {"pe_ratio": 16.7, "sector": "Distributors",
+                                "earnings_next_date": "2026-11-04"},
+                               fetched_date="2026-09-06")
+    sector_id = db.resolve_sector_id(in_memory_db, "Distributors")
+    assert sector_id is not None                      # Vorbedingung: Alias -> Retail
+    db.upsert_ticker_sector(in_memory_db, "GOLD", sector_id)
+    provider = MagicMock()
+
+    _update_weekly_fundamentals(in_memory_db, date="2026-09-13", provider=provider,
+                                universe=["GOLD"])
+
+    provider.get_fundamentals.assert_not_called()
+    assert in_memory_db.execute(
+        "SELECT COUNT(*) FROM fundamentals_cache WHERE ticker='GOLD'").fetchone()[0] == 0
+    assert db.get_ticker_sector(in_memory_db, "GOLD") is None

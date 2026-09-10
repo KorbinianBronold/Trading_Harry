@@ -153,6 +153,9 @@ Kurzform zum Erkennen einer drohenden Verletzung; Begründung und Randfälle in
   instanziiert). Finnhub nur Fundamentals (7-Tage-Cache, 60 Requests/min gedrosselt).
 - Phase 1 ist Finnhub-frei; Cache-Miss lädt **Phase 2b** nach (nur Kandidaten) **und**
   spiegelt in die `td`-Dicts zurück. → C.7 / C.8
+- Rohstoffe/Krypto bekommen **nie** Fundamentals (`universe.is_commodity_or_crypto`):
+  Finnhub löst `GOLD` als Aktie Gold.com Inc auf. Wochenjob und Phase 2b überspringen sie,
+  Phase 1 liest für sie keinen Cache, der Wochenjob räumt Altbestand weg. → C.35
 - Kurs-Sweep: Sammelabruf `/markets?epics=` in 20er-Chunks, dreistufige 429-Notbremse.
   Fehlender Live-Kurs = **kein** Skip (Fallback letzter finaler Close, WARNING). → P2.2
 - Capital.com: `to` nie in der Zukunft (HTTP 400, `_not_in_future()`). Tages-Bar-`open`

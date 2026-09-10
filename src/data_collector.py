@@ -49,6 +49,7 @@ GAP_SCAN_BARS = 220
 
 from src.providers.base import DataProvider
 from src import db, technical_signal
+from src.universe import is_commodity_or_crypto
 import config
 
 # Die Batch-Pause in collect() zaehlt Capital.com-CALLS, nicht Ticker (F8,
@@ -469,7 +470,16 @@ def _process_ticker(
     # verschiebt aber 'high' auf 'medium', weil pe_ratio/market_cap_b/sector zu
     # den peripheral-Feldern zaehlen. Genau diese Einstufung holt Phase 2b nach,
     # sobald die Fundamentals da sind (Spec 18.1f).
-    fundamentals = db.get_cached_fundamentals(conn, ticker, today=date) or {}
+    #
+    # C.35: Rohstoffe/Krypto lesen den Cache NICHT. Finnhub kennt keine Rohstoffe
+    # und loest GOLD als die Aktie Gold.com Inc auf -- eine solche Zeile
+    # (Altbestand in db-latest) darf das td nicht mit PE/Market Cap/Earnings
+    # einer Aktie fuellen und kein Sub-Sektor-Mapping (Distributors -> Retail)
+    # ausloesen. Der Wochenjob raeumt solche Zeilen zusaetzlich weg.
+    if is_commodity_or_crypto(ticker):
+        fundamentals: dict = {}
+    else:
+        fundamentals = db.get_cached_fundamentals(conn, ticker, today=date) or {}
 
     _apply_fundamentals_to_td(td, fundamentals, date)
     _map_sector(conn, ticker, fundamentals.get("sector"))
@@ -513,11 +523,10 @@ def _gate_phase(tickers: list[str], conn, date: str) -> list[str]:
     sie bleiben trotz inaktivem Status Survivors, nur mit WARNING statt dem
     harten Rauswurf -- das Universum ist hier so klein, dass ein dauerhaft
     fehlender Rohstoff-/Krypto-Wert schwerer wiegt als bei 500 Aktien."""
-    exempt = set(config.COMMODITY_TICKERS) | set(config.CRYPTO_TICKERS)
     survivors: list[str] = []
     for t in tickers:
         if db.is_ticker_inactive(conn, t, today=date):
-            if t in exempt:
+            if is_commodity_or_crypto(t):
                 log.warning(
                     f"{t}: inaktiv, aber Rohstoff/Krypto-Ausnahme (Spec 6.1) — "
                     f"bleibt Survivor"
@@ -679,6 +688,10 @@ def fetch_missing_fundamentals(
     ein bereits vorhandenes earnings_next_date unten TTL-los nachgelesen und
     in `raw` uebernommen, bevor geschrieben wird."""
     for t in tickers:
+        if is_commodity_or_crypto(t):
+            # C.35: Finnhub kennt keine Rohstoffe (GOLD = Gold.com Inc). Dieselbe
+            # Sperre wie im Wochenjob -- Phase 2b ist der zweite Schreiber.
+            continue
         if db.get_cached_fundamentals(conn, t, today=date) is not None:
             continue
         try:
