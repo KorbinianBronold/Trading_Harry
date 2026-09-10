@@ -4143,6 +4143,57 @@ README nennt `OIL_CRUDE` weiter (Finaldurchgang).
   Monate), SMA200 = 200 Kalendertage. Konsistent innerhalb der Asset-Klasse, nur beim
   Vergleich mit Aktien-Schwellen zu bedenken. Nur notiert.
 
+- **F16 — Phase 3b bekommt kein Technik-Signal.** Der 1b-Sidecar (`tech_direction`,
+  `tech_strength`, `premarket_change_pct`) fließt nur über `_signal_context()` in die
+  Persistierung (`main.py`), nie in den `commodities_crypto_v3`-Prompt — Phase 3 (Aktien)
+  sieht `technical_signal {direction, strength}` aus dem Cutoff, Phase 3b nicht. Asymmetrie,
+  fachlich diskussionswürdig (im Walkthrough: Brent 3/3 long, Stärke 3 — Claude erfährt es
+  nicht). Nur notiert.
+
+#### Nachtrag — Walkthrough-Lauf Phase 1b (2026-09-10, `random/pipeline_walkthrough.ipynb`, Zelle 34)
+
+Die 1b-Zelle spiegelt `main.py` eins zu eins (gefiltertes `build_commodity_crypto_inputs()`,
+`collect()`, `asset_class`-Annotation, Skips aus der DB). Zeigt im Gegensatz zu Phase 1
+(Zellen 29–32) kein `td`/Sidecar an — Vorschlag: eine Anzeige-Zelle wie dort ergänzen, sonst
+bleiben die Befunde unten unsichtbar. Lauf hier gegen eine Wegwerf-Kopie mit Live-Provider,
+alle 7 Assets, 0 Skips; Gap-Fill holte 8–20 Bars je Asset nach (Kopie war veraltet).
+
+| Asset | Kurs | RSI | MACD | ATR % | Range % | data_quality | sector | Signal |
+|---|---|---|---|---|---|---|---|---|
+| GOLD | 4364 | 48.7 | bearish | 2.05 | 1.74 | **high** | **Distributors** | neutral |
+| SILVER | 64.5 | 55.4 | bearish | 3.25 | 2.62 | medium | Unknown | neutral (weak) |
+| OIL_BRENT | 102.7 | 71.9 | bullish | 3.05 | 2.46 | medium | Unknown | long 3/3, Stärke 3 |
+| BTCUSD | 76999 | 59.5 | bearish | 2.83 | 1.92 | medium | Unknown | neutral (strong) |
+| ETHUSD | 2433 | 61.0 | bearish | 3.63 | 2.60 | medium | Unknown | neutral (strong) |
+| SOLUSD | 99.4 | 58.4 | bearish | 4.56 | 3.63 | medium | Unknown | neutral (strong) |
+| XRPUSD | 1.36 | 57.5 | bearish | 5.19 | 3.65 | medium | Unknown | neutral (strong) |
+
+**F13 verschärft — Finnhub-Ticker-Kollision, echter Datenfehler.** Finnhub löst `GOLD` als
+**Gold.com Inc** (NYSE, `finnhubIndustry` „Distributors") auf: `company_profile2("GOLD")`
+liefert PE 16.7, Market Cap 1,43 Mrd., Konsens „buy", Earnings 2026-11-04. Der Wochenjob
+(`_update_weekly_fundamentals`, `full_universe()`) schreibt das in die `fundamentals_cache`-
+Zeile des **Rohstoffs**; `_process_ticker()` liest es (Cache-Hit), das `td` für Gold trägt
+dann `data_quality: high`, `sector: Distributors`, `earnings_in_days: 55`, `pe_ratio 16.72`;
+Phase 3b gibt `td` per `json.dumps` **ungefiltert** an Claude. Zweite Folge:
+`_map_sector("GOLD", "Distributors")` → `SECTOR_ALIASES` „Distributors" = **Retail** →
+`ticker_sectors` — Gold liefe als Retail-Position in Sektor-Momentum- und Cluster-Check
+(Phase 4a). `SILVER`, `BTCUSD`, `OIL_BRENT` lösen bei Finnhub zu nichts auf (Zeilen aus
+`None`, nur nutzlos). **Prod-Status unklar:** in der Kopie vom 04.08. war die GOLD-Zeile leer;
+seither liefen Sonntagsjobs. Prüfen in `db-latest`:
+`SELECT fetched_date, pe_ratio, sector, earnings_next_date FROM fundamentals_cache WHERE ticker='GOLD';`
+sowie `SELECT * FROM ticker_sectors WHERE ticker='GOLD';`. **Lokale DB:** die Zeile hatte
+**mein** Fundamentals-Reload von heute geschrieben; aus dem Backup zurückgesetzt (leer, Stand
+04.08.), kein `ticker_sectors`-Eintrag entstanden. Fix-Kandidaten (Entscheidung Korbinian):
+`COMMODITY_TICKERS`/`CRYPTO_TICKERS` in `_update_weekly_fundamentals` **und**
+`fetch_missing_fundamentals` überspringen; zusätzlich `_process_ticker` für diese Klassen
+ohne Cache-Lesung (Gurt und Hosenträger); einmalige Bereinigung der GOLD-Zeile und eines
+etwaigen `ticker_sectors`-Eintrags in `db-latest`.
+
+**F11 live gemessen:** Golds letzte fünf Bars am 10.09. = 04.09. (2,83 %), **06.09. So
+(0,40 %)**, 07.09. (1,10 %), 08.09. (2,24 %), 09.09. (2,12 %) → `intraday_range_pct` 1,73 mit,
+2,07 ohne Sonntag. Auffällig: der 07.09. (Montag) mit 1,10 % ist ebenfalls dünn — ob Capital.com
+die Montagsbar an der UTC-Grenze ebenfalls anschneidet, wäre der nächste Prüfpunkt.
+
 ## Sprint 3D — Learning Modul
 
 ⚠️ **Noch nicht ausgearbeitet — braucht eine eigene Planungssession, bevor die Implementierung
