@@ -149,7 +149,7 @@ def sample_ticker_data() -> dict:
         "price_change_3m": 12.3,
         "rsi_14": 58.4,
         "rsi_trend": "rising",
-        "macd_signal": "bullish_cross",
+        "macd_signal": "bullish",
         "atr_pct": 1.8,
         "bb_position": 0.62,
         "above_sma20": 2.1,

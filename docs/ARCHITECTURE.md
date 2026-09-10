@@ -416,8 +416,12 @@ Richtung (`long`/`short`/`neutral`) und zählbare Stärke (0–4) aus drei absti
 Teilindikatoren — RSI als Momentum (nicht Mean-Reversion), MACD über das
 Histogramm-Vorzeichen (nicht die Kreuzung), SMA-Trend (Kurs > SMA50 **und** Kurs >
 SMA200 — zwei unabhängige Kurs-zu-SMA-Distanzen, **kein** Vergleich von SMA50 gegen
-SMA200, also kein Golden-/Death-Cross-Signal). ADX moduliert die Stärke (`weak` → 1,
-`strong` → Bonus +1), **filtert aber nie die Richtung**. Deterministisch, kein
+SMA200, also kein Golden-/Death-Cross-Signal). ADX moduliert die Stärke (`weak` → eine
+Stimme weniger, Boden 1; `strong` → +1, Deckel 4 — seit C.33, davor `weak` → fix 1),
+**filtert aber nie die Richtung**. Das Label `td["macd_signal"]` aus Phase 1
+(`compute_macd_signal()`) liest seit C.33 dieselben Rohwerte mit demselben Vergleich:
+`bullish` / `bearish` / `neutral` statt der früheren Kreuzungs-Labels — eine MACD-Wahrheit
+je Ticker. Deterministisch, kein
 Claude-Call, keine DB, kein Netz — eine reine Funktion über das Phase-1-Snapshot-Dict,
 deshalb tabellengetrieben ohne Mocking testbar.
 

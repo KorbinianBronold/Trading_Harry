@@ -146,7 +146,7 @@ def test_process_ticker_returns_full_ticker_data(in_memory_db):
     assert out["ticker"] == "AAPL"
     assert out["price"] > 0
     assert out["rsi_14"] is not None
-    assert out["macd_signal"] in {"bullish_cross", "bearish_cross", "neutral"}
+    assert out["macd_signal"] in {"bullish", "bearish", "neutral"}
     assert out["atr_pct"] is not None
     assert out["sector"] == "Technology"
     assert out["earnings_in_days"] == 14

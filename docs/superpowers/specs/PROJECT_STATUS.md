@@ -3990,7 +3990,7 @@ betroffen.
 der Änderung: ohne Lücke kein `time.sleep`; 31 Survivors mit 29 Calls keine Pause.
 
 **Offen aus dem Phase-1-Review (Entscheidung Korbinian):**
-- **F1** `technical_signal.compute()`: bei `adx_band == "weak"` (ADX ≤ `ADX_WEAK_BELOW`)
+- **F1** *(entschieden → C.33)* `technical_signal.compute()`: bei `adx_band == "weak"` (ADX ≤ `ADX_WEAK_BELOW`)
   wird `strength` fix auf 1 gesetzt, auch bei 3/3-Einigkeit. `cutoff_candidates()`
   verlangt `tech_strength >= TECH_MIN_FOR_DEEP` (= 2). In Seitwärtsregimen ist der
   technische Weg nach Phase 3 damit für **jeden** Ticker zu — nur News
@@ -3998,7 +3998,7 @@ der Änderung: ohne Lücke kein `time.sleep`; 31 Survivors mit 29 Calls keine Pa
   Stärke, nie die Richtung" gilt isoliert; in Kombination mit dem Cutoff filtert ADX den
   Ticker. Optionen: `weak` → `agreement − 1` statt fix 1; oder `TECH_MIN_FOR_DEEP`
   senken — welche Variante besser predictet, ist eine 3D-Messfrage.
-- **F2** `td["macd_signal"]` (`compute_macd_signal`) meldet nur eine Kreuzung in den
+- **F2** *(entschieden → C.33)* `td["macd_signal"]` (`compute_macd_signal`) meldet nur eine Kreuzung in den
   letzten zwei Bars und steht deshalb in ~87 % der `technical_indicators`-Zeilen auf
   `neutral`. Claude sieht dieses Feld in `td`, während `technical_signal._vote_macd()`
   das Histogramm-Vorzeichen nutzt — zwei MACD-Wahrheiten je Ticker. Vorschlag: gleicher
@@ -4020,6 +4020,55 @@ der Änderung: ohne Lücke kein `time.sleep`; 31 Survivors mit 29 Calls keine Pa
   keinen Marker dafür. Bei den Prompt-Reviews von Phase 2/3 prüfen, ob die Feldbedeutung
   erklärt ist.
 - **F10** `bb_position` ist auf 0..1 gekappt — ein Ausbruch liest sich wie eine Berührung.
+
+### C.33 — Phase-1-Review, Entscheidungen F1/F2: ADX-Band kostet eine Stimme, `macd_signal` trägt das Histogramm-Vorzeichen (2026-09-10)
+
+Beide Befunde aus C.32, Entscheidung von Korbinian (je Option 1). Beide Änderungen per
+TDD (rote Tests zuerst), beide klein, beide ändern das Verhalten des Trichters bzw. das,
+was Claude in Phase 3/3b/4a sieht.
+
+**F1 — `weak` deckelt nicht mehr fix auf 1, sondern kostet eine Stimme.**
+`technical_signal.compute()`: `strength = max(1, agreement − 1)` bei ADX ≤ 20, symmetrisch
+zu `strong` (+1, Deckel 4). 3/3 ohne Trend = 2 und erreicht `TECH_MIN_FOR_DEEP` (= 2);
+2/3 ohne Trend = 1 und bleibt draußen — ohne Trend verlangt der technische Weg
+Einstimmigkeit. Skala 0–4, Schwelle, Sidecar-Schlüssel und Prompts unverändert.
+Folgen: (1) in Seitwärtsphasen kommen 3/3-Ticker wieder über den technischen Weg nach
+Phase 3, Kosten gedeckelt durch `MAX_DEEP_ANALYSIS = 50` und die Sortierung News →
+|Vorbörse| → Technik; (2) `rank_score = analysis_strength × tech_strength` verdoppelt
+sich für genau diese Ticker in Phase 4. **Vergleichbarkeit:** `predictions.tech_strength`
+/ `rank_score` und `cutoff_log.tech_strength` vor dem 10.09. wurden mit dem fixen Deckel
+berechnet; 3D unterscheidet per Datum oder rechnet aus `tech_agreement` + `tech_adx_band`
+neu (beide persistiert). §6.2 und ARCHITECTURE nachgezogen; CLAUDE.md-Kurzform („ADX
+moduliert die Stärke, nie die Richtung") bleibt wahr.
+
+**F2 — `macd_signal` = Vorzeichen des Histogramms, drei Werte.** `compute_macd_signal()`
+liest jetzt `compute_macd_raw()` mit demselben Vergleich wie
+`technical_signal._vote_macd()`: `bullish` (Linie > Signal), `bearish` (<), `neutral`
+(Gleichstand oder zu wenig Historie). Die Kreuzung der letzten zwei Bars
+(`bullish_cross`/`bearish_cross`) entfällt als Information — bewusst (Option 1, nicht die
+Fünf-Werte-Variante). Eine MACD-Wahrheit je Ticker; ein Test pinnt, dass Label und
+Abstimmung auf derselben Reihe übereinstimmen. **Die Spalte
+`technical_indicators.macd_signal` wechselt ab 2026-09-10 die Bedeutung** — keine
+Migration, `macd_hist` liegt seit 3C roh daneben und ist datumsübergreifend die
+verlässliche Quelle. Test-Fixtures (`conftest`, `test_db`, `test_broad_scan`,
+`test_portfolio_check`) von `bullish_cross` auf `bullish` umgestellt;
+`tests/fixtures/mock_quick_filter_response.json` nennt `MACD bullish_cross` weiter —
+toter Code (`quick_filter`), nicht angefasst.
+
+**Regel-15-Sweep:** kein Prompt zitiert die Stärkeskala des Technik-Signals, die
+ADX-Bänder oder die MACD-Labels (`deep_analysis_v2` sagt nur „technical readings are
+facts, computed elsewhere"; das „strength 1-10" in `trend_analyzer_v1` ist dessen eigene
+Skala). Nichts zu ändern.
+
+**Tests:** 992 grün, 15 übersprungen, Coverage 92,79 %. Sechs neue Tests (F1: 3/3-weak →
+2, 2/3-weak → 1; F2: bullish- und bearish-Zustand lange nach der Kreuzung, flache Reihe
+neutral, Label = Abstimmung), drei bestehende F1-Tests auf die neue Regel gezogen (mit
+Docstring), zwei Label-Mengen angepasst.
+
+**Offen:** nicht gegen die echte API gemessen. Beobachtungsposten für den nächsten
+Produktivlauf: Zahl der Kandidaten, die **nur** über den technischen Weg qualifizieren
+(`cutoff_log`: `news_strength = 0`, `tech_strength >= 2`, `forced = 0`), und ob die
+Sortierung sie hinter News- und Vorbörsen-Kandidaten einreiht.
 
 ## Sprint 3D — Learning Modul
 
@@ -4375,12 +4424,18 @@ bewusst schlankerem Fehlerpfad (einmal wiederholen, **kein** Halbieren).
 
 Das technische Signal ist **deterministisch im Code** (`src/technical_signal.py`),
 kein Claude-Call. Drei Teilindikatoren stimmen ab; ADX **moduliert die Stärke**
-(weak deckelt auf 1, strong gibt +1), **filtert aber nie die Richtung**. Die drei
-Ablesungen sind bewusst so gewählt — welche besser predictet, misst Sprint 3D:
+(weak nimmt eine Stimme, Boden 1; strong gibt +1, Deckel 4 — seit C.33, davor deckelte
+weak fix auf 1), **filtert aber nie die Richtung**. Die drei Ablesungen sind bewusst so
+gewählt — welche besser predictet, misst Sprint 3D:
 
 - RSI als **Momentum** (nicht als Überkauft/Überverkauft-Schwelle)
 - MACD über das **Histogramm** (nicht über die Signallinien-Kreuzung)
 - Kurs über SMA50 **und** über SMA200 — **keine** SMA50-vs-SMA200-Kreuzung
+
+`td["macd_signal"]` — das Label, das Claude in Phase 3/3b/4a sieht — trägt seit C.33
+dasselbe Histogramm-Vorzeichen (`bullish` / `bearish` / `neutral`): eine MACD-Wahrheit je
+Ticker. Davor meldete es nur die Kreuzung der letzten zwei Bars und stand an ~87 % der
+Tage auf `neutral`.
 
 `technical_indicators` trägt 17 Indikatoren, von denen zunächst nur vier etwas
 steuern; der Rest läuft mit, damit 3D Historie hat statt bei null zu beginnen (C.6).

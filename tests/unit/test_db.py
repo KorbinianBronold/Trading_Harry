@@ -157,7 +157,7 @@ def test_upsert_technical_indicators_inserts_and_replaces(in_memory_db):
     init_schema(in_memory_db)
     upsert_technical_indicators(in_memory_db, {
         "ticker": "AAPL", "date": "2026-05-19",
-        "rsi_14": 58.4, "macd_signal": "bullish_cross", "atr_pct": 1.8,
+        "rsi_14": 58.4, "macd_signal": "bullish", "atr_pct": 1.8,
         "bb_position": 0.62, "above_sma20": 2.1, "above_sma50": 5.4,
         "above_sma200": 12.8, "volume_ratio": 1.15, "intraday_range_pct": 1.4,
     })

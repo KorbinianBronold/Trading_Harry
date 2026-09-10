@@ -66,10 +66,33 @@ def test_strong_adx_raises_strength_by_one():
     assert strong.strength <= 4
 
 
-def test_weak_adx_caps_strength_at_one_without_removing_direction():
-    """ADX ist Verstaerkungsfaktor, nicht Filter: die Richtung bleibt."""
+def test_weak_adx_lowers_strength_without_removing_direction():
+    """ADX ist Verstaerkungsfaktor, nicht Filter: die Richtung bleibt, die
+    Staerke sinkt um eine Stimme (3/3 -> 2; bis C.33 fix 1)."""
     sig = compute(_bullish(adx_14=15.0))
     assert sig.adx_band == "weak"
+    assert sig.direction == "long"
+    assert sig.strength == 2
+
+
+def test_weak_adx_costs_one_vote_so_full_agreement_still_reaches_two():
+    """F1 (Phase-1-Review, Entscheidung 2026-09-10): `weak` deckelt nicht mehr
+    fix auf 1, sondern kostet eine Stimme -- symmetrisch zu `strong` (+1).
+    3/3-Einigkeit ohne Trend ergibt 2 und erreicht damit TECH_MIN_FOR_DEEP;
+    vorher war der technische Weg in Seitwaertsphasen fuer jeden Ticker zu."""
+    sig = compute(_bullish(adx_14=15.0))
+    assert sig.adx_band == "weak"
+    assert sig.agreement == 3
+    assert sig.strength == 2
+
+
+def test_weak_adx_with_majority_agreement_floors_at_one():
+    """2/3 ohne Trend bleibt bei 1: ohne Trend verlangt der technische Weg
+    Einstimmigkeit. Der Boden ist 1, nie 0 -- 0 bleibt dem neutralen Signal
+    vorbehalten (ranking._classify liest strength == 0 als 'kein Signal')."""
+    sig = compute(_bullish(adx_14=15.0, above_sma200=None))
+    assert sig.adx_band == "weak"
+    assert sig.agreement == 2
     assert sig.direction == "long"
     assert sig.strength == 1
 
@@ -108,7 +131,7 @@ def test_adx_exactly_20_is_weak():
     """ADX=20.0 ist exakt die Grenze; alles <= 20 ist schwach."""
     sig = compute(_bullish(adx_14=20.0))
     assert sig.adx_band == "weak"
-    assert sig.strength == 1  # gedeckelt auf 1, nicht höher
+    assert sig.strength == 2  # 3/3 minus eine Stimme
 
 
 def test_adx_exactly_25_is_strong():
@@ -119,10 +142,10 @@ def test_adx_exactly_25_is_strong():
 
 
 def test_adx_below_20_is_weak():
-    """ADX < 20: Staerke gedeckelt auf 1."""
+    """ADX < 20: eine Stimme weniger (3/3 -> 2)."""
     sig = compute(_bullish(adx_14=19.9))
     assert sig.adx_band == "weak"
-    assert sig.strength == 1
+    assert sig.strength == 2
 
 
 def test_adx_above_25_is_strong():

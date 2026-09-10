@@ -54,7 +54,7 @@ def test_check_one_position_returns_parsed(in_memory_db):
     fake = _fake_result(payload)
     tracker = CostTracker(hard_cap_eur=10.0)
     snapshot = {"ticker": "AAPL", "price": 181.2, "rsi_14": 60.0,
-                "macd_signal": "bullish_cross", "atr_pct": 1.8,
+                "macd_signal": "bullish", "atr_pct": 1.8,
                 "intraday_range_pct": 1.5}
     trend = {"trend_summary": "risk-on"}
     policy = {"policy_risk_level": "low", "events": []}
@@ -79,7 +79,7 @@ def test_check_open_positions_writes_recommendation_rows(in_memory_db):
     fake = _fake_result(json.dumps(payload_obj))
     tracker = CostTracker(hard_cap_eur=10.0)
     analyses_by_ticker = {"AAPL": {"ticker": "AAPL", "price": 181.2,
-                                   "rsi_14": 60.0, "macd_signal": "bullish_cross",
+                                   "rsi_14": 60.0, "macd_signal": "bullish",
                                    "atr_pct": 1.8, "intraday_range_pct": 1.5}}
 
     with patch("src.portfolio_check.call_claude", return_value=fake):

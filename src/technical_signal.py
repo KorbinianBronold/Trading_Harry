@@ -2,7 +2,8 @@
 
 Drei richtungsgebende Teilindikatoren stimmen ab (RSI mit Trend, MACD-Histogramm,
 SMA-Trend); die Mehrheit bestimmt die Richtung. ADX moduliert die Staerke, ohne
-die Richtung zu filtern.
+die Richtung zu filtern: strong gibt eine Stimme dazu (Deckel 4), weak nimmt
+eine weg (Boden 1) -- 3/3 ohne Trend ergibt 2, 2/3 ohne Trend 1.
 
 Kein Claude-Call, kein Netz, keine Datenbank -- eine reine Funktion ueber das
 Snapshot-Dict aus Phase 1. Damit ist das Signal reproduzierbar und
@@ -110,7 +111,12 @@ def compute(td: dict) -> TechnicalSignal:
     if band == "strong":
         strength = min(4, strength + 1)
     elif band == "weak":
-        strength = 1
+        # F1 (C.33, 2026-09-10): eine Stimme weniger statt fix 1, symmetrisch
+        # zu strong. 3/3 ohne Trend = 2 und erreicht TECH_MIN_FOR_DEEP, 2/3 = 1
+        # nicht -- ohne Trend verlangt der technische Weg Einstimmigkeit.
+        # Der fixe Deckel schloss den technischen Weg in Seitwaertsphasen fuer
+        # jeden Ticker. Boden 1: 0 bleibt dem neutralen Signal vorbehalten.
+        strength = max(1, strength - 1)
 
     return TechnicalSignal(
         direction=direction, agreement=agreement,

@@ -74,25 +74,24 @@ def compute_rsi_trend(df: pd.DataFrame) -> str:
 
 
 def compute_macd_signal(df: pd.DataFrame) -> str:
-    """bullish_cross if MACD crossed above signal in the last 2 bars,
-    bearish_cross if crossed below, else neutral."""
-    if len(df) < MIN_BARS_MACD:
+    """Vorzeichen des MACD-Histogramms als Label: 'bullish' (MACD-Linie ueber
+    der Signallinie), 'bearish' (darunter), 'neutral' bei Gleichstand oder zu
+    wenig Historie. Liest dieselben Rohwerte mit demselben Vergleich wie
+    technical_signal._vote_macd() -- eine MACD-Wahrheit je Ticker.
+
+    Bis 2026-09-10 (C.33, F2) meldete die Funktion nur eine Kreuzung in den
+    letzten zwei Bars ('bullish_cross'/'bearish_cross') und stand deshalb an
+    ~87 % der Tage auf 'neutral'. Die Spalte technical_indicators.macd_signal
+    wechselt ab diesem Datum die Bedeutung; datumsuebergreifend rechnet man
+    ueber macd_hist."""
+    raw = compute_macd_raw(df)
+    line, signal = raw["macd_line"], raw["macd_signal_line"]
+    if line is None or signal is None:
         return "neutral"
-    macd = ta.macd(df["Close"])
-    if macd is None or macd.empty:
-        return "neutral"
-    macd_line = macd.iloc[:, 0]
-    signal_line = macd.iloc[:, 2]
-    if len(macd_line) < 3 or len(signal_line) < 3:
-        return "neutral"
-    diff_now = macd_line.iloc[-1] - signal_line.iloc[-1]
-    diff_prev = macd_line.iloc[-2] - signal_line.iloc[-2]
-    if pd.isna(diff_now) or pd.isna(diff_prev):
-        return "neutral"
-    if diff_prev < 0 and diff_now >= 0:
-        return "bullish_cross"
-    if diff_prev > 0 and diff_now <= 0:
-        return "bearish_cross"
+    if line > signal:
+        return "bullish"
+    if line < signal:
+        return "bearish"
     return "neutral"
 
 
@@ -204,9 +203,8 @@ def compute_ema_distance_pct(df: pd.DataFrame, length: int) -> float | None:
 def compute_macd_raw(df: pd.DataFrame) -> dict[str, float | None]:
     """MACD-Linie, Signallinie und Histogramm als Rohwerte.
 
-    Ergaenzt compute_macd_signal(), das nur die Kreuzung meldet und deshalb an
-    den meisten Tagen 'neutral' liefert -- als Dauersignal unbrauchbar. Das
-    Vorzeichen des Histogramms traegt dagegen jeden Tag eine Aussage.
+    Die eine Quelle fuer das Label compute_macd_signal() und die Abstimmung
+    technical_signal._vote_macd(); die Rohwerte gehen in technical_indicators.
     """
     empty = {"macd_line": None, "macd_signal_line": None, "macd_hist": None}
     if len(df) < MIN_BARS_MACD:

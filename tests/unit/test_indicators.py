@@ -70,7 +70,52 @@ def test_compute_rsi_trend_classifies_rising_and_falling():
 
 def test_compute_macd_signal_returns_one_of_three_labels():
     df = _df_monotonic_up(60)
-    assert compute_macd_signal(df) in {"bullish_cross", "bearish_cross", "neutral"}
+    assert compute_macd_signal(df) in {"bullish", "bearish", "neutral"}
+
+
+def _df_v_shape(down: int = 40, up: int = 20) -> pd.DataFrame:
+    """Faellt `down` Bars, steigt dann `up` Bars: die MACD-Kreuzung nach oben
+    liegt viele Bars zurueck, der Zustand (Linie ueber Signal) haelt an."""
+    closes = [100.0 - 0.5 * i for i in range(down)]
+    closes += [closes[-1] + 1.0 * (i + 1) for i in range(up)]
+    idx = pd.date_range("2025-01-01", periods=len(closes), freq="B")
+    return pd.DataFrame({
+        "Open": [c - 0.1 for c in closes], "High": [c + 0.5 for c in closes],
+        "Low": [c - 0.5 for c in closes], "Close": closes,
+        "Volume": [1_000_000] * len(closes),
+    }, index=idx)
+
+
+def test_compute_macd_signal_reports_bullish_state_long_after_the_cross():
+    """F2 (Phase-1-Review, Entscheidung 2026-09-10): das Label traegt das
+    Vorzeichen des Histogramms, nicht mehr die Kreuzung der letzten zwei Bars.
+    Vorher stand das Feld an ~87 % der Tage auf 'neutral' und widersprach
+    technical_signal._vote_macd(), das schon immer das Histogramm liest."""
+    assert compute_macd_signal(_df_v_shape()) == "bullish"
+
+
+def test_compute_macd_signal_reports_bearish_state_long_after_the_cross():
+    df = _df_v_shape()
+    df["Close"] = 200.0 - df["Close"]                    # invertiert: 40 Bars hoch, dann 20 runter
+    df["High"], df["Low"] = df["Close"] + 0.5, df["Close"] - 0.5
+    assert compute_macd_signal(df) == "bearish"
+
+
+def test_compute_macd_signal_is_neutral_on_a_flat_series():
+    df = _df_monotonic_up(60)
+    for col in ("Open", "High", "Low", "Close"):
+        df[col] = 100.0
+    assert compute_macd_signal(df) == "neutral"
+
+
+def test_compute_macd_signal_matches_the_technical_signal_vote():
+    """Eine MACD-Wahrheit je Ticker: Label und Abstimmung lesen dieselben
+    Rohwerte (compute_macd_raw) mit demselben Vergleich."""
+    from src.technical_signal import _vote_macd
+    for df in (_df_v_shape(), _df_monotonic_up(60)):
+        raw = ind.compute_macd_raw(df)
+        expected = {"long": "bullish", "short": "bearish", "neutral": "neutral"}[_vote_macd(raw)]
+        assert compute_macd_signal(df) == expected
 
 
 def test_compute_atr_pct_is_positive_for_oscillating_series():

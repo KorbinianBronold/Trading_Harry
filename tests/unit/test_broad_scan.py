@@ -48,7 +48,7 @@ def _td(ticker: str, **overrides) -> dict:
         "price_change_1d": 1.2, "price_change_5d": 3.4,
         "price_change_1m": 5.6, "price_change_3m": 12.3,
         "rsi_14": 58.4, "rsi_trend": "rising",
-        "macd_signal": "bullish_cross", "atr_pct": 1.8,
+        "macd_signal": "bullish", "atr_pct": 1.8,
         "bb_position": 0.62, "above_sma20": 2.1, "above_sma50": 5.4,
         "above_sma200": 12.8, "volume_ratio": 1.15,
         "intraday_range_pct": 1.5,
