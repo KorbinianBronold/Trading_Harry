@@ -4428,6 +4428,16 @@ Kurs-Nutzlast und ohne Datumsanker — für 3D per Datum trennen. Nicht live gem
 Beobachtungsposten: Anteil Stärke ≥ 1 sollte sinken (weniger Sektor-Beta, weniger
 Altnachrichten), Notizen sollten Ereignisse statt Kursbewegungen nennen.
 
+**Nachtrag (Entscheidung Korbinian: Prosa vor dem JSON fixen).** Haiku schrieb nach den
+Websuchen einen Absatz Prosa vor dem JSON-Block (~400 Ausgabe-Tokens je Call, im Walkthrough
+zweimal beobachtet). Structured Outputs (`output_config.format`) gibt es im gepinnten SDK
+`anthropic==0.42.0` nicht, Prefill ist auf aktuellen Modellen abgeschafft und ginge mit
+einem Server-Tool ohnehin nicht. Deshalb Prompt-Weg: die JSON-Regel steht jetzt als
+**letzter** Absatz im System-Prompt („FINAL OUTPUT RULE … Start with `{` and end with `}`")
+und als letzte Zeile der User-Message — Format-Regeln wirken am Prompt-Ende am stärksten.
+Ein Test pinnt beide Stellen. Keine Garantie, der Parser bleibt Sicherheitsnetz; messen am
+nächsten Walkthrough-Call (0,03 €).
+
 **Offen (Option 5, notiert):** 150 Namen mit maximal 5 Suchen ergeben zwangsläufig
 Sektor-Roundups statt Einzelrecherche — Stärke 1 heisst praktisch „im heissen Sektor
 genannt". Mehr Suchtiefe (Batches je Sub-Sektor, grob 1–1,5 € statt 0,5 € je Lauf) ist

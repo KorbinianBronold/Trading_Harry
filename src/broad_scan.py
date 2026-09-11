@@ -110,7 +110,8 @@ def _format_batch_for_prompt(
         parts.append(json.dumps(_payload_for_ticker(td, sidecar), ensure_ascii=False))
     parts.append(
         "\nReturn the JSON object defined in your system prompt with one entry "
-        "per ticker above, in the same order."
+        "per ticker above, in the same order. Reply with the JSON object only: "
+        "start with `{`, end with `}`, no other text."
     )
     return "\n".join(parts)
 

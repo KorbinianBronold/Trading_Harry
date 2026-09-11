@@ -52,3 +52,7 @@ Rules:
 - Return one entry per ticker in the batch, in the same order. Never invent tickers.
 - Never invent news. If you found nothing for a ticker, return news_strength=0 with an
   empty news_note.
+
+FINAL OUTPUT RULE: your reply is the JSON object and nothing else. Start with `{` and end
+with `}`. No introduction, no summary of your searches, no markdown fences, no text after
+the JSON. Everything you learned from the searches belongs inside news_note.
