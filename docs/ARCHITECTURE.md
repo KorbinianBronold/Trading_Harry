@@ -206,8 +206,11 @@ DB-Close.
 │           PHASE 2: NACHRICHTEN-SCAN (broad_scan_batch)           │
 │  Seit Sprint 3C / Plan 2, Task 10 (2026-08-15) — ersetzt         │
 │  quick_filter_batch(), s. Modul 3/3b weiter unten                │
-│  Input: sp500_tds[], sidecar, trend_context, market_context      │
-│  Claude: 1× Sonnet + web_search über ALLE Ticker                │
+│  Input: sp500_tds[], sidecar, trend_context, market_context,     │
+│         date, run_type (C.39: Datumsanker fürs 24-48h-Fenster)   │
+│  Nutzlast je Ticker: ticker, sector, premarket_change_pct,       │
+│         earnings_in_days — keine Technik, kein Kurs (C.39)       │
+│  Claude: 1× Haiku + web_search (max 5) über ALLE Ticker         │
 │  Output: {ticker: {news_strength: 0-3, news_note}}               │
 │  Fail: ✅ unparsebar → ganzer Batch auf news_strength=0           │
 └─────────────────────────────────────────────────────────────────┘
@@ -600,8 +603,8 @@ Richtung und keine „lohnt sich"-Einschätzung.**
 
 ```python
 def broad_scan_batch(ticker_datas, sidecar, trend_context, market_context,
-                     policy_context, cost_tracker) -> dict[str, dict]:
-    """→ {ticker: {news_strength: 0-3, news_note: str}}"""
+                     cost_tracker, date, run_type) -> list[dict]:
+    """→ [{ticker, news_strength: 0-3, news_note: str}] in Eingabereihenfolge"""
 ```
 
 | `news_strength` | Bedeutung |
@@ -612,9 +615,17 @@ def broad_scan_batch(ticker_datas, sidecar, trend_context, market_context,
 | 3 | marktbewegend |
 
 **Entscheidungen, die nicht aus dem Code folgen:**
-- Die Nutzlast wird **explizit aus acht Feldern gebaut** (sieben aus `td`,
-  `premarket_change_pct` aus dem Sidecar), nicht aus `td` gedumpt — die 19 unbeteiligten
-  `td`-Felder bleiben draussen.
+- Die Nutzlast wird **explizit aus vier Feldern gebaut** (`ticker`, `sector`,
+  `earnings_in_days` aus `td`, `premarket_change_pct` aus dem Sidecar), nicht aus `td`
+  gedumpt. Seit C.39 (2026-09-11) **ohne** `price`, `price_change_1d/5d`, `rsi_14`,
+  `atr_pct`: der Prompt verbot ihre Nutzung, das Modell rechnete sie trotzdem in die
+  Stärke ein (MRVL Stärke 2 für „up 4.76 % on strong momentum"). Der Vorbörsen-Gap bleibt
+  als einziger Kurswert — ein Level-3-Hinweis, die Stärke kommt aus der Ursache.
+- **Datumsanker:** die User-Message beginnt mit „Today is {date}. Run type: …" — ohne ihn
+  galt am 10.09. ein Downgrade vom 8. Januar als Nachricht (C.39, F22).
+- **Trend-Echo zählt nicht:** Exposure zu einem Thema aus TREND CONTEXT ist keine
+  Ticker-Nachricht (am 10.09. acht Energie-Titel mit „Iran conflict premium"); nur
+  tickerspezifische, neue Information erreicht Stärke ≥ 1 (C.39, F21).
 - **`news_note` ist Pflicht ab Stärke 1.** Fehlt der Beleg, setzt der Code die Stärke auf
   0: eine Stärke ohne Beleg ist nicht überprüfbar. Dasselbe für Werte ausserhalb 0–3,
   Nachkommaanteile und `bool` — sie werden auf 0 gezogen, nicht geklemmt.

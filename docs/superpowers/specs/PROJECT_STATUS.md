@@ -4370,6 +4370,69 @@ zitiert die Momentum-Werte (`trade_proposals_v1` nennt „RELATIVE STRENGTH", di
 - Notebook-Zelle 40 zeigt fünf Einträge nach ID ohne Namen; eine Tabelle mit Sub-Sektor,
   ETF, beiden Werten und Konfliktmarkierung machte F17 sichtbar. Nicht geändert.
 
+### C.39 — Phase-2-Review (`broad_scan`): Nutzlast auf Nachrichten reduziert, Datumsanker, Trend-Echo-Regel, Earnings-Termin (2026-09-11)
+
+Sechster Durchgang des Pipeline-Reviews. **Code-Sicht solide:** ein gestreamter Haiku-Call
+mit bis zu 5 Websuchen (`max_uses`), Kosten vor dem Parsen gebucht, `extract_json_blob`
+verkraftet Prosa plus JSON-Block (im Walkthrough nötig), `stop_reason`-Prüfung,
+Reihenfolge/Vollständigkeit/Domäne 0–3/Beleg-Pflicht im Code erzwungen. Kleinigkeiten
+mitkorrigiert: Modul-Docstring und `main.py`-Kommentar sagten „Sonnet-Call" (Haiku seit
+`0db8644`).
+
+**Produktionsbild (`db-latest`, nur gelesen):** 10.09.: 25 von 150 Tickern mit Stärke ≥ 1
+(16 × 1, 9 × 2, 0 × 3); 09.09.: 15; 08.09.: 54 — dort griff `MAX_DEEP_ANALYSIS = 50`, vier
+Stärke-1-Ticker blieben draussen. Je Lauf 45–47 Websuchen über alle Phasen (0,41 €).
+
+**Drei fachliche Befunde, alle mit Belegen vom 10.09., alle behoben (Entscheidung
+Korbinian: Optionen 1–4):**
+- **F20 — Kursverhalten wurde als Nachricht gewertet.** Der Prompt verbot, dass Technik
+  oder Kurs die Stärke beeinflussen; der Code lieferte `price`, `price_change_1d/5d`,
+  `rsi_14`, `atr_pct` trotzdem mit, und das Modell folgte den Daten: MRVL Stärke 2 für
+  „up 4.76 % on strong momentum", ELV/FCX/HCA Stärke 1 für Vorbörsen- bzw. Tagesbewegung,
+  META für „relative resilience"; im Walkthrough-Call begründete Haiku mit „+2.5 % 1D,
+  +5.1 % 5D". Die Technik geht schon deterministisch als `tech_strength` in den Cutoff,
+  über die „News"-Stärke zählte sie doppelt, und `news_summaries` bekam Kursbeschreibungen
+  als Nachrichten. **Fix:** `PAYLOAD_FIELDS_FROM_TD = (ticker, sector, earnings_in_days)`
+  plus `premarket_change_pct` aus dem Sidecar — der Gap bleibt als einziger Kurswert, er ist
+  im Prompt ein Level-3-Hinweis („news-driven pre-market gap"), die Stärke kommt aus der
+  Ursache. Prompt: Technik-Absatz ersetzt durch „no technical readings are provided and
+  none are wanted".
+- **F21 — Trend-Kontext als Ticker-Nachricht zurückgespiegelt.** COP, CVX, EOG, FANG, MPC,
+  PSX, VLO, XOM bekamen Stärke ≥ 1 für „benefiting from Iran conflict premium" — das
+  Makro-Thema aus Phase 0, das Phase 3 ohnehin bekommt; ein Sektorcluster füllte die
+  Kandidatenliste. **Fix (Prompt):** „Exposure to a macro theme already listed in TREND
+  CONTEXT is NOT ticker news … a name that shows up only because its sector is moving
+  gets 0."
+- **F22 — Alte Nachrichten ohne Datumsanker.** JPM Stärke 1 für ein Wolfe-Downgrade vom
+  8. Januar, AMD Stärke 2 für Q2-Zahlen von Anfang August, UNH Stärke 2 für den Q2-Beat
+  von Juli. Das 24–48h-Fenster stand im Prompt, aber die User-Message trug kein Datum
+  (`trend_analyzer` übergibt „Today is …", `broad_scan` nicht). **Fix:** `broad_scan_batch()`
+  bekommt `date`/`run_type` als Pflichtparameter, die User-Message beginnt mit „Today is
+  {date}. Run type: … Only news published within the last 24-48 hours before today counts";
+  der Prompt verankert das Fenster am „date given in the user message".
+- **Option 4 — Earnings-Termin in die Nutzlast.** `earnings_in_days` (None bei kaltem
+  Cache) geht mit; Prompt: 0–3 Tage = der Termin selbst ist ein Katalysator, Preview
+  suchen, ≥ 2 bei Beleg. Für einen 1–5-Tage-Horizont der wichtigste Katalysator, den der
+  Scanner bisher nicht sah.
+
+**Tests:** 1016 grün, 15 übersprungen, Coverage 92,92 %. Drei neue Tests (rot zuerst):
+Datumsanker in der User-Message, Nutzlast nur Ticker/Sektor/Gap/Earnings, Prompt-Pins
+(`earnings_in_days`, „is NOT ticker news", „date given in the user message", kein
+Technik-Absatz). `EXCLUDED_TD_FIELDS` um `price`, `price_change_1d/5d`, `rsi_14`, `atr_pct`
+erweitert; 21 bestehende Aufrufe um die Pflichtparameter ergänzt. Regel-15-Sweep: kein
+anderer Prompt nennt die Scan-Felder (`deep_analysis_v2` bekommt weiterhin
+`news_strength`/`news_note`). Walkthrough-Zelle 42 übergibt `RUN_DATE`/`RUN_TYPE`.
+
+**Vergleichbarkeit:** `news_strength`/`news_summaries` vor dem 11.09. entstanden mit
+Kurs-Nutzlast und ohne Datumsanker — für 3D per Datum trennen. Nicht live gemessen;
+Beobachtungsposten: Anteil Stärke ≥ 1 sollte sinken (weniger Sektor-Beta, weniger
+Altnachrichten), Notizen sollten Ereignisse statt Kursbewegungen nennen.
+
+**Offen (Option 5, notiert):** 150 Namen mit maximal 5 Suchen ergeben zwangsläufig
+Sektor-Roundups statt Einzelrecherche — Stärke 1 heisst praktisch „im heissen Sektor
+genannt". Mehr Suchtiefe (Batches je Sub-Sektor, grob 1–1,5 € statt 0,5 € je Lauf) ist
+eine Designfrage für 3F.
+
 ## Sprint 3D — Learning Modul
 
 ⚠️ **Noch nicht ausgearbeitet — braucht eine eigene Planungssession, bevor die Implementierung

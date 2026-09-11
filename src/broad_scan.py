@@ -1,7 +1,14 @@
 """Phase 2 (Nachrichten-Scan) + Phase 2a (Cutoff).
 
-broad_scan_batch(): ein Sonnet-Call mit Websuche ueber alle Ueberlebenden aus
+broad_scan_batch(): ein Haiku-Call mit Websuche ueber alle Ueberlebenden aus
 Phase 1. Liefert je Ticker {ticker, news_strength (0-3), news_note}.
+
+Seit C.39 (2026-09-11) ist der Scan ein reiner Nachrichtenfilter: die Nutzlast
+traegt nur Ticker, Sektor, Vorboersen-Gap und Tage bis zu den Earnings, und
+die User-Message nennt das Lauf-Datum. Technik und Kurs bleiben draussen --
+das Modell rechnete sie nachweislich in die Staerke ein (MRVL Staerke 2 fuer
+'up 4.76 % on strong momentum'), und ohne Datumsanker galt ein Downgrade vom
+8. Januar am 10. September als Nachricht.
 
 cutoff_candidates(): waehlt daraus die Kandidaten fuer Phase 3 (Spec 4.7) --
 deterministisch, kein Claude-Call. Kein DB-Schreiben in diesem Modul; die
@@ -47,14 +54,14 @@ MODEL = config.CLAUDE_MODEL_HAIKU  # News-Scoring (0-3) braucht keine Sonnet-Kra
 MAX_TOKENS = 32000
 TRUNCATION_WARNING_RATIO = 0.9
 
-# R23: die Nutzlast wird explizit zusammengesetzt (nicht json.dumps(td)) --
-# genau die Felder aus Spec 4.6. Sieben stammen aus td, das achte
-# (premarket_change_pct) aus dem Sidecar (R22). Als benannte Konstante, damit
-# die Feldliste nicht inline verstreut im Code steht.
-PAYLOAD_FIELDS_FROM_TD = (
-    "ticker", "price", "price_change_1d", "price_change_5d",
-    "rsi_14", "atr_pct", "sector",
-)
+# R23: die Nutzlast wird explizit zusammengesetzt (nicht json.dumps(td)).
+# C.39: drei Felder aus td (Ticker, Sektor, Tage bis Earnings) plus
+# premarket_change_pct aus dem Sidecar (R22). Bis C.39 standen hier auch price,
+# price_change_1d/5d, rsi_14 und atr_pct -- der Prompt verbot ihre Nutzung,
+# das Modell nutzte sie trotzdem (Phase-2-Review, F20). Der Vorboersen-Gap
+# bleibt als einziger Kurswert: ein grosser Gap ist im Prompt ein Level-3-
+# Hinweis ("news-driven pre-market gap"), die Staerke kommt aus der Ursache.
+PAYLOAD_FIELDS_FROM_TD = ("ticker", "sector", "earnings_in_days")
 
 
 class BroadScanError(RuntimeError):
@@ -68,9 +75,10 @@ class BroadScanError(RuntimeError):
 
 
 def _payload_for_ticker(td: dict, sidecar: dict[str, dict]) -> dict:
-    """Baut die Acht-Feld-Nutzlast fuer einen Ticker: sieben Felder aus td
-    plus premarket_change_pct aus dem Sidecar. Ein Ticker, der im Sidecar
-    fehlt, ist kein Fehler -- der Wert ist dann schlicht None (R22)."""
+    """Baut die Vier-Feld-Nutzlast fuer einen Ticker: Ticker, Sektor und
+    earnings_in_days aus td plus premarket_change_pct aus dem Sidecar. Ein
+    Ticker, der im Sidecar fehlt, ist kein Fehler -- der Wert ist dann
+    schlicht None (R22); earnings_in_days ist None bei kaltem Cache."""
     payload = {field: td.get(field) for field in PAYLOAD_FIELDS_FROM_TD}
     payload["premarket_change_pct"] = (
         sidecar.get(td["ticker"], {}).get("premarket_change_pct")
@@ -83,10 +91,18 @@ def _format_batch_for_prompt(
     sidecar: dict[str, dict],
     trend_context: dict,
     market_context: dict,
+    date: str,
+    run_type: str,
 ) -> str:
-    """Komponiert die User-Message: Trend- und Marktkontext, dann je Ticker
-    die explizite Acht-Feld-Nutzlast (R23) -- nie ein roher td-Dump."""
-    parts = ["TREND CONTEXT:", json.dumps(trend_context, ensure_ascii=False)]
+    """Komponiert die User-Message: Datumsanker (C.39, F22 -- ohne ihn kann
+    das Modell das 24-48h-Fenster nicht anwenden), Trend- und Marktkontext,
+    dann je Ticker die explizite Vier-Feld-Nutzlast (R23) -- nie ein roher
+    td-Dump."""
+    parts = [
+        f"Today is {date}. Run type: {run_type}. Only news published within the "
+        f"last 24-48 hours before today counts for this scan.",
+        "\nTREND CONTEXT:", json.dumps(trend_context, ensure_ascii=False),
+    ]
     parts.append("\nMARKET CONTEXT:")
     parts.append(json.dumps(market_context, ensure_ascii=False))
     parts.append("\nBATCH (one ticker per line, JSON):")
@@ -190,8 +206,11 @@ def broad_scan_batch(
     trend_context: dict,
     market_context: dict,
     cost_tracker: CostTracker,
+    date: str,
+    run_type: str,
 ) -> list[dict]:
-    """Scort alle uebergebenen Ticker in einem einzigen Sonnet+Websuche-Call.
+    """Scort alle uebergebenen Ticker in einem einzigen Haiku+Websuche-Call.
+    `date`/`run_type` sind Pflicht (C.39): sie verankern das Nachrichtenfenster.
 
     Liefert IMMER genau ein Ergebnis je Input-Ticker, in Eingabereihenfolge --
     ein fehlender Ticker in der Antwort bekommt news_strength=0 (nie ein
@@ -203,7 +222,7 @@ def broad_scan_batch(
         return []
 
     user_msg = _format_batch_for_prompt(
-        ticker_datas, sidecar, trend_context, market_context)
+        ticker_datas, sidecar, trend_context, market_context, date, run_type)
 
     result = call_claude(
         model=MODEL,

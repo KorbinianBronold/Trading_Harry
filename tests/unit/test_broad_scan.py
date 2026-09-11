@@ -16,10 +16,13 @@ FIXTURE_PATH = Path(__file__).parent.parent / "fixtures" / "mock_broad_scan_resp
 # Zusatzindikatoren (adx_14, macd_line, obv, ...) -- die stehen seit Plan 1
 # nie in td, sondern in extra_indicators.
 EXCLUDED_TD_FIELDS = (
+    # C.39: der Scan ist ein Nachrichtenfilter -- Technik und Kurs bleiben
+    # draussen, weil das Modell sie nachweislich in die Staerke einrechnete.
+    "price", "price_change_1d", "price_change_5d", "rsi_14", "atr_pct",
     "rsi_trend", "macd_signal", "bb_position", "above_sma20", "above_sma50",
     "above_sma200", "volume_ratio", "intraday_range_pct", "price_change_1m",
     "price_change_3m", "pe_ratio", "forward_pe", "market_cap_b", "debt_equity",
-    "analyst_target_upside", "analyst_consensus", "earnings_in_days",
+    "analyst_target_upside", "analyst_consensus",
     "earnings_beat_pct", "data_quality",
 )
 
@@ -97,6 +100,7 @@ def test_broad_scan_returns_one_result_per_ticker():
             trend_context=_trend_context(),
             market_context=_market_context(),
             cost_tracker=tracker,
+        date="2026-09-11", run_type="pre_market",
         )
 
     assert len(out) == 2
@@ -125,6 +129,7 @@ def test_broad_scan_zeroes_strength_without_note():
             trend_context=_trend_context(),
             market_context=_market_context(),
             cost_tracker=tracker,
+        date="2026-09-11", run_type="pre_market",
         )
 
     by_ticker = {r["ticker"]: r for r in out}
@@ -148,6 +153,7 @@ def test_broad_scan_missing_ticker_defaults_to_zero():
             trend_context=_trend_context(),
             market_context=_market_context(),
             cost_tracker=tracker,
+        date="2026-09-11", run_type="pre_market",
         )
 
     assert len(out) == 2
@@ -170,6 +176,7 @@ def test_broad_scan_bad_json():
             trend_context=_trend_context(),
             market_context=_market_context(),
             cost_tracker=tracker,
+        date="2026-09-11", run_type="pre_market",
         )
 
     assert len(out) == 2
@@ -195,6 +202,7 @@ def test_broad_scan_missing_news_strength_key_defaults_to_zero():
             trend_context=_trend_context(),
             market_context=_market_context(),
             cost_tracker=tracker,
+        date="2026-09-11", run_type="pre_market",
         )
 
     assert out[0]["news_strength"] == 0
@@ -220,6 +228,7 @@ def test_broad_scan_news_strength_above_range_zeroed(caplog):
                 trend_context=_trend_context(),
                 market_context=_market_context(),
                 cost_tracker=tracker,
+            date="2026-09-11", run_type="pre_market",
             )
 
     assert out[0]["news_strength"] == 0
@@ -244,6 +253,7 @@ def test_broad_scan_news_strength_below_range_zeroed(caplog):
                 trend_context=_trend_context(),
                 market_context=_market_context(),
                 cost_tracker=tracker,
+            date="2026-09-11", run_type="pre_market",
             )
 
     assert out[0]["news_strength"] == 0
@@ -269,6 +279,7 @@ def test_broad_scan_news_strength_non_integer_zeroed(caplog):
                 trend_context=_trend_context(),
                 market_context=_market_context(),
                 cost_tracker=tracker,
+            date="2026-09-11", run_type="pre_market",
             )
 
     assert out[0]["news_strength"] == 0
@@ -294,6 +305,7 @@ def test_broad_scan_news_strength_bool_treated_as_non_numeric():
             trend_context=_trend_context(),
             market_context=_market_context(),
             cost_tracker=tracker,
+        date="2026-09-11", run_type="pre_market",
         )
 
     assert out[0]["news_strength"] == 0
@@ -320,6 +332,7 @@ def test_broad_scan_news_strength_in_range_values_untouched():
             trend_context=_trend_context(),
             market_context=_market_context(),
             cost_tracker=tracker,
+        date="2026-09-11", run_type="pre_market",
         )
 
     by_ticker = {r["ticker"]: r for r in out}
@@ -344,6 +357,7 @@ def test_broad_scan_valid_json_missing_results_key_degrades_to_zero():
             trend_context=_trend_context(),
             market_context=_market_context(),
             cost_tracker=tracker,
+        date="2026-09-11", run_type="pre_market",
         )
 
     assert len(out) == 2
@@ -365,6 +379,7 @@ def test_broad_scan_payload_contains_premarket_change_pct():
             trend_context=_trend_context(),
             market_context=_market_context(),
             cost_tracker=tracker,
+        date="2026-09-11", run_type="pre_market",
         )
 
     user_msg = mock_call.call_args.kwargs["user"]
@@ -387,11 +402,63 @@ def test_broad_scan_payload_excludes_unrelated_td_fields():
             trend_context=_trend_context(),
             market_context=_market_context(),
             cost_tracker=tracker,
+        date="2026-09-11", run_type="pre_market",
         )
 
     user_msg = mock_call.call_args.kwargs["user"]
     for field in EXCLUDED_TD_FIELDS:
         assert f'"{field}"' not in user_msg, f"{field} leaked into the Phase-2 payload"
+
+
+def test_broad_scan_user_message_carries_run_date_and_type():
+    """C.39 (F22): ohne Datumsanker kann Haiku das 24-48h-Fenster nicht anwenden
+    -- am 10.09. bekam JPM Staerke 1 fuer ein Downgrade vom 8. Januar."""
+    fake = _fake_result(FIXTURE_PATH.read_text())
+    with patch("src.broad_scan.call_claude", return_value=fake) as mock_call:
+        broad_scan_batch(
+            ticker_datas=[_td("AAPL")], sidecar=_sidecar(),
+            trend_context=_trend_context(), market_context=_market_context(),
+            cost_tracker=CostTracker(hard_cap_eur=10.0),
+            date="2026-09-11", run_type="pre_market",
+        )
+    user_msg = mock_call.call_args.kwargs["user"]
+    assert "Today is 2026-09-11" in user_msg
+    assert "pre_market" in user_msg
+
+
+def test_broad_scan_payload_is_ticker_sector_gap_and_earnings_only():
+    """C.39 (F20): der Prompt verbot Technik und Kurs als Einfluss, der Code
+    lieferte sie trotzdem -- und das Modell rechnete sie ein (MRVL Staerke 2
+    fuer 'up 4.76 % on strong momentum'). Jetzt: Ticker, Sektor, Vorboersen-Gap
+    (legitimes Level-3-Kriterium) und Tage bis zu den Earnings (F-Option 4)."""
+    fake = _fake_result(FIXTURE_PATH.read_text())
+    td = {**_td("AAPL"), "rsi_14": 61.0, "atr_pct": 2.49, "price_change_1d": 2.54,
+          "price_change_5d": 5.1, "earnings_in_days": 3}
+    with patch("src.broad_scan.call_claude", return_value=fake) as mock_call:
+        broad_scan_batch(
+            ticker_datas=[td], sidecar=_sidecar(),
+            trend_context=_trend_context(), market_context=_market_context(),
+            cost_tracker=CostTracker(hard_cap_eur=10.0),
+            date="2026-09-11", run_type="pre_market",
+        )
+    user_msg = mock_call.call_args.kwargs["user"]
+    assert '"earnings_in_days": 3' in user_msg
+    assert '"premarket_change_pct"' in user_msg and '"sector"' in user_msg
+    for key in ('"rsi_14"', '"atr_pct"', '"price_change_1d"', '"price_change_5d"', '"price":'):
+        assert key not in user_msg, f"{key} gehoert nicht in die Phase-2-Nutzlast"
+
+
+def test_prompt_anchors_the_window_and_rules_out_trend_echo():
+    """C.39: Regel 15 -- der Prompt muss die neue Nutzlast erklaeren (kein
+    Technik-Absatz mehr), das Fenster am uebergebenen Datum verankern und
+    Sektor-Beta aus dem TREND CONTEXT von tickerspezifischen Nachrichten
+    trennen (am 10.09. bekamen acht Energie-Titel Staerke >= 1 fuer
+    'benefiting from Iran conflict premium')."""
+    from src.broad_scan import SYSTEM_PROMPT
+    assert "earnings_in_days" in SYSTEM_PROMPT
+    assert "TREND CONTEXT" in SYSTEM_PROMPT and "is NOT ticker news" in SYSTEM_PROMPT
+    assert "date given in the user message" in SYSTEM_PROMPT
+    assert "RSI, moving averages, ATR" not in SYSTEM_PROMPT
 
 
 def test_broad_scan_uses_configured_model_and_web_search():
@@ -405,6 +472,7 @@ def test_broad_scan_uses_configured_model_and_web_search():
             trend_context=_trend_context(),
             market_context=_market_context(),
             cost_tracker=tracker,
+        date="2026-09-11", run_type="pre_market",
         )
 
     kwargs = mock_call.call_args.kwargs
@@ -428,6 +496,7 @@ def test_broad_scan_bills_cost_tracker():
             trend_context=_trend_context(),
             market_context=_market_context(),
             cost_tracker=tracker,
+        date="2026-09-11", run_type="pre_market",
         )
 
     assert tracker.input_tokens == 8000
@@ -453,6 +522,7 @@ def test_broad_scan_warns_when_output_near_max_tokens(caplog):
                 trend_context=_trend_context(),
                 market_context=_market_context(),
                 cost_tracker=tracker,
+            date="2026-09-11", run_type="pre_market",
             )
 
     assert any("MAX_TOKENS" in r.message and "abgeschnitten" in r.message
@@ -473,6 +543,7 @@ def test_broad_scan_no_truncation_warning_for_normal_output(caplog):
                 trend_context=_trend_context(),
                 market_context=_market_context(),
                 cost_tracker=tracker,
+            date="2026-09-11", run_type="pre_market",
             )
 
     assert not any("abgeschnitten" in r.message for r in caplog.records)
@@ -487,6 +558,7 @@ def test_broad_scan_empty_batch_returns_empty_list():
             trend_context=_trend_context(),
             market_context=_market_context(),
             cost_tracker=tracker,
+        date="2026-09-11", run_type="pre_market",
         )
     assert out == []
     assert tracker.input_tokens == 0
@@ -505,6 +577,7 @@ def test_broad_scan_uses_streaming():
             ticker_datas=[_td("AAPL")], sidecar=_sidecar(),
             trend_context=_trend_context(), market_context=_market_context(),
             cost_tracker=tracker,
+        date="2026-09-11", run_type="pre_market",
         )
 
     assert cc.call_args.kwargs["stream"] is True
@@ -525,6 +598,7 @@ def test_broad_scan_warns_on_stop_reason_max_tokens(caplog):
             ticker_datas=[_td("AAPL")], sidecar=_sidecar(),
             trend_context=_trend_context(), market_context=_market_context(),
             cost_tracker=tracker,
+        date="2026-09-11", run_type="pre_market",
         )
 
     assert any("abgeschnitten" in r.message for r in caplog.records)
@@ -543,6 +617,7 @@ def test_broad_scan_no_warning_when_stop_reason_clean_and_output_small(caplog):
             ticker_datas=[_td("AAPL")], sidecar=_sidecar(),
             trend_context=_trend_context(), market_context=_market_context(),
             cost_tracker=tracker,
+        date="2026-09-11", run_type="pre_market",
         )
 
     assert not any("abgeschnitten" in r.message for r in caplog.records)

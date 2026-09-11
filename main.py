@@ -555,14 +555,15 @@ def run_pipeline(run_type: str, date: str, db_path: str) -> None:
             log.warning(f"Sektor-Momentum nicht ermittelbar, Run laeuft ohne: {e}")
 
         current_phase = "broad_scan"
-        # Phase 2 — Nachrichten-Scan (Sonnet + Websuche, stocks only). Ersetzt
-        # den Haiku-Quick-Filter (Sprint 3C / Analyse-Pipeline-Umbau, Plan 2,
+        # Phase 2 — Nachrichten-Scan (Haiku + Websuche, stocks only). Ersetzt
+        # den Quick-Filter (Sprint 3C / Analyse-Pipeline-Umbau, Plan 2,
         # Task 10). Rohstoffe/Krypto umgehen Scan, Cutoff und 2b komplett
         # (Spec 18.3) -- sie laufen separat ueber cc_tds/deep_cc weiter unten.
+        # date/run_type verankern das 24-48h-Fenster (C.39).
         broad_results = broad_scan_batch(
             ticker_datas=sp500_tds, sidecar=sp500_sidecar,
             trend_context=trend_context, market_context=market_ctx,
-            cost_tracker=cost_tracker,
+            cost_tracker=cost_tracker, date=date, run_type=run_type,
         )
         # Phase 2a — Cutoff: waehlt ≤ MAX_DEEP_ANALYSIS Kandidaten aus, Pflicht-
         # Kandidaten aus Phase 1c stehen vorn und zaehlen gegen den Deckel.
