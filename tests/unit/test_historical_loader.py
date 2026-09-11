@@ -401,3 +401,29 @@ def test_loader_never_writes_todays_provisional_bar(tmp_db_path, mocker):
     conn.close()
     assert today not in dates, "Der laufende Tag ist noch nicht final"
     assert yesterday in dates
+
+
+def test_loader_drops_commodity_weekend_bars_but_keeps_crypto(tmp_db_path, mocker):
+    """C.36: der Backfill (bootstrap-db!) darf die Sonntagsbar eines Rohstoffs
+    nicht wieder anlegen, die final_close weglaesst -- drei Schreiber, eine
+    Regel. Krypto behaelt seine Wochenendbars."""
+    import pandas as pd
+    from src import db
+    conn = db.connect(str(tmp_db_path)); db.init_schema(conn); conn.close()
+    days = ["2026-09-04", "2026-09-06", "2026-09-07"]          # Fr, SO, Mo (alle final)
+    prov = MagicMock()
+    prov.get_price_history.return_value = pd.DataFrame(
+        {"Open": [1.0] * 3, "High": [2.0] * 3, "Low": [0.5] * 3,
+         "Close": [1.5] * 3, "Volume": [1] * 3},
+        index=pd.to_datetime(days))
+
+    from setup.historical_loader import load_ticker_history
+    n_gold = load_ticker_history("GOLD", db_path=str(tmp_db_path), provider=prov)
+    n_btc = load_ticker_history("BTCUSD", db_path=str(tmp_db_path), provider=prov)
+
+    conn = db.connect(str(tmp_db_path))
+    gold = {r["date"] for r in conn.execute("SELECT date FROM price_history WHERE ticker='GOLD'")}
+    btc = {r["date"] for r in conn.execute("SELECT date FROM price_history WHERE ticker='BTCUSD'")}
+    conn.close()
+    assert n_gold == 2 and gold == {"2026-09-04", "2026-09-07"}
+    assert n_btc == 3 and btc == set(days)

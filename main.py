@@ -28,7 +28,7 @@ from src.market_context import (fetch_market_context, vix_only_context,
 from src.portfolio_check import check_open_positions
 from src.ranking import rank_and_persist
 from src.evaluator import evaluate_open_predictions
-from src.universe import full_universe, stock_universe, thin_history_tickers, is_commodity_or_crypto
+from src.universe import full_universe, stock_universe, thin_history_tickers, is_commodity_or_crypto, has_weekend_sessions, is_partial_weekend_bar
 from src import signal_checks
 from src.revalidation import revalidate_one, RevalidationError
 from src.email_sender import (
@@ -1157,7 +1157,8 @@ def _write_final_bar(conn, price_provider, ticker: str, target: str) -> bool:
 
     Eine fehlende Bar ist der erwartete Normalfall, kein Fehler: am Wochenende
     und an Feiertagen gibt es fuer Aktien keine neue Tagesbar, fuer Crypto
-    schon."""
+    schon. Wochenend-Teilbars von Instrumenten ohne Wochenendsitzung
+    (Rohstoff-Sonntagsbar) werden verworfen (C.36)."""
     try:
         df = price_provider.get_ohlc_after(ticker, target, target)
     except Exception as e:
@@ -1173,6 +1174,10 @@ def _write_final_bar(conn, price_provider, ticker: str, target: str) -> bool:
     for ts, row in df.iterrows():
         d = ts.strftime("%Y-%m-%d") if hasattr(ts, "strftime") else str(ts)[:10]
         if d != target:
+            continue
+        if is_partial_weekend_bar(ticker, d):
+            # C.36: Rohstoff-Sonntagsbar = eine Stunde Sitzung, kein Handelstag.
+            log.info(f"{ticker}: Wochenend-Teilbar {d} verworfen (C.36)")
             continue
         db.upsert_price_history(
             conn, ticker=ticker, date=d,
@@ -1210,6 +1215,13 @@ def run_final_close(date: str, db_path: str) -> None:
     # Dieselbe Liste, die `historical_loader --universe` backfillt — siehe
     # src/universe.py. Getrennt gepflegt liefen beide auseinander, und ein
     # Ticker haette Backfill ohne Fortschreibung (oder umgekehrt).
+    # C.36: Altbestand an Wochenend-Teilbars (Rohstoff-Sonntagsbars) bei jedem
+    # Lauf wegraeumen -- idempotent, damit db-latest ohne Hand-SQL heilt.
+    removed = db.delete_weekend_bars(
+        conn, [t for t in full_universe() if not has_weekend_sessions(t)])
+    if removed:
+        log.warning(f"final_close: {removed} Wochenend-Teilbar(s) entfernt (C.36)")
+
     written = 0
     for ticker in full_universe():
         if _write_final_bar(conn, price_provider, ticker, target):

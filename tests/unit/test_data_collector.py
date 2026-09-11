@@ -1277,6 +1277,33 @@ def test_fill_price_gaps_backfills_missing_bars(in_memory_db, mocker):
     assert dates == ["2026-07-20", "2026-07-21", "2026-07-22"]
 
 
+def test_fill_price_gaps_drops_commodity_weekend_bars(in_memory_db, mocker):
+    """C.36: der Gap-Fill ist der dritte Schreiber von price_history -- dieselbe
+    Regel wie final_close und Loader, sonst kommt die Sonntagsbar beim naechsten
+    Nachladen zurueck."""
+    from src import db
+    from src.data_collector import _fill_price_gaps
+    db.init_schema(in_memory_db)
+    for d in ("2026-09-01", "2026-09-02", "2026-09-03"):        # Di-Do, dann Luecke
+        db.insert_price_bar_if_missing(in_memory_db, ticker="GOLD", date=d,
+                                       open_=1, high=2, low=0.5, close=1.5, volume=1)
+    in_memory_db.commit()
+
+    provider = mocker.MagicMock(); provider._source_name = "capital.com"
+    fill = ["2026-09-04", "2026-09-06", "2026-09-07", "2026-09-08"]   # Fr, SO, Mo, Di
+    provider.get_ohlc_after.return_value = pd.DataFrame(
+        {"Open": [1.0] * 4, "High": [2.0] * 4, "Low": [0.5] * 4,
+         "Close": [1.5] * 4, "Volume": [1] * 4},
+        index=pd.to_datetime(fill))
+
+    n = _fill_price_gaps("GOLD", provider, in_memory_db, date="2026-09-10")
+
+    assert n == 3
+    dates = {r["date"] for r in in_memory_db.execute(
+        "SELECT date FROM price_history WHERE ticker='GOLD'")}
+    assert "2026-09-06" not in dates and {"2026-09-04", "2026-09-07", "2026-09-08"} <= dates
+
+
 def test_fill_price_gaps_ignores_bars_outside_the_window(in_memory_db, mocker):
     """Der Provider darf mehr liefern als angefragt — gespeichert wird nur die Luecke."""
     from src import db

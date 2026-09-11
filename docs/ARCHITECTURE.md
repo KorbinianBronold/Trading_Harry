@@ -141,6 +141,15 @@ Es gibt **drei** Schreiber, alle an dieselbe Regel gebunden — **nie der laufen
 Gap-Filler nicht. Sachlich falsch — die **Regel** ist einheitlich, die Zahl der
 Schreibstellen ist es nicht (korrigiert 2026-08-09).
 
+⚠️ **Wochenend-Teilbars (C.36, 2026-09-11):** Capital.com liefert Rohstoffen eine Sonntagsbar
+aus einer Stunde Sitzung (Öffnung So 23:00 UTC; Gold Ø 0,56 % Spanne gegen 2,5 % werktags).
+Sie drückte `intraday_range_pct` (Mittel der letzten 5 Bars) und ATR und kippte Gold in ruhigen
+Phasen unter den 1-%-Guardrail. Alle drei Schreiber verwerfen Sa/So-Bars von Instrumenten ohne
+Wochenendsitzung über `universe.is_partial_weekend_bar()` (nur Krypto hat eine:
+`has_weekend_sessions()`); `run_final_close()` räumt Altbestand per `db.delete_weekend_bars()`
+bei jedem Lauf weg. Bewusster Verzicht: der Evaluator (`load_price_history_after`) sieht für
+Rohstoffe die Handelsstunde So 23–24 UTC nicht mehr.
+
 Konsequenz: `price_history` endet zur Laufzeit der Analyse-Läufe bei **D-1**. Der
 Entscheidungskurs kommt deshalb live über `get_premarket_price()`, nicht aus dem letzten
 DB-Close.

@@ -170,3 +170,15 @@ def test_is_commodity_or_crypto_knows_the_seven_fixed_assets():
     assert is_commodity_or_crypto("BTCUSD")
     assert not is_commodity_or_crypto("AAPL")
     assert not is_commodity_or_crypto("XLK")      # Sektor-ETF ist keine der beiden Klassen
+
+
+def test_is_partial_weekend_bar_only_for_instruments_without_weekend_sessions():
+    """C.36: Capital.com liefert Rohstoffen eine Sonntagsbar aus einer Stunde
+    Sitzung (Gold Ø 0,56 % Spanne gegen 2,5 % werktags). Krypto handelt am
+    Wochenende durchgehend -- dort ist die Bar echt."""
+    from src.universe import is_partial_weekend_bar
+    assert is_partial_weekend_bar("GOLD", "2026-09-06")        # Sonntag
+    assert is_partial_weekend_bar("OIL_BRENT", "2026-09-05")   # Samstag (degenerierte Bar)
+    assert not is_partial_weekend_bar("GOLD", "2026-09-07")    # Montag
+    assert not is_partial_weekend_bar("BTCUSD", "2026-09-06")  # Krypto: echte Sitzung
+    assert is_partial_weekend_bar("AAPL", "2026-09-06")        # kaeme nie, waere aber Artefakt

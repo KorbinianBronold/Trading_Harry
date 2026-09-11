@@ -4226,6 +4226,47 @@ Notebook sichtbar.
 Sonntagsjob nach dem Deploy sollte im Log `Altbestand-Zeile(n) ... entfernt (C.35)` zeigen,
 falls `db-latest` die Gold.com-Zeile trägt.
 
+### C.36 — Rohstoff-Sonntagsbars: alle drei `price_history`-Schreiber verwerfen Wochenend-Teilbars, `final_close` räumt Altbestand (2026-09-11)
+
+Fix zu F11 (C.34), Entscheidung von Korbinian: Schreiber-Seite („in final_close"), nicht
+Filter beim Indikator-Laden. Umgesetzt an **allen drei** Schreibern — nur `final_close`
+allein hätte nichts genützt, Loader (`bootstrap-db`!) und Gap-Fill hätten die Sonntagsbar
+beim nächsten Backfill wieder angelegt (Invariante „drei Schreiber, eine Regel", P3).
+
+**Befund in Zahlen (lokale DB, seit 09/2025):** Rohstoffe tragen ausschliesslich
+Sonntagsbars (Gold 168 von 1011 Bars, Ø 0,56 % Spanne gegen 2,5 % Di–Fr; Silber 0,97 %;
+Brent 0,96 % plus eine degenerierte Samstagsbar mit 0,0 %). Montag ist unauffällig (Gold
+2,33 %). Krypto: Sa/So echte Sitzungen (BTC Sa Ø 1,93 %, So 2,79 %) — bleiben.
+
+**Änderungen (TDD, fünf neue Tests, alle rot zuerst):**
+- `universe.has_weekend_sessions(ticker)` (nur `CRYPTO_TICKERS`) und
+  `universe.is_partial_weekend_bar(ticker, date)` (Sa/So **und** keine Wochenendsitzung).
+  Gilt damit auch für Aktien/ETFs — die liefern nie Wochenendbars, ein Artefakt wäre aber
+  genauso eines.
+- `main._write_final_bar()` verwirft solche Bars (INFO-Log); `run_final_close()` ruft
+  vorher `db.delete_weekend_bars()` (neu) über alle Nicht-Krypto-Ticker — idempotent,
+  WARNING bei Treffern, `db-latest` heilt beim nächsten 00:15-UTC-Lauf ohne Hand-SQL.
+- `data_collector._fill_price_gaps()` und `historical_loader.load_ticker_history()`
+  überspringen sie ebenso (Loader zählt sie im Log).
+- `technical_indicators`-Zeilen, die auf den alten Bars gerechnet wurden, korrigieren sich
+  beim nächsten Tageslauf selbst (`INSERT OR REPLACE` je Tag, C.14).
+
+**Bewusster Verzicht:** `evaluator.evaluate_open_predictions()` liest `price_history`
+(`load_price_history_after`) für die TP/SL-Walk-Forward-Prüfung. Ohne Sonntagsbar fehlt
+ihm für Rohstoffe die Handelsstunde So 23–24 UTC — ein Stop, der genau dort reisst und bis
+Mo 00:00 UTC zurückläuft, bliebe unbemerkt. Eine Stunde je Woche bei dünner Liquidität;
+gegenüber dem systematisch verzerrten Range/ATR (Guardrail-Fehlablehnungen) das kleinere
+Übel. Die Alternative (Filter nur beim Indikator-Laden) hätte den Evaluator unberührt
+gelassen — bei Bedarf umkehrbar, die Bars sind bei Capital.com jederzeit nachladbar.
+
+**Lokale DB:** Altbestand mit dem neuen Helfer entfernt — 482 Zeilen (Gold 168, Silber 166,
+Brent 148), BTC-Wochenendbars unverändert (290); Backup vom 10.09. im Scratchpad. **Regel-15-Sweep:** kein Prompt erwähnt Wochenende oder Sonntag.
+
+**Tests:** 1002 grün, 15 übersprungen, Coverage 92,82 %. Nicht live gemessen;
+Beobachtungsposten: erster `final_close` nach dem Deploy sollte
+`Wochenend-Teilbar(s) entfernt (C.36)` loggen (in `db-latest` ~500 Zeilen für drei
+Rohstoffe), danach nie wieder.
+
 ## Sprint 3D — Learning Modul
 
 ⚠️ **Noch nicht ausgearbeitet — braucht eine eigene Planungssession, bevor die Implementierung

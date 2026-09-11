@@ -49,7 +49,7 @@ GAP_SCAN_BARS = 220
 
 from src.providers.base import DataProvider
 from src import db, technical_signal
-from src.universe import is_commodity_or_crypto
+from src.universe import is_commodity_or_crypto, is_partial_weekend_bar
 import config
 
 # Die Batch-Pause in collect() zaehlt Capital.com-CALLS, nicht Ticker (F8,
@@ -265,7 +265,9 @@ def _fill_price_gaps(
         # `>= date` statt `> date`: der laufende Tag ist noch nicht final und
         # gehoert final_close. Ihn hier nachzuladen brachte die provisorische
         # Teilbar zurueck, deren Beseitigung der ganze Umbau ist.
-        if d < start or d >= date or d in have:
+        # C.36: Wochenend-Teilbars (Rohstoff-Sonntag) nie nachladen -- dieselbe
+        # Regel wie final_close und Loader, drei Schreiber, eine Regel.
+        if d < start or d >= date or d in have or is_partial_weekend_bar(ticker, d):
             continue
         db.insert_price_bar_if_missing(
             conn, ticker=ticker, date=d,

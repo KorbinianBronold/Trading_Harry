@@ -72,6 +72,9 @@ Kurzform zum Erkennen einer drohenden Verletzung; Begründung und Randfälle in
 - `price_history` = nur **finale** Tagesbars. Entscheidungskurse gehören in
   `predictions.price_premarket/price_open/price_1610`. Drei Schreiber, **nie** der
   laufende Tag. → P3
+- Wochenend-Bars nur für Krypto (`universe.has_weekend_sessions`). Rohstoffe bekommen von
+  Capital.com eine Sonntagsbar aus einer Stunde Sitzung — alle drei Schreiber verwerfen sie
+  über `is_partial_weekend_bar()`, `final_close` räumt Altbestand weg. → C.36
 - `technical_indicators`-Zeile `date=T` ist aus Bars bis **T-1** — kein Off-by-one,
   **nicht** „korrigieren" (Leakage). Indikatoren sind pro Tag konstant; mehrere
   Läufe/Tag schreiben wertgleich per `INSERT OR REPLACE`. → C.14

@@ -1636,6 +1636,63 @@ def test_final_close_writes_final_bars_for_tickers_and_etfs(tmp_db_path, mocker)
     assert tickers == {"AAPL", "BTCUSD", "SOXX"}
 
 
+def test_write_final_bar_drops_a_commodity_weekend_bar_but_keeps_crypto(in_memory_db):
+    """C.36 (F11): die Sonntagsbar eines Rohstoffs ist eine Stunde Sitzung
+    (Capital.com oeffnet So 23:00 UTC) und drueckt intraday_range_pct/ATR --
+    Gold kippte damit in ruhigen Phasen unter den 1-%-Guardrail. Krypto
+    behaelt seine Wochenendbars, dort ist es eine volle Sitzung."""
+    import pandas as pd
+    from src import db
+    from main import _write_final_bar
+    db.init_schema(in_memory_db)
+
+    def _bar(day):
+        return pd.DataFrame(
+            {"Open": [1.0], "High": [2.0], "Low": [0.5], "Close": [1.5], "Volume": [1]},
+            index=pd.DatetimeIndex([pd.Timestamp(day)]))
+    prov = MagicMock(); prov._source_name = "capital.com"
+    prov.get_ohlc_after.side_effect = lambda t, start, end: _bar(end)
+
+    assert _write_final_bar(in_memory_db, prov, "GOLD", "2026-09-06") is False    # Sonntag
+    assert _write_final_bar(in_memory_db, prov, "GOLD", "2026-09-07") is True     # Montag
+    assert _write_final_bar(in_memory_db, prov, "BTCUSD", "2026-09-06") is True   # Krypto
+
+    rows = {(r["ticker"], r["date"]) for r in in_memory_db.execute(
+        "SELECT ticker, date FROM price_history")}
+    assert rows == {("GOLD", "2026-09-07"), ("BTCUSD", "2026-09-06")}
+
+
+def test_final_close_removes_existing_commodity_weekend_bars(tmp_db_path, mocker):
+    """Altbestand heilt ohne Hand-SQL: final_close raeumt bei jedem Lauf die
+    Wochenendbars aller Nicht-Krypto-Ticker weg (idempotent). Krypto- und
+    Werktagsbars bleiben."""
+    from src import db
+    conn = db.connect(str(tmp_db_path)); db.init_schema(conn)
+    for t, d in (("GOLD", "2026-09-06"), ("GOLD", "2026-09-04"),
+                 ("BTCUSD", "2026-09-06"), ("AAPL", "2026-09-04")):
+        db.upsert_price_history(conn, t, d, 1.0, 2.0, 0.5, 1.5, 1)
+    conn.commit(); conn.close()
+
+    prov = MagicMock(); prov._source_name = "capital.com"
+    prov.get_ohlc_after.return_value = None
+    mocker.patch("main.CapitalComProvider", return_value=prov)
+    mocker.patch("main.evaluate_open_predictions", return_value=0)
+    mocker.patch("main.config.SP500_PROD_TICKERS", ["AAPL"])
+    mocker.patch("main.config.USE_FULL_SP500", False)
+    mocker.patch("main.config.SUB_SECTOR_ETFS", {})
+    mocker.patch("main.config.COMMODITY_TICKERS", ["GOLD"])
+    mocker.patch("main.config.CRYPTO_TICKERS", ["BTCUSD"])
+    mocker.patch("main.send_final_close_email")
+
+    from main import run_final_close
+    run_final_close(date="2026-09-10", db_path=str(tmp_db_path))
+
+    conn = db.connect(str(tmp_db_path))
+    rows = {(r["ticker"], r["date"]) for r in conn.execute("SELECT ticker, date FROM price_history")}
+    conn.close()
+    assert rows == {("GOLD", "2026-09-04"), ("BTCUSD", "2026-09-06"), ("AAPL", "2026-09-04")}
+
+
 def test_final_close_covers_exactly_the_bootstrap_universe(tmp_db_path, mocker):
     """final_close und `historical_loader --universe` muessen dieselbe Liste
     anfassen. Laufen sie auseinander, backfillt der Bootstrap einen Ticker, den

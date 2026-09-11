@@ -1590,6 +1590,24 @@ def get_cached_fundamentals(
     return dict(row) if row else None
 
 
+def delete_weekend_bars(conn: sqlite3.Connection, tickers: list[str]) -> int:
+    """Loescht Samstags-/Sonntagsbars der genannten Ticker aus price_history und
+    gibt die Zahl geloeschter Zeilen zurueck (C.36). Fuer Instrumente ohne
+    Wochenendsitzung sind das Teilbars (s. universe.is_partial_weekend_bar);
+    final_close ruft dies bei jedem Lauf -- idempotent, Altbestand in
+    db-latest heilt so ohne Hand-SQL. Krypto gehoert NIE in `tickers`."""
+    if not tickers:
+        return 0
+    marks = ",".join("?" * len(tickers))
+    n = conn.execute(
+        f"DELETE FROM price_history WHERE ticker IN ({marks}) "
+        f"AND strftime('%w', date) IN ('0', '6')",
+        list(tickers),
+    ).rowcount
+    conn.commit()
+    return n
+
+
 def purge_non_equity_fundamentals(conn: sqlite3.Connection, tickers: list[str]) -> int:
     """Loescht fundamentals_cache- und ticker_sectors-Zeilen der genannten
     Rohstoff-/Krypto-Ticker und gibt die Zahl geloeschter Zeilen zurueck (C.35).

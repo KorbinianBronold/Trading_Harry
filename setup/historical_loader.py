@@ -33,7 +33,7 @@ from src import db  # noqa: E402
 from src.providers.capital_provider import (  # noqa: E402
     CapitalComProvider, MAX_BARS_PER_REQUEST,
 )
-from src.universe import full_universe  # noqa: E402
+from src.universe import full_universe, is_partial_weekend_bar  # noqa: E402
 
 log = logging.getLogger("shares_future.historical_loader")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -80,10 +80,16 @@ def load_ticker_history(
 
     inserted = 0
     skipped_today = 0
+    skipped_weekend = 0
     for ts, row in df.iterrows():
         d   = ts.strftime("%Y-%m-%d")
         if d >= today:
             skipped_today += 1
+            continue
+        if is_partial_weekend_bar(ticker, d):
+            # C.36: Rohstoff-Sonntagsbar = eine Stunde Sitzung; final_close
+            # schreibt sie nicht, der Backfill darf sie nicht wieder anlegen.
+            skipped_weekend += 1
             continue
         cur = conn.execute(
             """INSERT OR IGNORE INTO price_history
@@ -106,6 +112,8 @@ def load_ticker_history(
         f"{ticker}: {inserted}/{len(df)} rows inserted"
         + (f" ({skipped_today} noch nicht finale Bar(s) uebersprungen)"
            if skipped_today else "")
+        + (f" ({skipped_weekend} Wochenend-Teilbar(s) verworfen, C.36)"
+           if skipped_weekend else "")
     )
     return inserted
 
