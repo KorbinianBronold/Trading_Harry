@@ -4323,6 +4323,53 @@ Beobachtungsposten: erster Lauf mit einer echten Position — Mail-Zeile mit P&L
 `position_checks`-Zeile mit der `deal_id`. README/SPECIFICATION beschreiben noch den alten
 Weg (Finaldurchgang).
 
+### C.38 — Phase-1d-Review (Sektor-Momentum): ETF-Signal auf abgeschlossene Tage gezogen (F17), F18/F19 offen (2026-09-11)
+
+Fünfter Durchgang des Pipeline-Reviews. Code-Logik sauber (ein Abruf je ETF, keine
+`price_history`-Schreiber, idempotent je Lauf, Vorzeichen-Vergleich nach B.3.1, alles weich
+solange `SECTOR_GUARDRAIL_STRICT = False`). Konsumenten: nur Guardrails (Ranking, 16:10)
+und die Persistenz in `predictions`/`guardrail_rejects`; kein Prompt sieht die Werte.
+
+**Produktionsstand (`db-latest`, nur gelesen):** 149 von 150 Tickern gemappt, 19 von 21
+Sub-Sektoren mit beiden Signalen, Ø 7 Ticker je Sektor — der DB-Pfad lebt (anders als zur
+MVP-Zeit, B.3.1).
+
+**F17 — ETF maß „heute bis jetzt", DB „gestern gegen vorgestern" (behoben).**
+`_fetch_etf_momentum` behielt mit `<= date` den Bar des Lauftags; Capital.com liefert ihn
+bereits (pre_market: Vorbörse, 16:10: 40 Minuten Sitzung). Live-Lauf 11.09. um 15 Uhr
+Berlin: XLK-Frame enthielt den 11.09. mit Close 187,20. `daily_change_pct` in
+`signal_checks.py` schreibt die Absicht in den Docstring („relative Stärke und D9
+vergleichen abgeschlossene Tage"), der ETF-Pfad hielt sich nicht daran. Folge am 10.09.
+(Ölschock-Tag): **6 von 19** Paaren im Vorzeichen-Konflikt (Semiconductors ETF −2,05 gegen DB
++1,35; Metals & Mining −3,18 gegen +0,41; Banks, Consumer Staples, Healthcare Rest,
+Transport), seit 01.09. acht `sector_momentum_conflict`-Warnungen — keine Uneinigkeit der
+Quellen, sondern die Tagesverschiebung. Fix: `< date`, beide Signale messen T-1 gegen T-2.
+Bewusste Vertragsänderung: `test_collect_ignores_etf_bars_after_the_run_date` pinnte den
+Lauftags-Bar und heißt jetzt `…_on_and_after_the_run_date`; Helfer-Default auf zwei
+abgeschlossene Tage. Neuer Test rot zuerst. Folge für 3D: `predictions.sector_etf_momentum`
+vor dem 11.09. trägt Vorbörsen-Teilbars, danach abgeschlossene Tage — per Datum trennen.
+Für 16:10 gilt dasselbe; ein echtes Intraday-Sektorsignal um 16:10 wäre ein eigenes Thema
+(Minutenbars).
+
+**Tests:** 1013 grün, 15 übersprungen, Coverage 92,92 %. Regel-15-Sweep: kein Prompt
+zitiert die Momentum-Werte (`trade_proposals_v1` nennt „RELATIVE STRENGTH", die kommt aus
+`compute_relative_strength` und war schon immer auf abgeschlossenen Tagen).
+
+**Offen (Entscheidung Korbinian: jetzt nur F17):**
+- **F18** Software und Clean Energy haben in Produktion 0 gemappte Ticker; `db_momentum`
+  bleibt dort dauerhaft NULL (nur ETF, weiche Warnung). Bei Software liegt es an Finnhub:
+  dessen Branche für MSFT & Co. heißt „Technology" und landet per Alias in „Technology
+  Hardware" (11 Ticker, darunter Software-Firmen) — die Quelle kann die zwei Sub-Sektoren
+  nicht trennen. Optionen: zusammenlegen, oder Software per fester Ticker-Liste zuordnen.
+- **F19** „Momentum" ist die Rendite eines einzigen Tages; für einen Guardrail über 1–5
+  Handelstage rauschdominiert, dreht täglich. Ein 3- oder 5-Tage-Fenster wäre mit denselben
+  Bars und derselben SQL machbar — 3D-Messfrage.
+- **Beobachtung (nicht 1d):** `sector_momentum` hat vom 08.–10.09. nur `pre_market`-Zeilen,
+  keine vom 16:10-Lauf — `trade_proposals` lief nicht oder brach vor 1d ab. Gehört in den
+  Cron-Check (F.1).
+- Notebook-Zelle 40 zeigt fünf Einträge nach ID ohne Namen; eine Tabelle mit Sub-Sektor,
+  ETF, beiden Werten und Konfliktmarkierung machte F17 sichtbar. Nicht geändert.
+
 ## Sprint 3D — Learning Modul
 
 ⚠️ **Noch nicht ausgearbeitet — braucht eine eigene Planungssession, bevor die Implementierung

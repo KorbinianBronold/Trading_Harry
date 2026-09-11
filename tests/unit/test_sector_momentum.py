@@ -10,8 +10,10 @@ from src import db
 
 def _etf_frame(*closes: float, dates: tuple[str, ...] | None = None) -> pd.DataFrame:
     """Minimaler OHLCV-Frame wie ihn CapitalComProvider.get_price_history()
-    liefert — ein Bar je uebergebenem Schlusskurs."""
-    dates = dates or ("2026-07-24", "2026-07-27")
+    liefert — ein Bar je uebergebenem Schlusskurs. Default: zwei abgeschlossene
+    Handelstage VOR dem Lauftag 2026-07-27 (seit F17 zaehlt der Bar des
+    Lauftags nicht mehr)."""
+    dates = dates or ("2026-07-23", "2026-07-24")
     return pd.DataFrame(
         {"Open": list(closes), "High": list(closes),
          "Low": list(closes), "Close": list(closes),
@@ -84,14 +86,14 @@ def test_collect_never_writes_price_history(in_memory_db):
     assert n == 0, "sector_momentum darf price_history nicht schreiben"
 
 
-def test_collect_ignores_etf_bars_after_the_run_date(in_memory_db):
-    """Ein Frame, der ueber `date` hinausreicht, darf weder gespeichert werden
-    noch das Momentum verfaelschen — sonst misst der ETF einen anderen Tag als
-    das DB-Signal."""
+def test_collect_ignores_etf_bars_on_and_after_the_run_date(in_memory_db):
+    """Ein Frame, der bis an oder ueber `date` reicht, darf weder gespeichert
+    werden noch das Momentum verfaelschen — sonst misst der ETF einen anderen
+    Tag als das DB-Signal (F17: der Bar des Lauftags ist eine Teilbar)."""
     from src.sector_momentum import collect_sector_momentum
     db.init_schema(in_memory_db)
-    frame = _etf_frame(100.0, 102.0, 200.0,
-                       dates=("2026-07-24", "2026-07-27", "2026-07-28"))
+    frame = _etf_frame(100.0, 102.0, 150.0, 200.0,
+                       dates=("2026-07-23", "2026-07-24", "2026-07-27", "2026-07-28"))
 
     collect_sector_momentum(
         conn=in_memory_db, date="2026-07-27", run_type="pre_market",
@@ -99,10 +101,10 @@ def test_collect_ignores_etf_bars_after_the_run_date(in_memory_db):
     )
     sid = db.resolve_sector_id(in_memory_db, "Semiconductors")
     stored = db.load_sector_momentum(in_memory_db, "2026-07-27", "pre_market")
-    assert round(stored[sid]["etf_momentum"], 4) == 2.0
+    assert round(stored[sid]["etf_momentum"], 4) == 2.0      # 24.07. gegen 23.07.
     dates = [r["date"] for r in in_memory_db.execute(
         "SELECT date FROM price_history WHERE ticker='SOXX'").fetchall()]
-    assert "2026-07-28" not in dates
+    assert "2026-07-27" not in dates and "2026-07-28" not in dates
 
 
 def test_collect_leaves_etf_momentum_none_when_fetch_returns_nothing(in_memory_db):
@@ -138,7 +140,7 @@ def test_collect_leaves_etf_momentum_none_with_only_one_bar(in_memory_db):
 
     collect_sector_momentum(
         conn=in_memory_db, date="2026-07-27", run_type="pre_market",
-        price_provider=_provider(_etf_frame(100.0, dates=("2026-07-27",))),
+        price_provider=_provider(_etf_frame(100.0, dates=("2026-07-24",))),
     )
     sid = db.resolve_sector_id(in_memory_db, "Semiconductors")
     stored = db.load_sector_momentum(in_memory_db, "2026-07-27", "pre_market")
@@ -229,3 +231,25 @@ def test_collect_is_idempotent_within_a_run(in_memory_db):
     sid = db.resolve_sector_id(in_memory_db, "Semiconductors")
     stored = db.load_sector_momentum(in_memory_db, "2026-07-27", "pre_market")
     assert round(stored[sid]["etf_momentum"], 4) == 5.0
+
+
+def test_etf_momentum_excludes_the_run_days_provisional_bar(in_memory_db):
+    """F17 (Phase-1d-Review, 2026-09-11): Capital.com liefert am Lauftag bereits
+    eine Teilbar (pre_market: Vorboerse, 16:10: 40 Minuten Sitzung). Mit `<= date`
+    mass das ETF-Signal 'heute bis jetzt', der DB-Pfad 'gestern gegen vorgestern'
+    -- am 10.09. standen 6 von 19 Paaren im Vorzeichen-Konflikt (Semis ETF -2,05
+    gegen DB +1,35). Beide Signale messen abgeschlossene Tage: der Bar des
+    Lauftags zaehlt nicht."""
+    from src.sector_momentum import collect_sector_momentum
+    db.init_schema(in_memory_db)
+    frame = _etf_frame(100.0, 102.0, 150.0,
+                       dates=("2026-09-09", "2026-09-10", "2026-09-11"))
+
+    collect_sector_momentum(
+        conn=in_memory_db, date="2026-09-11", run_type="pre_market",
+        price_provider=_provider(frame),
+    )
+
+    sid = db.resolve_sector_id(in_memory_db, "Semiconductors")
+    stored = db.load_sector_momentum(in_memory_db, "2026-09-11", "pre_market")
+    assert round(stored[sid]["etf_momentum"], 4) == 2.0      # 10.09. gegen 09.09., nicht 150/102

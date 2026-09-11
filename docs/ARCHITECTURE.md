@@ -548,7 +548,7 @@ def collect_sector_momentum(conn, date, run_type, price_provider) -> dict[int, d
     """{sector_id: {etf_momentum, db_momentum, ticker_count}}"""
 ```
 
-- `etf_momentum` – Tagesperformance des Sub-Sektor-ETF von Capital.com. Jeder ETF
+- `etf_momentum` – Tagesperformance des Sub-Sektor-ETF von Capital.com für den letzten **abgeschlossenen** Handelstag (seit C.38/F17: der Bar des Lauftags ist eine Teilbar und zählt nicht; vorher maß der ETF „heute bis jetzt", der DB-Pfad gestern). Jeder ETF
   wird nur einmal abgerufen (21 Sub-Sektoren teilen sich 19 ETFs); die Bars landen
   in `price_history`, weil keine Phase-1-Ticker-Liste sie enthält.
 - `db_momentum` – Ø Tagesperformance aller Ticker des Sub-Sektors, reines SQL,

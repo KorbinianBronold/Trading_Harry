@@ -133,7 +133,8 @@ Kurzform zum Erkennen einer drohenden Verletzung; Begründung und Randfälle in
 - Technisches Signal deterministisch im Code; drei feste Ablesungen (RSI-Momentum,
   MACD-Histogramm, Kurs vs. SMA50 **und** SMA200 — keine Kreuzung); ADX moduliert
   die Stärke, **nie** die Richtung. → §6.2
-- Sektor-Momentum = **zwei getrennte** Signale (ETF + DB-Ø), nie verrechnet. → B.3.1
+- Sektor-Momentum = **zwei getrennte** Signale (ETF + DB-Ø), nie verrechnet; beide auf
+  **abgeschlossenen** Tagen (T-1 gegen T-2), der Bar des Lauftags zählt nie. → B.3.1 / C.38
 - Sektor-**Rotation** gibt es doppelt: `market_context` (persistiert; Prompt-Kontext für
   Phase 2 und den 16:10-Portfolio-Check) und `trend_analyzer` (nur Prompt-Kontext für
   Phase 2/3/3b/4a). **Kein Guardrail liest Rotation, Regime oder Breite** — der einzige

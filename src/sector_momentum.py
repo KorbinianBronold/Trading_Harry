@@ -46,11 +46,17 @@ def _daily_change_pct(df: pd.DataFrame | None) -> float | None:
 def _fetch_etf_momentum(
     price_provider: DataProvider, conn, etf: str, date: str,
 ) -> float | None:
-    """Holt die letzten Bars des Sektor-ETF und gibt die Tagesperformance zurueck.
-    None bei jedem Abruf- oder Datenproblem. Schreibt nichts (s. Modul-Docstring).
+    """Holt die letzten Bars des Sektor-ETF und gibt die Tagesperformance des
+    letzten ABGESCHLOSSENEN Handelstags zurueck. None bei jedem Abruf- oder
+    Datenproblem. Schreibt nichts (s. Modul-Docstring).
 
-    Bars nach `date` werden verworfen, damit das ETF-Signal denselben Handelstag
-    misst wie das DB-Signal."""
+    Bars ab `date` werden verworfen (F17, C.38): Capital.com liefert am Lauftag
+    bereits eine Teilbar (pre_market: Vorboerse, 16:10: 40 Minuten Sitzung).
+    Mit ihr mass das ETF-Signal 'heute bis jetzt', waehrend der DB-Pfad
+    (compute_sector_db_momentum) gestern gegen vorgestern rechnet -- am
+    10.09.2026 standen so 6 von 19 Paaren im Vorzeichen-Konflikt. Beide
+    Signale vergleichen abgeschlossene Tage, wie signal_checks.daily_change_pct
+    es fuer die relative Staerke schon immer tat."""
     try:
         df = price_provider.get_price_history(etf, days=5)
     except Exception as e:
@@ -60,9 +66,9 @@ def _fetch_etf_momentum(
         log.warning(f"{etf}: keine Bars fuer ETF-Momentum")
         return None
 
-    df = df[[_bar_date(ts) <= date for ts in df.index]]
+    df = df[[_bar_date(ts) < date for ts in df.index]]
     if df.empty:
-        log.warning(f"{etf}: nur Bars nach {date} — kein ETF-Momentum")
+        log.warning(f"{etf}: keine abgeschlossenen Bars vor {date} — kein ETF-Momentum")
         return None
 
     return _daily_change_pct(df)
