@@ -297,18 +297,21 @@ DB-Close.
 └─────────────────────────────────────────────────────────────────┘
                               ↓
 ┌─────────────────────────────────────────────────────────────────┐
-│       PHASE 4a: PORTFOLIO-CHECK (Offene Positionen)              │
+│       PHASE 4a: PORTFOLIO-CHECK (Capital.com-Positionen)         │
 │  ⚠️ Läuft seit B.5 NACH Phase 4 und nutzt deren fertige         │
 │     Phase-3-Analysen — kein eigener web_search mehr.             │
-│  Input: db.predictions[status='open' & date < today],           │
+│  Input: positions aus Phase 1c (LIVE bei Capital.com, C.37),    │
 │         analyses_by_ticker, trend_context, policy_context       │
-│  Claude: Sonnet × N offene Positionen, OHNE web_search          │
-│  Output: list[{prediction_id, action="HALTEN|SCHLIESSEN|..."}]  │
-│  Hinweis: date < today — eine Prediction ist erst ab dem        │
-│           Folgetag eine offene Position, vorher ein Vorschlag.   │
-│  Cost: ~0.20 EUR (abhängig von offenen Positionen)              │
+│  Claude: Haiku × N offene Positionen, OHNE web_search           │
+│  Output: list[{deal_id, action="HALTEN|SCHLIESSEN|ANPASSEN|     │
+│                KEINE ANALYSE", ...}]                              │
+│  Hinweis: liest `predictions` NICHT — Predictions sind Papier-  │
+│           Vorschläge fürs Lernmodul, keine Positionen.           │
+│  positions=None (Abruf gescheitert): keine Empfehlungen,        │
+│           Mail sagt „nicht abrufbar".                            │
+│  Cost: ~0.03 EUR je echter Position                              │
 │  Fail: ✅ Skip Position, continue                                │
-│  DB: position_recommendations-Table schreiben                   │
+│  DB: position_checks (je Deal); position_recommendations tot    │
 └─────────────────────────────────────────────────────────────────┘
                               ↓
 ┌─────────────────────────────────────────────────────────────────┐
@@ -894,33 +897,43 @@ Originale unverändert.
 
 ### 7. **`src/portfolio_check.py`** (Phase 4a)
 
-Evaluiert alle offenen Positionen (max `MAX_HOLD_DAYS` Tage alt). **Läuft seit B.5
-nach Phase 4** und arbeitet auf deren fertigen Phase-3-Analysen.
+Prüft die bei **Capital.com tatsächlich offenen Positionen** (C.37, 2026-09-11) —
+Quelle ist `main._open_broker_positions()` aus Phase 1c, ein Abruf je Lauf. Liest
+`predictions` nicht: Predictions sind Papier-Vorschläge und laufen getrennt durch
+die mehrtägige Auswertung. **Läuft seit B.5 nach Phase 4** auf deren fertigen
+Phase-3-Analysen (16:10: auf den Phase-1-Snapshots).
 
 ```python
 def check_open_positions(
     conn,
     today: str,
     run_type: str,
-    analyses_by_ticker: dict[str, dict],   # fertige Phase-3-Analysen, NICHT Snapshots
+    positions: list[dict] | None,          # Capital.com-Positionen; None = Abruf gescheitert
+    analyses_by_ticker: dict[str, dict],   # fertige Phase-3-Analysen (16:10: Snapshots)
     trend_context: dict,
     policy_context: dict,
     cost_tracker: CostTracker,
 ) -> list[dict]:
     """
-    Für jede offene Position (≤ MAX_HOLD_DAYS alt):
-      - Sonnet-Call OHNE web_search (B.5) — der Kontext kommt aus Phase 3
-      - Returns: {prediction_id, action:"HALTEN"|"SCHLIESSEN"|"ANPASSEN",
+    Je Position (deal_id, direction, entry/current price, TP/SL, size, P&L, opened_at):
+      - Haiku-Call OHNE web_search (B.5) — der Kontext kommt aus Phase 3
+      - Returns: {deal_id, ticker, action:"HALTEN"|"SCHLIESSEN"|"ANPASSEN",
                  reason, new_sl_price, new_tp_price, market_context_changed}
-      - Speichert position_recommendations-Row
-
-    Nur Predictions mit date < today: eine Prediction desselben Laufs ist ein
-    Vorschlag, keine offene Position — sonst prüfte 4a die Signale gegen ihre
-    eigene, Sekunden alte Analyse.
+                 + Positionsfelder für die Mail
+      - Speichert eine position_checks-Zeile je Deal und Lauf
+    Position ohne Analyse (Fremdposition, Ticker in Phase 3 übersprungen):
+      kein Call, Zeile action="KEINE ANALYSE" für die Mail.
+    positions is None: keine Empfehlungen (Mail: „nicht abrufbar").
     """
 ```
 
 **Fail-Verhalten:** `PortfolioCheckError` → skip Position, continue.
+
+Bis C.37 lud der Check „offene Positionen" aus `predictions` (≤ `MAX_HOLD_DAYS`, `date <
+today`) und empfahl HALTEN/SCHLIESSEN für Positionen, die es beim Broker nie gab (10.09.:
+7 Empfehlungen bei 0 offenen Positionen). `db.load_open_predictions_within_max_age_days()`,
+`save_position_recommendation()`, `load_position_recommendations_for_date()` und die Tabelle
+`position_recommendations` sind seither ohne Aufrufer (Finaldurchgang).
 
 ---
 
@@ -1159,7 +1172,8 @@ SQLite-Schema + Persistence.
 - `technical_indicators` – Phase 1 Daten (rsi_14, macd, ..., seit Sprint 3C / Plan 1
   zusätzlich 29 Spalten für die 17 Indikatoren aus `src/indicators.py`, s. unten)
 - `outcomes` – Walk-Forward Ergebnisse (tp_hit, sl_hit, days_to_close, hold_day, extended_hold, p&l, ...)
-- `position_recommendations` – Phase 4a Output (HALTEN/SCHLIESSEN/ANPASSEN)
+- `position_checks` – Phase 4a Output je Capital.com-Deal (HALTEN/SCHLIESSEN/ANPASSEN), seit C.37
+- `position_recommendations` – bis C.37 Phase 4a Output je Prediction; ohne Schreiber, Historie
 - `cost_tracking` – Claude-API Kosten pro Run
 - `fundamentals_cache` – Finnhub-Fundamentals mit 7-Tage TTL (UNIQUE per ticker)
 - `price_history` – ausschliesslich finale Tages-OHLCV (s. „Die zentrale Trennung" oben)
@@ -1233,7 +1247,8 @@ ist entfernt, nicht nur tot.
 
 **Wichtige Helpers:**
 - `save_prediction(conn, pred_dict)` – Phase 4
-- `load_open_predictions_within_max_age_days(conn, today, max_trading_days=config.MAX_HOLD_DAYS)` – Phase 4a
+- `save_position_check(conn, row)` – Phase 4a (je Capital.com-Deal, C.37)
+- `load_open_predictions_within_max_age_days(conn, today, ...)` – bis C.37 Phase 4a, jetzt ohne Aufrufer
 - `update_outcome_close(conn, pred_id, exit_reason, exit_price, ...)` – Evaluator
 - `load_recent_outcomes(conn, days=7)` – Weekly Email
 - `resolve_sector_id(conn, raw)` / `upsert_ticker_sector(...)` / `get_ticker_sector(...)` – Sub-Sektoren
@@ -1619,7 +1634,7 @@ Offen bleibt nur noch `weekly`: zugestellt, aber nicht inhaltlich geprüft.
 | Bereich | Änderung |
 |---|---|
 | Run-Types | `midday`, `evaluate`, `position_check` entfernt; neu `trade_proposals` (16:10 Berlin) |
-| Pipeline | **Phase 1c**: offene Capital.com-Positionen als Pflicht-Kandidaten für Phase 3 |
+| Pipeline | **Phase 1c**: offene Capital.com-Positionen als Pflicht-Kandidaten für Phase 3 — seit C.37 auch die **einzige Quelle** des Portfolio-Checks (4a) |
 | Pipeline | **Phase 1d**: Sektor-Momentum verdrahtet (war toter Code) |
 | Pipeline | **Phase 4 vor 4a** — 4a nutzt die fertigen Phase-3-Analysen, ohne Web-Search. Mail-Reihenfolge bleibt: Portfolio zuerst |
 | Module | **neu** `src/signal_checks.py` und `src/revalidation.py` (s. 10a/10b) |

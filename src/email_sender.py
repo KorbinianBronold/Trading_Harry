@@ -96,28 +96,37 @@ def _section_briefing(bullets: list[str]) -> str:
     )
 
 
-def _section_portfolio(recs: list[dict]) -> str:
-    """Renders the Phase-4a portfolio-recommendations table (HALTEN/SCHLIESSEN/
-    ANPASSEN), the first section of the daily e-mail."""
+def _section_portfolio(recs: list[dict], positions_unavailable: bool = False) -> str:
+    """Renders the Phase-4a table (HALTEN/SCHLIESSEN/ANPASSEN/KEINE ANALYSE) for
+    the positions actually open at Capital.com (C.37), the first section of the
+    daily and the 16:10 e-mail. `positions_unavailable` = the broker call failed:
+    say so instead of rendering an empty section that reads like 'all closed'."""
+    if positions_unavailable:
+        return ('<h2>Portfolio-Empfehlungen</h2>'
+                '<p><i>Capital.com-Positionen nicht abrufbar, keine Empfehlungen.</i></p>')
     if not recs:
         return ('<h2>Portfolio-Empfehlungen</h2>'
-                '<p><i>Keine offenen Positionen.</i></p>')
+                '<p><i>Keine offenen Positionen bei Capital.com.</i></p>')
     rows = []
     for r in recs:
         new_lvls = ""
         if r["action"] == "ANPASSEN":
             new_lvls = (f' (neuer SL {_h(r.get("new_sl_price"))}, '
                         f'neues TP {_h(r.get("new_tp_price"))})')
+        label = r.get("ticker") or r.get("epic")
         rows.append(
             f'<tr><td><b>{_h(r["action"])}</b></td>'
-            f'<td>{_h(r["ticker"])}</td>'
-            f'<td>{_h(r["direction"])} @ {_h(r.get("entry_price"))}</td>'
+            f'<td>{_h(label)}</td>'
+            f'<td>{_h(r["direction"])} @ {_h(r.get("entry_price"))}'
+            f' (jetzt {_h(r.get("current_price"))})</td>'
+            f'<td>{_h(r.get("profit_loss"))}</td>'
             f'<td>{_h(r.get("reason", ""))}{new_lvls}</td></tr>'
         )
     return (
         '<h2>Portfolio-Empfehlungen</h2>'
         '<table border="1" cellpadding="4" cellspacing="0">'
-        '<tr><th>Action</th><th>Ticker</th><th>Position</th><th>Begründung</th></tr>'
+        '<tr><th>Action</th><th>Ticker</th><th>Position</th><th>P&amp;L</th>'
+        '<th>Begründung</th></tr>'
         + "".join(rows) + '</table>'
     )
 
@@ -338,7 +347,8 @@ def render_daily_html(payload: dict) -> str:
         f'({_h(payload.get("run_type"))})</h1>'
         + _section_briefing(payload.get("briefing") or [])
         + _section_market_line(payload.get("market_context") or {})
-        + _section_portfolio(payload.get("portfolio_recs") or [])
+        + _section_portfolio(payload.get("portfolio_recs") or [],
+                             positions_unavailable=bool(payload.get("positions_unavailable")))
         + _section_stocks(
             payload.get("top_long") or [], payload.get("top_short") or [],
         )
@@ -602,7 +612,8 @@ def render_trade_proposals_html(payload: dict) -> str:
         '<html><body style="font-family:sans-serif;font-size:14px;">'
         f'<h1>Shares_Future — {_h(payload.get("date"))} (16:10 Nachprüfung)</h1>'
         + _section_briefing(payload.get("briefing") or [])
-        + _section_portfolio(payload.get("portfolio_recs") or [])
+        + _section_portfolio(payload.get("portfolio_recs") or [],
+                             positions_unavailable=bool(payload.get("positions_unavailable")))
         + _section_signal_changes(payload.get("signal_changes") or [])
         + _section_commodities_crypto(payload.get("commodities_crypto") or [])
         + _section_market_warnings(payload.get("market_context") or {})

@@ -4267,6 +4267,62 @@ Beobachtungsposten: erster `final_close` nach dem Deploy sollte
 `Wochenend-Teilbar(s) entfernt (C.36)` loggen (in `db-latest` ~500 Zeilen für drei
 Rohstoffe), danach nie wieder.
 
+### C.37 — Portfolio-Check nur auf echten Capital.com-Positionen; Predictions und Positionen getrennt (2026-09-11)
+
+**Befund (Korbinian):** die Mail zeigte „offene Positionen", die nicht offen waren. Ursache:
+`check_open_positions()` lud „offene Positionen" aus `predictions` (Papier-Vorschläge der
+letzten 5 Handelstage, `status='open'`, `date < today`) und fragte Capital.com nie. Belege
+aus `db-latest` (nur lesend geladen): Mail vom 10.09. mit **7** Empfehlungen (BMY, COP, CVX,
+FCX, GOLD, MPC, PSX) bei **0** offenen Positionen laut Capital.com; der Prompt sagte Claude
+„You receive ONE currently-open CFD position". P2.10 (09.08.) hatte die zwei Bedeutungen
+von „offene Position" (1c = Broker, 4a = DB) als „Formulierungssache" eingestuft. Jede
+Scheinposition kostete einen Haiku-Call.
+
+**Entscheidung (Korbinian):** Phase 4a prüft ausschliesslich die bei Capital.com offenen
+Positionen und leitet daraus Handlungsempfehlungen ab. Predictions haben damit nichts zu
+tun, sie laufen wie bisher über mehrere Tage durch die Auswertung. Design im Chat
+freigegeben (Fehlerverhalten, Fremdpositionen nur listen, neue Tabelle).
+
+**Änderungen (TDD, zwei Tranchen, alle Tests rot zuerst):**
+- `CapitalComProvider.get_open_positions()` **wirft** bei Fehlern statt `[]` zu liefern
+  („keine Position" und „Abruf gescheitert" waren ununterscheidbar) und trägt `deal_id`,
+  `size`, `opened_at` mit (`profit` mit Fallback `upl`).
+- `main._open_broker_positions()` (ersetzt `_forced_candidates`): **ein** Abruf je Lauf,
+  liefert die Positionen mit `epic` + `ticker` (None für Fremdpositionen), `None` bei
+  Ausfall; `_forced_tickers()` leitet die Pflicht-Kandidaten (B.4) daraus ab. Beide Läufe
+  setzen `payload["positions_unavailable"]`.
+- `portfolio_check.check_open_positions(positions=…)`: je Position ein Haiku-Call mit
+  Broker-Daten (Richtung, Einstieg, aktueller Kurs, TP/SL, Grösse, P&L, Alter), aktueller
+  Analyse bzw. Snapshot, Trend, Policy — **keine** Prediction, keine Ursprungsthese.
+  Position ohne Analyse → Zeile `KEINE ANALYSE`, kein Call, nicht persistiert.
+  `positions is None` → keine Empfehlungen. Ein Test pinnt, dass eine offene Prediction ohne
+  Broker-Position **keinen** Check auslöst.
+- **Neue Tabelle `position_checks`** (UNIQUE je Datum, Run-Type, `deal_id`; `CREATE TABLE
+  IF NOT EXISTS`, keine Migration), `db.save_position_check()`. `position_recommendations`
+  bleibt als Historie ohne Schreiber; ebenso ohne Aufrufer: `load_open_predictions_within_
+  max_age_days()`, `save_position_recommendation()`, `load_position_recommendations_for_
+  date()` — Finaldurchgang, nicht gelöscht (Regel 8).
+- **Prompt `portfolio_check_v2.txt` direkt angepasst** (Regel 10/15): Position statt
+  Prediction/These, `deal_id` statt `prediction_id`, Regeln ohne „thesis" (SCHLIESSEN bei
+  gedrehtem technischem Bild, Policy-Schock, ±80 % TP/SL-Distanz mit nachlassendem
+  Momentum); die deutschen Intraday-Zeilen standen mitten im ersten Satz und stehen jetzt
+  als eigener Absatz. Neuer Pin-Test (`deal_id` drin, `prediction_id`/`original thesis`
+  raus). Kein anderer Prompt betroffen.
+- **Mail:** Portfolio-Sektion mit P&L-Spalte und aktuellem Kurs; leer = „Keine offenen
+  Positionen bei Capital.com."; Ausfall = „Capital.com-Positionen nicht abrufbar, keine
+  Empfehlungen." (Tagesmail und 16:10). Portfolio bleibt die erste Sektion.
+- Walkthrough-Notebook (`random/`, nicht versioniert): Zellen 1c und 4a auf die neue
+  Signatur umgestellt, 1c zeigt die Positionsliste.
+
+**Tests:** 1012 grün, 15 übersprungen, Coverage 92,96 %. Acht Prediction-basierte
+Portfolio-Tests bewusst durch elf Positions-basierte ersetzt; Fixture
+`mock_portfolio_check_response.json` auf `deal_id`.
+
+**Offen:** nicht gegen die echte API mit einer offenen Position gemessen (heute 0 offen).
+Beobachtungsposten: erster Lauf mit einer echten Position — Mail-Zeile mit P&L, eine
+`position_checks`-Zeile mit der `deal_id`. README/SPECIFICATION beschreiben noch den alten
+Weg (Finaldurchgang).
+
 ## Sprint 3D — Learning Modul
 
 ⚠️ **Noch nicht ausgearbeitet — braucht eine eigene Planungssession, bevor die Implementierung
@@ -4647,9 +4703,16 @@ wiederholt eine Diagnose-Falle. Die zugehörige Prompt-Konsistenz (`deep_analysi
 / `commodities_crypto_v3` dürfen nicht zum Auffüllen einer dünnen Dimension drängen):
 C.12, Befund 3.
 
-### 6.4 — Eine Prediction ist erst ab dem Folgetag eine offene Position
+### 6.4 — Offene Position heisst: live bei Capital.com. Predictions sind Vorschläge.
 
-Vorher ist sie ein **Vorschlag**. Ohne diese Abgrenzung prüft Phase 4a
-(Portfolio-Check) die Signale desselben Laufs gegen ihre eigene, Sekunden alte
-Analyse. Betrifft die zwei Bedeutungen von „offene Position" (Phase 1c vs.
-Phase 4a) — s. P2.10, Befund 1.
+*(neu gefasst 2026-09-11, C.37, Entscheidung von Korbinian)* Eine offene Position im
+Sinne von Phase 1c, Phase 4a und der Mail ist eine bei **Capital.com live offene
+Position** (`get_open_positions()`, bei jedem Lauf **einmal** abgefragt, Phase 1c). Offene
+Predictions sind **Papier-Vorschläge** für die mehrtägige Auswertung (Lernmodul), keine
+Positionen — Phase 4a liest `predictions` nie. Ein gescheiterter Abruf erzeugt keine
+Empfehlungen, sondern eine Warnung und den Hinweis „nicht abrufbar" in der Mail; eine
+leere Portfolio-Sektion heisst ausschliesslich „keine Position beim Broker".
+
+Historie: bis C.37 lud Phase 4a „offene Positionen" aus `predictions` (≤ `MAX_HOLD_DAYS`,
+`date < today`, P2.10 Befund 1 stufte die zwei Bedeutungen als „Formulierungssache" ein).
+Die Abgrenzung „erst ab dem Folgetag" ist damit gegenstandslos.

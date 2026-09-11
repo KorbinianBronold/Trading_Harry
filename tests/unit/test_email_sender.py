@@ -814,3 +814,34 @@ def test_daily_mail_without_market_context_has_no_market_line():
     assert "Marktlage" not in render_daily_html(_daily_payload(market_context={}))
     assert "Marktlage" not in render_daily_html(_daily_payload(market_context={
         "vix_level": None, "sp500_change_pct": None, "market_regime": None}))
+
+
+# ---------- C.37: Portfolio-Sektion zeigt Capital.com-Positionen ----------
+
+
+def test_portfolio_section_names_capital_com_when_empty():
+    payload = _sample_payload(); payload["portfolio_recs"] = []
+    html = render_daily_html(payload)
+    assert "Keine offenen Positionen bei Capital.com" in html
+
+
+def test_portfolio_section_flags_unavailable_broker_positions():
+    """Ein gescheiterter Abruf darf nicht wie 'alles geschlossen' aussehen."""
+    payload = _sample_payload(); payload["portfolio_recs"] = []
+    payload["positions_unavailable"] = True
+    html = render_daily_html(payload)
+    assert "nicht abrufbar" in html
+    assert "Keine offenen Positionen" not in html
+
+
+def test_portfolio_rows_show_pnl_and_positions_without_analysis():
+    payload = _sample_payload()
+    payload["portfolio_recs"] = [
+        {"ticker": "AAPL", "epic": "AAPL", "action": "HALTEN", "reason": "ok",
+         "entry_price": 178.0, "current_price": 181.2, "direction": "long", "profit_loss": 3.2},
+        {"ticker": None, "epic": "PPHE", "action": "KEINE ANALYSE",
+         "reason": "Fremdposition ausserhalb des Universums",
+         "entry_price": 10.0, "current_price": 9.8, "direction": "long", "profit_loss": -0.5},
+    ]
+    html = render_daily_html(payload)
+    assert "3.2" in html and "PPHE" in html and "KEINE ANALYSE" in html

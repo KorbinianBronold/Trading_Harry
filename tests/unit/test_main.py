@@ -770,22 +770,34 @@ def test_run_trade_proposals_backfills_only_policy_risk_level(tmp_db_path, mocke
 # ---------- Sprint 3B / Plan 2, Task 5: Phase 1c — Pflicht-Kandidaten (B.4) ----------
 
 
-def test_forced_candidates_maps_epics_and_skips_foreign(mocker):
-    """B.4: bekannte Epics werden zu Tickern, fremde geloggt und uebersprungen."""
+def test_open_broker_positions_maps_epics_and_marks_foreign(mocker):
+    """C.37: Phase 1c holt die Capital.com-Positionen EINMAL; daraus kommen die
+    Pflicht-Kandidaten fuer Phase 3 (B.4) und die Positionsliste fuer Phase 4a.
+    Fremde Epics bleiben in der Liste (die Mail zeigt sie), tragen aber keinen
+    Ticker und werden nie Pflicht-Kandidat."""
     provider = MagicMock()
     provider.get_open_positions.return_value = [
-        {"ticker": "GOLD"}, {"ticker": "AAPL"}, {"ticker": "PPHE"},
+        {"ticker": "GOLD", "deal_id": "d1"}, {"ticker": "AAPL", "deal_id": "d2"},
+        {"ticker": "PPHE", "deal_id": "d3"},
     ]
-    from main import _forced_candidates
-    assert _forced_candidates(provider) == {"GOLD", "AAPL"}
+    from main import _open_broker_positions, _forced_tickers
+    positions = _open_broker_positions(provider)
+    assert [(p["epic"], p["ticker"]) for p in positions] == [
+        ("GOLD", "GOLD"), ("AAPL", "AAPL"), ("PPHE", None)]
+    assert _forced_tickers(positions) == {"GOLD", "AAPL"}
 
 
-def test_forced_candidates_is_empty_when_provider_fails(mocker):
-    """get_open_positions() gibt bei Fehlern [] zurueck — kein Absturz."""
+def test_open_broker_positions_returns_none_when_provider_fails(mocker, caplog):
+    """Ein gescheiterter Abruf ist NICHT 'keine Position': None statt [] --
+    Phase 4a erzeugt dann keine Empfehlungen und die Mail sagt es."""
     provider = MagicMock()
-    provider.get_open_positions.return_value = []
-    from main import _forced_candidates
-    assert _forced_candidates(provider) == set()
+    provider.get_open_positions.side_effect = RuntimeError("503")
+    from main import _open_broker_positions, _forced_tickers
+    with caplog.at_level("WARNING"):
+        positions = _open_broker_positions(provider)
+    assert positions is None
+    assert _forced_tickers(None) == set()
+    assert any("Capital.com" in r.message for r in caplog.records)
 
 
 def test_forced_candidate_reaches_deep_analysis(tmp_db_path, mocker):
@@ -2273,3 +2285,29 @@ def test_split_sectors_normalises_the_comma_string(raw, expected):
     der 16:10-Pfad muss exakt dieselbe Form bauen."""
     from main import _split_sectors
     assert _split_sectors(raw) == expected
+
+
+def test_trade_proposals_marks_positions_unavailable_when_capital_fails(tmp_db_path, mocker):
+    """C.37: scheitert der Positionsabruf, bekommt Phase 4a positions=None und
+    die Mail traegt positions_unavailable=True -- keine Scheinpositionen, keine
+    stumme leere Sektion."""
+    from src import db
+    conn = db.connect(str(tmp_db_path)); db.init_schema(conn); conn.close()
+    prov = MagicMock()
+    prov.get_open_positions.side_effect = RuntimeError("503")
+    mocker.patch("main.CapitalComProvider", return_value=prov)
+    mocker.patch("main.FinnhubProvider", return_value=MagicMock())
+    mocker.patch("main.collect", return_value=([], 0, {}))
+    mocker.patch("main.vix_only_context",
+                 return_value={"vix_level": 18.0, "vix_source": "capital.com"})
+    mocker.patch("main.collect_sector_momentum", return_value={})
+    mocker.patch("main.run_policy_monitor",
+                 return_value={"policy_risk_level": "low", "events": []})
+    mock_portfolio = mocker.patch("main.check_open_positions", return_value=[])
+    mock_mail = mocker.patch("main.send_trade_proposals_email")
+
+    from main import run_trade_proposals
+    run_trade_proposals(date="2026-07-30", db_path=str(tmp_db_path))
+
+    assert mock_portfolio.call_args.kwargs["positions"] is None
+    assert mock_mail.call_args.kwargs["payload"]["positions_unavailable"] is True

@@ -438,32 +438,39 @@ class CapitalComProvider(DataProvider):
 
     def get_open_positions(self) -> list[dict]:
         """Returns all currently open demo-account positions as a list of dicts
-        (ticker, direction, entry/current price, TP/SL, P&L); empty list on failure."""
-        try:
-            resp = requests.get(
-                f"{config.CAPITAL_COM_BASE_URL}/api/v1/positions",
-                headers=self._headers(),
-                timeout=30,
-            )
-            resp.raise_for_status()
-            out = []
-            for p in resp.json().get("positions", []):
-                pos = p.get("position", {})
-                mkt = p.get("market", {})
-                out.append({
-                    "ticker":        mkt.get("epic"),
-                    "direction":     "long" if pos.get("direction") == "BUY" else "short",
-                    "entry_price":   pos.get("level"),
-                    "current_price": mkt.get("bid"),
-                    "tp_price":      pos.get("limitLevel"),
-                    "sl_price":      pos.get("stopLevel"),
-                    "profit_loss":   pos.get("profit"),
-                    "status":        "open",
-                })
-            return out
-        except Exception as e:
-            log.warning(f"Capital.com open positions fetch failed: {e}")
-            return []
+        (ticker = Epic, direction, entry/current price, TP/SL, P&L, deal_id,
+        size, opened_at).
+
+        C.37: Fehler werden NICHT mehr verschluckt. Bis dahin hiess '[]' sowohl
+        'keine Position' als auch 'Abruf gescheitert' -- Phase 4a haette im
+        zweiten Fall stumm keine Empfehlungen gegeben. Der Aufrufer
+        (main._open_broker_positions) faengt die Exception, warnt und meldet
+        None weiter, damit die Mail den Ausfall zeigt."""
+        resp = requests.get(
+            f"{config.CAPITAL_COM_BASE_URL}/api/v1/positions",
+            headers=self._headers(),
+            timeout=30,
+        )
+        resp.raise_for_status()
+        out = []
+        for p in resp.json().get("positions", []):
+            pos = p.get("position", {})
+            mkt = p.get("market", {})
+            out.append({
+                "deal_id":       pos.get("dealId"),
+                "ticker":        mkt.get("epic"),
+                "direction":     "long" if pos.get("direction") == "BUY" else "short",
+                "entry_price":   pos.get("level"),
+                "current_price": mkt.get("bid"),
+                "tp_price":      pos.get("limitLevel"),
+                "sl_price":      pos.get("stopLevel"),
+                "size":          pos.get("size"),
+                # 'profit' in der Demo-Antwort, 'upl' (unrealised P&L) laut Doku.
+                "profit_loss":   pos.get("profit", pos.get("upl")),
+                "opened_at":     pos.get("createdDate"),
+                "status":        "open",
+            })
+        return out
 
     def get_closed_positions(self, date: str) -> list[dict]:
         """Returns positions that were closed on `date`, filtered from the account

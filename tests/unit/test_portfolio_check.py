@@ -44,185 +44,187 @@ def _make_open_prediction(conn, date: str = "2026-05-18", ticker: str = "AAPL") 
     })
 
 
-def test_check_one_position_returns_parsed(in_memory_db):
-    db.init_schema(in_memory_db)
-    pid = _make_open_prediction(in_memory_db)
-    pred = in_memory_db.execute(
-        "SELECT * FROM predictions WHERE id=?", (pid,),
-    ).fetchone()
-    payload = (FIXTURE_DIR / "mock_portfolio_check_response.json").read_text()
-    fake = _fake_result(payload)
-    tracker = CostTracker(hard_cap_eur=10.0)
-    snapshot = {"ticker": "AAPL", "price": 181.2, "rsi_14": 60.0,
-                "macd_signal": "bullish", "atr_pct": 1.8,
-                "intraday_range_pct": 1.5}
-    trend = {"trend_summary": "risk-on"}
-    policy = {"policy_risk_level": "low", "events": []}
+def _position(**overrides) -> dict:
+    """Eine offene Capital.com-Position, wie main._open_broker_positions() sie
+    liefert (C.37): Broker-Felder plus epic/ticker."""
+    base = {
+        "deal_id": "d-aapl-1", "epic": "AAPL", "ticker": "AAPL", "direction": "long",
+        "entry_price": 178.0, "current_price": 181.2, "tp_price": 184.0,
+        "sl_price": 176.0, "size": 1, "profit_loss": 3.2,
+        "opened_at": "2026-05-18T14:30:00", "status": "open",
+    }
+    base.update(overrides)
+    return base
 
-    with patch("src.portfolio_check.call_claude", return_value=fake):
+
+def _snapshot(ticker: str = "AAPL", price: float = 181.2) -> dict:
+    return {"ticker": ticker, "price": price, "rsi_14": 60.0,
+            "macd_signal": "bullish", "atr_pct": 1.8, "intraday_range_pct": 1.5}
+
+
+def _ctx():
+    return {"trend_summary": "risk-on"}, {"policy_risk_level": "low", "events": []}
+
+
+def test_check_one_position_returns_parsed():
+    payload = (FIXTURE_DIR / "mock_portfolio_check_response.json").read_text()
+    trend, policy = _ctx()
+    with patch("src.portfolio_check.call_claude", return_value=_fake_result(payload)):
         out = check_one_position(
-            prediction=pred, current_snapshot=snapshot,
+            position=_position(), current_snapshot=_snapshot(),
             trend_context=trend, policy_context=policy,
-            cost_tracker=tracker,
+            cost_tracker=CostTracker(hard_cap_eur=10.0),
         )
     assert out["action"] == "ANPASSEN"
     assert out["new_sl_price"] == 178.5
 
 
-def test_check_open_positions_writes_recommendation_rows(in_memory_db):
-    db.init_schema(in_memory_db)
-    pid = _make_open_prediction(in_memory_db)
+def test_check_one_position_sends_the_position_not_a_prediction():
+    """C.37: Claude bekommt die Broker-Position (Einstieg, TP/SL, P&L, Alter),
+    keine Prediction und keine Ursprungsthese -- Positionen und Predictions
+    sind getrennte Welten."""
     payload = (FIXTURE_DIR / "mock_portfolio_check_response.json").read_text()
-    # Adjust the fixture prediction_id to match the just-inserted one
-    payload_obj = json.loads(payload)
-    payload_obj["prediction_id"] = pid
-    fake = _fake_result(json.dumps(payload_obj))
-    tracker = CostTracker(hard_cap_eur=10.0)
-    analyses_by_ticker = {"AAPL": {"ticker": "AAPL", "price": 181.2,
-                                   "rsi_14": 60.0, "macd_signal": "bullish",
-                                   "atr_pct": 1.8, "intraday_range_pct": 1.5}}
+    trend, policy = _ctx()
+    with patch("src.portfolio_check.call_claude", return_value=_fake_result(payload)) as call:
+        check_one_position(
+            position=_position(), current_snapshot=_snapshot(),
+            trend_context=trend, policy_context=policy,
+            cost_tracker=CostTracker(hard_cap_eur=10.0),
+        )
+    user_msg = call.call_args.kwargs["user"]
+    assert "OPEN POSITION" in user_msg and '"deal_id": "d-aapl-1"' in user_msg
+    assert '"profit_loss": 3.2' in user_msg
+    assert "ORIGINAL PREDICTION" not in user_msg
 
-    with patch("src.portfolio_check.call_claude", return_value=fake):
+
+def test_check_open_positions_writes_position_check_rows(in_memory_db):
+    db.init_schema(in_memory_db)
+    payload = (FIXTURE_DIR / "mock_portfolio_check_response.json").read_text()
+    trend, policy = _ctx()
+    with patch("src.portfolio_check.call_claude", return_value=_fake_result(payload)):
         out = check_open_positions(
             conn=in_memory_db, today="2026-05-20", run_type="pre_market",
-            analyses_by_ticker=analyses_by_ticker,
-            trend_context={"trend_summary": "risk-on"},
-            policy_context={"policy_risk_level": "low", "events": []},
-            cost_tracker=tracker,
+            positions=[_position()], analyses_by_ticker={"AAPL": _snapshot()},
+            trend_context=trend, policy_context=policy,
+            cost_tracker=CostTracker(hard_cap_eur=10.0),
         )
     rows = in_memory_db.execute(
-        "SELECT action, new_sl_price FROM position_recommendations "
-        "WHERE prediction_id=?", (pid,),
+        "SELECT deal_id, ticker, action, new_sl_price, profit_loss FROM position_checks"
     ).fetchall()
-    assert len(rows) == 1
-    assert rows[0]["action"] == "ANPASSEN"
+    assert len(rows) == 1 and rows[0]["deal_id"] == "d-aapl-1"
+    assert rows[0]["action"] == "ANPASSEN" and rows[0]["profit_loss"] == 3.2
     assert len(out) == 1
 
 
-def test_check_open_positions_skips_position_with_missing_snapshot(in_memory_db):
-    """If the data_collector didn't produce a snapshot for the ticker
-    (e.g., yfinance failure), we skip the position rather than crash."""
+def test_check_open_positions_lists_positions_without_analysis_without_a_call(in_memory_db):
+    """Fremdposition (kein Ticker im Universum) oder Ticker ohne aktuelle
+    Analyse: kein Claude-Call, keine Persistierung -- aber eine Zeile fuer die
+    Mail, damit die Position nicht unsichtbar bleibt."""
     db.init_schema(in_memory_db)
-    _make_open_prediction(in_memory_db, ticker="AAPL")
-    tracker = CostTracker(hard_cap_eur=10.0)
-    with patch("src.portfolio_check.call_claude") as mock_call:
+    positions = [_position(deal_id="d-x", epic="PPHE", ticker=None),
+                 _position(deal_id="d-y", epic="MSFT", ticker="MSFT")]
+    with patch("src.portfolio_check.call_claude") as call:
         out = check_open_positions(
             conn=in_memory_db, today="2026-05-20", run_type="pre_market",
-            analyses_by_ticker={},
-            trend_context={"trend_summary": ""},
-            policy_context={"policy_risk_level": "low", "events": []},
-            cost_tracker=tracker,
-        )
-    assert out == []
-    mock_call.assert_not_called()
-
-
-def test_check_open_positions_skips_old_predictions(in_memory_db):
-    """Predictions older than max_trading_days are not loaded."""
-    db.init_schema(in_memory_db)
-    _make_open_prediction(in_memory_db, date="2026-05-10")
-    tracker = CostTracker(hard_cap_eur=10.0)
-    with patch("src.portfolio_check.call_claude") as mock_call:
-        out = check_open_positions(
-            conn=in_memory_db, today="2026-05-20", run_type="pre_market",
-            analyses_by_ticker={"AAPL": {"ticker": "AAPL", "price": 180.0,
-                                          "intraday_range_pct": 1.5}},
+            positions=positions, analyses_by_ticker={},
             trend_context={}, policy_context={},
-            cost_tracker=tracker,
+            cost_tracker=CostTracker(hard_cap_eur=10.0),
+        )
+    call.assert_not_called()
+    assert [r["action"] for r in out] == ["KEINE ANALYSE", "KEINE ANALYSE"]
+    assert out[0]["epic"] == "PPHE" and out[1]["ticker"] == "MSFT"
+    assert in_memory_db.execute("SELECT COUNT(*) FROM position_checks").fetchone()[0] == 0
+
+
+def test_check_open_positions_returns_empty_when_positions_unavailable(in_memory_db):
+    """None = Abruf gescheitert: keine Empfehlungen, kein Call (die Mail zeigt
+    den Ausfall ueber payload['positions_unavailable'])."""
+    db.init_schema(in_memory_db)
+    with patch("src.portfolio_check.call_claude") as call:
+        out = check_open_positions(
+            conn=in_memory_db, today="2026-05-20", run_type="pre_market",
+            positions=None, analyses_by_ticker={"AAPL": _snapshot()},
+            trend_context={}, policy_context={},
+            cost_tracker=CostTracker(hard_cap_eur=10.0),
         )
     assert out == []
-    mock_call.assert_not_called()
+    call.assert_not_called()
 
 
-def test_check_one_position_raises_on_invalid_json(in_memory_db):
+def test_check_open_positions_returns_empty_when_no_open(in_memory_db):
     db.init_schema(in_memory_db)
-    pid = _make_open_prediction(in_memory_db)
-    pred = in_memory_db.execute(
-        "SELECT * FROM predictions WHERE id=?", (pid,),
-    ).fetchone()
-    fake = _fake_result("not json")
-    tracker = CostTracker(hard_cap_eur=10.0)
-    with patch("src.portfolio_check.call_claude", return_value=fake):
+    out = check_open_positions(
+        conn=in_memory_db, today="2026-05-20", run_type="pre_market",
+        positions=[], analyses_by_ticker={}, trend_context={}, policy_context={},
+        cost_tracker=CostTracker(hard_cap_eur=10.0),
+    )
+    assert out == []
+
+
+def test_check_open_positions_never_reads_predictions(in_memory_db):
+    """C.37, die Trennung: eine offene Prediction ist KEINE Position. Ohne
+    Capital.com-Position gibt es keinen Portfolio-Check, egal was in
+    `predictions` steht -- die laeuft getrennt durch die mehrtaegige Auswertung."""
+    db.init_schema(in_memory_db)
+    _make_open_prediction(in_memory_db, date="2026-05-19", ticker="AAPL")
+    with patch("src.portfolio_check.call_claude") as call:
+        out = check_open_positions(
+            conn=in_memory_db, today="2026-05-20", run_type="pre_market",
+            positions=[], analyses_by_ticker={"AAPL": _snapshot()},
+            trend_context={}, policy_context={},
+            cost_tracker=CostTracker(hard_cap_eur=10.0),
+        )
+    assert out == []
+    call.assert_not_called()
+
+
+def test_check_one_position_raises_on_invalid_json():
+    with patch("src.portfolio_check.call_claude", return_value=_fake_result("not json")):
         with pytest.raises(PortfolioCheckError):
             check_one_position(
-                prediction=pred,
-                current_snapshot={"ticker": "AAPL", "price": 181.0,
-                                  "intraday_range_pct": 1.5},
+                position=_position(), current_snapshot=_snapshot(),
                 trend_context={}, policy_context={},
-                cost_tracker=tracker,
+                cost_tracker=CostTracker(hard_cap_eur=10.0),
             )
 
 
 def test_check_open_positions_continues_after_single_failure(in_memory_db):
     db.init_schema(in_memory_db)
-    p1 = _make_open_prediction(in_memory_db, ticker="AAPL")
-    p2 = _make_open_prediction(in_memory_db, ticker="MSFT")
-    good_payload = json.loads((FIXTURE_DIR / "mock_portfolio_check_response.json").read_text())
-    good_payload["ticker"] = "MSFT"
-    good_payload["prediction_id"] = p2
-    side_effects = [_fake_result("bad"), _fake_result(json.dumps(good_payload))]
-    tracker = CostTracker(hard_cap_eur=10.0)
-    snapshots = {
-        "AAPL": {"ticker": "AAPL", "price": 181.0, "intraday_range_pct": 1.5},
-        "MSFT": {"ticker": "MSFT", "price": 410.0, "intraday_range_pct": 1.4},
-    }
+    good = json.loads((FIXTURE_DIR / "mock_portfolio_check_response.json").read_text())
+    good.update({"ticker": "MSFT", "deal_id": "d-msft-1"})
+    side_effects = [_fake_result("bad"), _fake_result(json.dumps(good))]
+    positions = [_position(), _position(deal_id="d-msft-1", epic="MSFT", ticker="MSFT",
+                                        entry_price=400.0, current_price=410.0)]
     with patch("src.portfolio_check.call_claude", side_effect=side_effects):
         out = check_open_positions(
             conn=in_memory_db, today="2026-05-20", run_type="pre_market",
-            analyses_by_ticker=snapshots,
+            positions=positions,
+            analyses_by_ticker={"AAPL": _snapshot(), "MSFT": _snapshot("MSFT", 410.0)},
             trend_context={}, policy_context={},
-            cost_tracker=tracker,
+            cost_tracker=CostTracker(hard_cap_eur=10.0),
         )
-    assert len(out) == 1
-    assert out[0]["ticker"] == "MSFT"
+    assert len(out) == 1 and out[0]["ticker"] == "MSFT"
 
 
-def test_check_open_positions_enriches_with_prediction_fields(in_memory_db):
-    """The returned dict must include ticker/direction/entry_price for the
-    email renderer, even though the raw Claude response doesn't have them."""
+def test_check_open_positions_enriches_with_position_fields(in_memory_db):
+    """Der Mail-Renderer braucht Ticker, Richtung, Einstieg, aktuellen Kurs und
+    P&L -- die kommen aus der Position, nicht aus der Claude-Antwort."""
     db.init_schema(in_memory_db)
-    pid = _make_open_prediction(in_memory_db, ticker="AAPL")
-    # Build a response WITHOUT ticker/direction/entry_price (just like a real
-    # portfolio_check response per prompts/portfolio_check_v1.txt).
-    raw_resp = json.dumps({
-        "prediction_id": pid,
-        "ticker": "AAPL",  # prompt requires this, model echoes
-        "action": "HALTEN",
-        "reason": "These intakt",
-        "new_sl_price": None,
-        "new_tp_price": None,
-        "market_context_changed": False,
-        "sources_used": ["a.com", "b.com"],
-    })
-    fake = _fake_result(raw_resp)
-    tracker = CostTracker(hard_cap_eur=10.0)
-    snapshots = {"AAPL": {"ticker": "AAPL", "price": 181.0,
-                          "intraday_range_pct": 1.5}}
-    with patch("src.portfolio_check.call_claude", return_value=fake):
+    raw = json.dumps({"deal_id": "d-aapl-1", "ticker": "AAPL", "action": "HALTEN",
+                      "reason": "kein neuer Katalysator", "new_sl_price": None,
+                      "new_tp_price": None, "market_context_changed": False})
+    with patch("src.portfolio_check.call_claude", return_value=_fake_result(raw)):
         out = check_open_positions(
             conn=in_memory_db, today="2026-05-20", run_type="pre_market",
-            analyses_by_ticker=snapshots,
+            positions=[_position()], analyses_by_ticker={"AAPL": _snapshot()},
             trend_context={}, policy_context={},
-            cost_tracker=tracker,
+            cost_tracker=CostTracker(hard_cap_eur=10.0),
         )
     assert len(out) == 1
-    # The renderer needs these — must be enriched from the prediction row:
-    assert out[0]["ticker"]      == "AAPL"
-    assert out[0]["direction"]   == "long"
-    assert out[0]["entry_price"] == 178.0
-    # Sanity: original fields still there
-    assert out[0]["action"] == "HALTEN"
-
-
-def test_check_open_positions_returns_empty_when_no_open(in_memory_db):
-    db.init_schema(in_memory_db)
-    tracker = CostTracker(hard_cap_eur=10.0)
-    out = check_open_positions(
-        conn=in_memory_db, today="2026-05-20", run_type="pre_market",
-        analyses_by_ticker={}, trend_context={}, policy_context={},
-        cost_tracker=tracker,
-    )
-    assert out == []
+    r = out[0]
+    assert (r["ticker"], r["direction"], r["entry_price"]) == ("AAPL", "long", 178.0)
+    assert r["current_price"] == 181.2 and r["profit_loss"] == 3.2 and r["deal_id"] == "d-aapl-1"
+    assert r["action"] == "HALTEN"
 
 
 def test_check_one_position_uses_no_web_search(mocker):
@@ -236,10 +238,8 @@ def test_check_one_position_uses_no_web_search(mocker):
     )
     from src.portfolio_check import check_one_position
     from src.cost_tracker import CostTracker
-    pred = {"id": 1, "ticker": "AAPL", "direction": "long", "entry_price": 178.0,
-            "tp_price": 184.0, "sl_price": 176.0}
     check_one_position(
-        prediction=pred, current_snapshot={"ticker": "AAPL"},
+        position=_position(), current_snapshot={"ticker": "AAPL"},
         trend_context={}, policy_context={}, cost_tracker=CostTracker(),
     )
     assert call.call_args.kwargs["tools"] == []
@@ -278,3 +278,14 @@ def test_prompt_still_carries_the_rules_that_do_not_depend_on_tools():
     for needle in ("HALTEN", "SCHLIESSEN", "ANPASSEN",
                    "market_context_changed", "Intraday", "Never invent prices"):
         assert needle in SYSTEM_PROMPT, f"'{needle}' fehlt im Prompt"
+
+
+def test_prompt_speaks_of_positions_not_predictions():
+    """C.37: der Prompt bewertet eine Capital.com-Position, keine Prediction.
+    Regel 15: prediction_id und 'original thesis' duerfen nicht mehr vorkommen,
+    deal_id muss (der Parser-Schluessel, den die Persistierung liest)."""
+    from src.portfolio_check import SYSTEM_PROMPT
+    assert "deal_id" in SYSTEM_PROMPT
+    assert "prediction_id" not in SYSTEM_PROMPT
+    assert "original thesis" not in SYSTEM_PROMPT
+    assert "predicted at most" not in SYSTEM_PROMPT

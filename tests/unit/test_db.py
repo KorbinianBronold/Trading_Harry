@@ -342,6 +342,25 @@ def test_outcomes_has_days_to_close_and_exit_reason_columns(in_memory_db):
     assert "exit_reason" in cols
 
 
+def test_position_checks_table_persists_one_row_per_deal(in_memory_db):
+    """C.37: Phase 4a prueft echte Capital.com-Positionen, Schluessel ist die
+    deal_id -- nicht mehr prediction_id (position_recommendations bleibt als
+    Historie stehen, bekommt keine neuen Zeilen)."""
+    db.init_schema(in_memory_db)
+    assert "position_checks" in db.get_tables(in_memory_db)
+    row = {"date": "2026-09-11", "run_type": "pre_market", "deal_id": "006011e7-0001",
+           "ticker": "SILVER", "direction": "short", "entry_price": 64.5,
+           "current_price": 65.1, "tp_price": 61.0, "sl_price": 66.0, "size": 2,
+           "profit_loss": -1.75, "opened_at": "2026-09-10T13:05:12",
+           "action": "HALTEN", "reason": "kein neuer Katalysator",
+           "new_sl_price": None, "new_tp_price": None, "market_context_changed": False}
+    db.save_position_check(in_memory_db, row)
+    db.save_position_check(in_memory_db, {**row, "action": "SCHLIESSEN"})   # gleicher Deal, gleicher Lauf
+    rows = in_memory_db.execute(
+        "SELECT ticker, action, profit_loss FROM position_checks").fetchall()
+    assert len(rows) == 1 and rows[0]["action"] == "SCHLIESSEN" and rows[0]["profit_loss"] == -1.75
+
+
 def test_position_recommendations_table_exists(in_memory_db):
     db.init_schema(in_memory_db)
     assert "position_recommendations" in db.get_tables(in_memory_db)

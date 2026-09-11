@@ -1,18 +1,29 @@
-"""Phase 4a: Daily portfolio check.
+"""Phase 4a: Portfolio-Check auf den bei Capital.com TATSAECHLICH offenen
+Positionen (C.37, 2026-09-11).
 
-For every open prediction <= config.MAX_HOLD_DAYS trading days old, decide HALTEN /
-SCHLIESSEN / ANPASSEN given the current snapshot, trend, and policy context. Writes one
-position_recommendations row per call. Output is rendered as the FIRST
-section of the daily e-mail (spec §3 CFD-Kurzfristfokus). Per-position
-failures are caught — a single broken call must not abort the loop.
+Je Position ein Haiku-Call: HALTEN / SCHLIESSEN / ANPASSEN aus Broker-Position
+(Richtung, Einstieg, TP/SL, P&L, Alter), aktueller Analyse bzw. Snapshot, Trend-
+und Policy-Kontext. Eine Zeile je Deal in position_checks; das Ergebnis ist die
+ERSTE Sektion der Tagesmail (spec §3 CFD-Kurzfristfokus).
+
+Bis C.37 lud der Check "offene Positionen" aus `predictions` (Papier-Vorschlaege
+der letzten MAX_HOLD_DAYS Tage) und empfahl HALTEN/SCHLIESSEN fuer Positionen,
+die es beim Broker nie gab (10.09.: 7 Empfehlungen bei 0 offenen Positionen).
+Predictions und Positionen sind seither getrennte Welten: Predictions laufen
+weiter durch die mehrtaegige Auswertung (Lernmodul), Positionen kommen nur von
+Capital.com (main._open_broker_positions, Phase 1c). Dieses Modul liest
+`predictions` nicht.
+
+Positionen ohne aktuelle Analyse (Fremdposition ausserhalb des Universums,
+Ticker in Phase 3 uebersprungen) bekommen keinen Call, erscheinen aber als
+Zeile "KEINE ANALYSE" in der Mail. `positions is None` (Abruf gescheitert)
+liefert keine Empfehlungen -- die Mail zeigt den Ausfall.
 
 Seit Sprint 3B / Plan 2 (B.5) laeuft der Check OHNE web_search und nach Phase 4:
-Input ist die fertige Phase-3-Analyse plus die Original-These aus der DB. Das spart
-die Recherchekosten, behaelt aber Urteilsvermoegen und Begruendungstext fuer die Mail.
+Input ist die fertige Phase-3-Analyse (16:10: der Phase-1-Snapshot).
 """
 import json
 import logging
-import sqlite3
 from pathlib import Path
 
 import config
@@ -23,20 +34,25 @@ from src.utils import call_claude, extract_json_blob
 log = logging.getLogger("shares_future.portfolio_check")
 
 # v2 seit 2026-08-06: v1 verlangte weiterhin web_search und >= 2 Quell-Domains,
-# obwohl B.5 den Aufruf auf tools=[] gestellt hat. Das Modell konnte die Vorgabe
-# nur durch Erfinden erfuellen — und `reason` steht als erste Sektion in der
-# Tagesmail. v1 bleibt als Beleg dessen liegen, was vorher lief (Regel 10).
+# obwohl B.5 den Aufruf auf tools=[] gestellt hat. Seit C.37 (Regel 10) direkt
+# in der aktiven Datei auf Positionen statt Predictions umgestellt.
 SYSTEM_PROMPT = (Path(__file__).resolve().parent.parent
                  / "prompts" / "portfolio_check_v2.txt").read_text()
 
 # HALTEN/SCHLIESSEN/ANPASSEN — strukturiert, Haiku reicht. Aus config gelesen
 # statt hart kodiert (2026-08-20): ein hart kodierter String greift beim naechsten
-# Modellwechsel still daneben, weil er nicht mitwandert. Genau das war bei
-# broad_scan der Fall, wo Test-Fixture und Produktionsmodell auseinanderliefen.
+# Modellwechsel still daneben, weil er nicht mitwandert.
 MODEL = config.CLAUDE_MODEL_HAIKU
 MAX_TOKENS = 2048
-MAX_HOLD_DAYS = config.MAX_HOLD_DAYS
 VALID_ACTIONS = {"HALTEN", "SCHLIESSEN", "ANPASSEN"}
+# Mail-Zeile fuer Positionen ohne Analyse -- kein Claude-Call, keine Persistierung.
+NO_ANALYSIS = "KEINE ANALYSE"
+
+# Felder der Broker-Position, die die Mail und die Persistierung brauchen.
+_POSITION_FIELDS = (
+    "deal_id", "epic", "ticker", "direction", "entry_price", "current_price",
+    "tp_price", "sl_price", "size", "profit_loss", "opened_at",
+)
 
 
 class PortfolioCheckError(RuntimeError):
@@ -44,16 +60,17 @@ class PortfolioCheckError(RuntimeError):
 
 
 def _build_user_message(
-    prediction: sqlite3.Row,
+    position: dict,
     current_snapshot: dict,
     trend_context: dict,
     policy_context: dict,
 ) -> str:
-    """Serializes the original prediction, current snapshot, and trend/policy
-    context into the user message sent to Claude for one portfolio check."""
-    pred_dict = {k: prediction[k] for k in prediction.keys()}
+    """Serialisiert Broker-Position, aktuellen Snapshot und Trend-/Policy-Kontext
+    in die User-Nachricht fuer EINEN Portfolio-Check. Keine Prediction, keine
+    Ursprungsthese (C.37)."""
+    pos = {k: position.get(k) for k in _POSITION_FIELDS}
     parts = [
-        "ORIGINAL PREDICTION:", json.dumps(pred_dict, ensure_ascii=False, default=str),
+        "OPEN POSITION (Capital.com):", json.dumps(pos, ensure_ascii=False, default=str),
         "\nCURRENT SNAPSHOT:", json.dumps(current_snapshot, ensure_ascii=False),
         "\nTREND CONTEXT:", json.dumps(trend_context, ensure_ascii=False),
         "\nPOLICY CONTEXT:", json.dumps(policy_context, ensure_ascii=False),
@@ -63,17 +80,17 @@ def _build_user_message(
 
 
 def check_one_position(
-    prediction: sqlite3.Row,
+    position: dict,
     current_snapshot: dict,
     trend_context: dict,
     policy_context: dict,
     cost_tracker: CostTracker,
 ) -> dict:
-    """Run portfolio-check on ONE open position. Returns the parsed response
-    dict including the {action, new_sl_price, new_tp_price, ...} fields.
-    Raises PortfolioCheckError on unparseable or schematically-invalid output."""
+    """Portfolio-Check fuer EINE offene Capital.com-Position. Gibt das geparste
+    Antwort-Dict ({action, reason, new_sl_price, new_tp_price, ...}) zurueck.
+    PortfolioCheckError bei unparsebarer oder schematisch ungueltiger Antwort."""
     user_msg = _build_user_message(
-        prediction=prediction, current_snapshot=current_snapshot,
+        position=position, current_snapshot=current_snapshot,
         trend_context=trend_context, policy_context=policy_context,
     )
     result = call_claude(
@@ -90,62 +107,72 @@ def check_one_position(
     return parsed
 
 
+def _no_analysis_row(position: dict) -> dict:
+    """Mail-Zeile fuer eine Position ohne Analyse -- sichtbar, aber ohne
+    Empfehlung und ohne Claude-Call."""
+    why = ("Fremdposition ausserhalb des Universums" if not position.get("ticker")
+           else "keine aktuelle Analyse fuer diesen Ticker")
+    return {**{k: position.get(k) for k in _POSITION_FIELDS},
+            "action": NO_ANALYSIS, "reason": why,
+            "new_sl_price": None, "new_tp_price": None, "market_context_changed": None}
+
+
 def check_open_positions(
     conn,
     today: str,
     run_type: str,
+    positions: list[dict] | None,
     analyses_by_ticker: dict[str, dict],
     trend_context: dict,
     policy_context: dict,
     cost_tracker: CostTracker,
 ) -> list[dict]:
-    """Loop all open predictions <= config.MAX_HOLD_DAYS days old, run portfolio_check
-    per row, persist one position_recommendations row each. `analyses_by_ticker`
-    enthaelt seit B.5 die fertigen Phase-3-Tiefenanalysen (nicht mehr die rohen
-    Phase-1-Snapshots). Returns the list of parsed response dicts."""
-    open_preds = db.load_open_predictions_within_max_age_days(
-        conn, today=today, max_trading_days=MAX_HOLD_DAYS,
-    )
-    log.info(f"Phase 4a: {len(open_preds)} open positions to check")
+    """Prueft jede uebergebene Capital.com-Position (main._open_broker_positions),
+    persistiert je Deal eine position_checks-Zeile und gibt die Empfehlungen fuer
+    die Mail zurueck (angereichert um Ticker, Richtung, Einstieg, Kurs, P&L).
 
+    `positions is None` = Abruf gescheitert: keine Empfehlungen, kein Call.
+    Positionen ohne Analyse werden als NO_ANALYSIS-Zeile zurueckgegeben.
+    Liest `predictions` NICHT (C.37)."""
+    if positions is None:
+        log.warning("Phase 4a: Capital.com-Positionen nicht abrufbar -- keine Empfehlungen")
+        return []
+    log.info(f"Phase 4a: {len(positions)} offene Capital.com-Position(en) zu pruefen")
     out: list[dict] = []
-    for pred in open_preds:
-        ticker = pred["ticker"]
-        analysis = analyses_by_ticker.get(ticker)
+    for pos in positions:
+        ticker = pos.get("ticker")
+        analysis = analyses_by_ticker.get(ticker) if ticker else None
         if analysis is None:
             log.warning(
-                f"{ticker}: no current analysis, skipping portfolio_check for "
-                f"prediction_id={pred['id']}"
+                f"Position {pos.get('epic')} (deal {pos.get('deal_id')}): "
+                f"keine Analyse -- nur Mail-Zeile, kein Portfolio-Check"
             )
+            out.append(_no_analysis_row(pos))
             continue
-
         try:
             parsed = check_one_position(
-                prediction=pred, current_snapshot=analysis,
+                position=pos, current_snapshot=analysis,
                 trend_context=trend_context, policy_context=policy_context,
                 cost_tracker=cost_tracker,
             )
         except PortfolioCheckError as e:
             log.warning(f"{ticker}: portfolio_check failed: {e}")
             continue
-
-        parsed["ticker"]      = pred["ticker"]
-        parsed["direction"]   = pred["direction"]
-        parsed["entry_price"] = pred["entry_price"]
-
-        db.save_position_recommendation(conn, {
+        rec = {**parsed, **{k: pos.get(k) for k in _POSITION_FIELDS}}
+        db.save_position_check(conn, {
+            **{k: pos.get(k) for k in _POSITION_FIELDS if k != "epic"},
             "date": today, "run_type": run_type,
-            "prediction_id": pred["id"],
             "action": parsed["action"],
             "reason": parsed.get("reason", ""),
             "new_sl_price": parsed.get("new_sl_price"),
             "new_tp_price": parsed.get("new_tp_price"),
             "market_context_changed": bool(parsed.get("market_context_changed")),
         })
-        out.append(parsed)
+        out.append(rec)
 
     log.info(
-        f"Phase 4a done: {len(out)} recommendations written, "
+        f"Phase 4a done: {len(out)} Zeilen "
+        f"({sum(1 for r in out if r['action'] != NO_ANALYSIS)} Empfehlungen), "
         f"cost so far: {cost_tracker.total_eur:.3f} EUR"
     )
     return out

@@ -190,6 +190,24 @@ CREATE TABLE IF NOT EXISTS position_recommendations (
 
 CREATE INDEX IF NOT EXISTS idx_position_recs_prediction ON position_recommendations(prediction_id);
 
+-- C.37 (2026-09-11): Phase 4a prueft echte Capital.com-Positionen, Schluessel
+-- ist die deal_id. position_recommendations (prediction_id) bleibt als Historie
+-- stehen und bekommt keine neuen Zeilen mehr.
+CREATE TABLE IF NOT EXISTS position_checks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    date TEXT NOT NULL, run_type TEXT NOT NULL,
+    deal_id TEXT NOT NULL,
+    ticker TEXT, direction TEXT,
+    entry_price REAL, current_price REAL, tp_price REAL, sl_price REAL,
+    size REAL, profit_loss REAL, opened_at TEXT,
+    action TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    new_sl_price REAL, new_tp_price REAL,
+    market_context_changed BOOLEAN,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(date, run_type, deal_id)
+);
+
 CREATE TABLE IF NOT EXISTS fundamentals_cache (
     ticker TEXT NOT NULL,
     fetched_date TEXT NOT NULL,
@@ -1401,6 +1419,26 @@ def list_inactive_tickers(conn: sqlite3.Connection) -> list[sqlite3.Row]:
     return conn.execute(
         "SELECT * FROM ticker_status WHERE inactive = 1 ORDER BY ticker"
     ).fetchall()
+
+
+def save_position_check(conn: sqlite3.Connection, row: dict) -> int:
+    """Schreibt oder ueberschreibt eine Phase-4a-Zeile je Capital.com-Deal und
+    Lauf (C.37) und gibt ihre id zurueck. Feste Spaltenliste (R13): ein Key im
+    dict allein reicht nicht, er muss hier auch stehen."""
+    cols = [
+        "date", "run_type", "deal_id", "ticker", "direction",
+        "entry_price", "current_price", "tp_price", "sl_price",
+        "size", "profit_loss", "opened_at",
+        "action", "reason", "new_sl_price", "new_tp_price", "market_context_changed",
+    ]
+    placeholders = ", ".join(["?"] * len(cols))
+    cur = conn.execute(
+        f"INSERT OR REPLACE INTO position_checks ({', '.join(cols)}) "
+        f"VALUES ({placeholders})",
+        [row.get(c) for c in cols],
+    )
+    conn.commit()
+    return cur.lastrowid
 
 
 def save_position_recommendation(conn: sqlite3.Connection, row: dict) -> int:

@@ -77,24 +77,40 @@ def build_commodity_crypto_inputs() -> list[dict]:
     return out
 
 
-def _forced_candidates(price_provider) -> set[str]:
-    """Phase 1c (B.4): Ticker mit offener Capital.com-Position. Sie muessen in
-    Phase 3, egal was der Quick-Filter sagt — es haengt echtes Geld daran.
+def _open_broker_positions(price_provider) -> list[dict] | None:
+    """Phase 1c (B.4, seit C.37 auch Quelle fuer Phase 4a): die bei Capital.com
+    tatsaechlich offenen Positionen, EINMAL je Lauf geholt.
 
-    Epics ohne Gegenstueck in unserer Ticker-Liste (von Hand eroeffnete
-    Fremdpositionen) werden geloggt und uebersprungen: fuer sie gibt es keine
-    Indikator-Daten."""
+    Jede Position traegt zusaetzlich `epic` (wie von Capital.com) und `ticker`
+    (unser Symbol via epic_to_ticker, None fuer von Hand eroeffnete
+    Fremdpositionen -- die bleiben in der Liste, damit die Mail sie zeigt,
+    werden aber nie Pflicht-Kandidat und nie analysiert).
+
+    None statt [] bei gescheitertem Abruf: '[]' heisst 'keine Position', und
+    Phase 4a darf aus einem Ausfall keine leere Portfolio-Sektion machen, die
+    wie 'alles geschlossen' aussieht."""
     from src.providers.capital_provider import epic_to_ticker
-    forced: set[str] = set()
-    for pos in price_provider.get_open_positions():
+    try:
+        raw = price_provider.get_open_positions()
+    except Exception as e:
+        log.warning(f"Phase 1c: Capital.com-Positionen nicht abrufbar: {e}")
+        return None
+    positions: list[dict] = []
+    for pos in raw:
         epic = pos.get("ticker")
-        if not epic:
-            continue
-        ticker = epic_to_ticker(epic)
+        ticker = epic_to_ticker(epic) if epic else None
         if ticker is None:
-            log.info(f"Offene Position {epic}: kein Ticker-Gegenstueck, uebersprungen")
-            continue
-        forced.add(ticker)
+            log.info(f"Offene Position {epic}: kein Ticker-Gegenstueck (Fremdposition)")
+        positions.append({**pos, "epic": epic, "ticker": ticker})
+    log.info(f"Phase 1c: {len(positions)} offene Capital.com-Position(en)")
+    return positions
+
+
+def _forced_tickers(positions: list[dict] | None) -> set[str]:
+    """Pflicht-Kandidaten fuer Phase 3 aus den offenen Positionen (B.4): sie
+    muessen in die Tiefenanalyse, egal was Scan und Cutoff sagen -- es haengt
+    echtes Geld daran. Fremdpositionen (ticker None) fallen heraus."""
+    forced = {p["ticker"] for p in (positions or []) if p.get("ticker")}
     if forced:
         log.info(f"Phase 1c: {len(forced)} Pflicht-Kandidaten aus offenen Positionen: "
                  f"{sorted(forced)}")
@@ -515,8 +531,11 @@ def run_pipeline(run_type: str, date: str, db_path: str) -> None:
         ]
 
         current_phase = "open_positions"
-        # Phase 1c — offene Positionen als Pflicht-Kandidaten (B.4)
-        forced = _forced_candidates(price_provider)
+        # Phase 1c — offene Capital.com-Positionen: Pflicht-Kandidaten (B.4) und
+        # seit C.37 die EINZIGE Quelle des Portfolio-Checks (Phase 4a).
+        positions = _open_broker_positions(price_provider)
+        forced = _forced_tickers(positions)
+        payload["positions_unavailable"] = positions is None
 
         current_phase = "sector_momentum"
         # Phase 1d — beide Momentum-Signale je Sub-Sektor (B.3.1 / D9). Muss NACH
@@ -680,6 +699,7 @@ def run_pipeline(run_type: str, date: str, db_path: str) -> None:
         analyses_by_ticker = {a["ticker"]: a for a in (deep_stocks + deep_cc)}
         portfolio_recs = check_open_positions(
             conn=conn, today=date, run_type=run_type,
+            positions=positions,
             analyses_by_ticker=analyses_by_ticker,
             trend_context=trend_context, policy_context=policy_context,
             cost_tracker=cost_tracker,
@@ -896,7 +916,9 @@ def run_trade_proposals(date: str, db_path: str) -> None:
             conn, date, snapshots)
 
         current_phase = "open_positions"
-        _forced_candidates(price_provider)   # nur fuer den Log — Phase 4a sieht sie ohnehin
+        positions = _open_broker_positions(price_provider)   # C.37: Quelle fuer 4a
+        _forced_tickers(positions)                            # nur fuer den Log
+        payload["positions_unavailable"] = positions is None
 
         current_phase = "sector_momentum"
         sector_mom: dict[int, dict] = {}
@@ -972,6 +994,7 @@ def run_trade_proposals(date: str, db_path: str) -> None:
         }
         payload["portfolio_recs"] = check_open_positions(
             conn=conn, today=date, run_type="trade_proposals",
+            positions=positions,
             analyses_by_ticker=snapshots,
             trend_context=trend_ctx,
             policy_context=policy_context, cost_tracker=cost_tracker,

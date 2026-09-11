@@ -81,7 +81,10 @@ Kurzform zum Erkennen einer drohenden Verletzung; Begründung und Randfälle in
 - Je Trade-Idee genau **eine** offene Prediction; `trade_proposals` löst per
   `superseded_by` ab (partieller Index `ux_predictions_one_open_per_idea`). Die
   Schrittreihenfolge in `db.supersede_prediction()` nicht umstellen. → P2.13
-- Eine Prediction ist erst **ab dem Folgetag** offene Position, vorher Vorschlag. → §6.4
+- Offene Position (Phase 1c, 4a, Mail) = **live bei Capital.com** (`get_open_positions`,
+  jeder Lauf, ein Abruf). Predictions sind Papier-Vorschläge und laufen getrennt durch die
+  Auswertung; Phase 4a liest `predictions` **nie**. Abruf gescheitert = keine Empfehlung
+  plus Hinweis in der Mail, nie eine leere Sektion. → §6.4 / C.37
 - `fundamentals_cache`: eine Zeile je Ticker, keine Historie. Was in eine
   Entscheidung einfliesst, wird in `predictions` eingefroren.
   `save_fundamentals_cache()` = `INSERT OR REPLACE` der **ganzen** Zeile (immer

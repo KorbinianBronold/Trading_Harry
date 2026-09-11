@@ -95,6 +95,45 @@ def test_get_price_history_on_error_returns_none(monkeypatch):
     assert CapitalComProvider().get_price_history("AAPL") is None
 
 
+def test_get_open_positions_raises_instead_of_hiding_failures(monkeypatch):
+    """C.37: '[]' hiess bisher sowohl 'keine Position' als auch 'Abruf gescheitert'.
+    Phase 4a darf bei einem Fehler keine Empfehlungen erzeugen und die Mail muss
+    es sagen -- dafuer muss der Fehler beim Aufrufer ankommen."""
+    import requests as _rq
+    monkeypatch.setattr("requests.post", _mock_post)
+    def _boom(url, **kwargs):
+        m = MagicMock()
+        m.raise_for_status.side_effect = _rq.HTTPError("503 Service Unavailable")
+        return m
+    monkeypatch.setattr("requests.get", _boom)
+    from src.providers.capital_provider import CapitalComProvider
+    with pytest.raises(_rq.HTTPError):
+        CapitalComProvider().get_open_positions()
+
+
+def test_get_open_positions_carries_deal_id_size_and_opened_at(monkeypatch):
+    """C.37: der Portfolio-Check persistiert je Deal (UNIQUE deal_id), zeigt P&L
+    und braucht das Alter der Position -- Capital.com liefert alles mit."""
+    monkeypatch.setattr("requests.post", _mock_post)
+    def _pos(url, **kwargs):
+        m = MagicMock(); m.raise_for_status = MagicMock()
+        m.json.return_value = {"positions": [{
+            "position": {"dealId": "006011e7-0001", "direction": "SELL", "level": 64.5,
+                         "size": 2, "stopLevel": 66.0, "limitLevel": 61.0,
+                         "upl": -1.75, "createdDate": "2026-09-10T13:05:12.345"},
+            "market": {"epic": "SILVER", "bid": 65.1},
+        }]}
+        return m
+    monkeypatch.setattr("requests.get", _pos)
+    from src.providers.capital_provider import CapitalComProvider
+    pos = CapitalComProvider().get_open_positions()[0]
+    assert pos["deal_id"] == "006011e7-0001"
+    assert pos["size"] == 2
+    assert pos["opened_at"] == "2026-09-10T13:05:12.345"
+    assert pos["direction"] == "short"
+    assert pos["profit_loss"] == -1.75          # 'upl', wenn 'profit' fehlt
+
+
 def test_get_closed_positions_filters_by_action_type(monkeypatch):
     monkeypatch.setattr("requests.post", _mock_post)
     def _act(url, **kwargs):
