@@ -2311,3 +2311,73 @@ def test_trade_proposals_marks_positions_unavailable_when_capital_fails(tmp_db_p
 
     assert mock_portfolio.call_args.kwargs["positions"] is None
     assert mock_mail.call_args.kwargs["payload"]["positions_unavailable"] is True
+
+
+# ---------- C.41: Policy-Events -> news_summaries (P2) ----------
+# Bis C.41 ueberlebte vom Policy-Monitor nur policy_risk_level den Lauf; die
+# Events (Headline, Ticker, Richtung, Datum) waren nach dem Lauf weg -- die
+# einzige Claude-Ausgabe der Pipeline ohne Datenspur.
+
+def test_news_summaries_from_policy_writes_one_row_per_ticker_and_side():
+    from main import _news_summaries_from_policy
+    ctx = {"policy_risk_level": "high", "events": [{
+        "headline": "IEA cuts 2026 supply forecast",
+        "detail": "Supply -6 %, Brent above 100.",
+        "effective_date": None,
+        "beneficiary_tickers": ["XOM", "OIL_BRENT"],
+        "negative_tickers": ["DAL"],
+    }]}
+    rows = _news_summaries_from_policy(ctx, "2026-09-14", "pre_market")
+    assert {(r["ticker"], r["derived_direction"]) for r in rows} == {
+        ("XOM", "bullish"), ("OIL_BRENT", "bullish"), ("DAL", "bearish")}
+    for r in rows:
+        assert r["source"] == "policy_monitor"
+        assert r["market_impact"] == "high"
+        assert "IEA cuts 2026 supply forecast" in r["summary"]
+        assert "Brent above 100" in r["summary"]
+        assert (r["date"], r["run_type"]) == ("2026-09-14", "pre_market")
+
+
+def test_news_summaries_from_policy_keeps_a_market_wide_event_without_ticker():
+    from main import _news_summaries_from_policy
+    ctx = {"policy_risk_level": "medium", "events": [{
+        "headline": "FOMC decision", "detail": "", "effective_date": "2026-09-16",
+        "beneficiary_tickers": [], "negative_tickers": [],
+    }]}
+    rows = _news_summaries_from_policy(ctx, "2026-09-14", "pre_market")
+    assert len(rows) == 1
+    assert rows[0]["ticker"] is None
+    assert rows[0]["derived_direction"] is None
+    assert "2026-09-16" in rows[0]["summary"]
+
+
+def test_news_summaries_from_policy_is_empty_without_events():
+    from main import _news_summaries_from_policy
+    assert _news_summaries_from_policy(
+        {"policy_risk_level": "unknown", "events": []},
+        "2026-09-14", "trade_proposals") == []
+
+
+def test_run_pipeline_persists_policy_events_in_news_summaries(mocker, tmp_db_path):
+    _mock_all_other_phases(mocker)
+    mocker.patch("main.run_policy_monitor", return_value={
+        "policy_risk_level": "high", "summary": "x",
+        "events": [{"headline": "Tariffs on autos take effect",
+                    "detail": "50 % on imports.", "effective_date": "2026-09-29",
+                    "beneficiary_tickers": [], "negative_tickers": ["GM", "F"]}],
+    })
+    mocker.patch("main.rank_and_persist", return_value={
+        "top_long": [], "top_short": [], "commodities_crypto": [],
+        "divergence": [], "divergence_stats": {
+            "tech_only_abstentions": 0, "conflicts": 0, "overflow": 0}})
+    mocker.patch("main.check_open_positions", return_value=[])
+
+    run_pipeline(run_type="pre_market", date="2026-05-19", db_path=str(tmp_db_path))
+
+    import sqlite3
+    conn = sqlite3.connect(str(tmp_db_path))
+    rows = conn.execute(
+        "SELECT ticker, derived_direction, market_impact FROM news_summaries "
+        "WHERE source='policy_monitor' ORDER BY ticker").fetchall()
+    conn.close()
+    assert rows == [("F", "bearish", "high"), ("GM", "bearish", "high")]

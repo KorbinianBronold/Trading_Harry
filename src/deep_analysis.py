@@ -100,6 +100,24 @@ class PolicyMonitorError(RuntimeError):
     """Policy monitor failed to produce parseable output."""
 
 
+POLICY_RISK_LEVELS = ("low", "medium", "high")
+
+
+def _normalise_policy_level(value) -> str:
+    """Zieht policy_risk_level auf die Skala low/medium/high (C.41, P1).
+
+    Der Wert geht verbatim nach market_context und wird im Briefing exakt auf
+    'high' verglichen -- ein 'High' oder 'elevated' liefe sonst still daran
+    vorbei und stuende als Fremdwort in der 3D-Spalte. Ausserhalb der Skala
+    wird 'unknown', derselbe Wert wie beim Ausfall des Calls in trade_proposals."""
+    level = str(value or "").strip().lower()
+    if level in POLICY_RISK_LEVELS:
+        return level
+    log.warning(f"policy_risk_level '{value}' liegt ausserhalb der Skala "
+                f"{POLICY_RISK_LEVELS} -- als 'unknown' gefuehrt")
+    return "unknown"
+
+
 def run_policy_monitor(
     date: str, run_type: str, cost_tracker: CostTracker,
 ) -> dict:
@@ -107,9 +125,10 @@ def run_policy_monitor(
     {policy_risk_level, events, summary}. Tolerates empty events list."""
     user_msg = (
         f"Today is {date}. Run type: {run_type}. "
-        "Use web_search 2-5 times to surface market-moving policy/geopolitics "
-        "events from the last 48h. Then return the JSON object defined in your "
-        "system prompt."
+        "Use web_search up to 5 times to surface market-moving policy/geopolitics "
+        "events since the last US cash close (at least the last 48 hours) and "
+        "scheduled decisions that land within the next 5 trading days. Then "
+        "return the JSON object defined in your system prompt."
     )
     # Bucht jeden Versuch selbst -- auch einen verworfenen gekappten.
     result = call_claude_retry_on_truncation(
@@ -123,6 +142,7 @@ def run_policy_monitor(
             "Policy monitor response missing required keys "
             "(policy_risk_level, events)"
         )
+    parsed["policy_risk_level"] = _normalise_policy_level(parsed["policy_risk_level"])
     log.info(
         f"Policy monitor: level={parsed['policy_risk_level']} "
         f"events={len(parsed['events'])} cost={cost_tracker.total_eur:.3f} EUR"

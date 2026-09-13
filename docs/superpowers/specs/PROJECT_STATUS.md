@@ -4486,6 +4486,113 @@ das an der Quelle.
 **Tests:** 1019 grün, 15 übersprungen, Coverage 92,93 %. Regel-15-Sweep: kein Prompt
 betroffen (Cutoff und 2b sind promptfrei).
 
+### C.41 — Phase-3-Vorlauf-Review (`policy_monitor`): Ankerskala, Ticker-Seiten, Wirkdatum, Detail-Feld, Events in `news_summaries` (2026-09-13)
+
+Achter Durchgang des Pipeline-Reviews. Vorweg der uncommittete Diff vom 01.09.
+abgeschlossen (Horizont `1-5d`, Capital.com-Epics statt `GC=F`/`BTC-USD`, `summary`
+einzeilig) und der offene Punkt aus C.34 erledigt: `OIL_CRUDE` → `OIL_BRENT` in Zeile 30.
+Neuer Pin-Test `test_policy_monitor_v1_pins_contract_the_code_relies_on` (rot zuerst:
+Schema-Schlüssel, `'high'`, alle Epics aus `config`, keine yfinance-Altlast).
+
+**Code-Sicht:** ein nicht gestreamter Sonnet-5-Call über `call_claude_retry_on_truncation`
+mit `web_search` (`max_uses` 5), Decke 9216, Kosten vor dem Parsen gebucht. Die
+Suchtreffer laufen **serverseitig** in den Modellkontext; der Client bekommt sie nur als
+`encrypted_content` zurück (Sonde 13.09.: 7 Treffer je Suche, je ~2 700 Zeichen
+verschlüsselt, ~13 000 Tokens Kontext je Suche; Zitate tragen `cited_text` von ~150
+Zeichen). Der Volltext ist also **nur innerhalb des Calls** analysierbar, den Lauf
+überlebt ausschliesslich das JSON — Kompression rund 50:1. Phase 3/3b recherchieren
+zusätzlich selbst; Phase 4a und die 16:10-Revalidierung haben bewusst keine Tools und
+sehen **nur** dieses Destillat („the policy_risk events carry the news that matters").
+Volltext durchreichen geht über die API nicht; der Hebel ist die Dichte des Destillats.
+
+**Messung (drei echte Calls am 13.09., `pre_market`, vor dem Umbau zwei, danach einer):**
+0,25 / 0,23 / 0,21 €, 39–40 s, 4–5 Websuchen, `out` 3 600–3 700 von 9216 (~40 %),
+`cache_write` 34–36k Tokens — **die Suchtreffer sind der Kostentreiber, nicht die
+Antwort**. `stop_reason` dreimal `end_turn`, JSON in Code-Fence ohne Prosa davor.
+ARCHITECTURE nannte 0,10 €. Alle drei Calls „high" (s. F27). Lokal ist die
+Produktionsverteilung nicht messbar (`market_context` in der Kopie: 4 Zeilen, alle NULL,
+vor C.16); für `db-latest`:
+`SELECT date, run_type, policy_risk_level FROM market_context WHERE date >= '2026-08-19' ORDER BY date;`
+
+**Befunde und Umsetzung (Entscheidung Korbinian: alle zwölf Punkte, P2 nach
+`news_summaries`, F30 ja):**
+- **F26 — Fenster an der Uhr statt am US-Schluss (behoben).** „Last 48 hours" ab Montag
+  15:00 Berlin beginnt Samstag 15:00; alles zwischen Freitag 22:00 (US-Close) und Samstag
+  15:00 war unbepreist und ausserhalb des Fensters, ebenso nach US-Feiertagen. Neu in
+  Prompt **und** User-Message: „since the last US cash close, at least 48 hours"; planbare
+  Entscheidungen der nächsten 5 Handelstage zählen ausdrücklich mit.
+- **F27 — `policy_risk_level` ohne Skala (behoben).** Nur das Briefing-Bullet (`== "high"`)
+  und die `market_context`-Spalte hängen daran; ohne Anker war „high" in jeder
+  nachrichtenreichen Phase der Normalwert. Ankerskala wie beim Trend-Prompt: high = Ereignis
+  im Fenster, das den S&P 500 um ≥ 1 % oder einen Sektor um ≥ 2 % bewegen kann; medium =
+  Sektor-Ebene oder Index-Katalysator > 2 Handelstage entfernt; low = Routine, leere
+  Events = immer low. **P1 (Code):** `_normalise_policy_level()` in `deep_analysis.py` —
+  `lower()`, Whitelist low/medium/high, sonst `unknown` (derselbe Wert wie beim
+  Call-Ausfall in `trade_proposals`). Vorher ging der Wert verbatim in die DB.
+- **F28 — kein Wirkdatum (behoben).** FOMC 16.09., Xi-Besuch 24.09., Importverbot 29.09.
+  waren in allen Calls die wertvollsten Treffer, das Schema kannte nur `as_of`. Neu
+  `effective_date` (ISO oder null) je Event.
+- **F29 — `direction_hint` mehrdeutig (behoben).** Call 1: IEA-Angebotskürzung „bullish"
+  mit Sektor „Airlines (cost)" im selben Event; Call 2: drei von vier Events „mixed".
+  Ersetzt durch `beneficiary_tickers` / `negative_tickers` (Konvention aus
+  `trend_analyzer_v1`). Kein Code las `direction_hint`.
+- **F30 — `affected_sectors` Freitext (behoben).** „Rate-sensitive equities", „Broad Equity
+  Market", „Global Trade". Jetzt dieselbe 11er-GICS-Liste wie `market_context_v1`;
+  Gold/Öl/Krypto-Exposure gehört in die Ticker-Listen.
+- **F31 — Quellenqualität (Prompt-Regel, Beobachtungsposten).** Zitiert wurden
+  cambridgecurrencies.com, ghy.com, tradingstrategyguides.com; ein Jackson-Hole-Kommentar
+  war auf „heute" datiert, ein Diplomat-Artikel vom Juli stand für ein Event vom 12.09.
+  Neu: Primärquellen und Tier-1-Medien bevorzugen, `as_of` = Publikationsdatum der
+  zitierten Quelle. Nach dem Umbau stimmen die Daten (April-Proklamation = `2026-04-03`),
+  die Quellenstufe bleibt gemischt (atfxcapital, riotimesonline, govtschemes, freshfields).
+- **F32 — Reihenfolge undefiniert (behoben).** `generate_daily_briefing()` zeigt
+  `events[0]`; jetzt „sorted by expected market impact, most important first".
+- **Neu (Punkt 12) — `detail`-Feld.** 300–400 Zeichen Fakten je Event (Zahl gegen Konsens,
+  bisherige Marktreaktion, was terminiert ist) — die Antwort auf die Frage, ob eine
+  Headline als Destillat reicht (s. Code-Sicht). Verifikationscall: 386–471 Zeichen.
+- **P2 — Events persistiert (behoben).** Vom Policy-Monitor überlebte nur
+  `policy_risk_level` den Lauf — die einzige Claude-Ausgabe der Pipeline ohne Datenspur.
+  Neu `main._news_summaries_from_policy()`: `source='policy_monitor'`, je Event eine
+  Zeile pro genanntem Ticker (`derived_direction` bullish für Gewinner, bearish für
+  Verlierer), Event ohne Ticker mit `ticker=NULL` behalten, `summary` = Headline +
+  `detail` + `[effective …]`, `market_impact` = **`policy_risk_level` des Laufs** (ein
+  Tageswert, kein Event-Wert — 3D so lesen). `pre_market` über den bestehenden
+  Sammel-Insert nach Phase 3b, `trade_proposals` neu direkt nach dem
+  `market_context`-Backfill (der 16:10-Call ist dort die einzige Nachrichtenquelle).
+- **P3 — ARCHITECTURE korrigiert:** Skala war als `0-10` notiert, Kosten `~0.10 EUR`, und
+  „Fail: Empty context, continue" stimmt nur für `trade_proposals` — in `pre_market`
+  fängt niemand `PolicyMonitorError` (der äussere `try` kennt nur `CostCapExceeded`).
+- **P4 — Suchanzahl einheitlich** „up to 5" (User-Message sagte „2-5 times").
+- **Nur notiert, nicht geändert:** `summary` überschritt in beiden Vorher-Calls 500
+  Zeichen (600 / 570), niemand liest die Grenze aus; nach dem Umbau 475. STZ (S&P 500,
+  nicht im 150er-Universum) als Kontext-Ticker ist vertretbar, anders als im Trend-Prompt.
+
+**Verifikationscall nach dem Umbau (0,21 €, 4 Websuchen, 40 s, `end_turn`):** high, 4
+Events, FOMC zuerst, `effective_date` `2026-09-16` / `2026-09-29`, Öl-Schock mit
+XOM/CVX/OIL_BRENT gegen DAL/UAL, Sektoren nur aus der GICS-Liste, Summary 475 Zeichen.
+
+**Tests:** 1028 grün, 15 übersprungen, Coverage 92,95 %. Neu (rot zuerst): Normalisierung
+×2, User-Message-Anker, Pin-Test erweitert (Event-Schlüssel, kein `direction_hint`, drei
+Stufen, „last US cash close", „most important first", GICS-Namen), Builder ×3,
+`run_pipeline`-Persistenz, 16:10-Persistenz (`test_trade_proposals_flow`). Fixture
+`mock_policy_monitor_response.json` auf das neue Schema. Regel-15-Sweep: kein anderer
+Prompt und keine Doku nennt `direction_hint`/`affected_tickers`; `trade_proposals_v1`
+spricht weiter von „48 Stunden" und bleibt damit richtig (Untergrenze).
+Walkthrough-Notebook: Zelle 50 (Text) und 60 (Sammel-Insert) spiegeln den Stand.
+
+**Nebenbefund (offen, eigene Entscheidung):** Die API teilt den Antworttext an jeder
+Zitatstelle in eigene `text`-Blöcke (Sonde: ein Satz = drei Blöcke), und
+`_result_from_message()` fügt sie mit `"\n"` zusammen. Zitiert das Modell mitten in einem
+JSON-String, entsteht ein roher Zeilenumbruch — eine plausible **zweite** Ursache für
+C.26 neben nicht escapten Umbrüchen. `strict=False` fängt es, der String trägt den Umbruch
+aber. Betrifft alle neun Aufrufer; Kandidat: Join mit `""`. Nicht in diesem Schritt.
+
+**Vergleichbarkeit:** Events vor dem 13.09. hatten `direction_hint`, kein `detail`, kein
+`effective_date` und keine Persistenz; `policy_risk_level` vor C.41 ohne Skala und ohne
+Normalisierung — für 3D per Datum trennen. **Beobachtungsposten:** Verteilung von
+`policy_risk_level` (greift die Skala, oder bleibt „high" der Normalwert?), Quellenstufe
+der `source_url`, Länge von `detail`.
+
 ## Sprint 3D — Learning Modul
 
 ⚠️ **Noch nicht ausgearbeitet — braucht eine eigene Planungssession, bevor die Implementierung
@@ -4507,7 +4614,9 @@ Grob umrissen (aus früheren Notizen, **nicht** als Spezifikation zu verstehen):
   2026-08-18 ganz entfallen (C.14). 3D muss die Auswertung nicht mehr „übernehmen".
 - Optimiert die Gewichte des `ranking_score` aus 3C
 - `news_summaries` wird seit C.16 (2026-08-19) befüllt (Phase 2 `broad_scan` +
-  Phase 3/3b `deep_analysis`/`commodities_crypto`) — `sentiment`/`market_impact`
+  Phase 3/3b `deep_analysis`/`commodities_crypto`, seit C.41 auch Policy-Monitor-Events
+  mit `source='policy_monitor'`, dort ist `market_impact` der Tageswert
+  `policy_risk_level`, kein Event-Wert) — `sentiment`/`market_impact`
   sind dort **abgeleitete**, keine direkt vom Modell gelieferten Werte (Mapping
   s. C.16). 3D sollte das beim Feature-Engineering kennen, bevor es diese Spalten
   als Ground Truth behandelt.

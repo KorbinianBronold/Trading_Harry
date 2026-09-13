@@ -527,3 +527,78 @@ def test_run_policy_monitor_bills_the_discarded_truncated_attempt():
 
     # beide Versuche gebucht, nicht nur der verwertete
     assert tracker.input_tokens == 5000 * 2
+
+
+def test_policy_monitor_v1_pins_contract_the_code_relies_on():
+    """Regel 10/15: die Datei wird direkt editiert -- das hier faengt einen Edit
+    auf, der stillschweigend Code oder das Universum bricht. Keine Stilpruefung.
+      * policy_risk_level / events: run_policy_monitor() verlangt beide Schluessel
+      * 'high': generate_daily_briefing() vergleicht exakt auf diesen Wert
+      * Ticker-Vokabular: die Rohstoff-/Krypto-Namen muessen die Capital.com-Epics
+        aus config sein (C.25/C.34), nicht die yfinance-Altlast -- Phase 3/3b/4a
+        bekommen die Events als Kontext und matchen gegen echte Ticker."""
+    text = (Path(__file__).parent.parent.parent
+            / "prompts" / "policy_monitor_v1.txt").read_text()
+
+    for key in ('"policy_risk_level"', '"events"', '"summary"'):
+        assert key in text, f"Schema-Schluessel {key} fehlt im Prompt"
+    assert "'high'" in text
+
+    for ticker in config.COMMODITY_TICKERS + config.CRYPTO_TICKERS:
+        assert ticker in text, f"Epic {ticker} aus config fehlt im Prompt"
+    for legacy in ("GC=F", "SI=F", "CL=F", "BTC-USD", "OIL_CRUDE"):
+        assert legacy not in text, f"Altlast {legacy} steht noch im Prompt"
+
+    # C.41: Event-Schema, das _news_summaries_from_policy() liest
+    for key in ('"detail"', '"effective_date"', '"beneficiary_tickers"',
+                '"negative_tickers"', '"as_of"'):
+        assert key in text, f"Event-Schluessel {key} fehlt im Prompt"
+    assert "direction_hint" not in text, "F29: direction_hint ist ersetzt"
+    # F27: Ankerskala, alle drei Stufen definiert
+    for level in ("'low'", "'medium'", "'high'"):
+        assert level in text
+    # F26: Fenster am letzten US-Schluss, nicht an der Uhr
+    assert "last US cash close" in text
+    # F32: Reihenfolge, auf die generate_daily_briefing() (events[0]) baut
+    assert "most important first" in text
+    # F30: dieselbe GICS-Liste wie market_context_v1
+    for sector in ("Information Technology", "Communication Services", "Real Estate"):
+        assert sector in text
+
+
+# --- run_policy_monitor: Normalisierung des Risiko-Levels (C.41, P1) ---------
+# Der Wert geht verbatim nach market_context und wird im Briefing exakt auf
+# 'high' verglichen -- ein 'High' oder 'elevated' liefe still daran vorbei.
+
+def test_run_policy_monitor_normalises_the_risk_level_case():
+    fake = _fake_result(json.dumps({
+        "policy_risk_level": " High ", "events": [], "summary": "x"}))
+    tracker = CostTracker(hard_cap_eur=10.0)
+    with patch("src.utils.call_claude", return_value=fake):
+        out = run_policy_monitor(date="2026-09-14", run_type="pre_market",
+                                 cost_tracker=tracker)
+    assert out["policy_risk_level"] == "high"
+
+
+def test_run_policy_monitor_maps_a_level_outside_the_scale_to_unknown():
+    fake = _fake_result(json.dumps({
+        "policy_risk_level": "elevated", "events": [], "summary": "x"}))
+    tracker = CostTracker(hard_cap_eur=10.0)
+    with patch("src.utils.call_claude", return_value=fake):
+        out = run_policy_monitor(date="2026-09-14", run_type="pre_market",
+                                 cost_tracker=tracker)
+    assert out["policy_risk_level"] == "unknown"
+
+
+def test_run_policy_monitor_user_message_anchors_the_window_to_the_last_close():
+    """F26/P4: das Fenster haengt am letzten US-Schluss, nicht an der Uhr, und
+    die Suchanzahl steht nur noch einmal ('up to 5', wie im System-Prompt)."""
+    payload = (FIXTURE_DIR / "mock_policy_monitor_response.json").read_text()
+    tracker = CostTracker(hard_cap_eur=10.0)
+    with patch("src.utils.call_claude", return_value=_fake_result(payload)) as mock_call:
+        run_policy_monitor(date="2026-09-14", run_type="pre_market",
+                           cost_tracker=tracker)
+    user = mock_call.call_args.kwargs["user"]
+    assert "Today is 2026-09-14" in user
+    assert "last US cash close" in user
+    assert "2-5" not in user

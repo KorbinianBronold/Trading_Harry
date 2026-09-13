@@ -354,6 +354,36 @@ def _news_summaries_from_analyses(
     ]
 
 
+def _news_summaries_from_policy(
+    policy_context: dict, date: str, run_type: str,
+) -> list[dict]:
+    """Policy-Monitor-Events -> news_summaries-Zeilen (C.41, P2). Je Event eine
+    Zeile pro genanntem Ticker: beneficiary_tickers als 'bullish',
+    negative_tickers als 'bearish'; ein Event ohne Ticker (FOMC, Zoll gegen ein
+    Land) wird mit ticker=NULL behalten statt zu verschwinden. summary =
+    Headline plus detail plus Wirkdatum; market_impact = policy_risk_level des
+    LAUFS -- ein Tageswert, kein Event-Wert, fuer 3D so lesen.
+
+    Bis C.41 ueberlebte vom Policy-Monitor nur policy_risk_level den Lauf."""
+    level = policy_context.get("policy_risk_level")
+    rows: list[dict] = []
+    for ev in policy_context.get("events") or []:
+        summary = ev.get("headline") or ""
+        if ev.get("detail"):
+            summary = f"{summary} -- {ev['detail']}"
+        if ev.get("effective_date"):
+            summary = f"{summary} [effective {ev['effective_date']}]"
+        sides = ([(t, "bullish") for t in ev.get("beneficiary_tickers") or []]
+                 + [(t, "bearish") for t in ev.get("negative_tickers") or []])
+        for ticker, direction in sides or [(None, None)]:
+            rows.append({
+                "ticker": ticker, "date": date, "run_type": run_type,
+                "summary": summary, "derived_direction": direction,
+                "source": "policy_monitor", "market_impact": level,
+            })
+    return rows
+
+
 def _opening_prices(price_provider, tickers: list[str], date: str) -> dict[str, float]:
     """Tatsaechlicher Eroeffnungskurs je Ticker, minutengenau.
 
@@ -653,7 +683,8 @@ def run_pipeline(run_type: str, date: str, db_path: str) -> None:
             + _news_summaries_from_analyses(
                 deep_stocks, date, run_type, "deep_analysis")
             + _news_summaries_from_analyses(
-                deep_cc, date, run_type, "commodities_crypto"),
+                deep_cc, date, run_type, "commodities_crypto")
+            + _news_summaries_from_policy(policy_context, date, run_type),
         )
 
         # Der 15:00-Kurs ist regulaer vorboerslich (09:00 ET). Die Markierung
@@ -960,6 +991,9 @@ def run_trade_proposals(date: str, db_path: str) -> None:
             fear_greed_value=None,
             policy_risk_level=policy_context.get("policy_risk_level"),
         )
+        # C.41: die 16:10-Events bekommen dieselbe Datenspur wie am Morgen.
+        db.save_news_summaries(
+            conn, _news_summaries_from_policy(policy_context, date, "trade_proposals"))
 
         current_phase = "revalidation"
         # out= statt Zuweisung: bricht der Lauf hier am Kostendeckel ab, sind die

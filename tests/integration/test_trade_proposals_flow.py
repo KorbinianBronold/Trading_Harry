@@ -116,3 +116,30 @@ def test_evaluator_closes_exactly_one_outcome(tmp_db_path, mocker):
         "sonst wird dieser Test auf dem data_missing-Pfad gruen und prueft den "
         "E3-Mechanismus gegen einen degenerierten Fall")
     conn.close()
+
+
+def test_1610_policy_events_land_in_news_summaries(tmp_db_path, mocker):
+    """C.41/P2: der 16:10-Lauf hat einen eigenen Policy-Call; seine Events
+    bekommen dieselbe Datenspur wie am Morgen (source='policy_monitor')."""
+    conn = db.connect(str(tmp_db_path)); db.init_schema(conn)
+    _morning_long(conn)
+    conn.commit(); conn.close()
+
+    mocker.patch("main.vix_only_context", return_value={"vix_level": 18.0})
+    _mock_16_10(mocker, price=101.0,
+                verdict={"verdict": "bestaetigt", "probability_pct": 70,
+                         "reason": "ok"})
+    mocker.patch("main.run_policy_monitor", return_value={
+        "policy_risk_level": "medium", "summary": "x",
+        "events": [{"headline": "Fed speaker turns hawkish", "detail": "",
+                    "effective_date": None,
+                    "beneficiary_tickers": ["GOLD"], "negative_tickers": []}]})
+    from main import run_trade_proposals
+    run_trade_proposals(date="2026-07-30", db_path=str(tmp_db_path))
+
+    conn = db.connect(str(tmp_db_path))
+    rows = conn.execute(
+        "SELECT ticker, derived_direction, run_type FROM news_summaries "
+        "WHERE source='policy_monitor'").fetchall()
+    conn.close()
+    assert [tuple(r) for r in rows] == [("GOLD", "bullish", "trade_proposals")]

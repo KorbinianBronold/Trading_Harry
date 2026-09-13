@@ -245,10 +245,14 @@ DB-Close.
 │            PHASE 3: POLICY-MONITOR (1× pro Run)                  │
 │  Input: —                                                         │
 │  Claude: 1× Sonnet + web_search                                  │
-│  Output: {policy_risk_level, events[], summary}                  │
+│  Output: {policy_risk_level low|medium|high, events[], summary} │
 │  Scope: Tariffs, Zentralbank, Geopolitik, Regulierung          │
-│  Cost: ~0.10 EUR                                                 │
-│  Fail: ✅ Empty context, continue (aber warn)                     │
+│  Persist: policy_risk_level -> market_context (Backfill),        │
+│           Events -> news_summaries (source=policy_monitor, C.41) │
+│  Cost: ~0.21-0.25 EUR (gemessen 2026-09-13, 4-5 Websuchen)      │
+│  Fail: pre_market ❌ PolicyMonitorError nicht gefangen -> Lauf   │
+│        bricht ab (nur der Kappungs-Retry aus C.18 schuetzt);     │
+│        trade_proposals ✅ leerer Kontext ('unknown'), weiter     │
 └─────────────────────────────────────────────────────────────────┘
                               ↓
 ┌─────────────────────────────────────────────────────────────────┐
@@ -668,7 +672,10 @@ ein Test pinnt ihre Abwesenheit, damit sie nicht versehentlich zurückkehren.
 def run_policy_monitor(date, run_type, cost_tracker) -> dict:
     """
     1 Sonnet + web_search Call EINMALIG pro Run.
-    Returns: {policy_risk_level:0-10, events:[], summary:str}
+    Returns: {policy_risk_level: 'low'|'medium'|'high'|'unknown', events:[], summary:str}
+    policy_risk_level wird normalisiert (C.41): lower(), Whitelist, sonst 'unknown'.
+    Je Event: headline, detail, category, beneficiary_tickers, negative_tickers,
+    affected_sectors (GICS), source_url, as_of, effective_date.
     """
 
 def build_batches(ticker_datas, batch_size=config.BATCH_SIZE_DEEP) -> list[list[dict]]:
@@ -1202,7 +1209,10 @@ SQLite-Schema + Persistence.
   Weekly-Auswertung und die Deaktivierung
 - `trend_analyses` – Phase-0-Ausgaben
 - `news_summaries` – seit C.16 (2026-08-19) befüllt aus Phase 2 (`broad_scan`) **und**
-  Phase 3/3b (`deep_analysis`/`commodities_crypto`), Vorarbeit für Sprint 3D.
+  Phase 3/3b (`deep_analysis`/`commodities_crypto`), seit C.41 (2026-09-13) auch aus dem
+  Policy-Monitor (`source='policy_monitor'`, je Event eine Zeile pro genanntem Ticker,
+  `ticker=NULL` für marktweite Events, in `pre_market` **und** `trade_proposals`),
+  Vorarbeit für Sprint 3D.
   `sentiment`/`market_impact` sind **abgeleitete** Werte (aus `direction`/`confidence`
   bzw. `news_strength`), keine direkt vom Modell gelieferten Felder. Kein
   UNIQUE-Constraint — mehrere Quellen dürfen für denselben Ticker/Tag nebeneinander stehen.

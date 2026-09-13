@@ -3,21 +3,25 @@
   "events": [
     {
       "headline": "US-EU tariff truce extended by 60 days (Reuters 2026-05-18)",
+      "detail": "USTR and the Commission extended the standstill on the 20 % reciprocal tariff to July 17; consumer-tech importers had priced a 40 % chance of expiry. Futures on XLK rose 0.6 % after the close; the July 17 deadline is the next decision point.",
       "category": "tariff",
-      "affected_tickers": ["AAPL", "TSLA"],
-      "affected_sectors": ["XLK", "XLY"],
-      "direction_hint": "bullish",
+      "beneficiary_tickers": ["AAPL", "TSLA"],
+      "negative_tickers": [],
+      "affected_sectors": ["Information Technology", "Consumer Discretionary"],
       "source_url": "https://www.reuters.com/world/tariff-truce-extended",
-      "as_of": "2026-05-18"
+      "as_of": "2026-05-18",
+      "effective_date": "2026-07-17"
     },
     {
       "headline": "Fed signals one more 25 bps hike at June meeting (Bloomberg 2026-05-19)",
+      "detail": "Two FOMC voters said a June hike is the base case unless May CPI undershoots; fed funds futures moved from 35 % to 60 % probability. Regional banks and utilities lagged the index by 1 %. Decision due at the June 16-17 meeting.",
       "category": "central_bank",
-      "affected_tickers": [],
-      "affected_sectors": ["XLF", "XLU"],
-      "direction_hint": "bearish",
+      "beneficiary_tickers": [],
+      "negative_tickers": ["USB", "NEE"],
+      "affected_sectors": ["Financials", "Utilities"],
       "source_url": "https://www.bloomberg.com/news/fed-signals-hike",
-      "as_of": "2026-05-19"
+      "as_of": "2026-05-19",
+      "effective_date": "2026-06-17"
     }
   ],
   "summary": "Tariff thaw is mildly bullish for consumer tech; Fed hike risk weighs on rate-sensitive sectors. Net policy_risk_level=medium."
