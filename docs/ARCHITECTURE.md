@@ -1208,7 +1208,9 @@ SQLite-Schema + Persistence.
   UNIQUE-Constraint — mehrere Quellen dürfen für denselben Ticker/Tag nebeneinander stehen.
 - `cutoff_log` *(neu, Sprint 3C / Plan 2, Task 9)* – **jeder** von Phase 2 bewertete
   Ticker, nicht nur die für Phase 3 ausgewählten (`selected`-Flag +
-  `rank_position` nach der Cutoff-Sortierung). UNIQUE(date, run_type, ticker);
+  `rank_position` nach der Cutoff-Sortierung, seit C.40 auch `forced` = Pflicht-Kandidat
+  aus offener Capital.com-Position, sonst wäre ein selektierter 0/0-Ticker für 3D
+  grundlos). UNIQUE(date, run_type, ticker);
   ein doppelter Lauf ersetzt statt zu duplizieren. 3D braucht die volle Liste,
   um den 51. mit dem 50. zu vergleichen. ⚠️ Trägt seit dem Plan-2-Abschluss-Review
   auch `tech_strength` — der Wert entscheidet die Qualifikation mit und ist aus

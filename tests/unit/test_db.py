@@ -2004,6 +2004,45 @@ def test_migration_creates_cutoff_log_on_a_legacy_db():
     assert "cutoff_log" in get_tables(conn)
 
 
+def test_log_cutoff_persists_the_forced_flag(in_memory_db):
+    """F23 (C.40): ohne `forced` kann 3D bei einem ausgewaehlten Ticker mit
+    news_strength 0 und tech_strength 0 nicht erkennen, dass er als offene
+    Capital.com-Position erzwungen wurde -- qualifies ist aus News/Technik
+    ableitbar, forced nicht."""
+    init_schema(in_memory_db)
+    log_cutoff(in_memory_db, date="2026-09-13", run_type="pre_market", evaluated=[
+        {"ticker": "GOLD", "news_strength": 0, "premarket_change_pct": 0.1,
+         "tech_direction": "neutral", "tech_agreement": 1, "tech_strength": 0,
+         "forced": True, "qualifies": True, "rank_position": 0, "selected": True},
+        {"ticker": "AAPL", "news_strength": 2, "premarket_change_pct": 1.0,
+         "tech_direction": "long", "tech_agreement": 3, "tech_strength": 3,
+         "forced": False, "qualifies": True, "rank_position": 1, "selected": True},
+    ])
+    rows = {r["ticker"]: r["forced"] for r in in_memory_db.execute(
+        "SELECT ticker, forced FROM cutoff_log")}
+    assert rows == {"GOLD": 1, "AAPL": 0}
+
+
+def test_migration_adds_forced_to_a_legacy_cutoff_log():
+    """Bestands-DB (db-latest) mit cutoff_log ohne `forced`: der additive
+    Migrations-Guard (PRAGMA table_info) reicht die Spalte nach, Altzeilen
+    tragen 0."""
+    conn = sqlite3.connect(":memory:"); conn.row_factory = sqlite3.Row
+    conn.execute("""CREATE TABLE cutoff_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, date TEXT NOT NULL,
+        run_type TEXT NOT NULL, ticker TEXT NOT NULL, news_strength INTEGER,
+        premarket_change_pct REAL, tech_direction TEXT, tech_agreement INTEGER,
+        tech_strength INTEGER, rank_position INTEGER, selected BOOLEAN NOT NULL,
+        UNIQUE(date, run_type, ticker))""")
+    conn.execute("INSERT INTO cutoff_log (date, run_type, ticker, selected) "
+                 "VALUES ('2026-09-10', 'pre_market', 'PSX', 1)")
+    conn.commit()
+    init_schema(conn)
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(cutoff_log)")}
+    assert "forced" in cols
+    assert conn.execute("SELECT forced FROM cutoff_log WHERE ticker='PSX'").fetchone()[0] == 0
+
+
 def test_log_cutoff_persists_all_evaluated_tickers(in_memory_db):
     """cutoff_log enthaelt alle bewerteten Ticker, nicht nur die selected --
     3D braucht den 51. neben dem 50."""

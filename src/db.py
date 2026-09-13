@@ -295,6 +295,11 @@ CREATE TABLE IF NOT EXISTS cutoff_log (
                                      -- ueber ALLE bewerteten Ticker (Spec: 3D
                                      -- vergleicht den 51. mit dem 50.)
     selected             BOOLEAN NOT NULL,  -- true = unter MAX_DEEP_ANALYSIS
+    forced               BOOLEAN NOT NULL DEFAULT 0,  -- C.40/F23: Pflicht-Kandidat
+                                     -- aus offener Capital.com-Position (1c).
+                                     -- qualifies ist aus news/tech ableitbar,
+                                     -- forced nicht -- ohne die Spalte sieht 3D
+                                     -- einen selektierten 0/0-Ticker ohne Grund.
     UNIQUE(date, run_type, ticker)
 );
 """
@@ -303,6 +308,11 @@ CREATE TABLE IF NOT EXISTS cutoff_log (
 def _apply_migrations(conn: sqlite3.Connection) -> None:
     """Idempotent column-add migrations for pre-existing DBs.
     SQLite does not support IF NOT EXISTS on ALTER TABLE, so we inspect first."""
+    # C.40 / F23: cutoff_log.forced, additiv, Altzeilen tragen 0.
+    cl_cols = {r["name"] for r in conn.execute("PRAGMA table_info(cutoff_log)")}
+    if cl_cols and "forced" not in cl_cols:
+        conn.execute("ALTER TABLE cutoff_log ADD COLUMN forced BOOLEAN NOT NULL DEFAULT 0")
+
     ti_cols = {r["name"] for r in conn.execute(
         "PRAGMA table_info(technical_indicators)"
     ).fetchall()}
@@ -781,10 +791,10 @@ def log_cutoff(
     einer Dublette."""
     cols = ["date", "run_type", "ticker", "news_strength",
             "premarket_change_pct", "tech_direction", "tech_agreement",
-            "tech_strength", "rank_position", "selected"]
+            "tech_strength", "rank_position", "selected", "forced"]
     placeholders = ", ".join(["?"] * len(cols))
     rows = [
-        [date, run_type] + [e.get(c) for c in cols[2:]]
+        [date, run_type] + [e.get(c) for c in cols[2:-1]] + [1 if e.get("forced") else 0]
         for e in evaluated
     ]
     conn.executemany(

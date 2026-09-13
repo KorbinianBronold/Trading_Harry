@@ -4443,6 +4443,49 @@ Sektor-Roundups statt Einzelrecherche — Stärke 1 heisst praktisch „im heiss
 genannt". Mehr Suchtiefe (Batches je Sub-Sektor, grob 1–1,5 € statt 0,5 € je Lauf) ist
 eine Designfrage für 3F.
 
+### C.40 — Phase-2a/2b-Review (Cutoff, Fundamentals): `cutoff_log.forced` (F23), F24 beobachten, F25 notiert (2026-09-13)
+
+Siebter Durchgang des Pipeline-Reviews. **Code-Sicht beider Phasen korrekt.**
+2a: deterministisch, kein Claude-Call; Qualifikation News ≥ 1 oder Technik ≥ 2 oder
+Pflicht-Kandidat; Sortierung Pflicht → News ↓ → |Vorbörsen-Gap| ↓ (None hinter jedem
+gemessenen Wert) → Technik ↓ → Ticker; Deckel `MAX_DEEP_ANALYSIS = 50`; alle bewerteten
+Ticker mit Rangposition in `cutoff_log`. Am Deckeltag 08.09. fielen genau die vier
+Stärke-1-Ticker mit dem kleinsten Gap heraus. 2b: Finnhub nur für Kandidaten mit
+Cache-Miss, Spiegelung in die `td`-Dicts über dieselbe Feldliste wie Phase 1
+(`_apply_fundamentals_to_td`), Sektor-Mapping, `data_quality` nur nach `high`, nie nach
+`low`; Fehler nicht fatal; seit C.35 ohne Rohstoffe/Krypto. Walkthrough: 1 von 1
+ausgewählt, 0 Finnhub-Calls (Cache warm), Werte unverändert. Notebook-Zellen 45/47/49
+spiegeln `main.py`.
+
+**F23 — `cutoff_log` trug `forced` nicht (behoben).** `qualifies` ist aus News/Technik
+ableitbar, `forced` nicht: ein Pflicht-Kandidat mit News 0 und Technik 0 stand als
+ausgewählt in der Tabelle, ohne dass 3D den Grund erkennen konnte. Neue Spalte `forced
+BOOLEAN NOT NULL DEFAULT 0` im Schema plus additiver Migrations-Guard (`PRAGMA
+table_info(cutoff_log)`, Altzeilen 0), `log_cutoff()` schreibt sie. Zwei Tests rot zuerst
+(Persistenz, Migration auf Bestands-DB).
+
+**F24 — News 1 schlägt Technik 4 (Entscheidung: beobachten).** Ein „am Rande erwähnter"
+Ticker rangiert vor einem 3/3-Signal mit starkem ADX; für den 1–5-Tage-Horizont ist der
+Katalysator zu Recht primär, Stärke 1 aber dünne Evidenz. Nach C.39 (Nutzlast, Datumsanker,
+Trend-Echo-Regel) sollte Stärke 1 seltener und aussagekräftiger werden. Beobachtungsposten
+über zwei Wochen: Verteilung von `news_strength` in `cutoff_log` (Referenz 08.–10.09.: 32 /
+5 / 16 Ticker mit Stärke 1). Danach entscheiden, ob Qualifikation erst ab Stärke 2 gilt und
+Stärke 1 nur noch sortiert.
+
+**F25 — 2b läuft nach dem Scan (notiert).** Seit C.39 sieht der Scanner `earnings_in_days`
+aus dem Cache; bei Cache-Miss `None`. Der Sonntagsjob hält den Cache warm; fällt er aus,
+fehlt dem Montagsscan der Earnings-Hinweis für das ganze Universum, 2b holt ihn erst nach
+der Auswahl nach. Option: `fetch_missing_fundamentals` für das Aktienuniversum **vor**
+Phase 2, wenn mehr als ein Anteil X kalt ist — Kaltstart bis zu 150 × 3 Finnhub-Requests
+bei 60/min, rund 8 Minuten. Nicht umgesetzt.
+
+**Einordnung ohne Befund:** der Cutoff kennt keine Sektor-Streuung; an Themen-Tagen füllen
+korrelierte Namen die 50 Plätze, der Cluster-Check (Phase 4) warnt nur. F21 (C.39) dämpft
+das an der Quelle.
+
+**Tests:** 1019 grün, 15 übersprungen, Coverage 92,93 %. Regel-15-Sweep: kein Prompt
+betroffen (Cutoff und 2b sind promptfrei).
+
 ## Sprint 3D — Learning Modul
 
 ⚠️ **Noch nicht ausgearbeitet — braucht eine eigene Planungssession, bevor die Implementierung
