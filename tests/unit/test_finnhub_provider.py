@@ -325,3 +325,51 @@ def test_get_fundamentals_period_is_none_without_any_recommendation():
 
     assert out["analyst_consensus_period"] is None
     assert out["consensus"] is None
+
+
+# --- C.44/F39: debt_equity -- Quartalswert, unskaliert -------------------------
+# Live-Sonde 2026-09-14 (finnhub.company_basic_financials("AAPL", "all")):
+#   totalDebt/totalEquityQuarterly 0.7844  (Stichtag 2026-06-27)
+#   totalDebt/totalEquityAnnual    1.3547  (Fiskaljahr 2025-09-27)
+# Externe Referenz stockanalysis.com, 2026-09-14: Debt/Equity 0.78
+#   (Total Debt 84,34 Mrd. $ / Equity 107,52 Mrd. $).
+# Bis C.44 las der Provider den ANNUAL-Wert und teilte durch 100 -> 0.0135 im
+# Cache, im Snapshot und in den Predictions -- Faktor 100 daneben, und danach
+# noch ein Fiskaljahr alt.
+
+def _fundamentals_with(metrics: dict) -> dict:
+    mock_client = MagicMock()
+    mock_client.company_profile2.return_value = {
+        "marketCapitalization": 3_000_000.0, "finnhubIndustry": "Technology"}
+    mock_client.company_basic_financials.return_value = {"metric": metrics}
+    mock_client.recommendation_trends.return_value = []
+    mock_client.price_target.return_value = {}
+    import src.providers.finnhub_provider as fh
+    original = fh._client
+    fh._client = mock_client
+    try:
+        return fh.FinnhubProvider().get_fundamentals("AAPL")
+    finally:
+        fh._client = original
+
+
+def test_debt_equity_uses_the_quarterly_ratio_unscaled():
+    """Der Wert ist eine Ratio, kein Prozentsatz, und das Quartal ist der
+    aktuelle Stichtag -- 0.7844 liegt in der Referenzspanne 0.70-0.85
+    (stockanalysis 0.78), der Jahreswert 1.3547 nicht."""
+    out = _fundamentals_with({
+        "totalDebt/totalEquityQuarterly": 0.7844,
+        "totalDebt/totalEquityAnnual": 1.3547,
+    })
+    assert out["debt_equity"] == pytest.approx(0.7844)
+    assert 0.70 <= out["debt_equity"] <= 0.85
+
+
+def test_debt_equity_falls_back_to_the_annual_ratio_unscaled():
+    out = _fundamentals_with({"totalDebt/totalEquityAnnual": 1.3547})
+    assert out["debt_equity"] == pytest.approx(1.3547)
+
+
+def test_debt_equity_is_none_when_finnhub_has_neither():
+    out = _fundamentals_with({"peNormalizedAnnual": 25.5})
+    assert out["debt_equity"] is None

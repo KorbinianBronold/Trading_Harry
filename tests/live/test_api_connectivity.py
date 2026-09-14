@@ -85,6 +85,20 @@ def test_finnhub_fundamentals_endpoint_answers(report, key_source):
            f"AAPL industry={profile['finnhubIndustry']!r}")
 
 
+@pytest.mark.live_api
+def test_finnhub_debt_equity_is_a_current_quarter_ratio(report, key_source):
+    """C.44/F39: der Provider liest totalDebt/totalEquityQuarterly unskaliert.
+    Band bewusst breit (0.3-2.0), damit der Test Quartale ueberlebt; die exakte
+    Referenz (AAPL 0.78, stockanalysis 2026-09-14) steht im Unit-Test mit
+    aufgezeichneter Antwort. Ein Wert um 0.01 hiesse: Division wieder drin;
+    ein Wert um 1.35 hiesse: wieder der Jahreswert."""
+    from src.providers.finnhub_provider import FinnhubProvider
+    de = FinnhubProvider().get_fundamentals("AAPL").get("debt_equity")
+    assert de is not None, "Finnhub lieferte kein debt_equity fuer AAPL"
+    assert 0.3 <= de <= 2.0, f"AAPL debt_equity={de} ausserhalb der Plausibilitaetsspanne"
+    report(f"✅ Finnhub debt_equity AAPL={de} (Quartals-Ratio, C.44)")
+
+
 # ---------- Capital.com ----------
 
 @pytest.mark.live_api

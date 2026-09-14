@@ -99,8 +99,18 @@ class FinnhubProvider(DataProvider):
         mc_millions  = profile.get("marketCapitalization")
         market_cap_b = round(mc_millions / 1000, 2) if mc_millions else None
 
-        de_raw  = metrics.get("totalDebt/totalEquityAnnual")
-        debt_eq = round(de_raw / 100, 4) if de_raw is not None else None
+        # C.44/F39: Finnhub liefert das Verhaeltnis als RATIO (AAPL 0.7844),
+        # nicht als Prozentsatz -- die fruehere Division durch 100 machte
+        # daraus 0.0135, und das stand so im Snapshot, in den Predictions
+        # und in einer Claude-Belegzeile ("fortress balance sheet"). Zweiter
+        # Fehler: der ANNUAL-Wert ist der letzte Fiskaljahres-Stichtag (AAPL
+        # 2025-09-27: 1.3547), der QUARTERLY-Wert das aktuelle Quartal
+        # (2026-06-27: 0.7844 = 84,34 / 107,52 Mrd. $, stockanalysis 0.78).
+        # Quartal zuerst, Jahreswert nur als Rueckfall.
+        de_raw = metrics.get("totalDebt/totalEquityQuarterly")
+        if de_raw is None:
+            de_raw = metrics.get("totalDebt/totalEquityAnnual")
+        debt_eq = round(de_raw, 4) if de_raw is not None else None
 
         return {
             "pe_ratio":       metrics.get("peNormalizedAnnual"),
