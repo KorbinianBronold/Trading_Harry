@@ -37,8 +37,8 @@ def test_full_pipeline_writes_predictions_and_sends_email(tmp_path, monkeypatch)
     fake_provider.get_price_history.return_value = _mock_ohlc()
     fake_provider.get_ohlc_after.return_value = None
     # Der Entscheidungskurs kommt seit dem Preismodell-Umbau (2026-08-06) live
-    # statt aus dem letzten DB-Close. Derselbe Wert wie zuvor, damit Guardrails
-    # und TP/SL-Fixtures unveraendert greifen.
+    # statt aus dem letzten DB-Close -- und seit C.45 (F41) ist er der Entry
+    # der Prediction; die Fixture-Levels werden unten daran ausgerichtet.
     fake_provider.get_premarket_price.return_value = float(
         _mock_ohlc()["Close"].iloc[-1])
     # Seit Sprint 3C / Plan 2, Task 5 laeuft Phase 1b ueber den Sammelabruf
@@ -100,11 +100,21 @@ def test_full_pipeline_writes_predictions_and_sends_email(tmp_path, monkeypatch)
     # ("Technology", aus dem gefakten get_fundamentals()) und landen deshalb
     # in EINEM Batch -- ein einziger call_claude-Call mit einer
     # results-Liste statt drei Einzelantworten.
+    # Seit C.45 (F41) ist der Entry der Snapshot-Kurs, nicht das Modell-Echo,
+    # und R/R wird aus TP/SL gegen diesen Kurs abgeleitet -- die Fixture-Levels
+    # (178.5 / 184 / 176) muessen deshalb zum synthetischen Kurs passen, sonst
+    # laege der SL ueber dem Entry und die Guardrail verwuerfe zu Recht.
+    def _levels_for(cp: dict) -> dict:
+        cp["current_price"] = _close_price
+        cp["tp_price"] = round(_close_price * 1.03, 2)
+        cp["sl_price"] = round(_close_price * 0.986, 2)
+        return cp
+
     deep_obj = json.loads(deep_resp)
     def _deep_for(ticker: str) -> dict:
         cp = dict(deep_obj)
         cp["ticker"] = ticker
-        return cp
+        return _levels_for(cp)
 
     deep_batch_resp = json.dumps({"results": [
         _deep_for("AAPL"), _deep_for("MSFT"), _deep_for("NVDA"),
@@ -119,7 +129,7 @@ def test_full_pipeline_writes_predictions_and_sends_email(tmp_path, monkeypatch)
         cp = dict(cc_obj)
         cp["ticker"] = ticker
         cp["asset_class"] = asset_class
-        return json.dumps({"results": [cp]})
+        return json.dumps({"results": [_levels_for(cp)]})
 
     # Phase 0b: wie die anderen Phasen auf Modulebene gemockt, damit der
     # Integrationstest den Markt-Kontext wirklich durchlaeuft (Parsen +

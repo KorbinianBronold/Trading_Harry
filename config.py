@@ -363,6 +363,23 @@ RR_RATIO_DEFAULT = 2.0
 # anzusehen, schaltet die Pipeline ab. Nach ~30 Outcomes ist die Zahl messbar.
 STOP_MIN_INTRADAY_RANGE_FRAC = 0.8
 
+# C.45 / F45 (2026-09-14): ab welchem Bruchteil der typischen Tagesspanne ein
+# TP als "ausserhalb der Reichweite" gilt. Spiegelbild der Schwelle oben, und
+# genauso WEICH (check_tp_reach). Anlass: in den vorliegenden Aktien-Predictions
+# lag das TP im Mittel bei 1,15 Tagesspannen, keines darunter, alle
+# geschlossenen waren sl_hit.
+#
+# ⚠️ STARTWERT, keine Messung -- und rechnerisch mit STOP_MIN_INTRADAY_RANGE_FRAC
+# unvereinbar: SL >= 0,8 und TP <= 0,9 der Range ergibt R/R <= 1,125 < 1,5.
+# Jedes guardrail-taugliche Setup loest also mindestens einen der beiden
+# weichen Checks aus. Gemessen wird, wie weit die Setups ausserhalb liegen.
+TP_MAX_INTRADAY_RANGE_FRAC = 0.90
+
+# C.45 / F46: Mindest-Tagesspanne fuer ein CFD-taugliches Setup (harte
+# Guardrail in GuardrailsChecker). Stand bis C.45 als 1.0 im Dataclass-Default,
+# als einzige Guardrail-Schwelle nicht hier. Aktienkalibriert (F14, C.34).
+MIN_INTRADAY_RANGE_PCT = 1.0
+
 # Spec G4: ab welchem Anteil des Morgen-Risikobudgets ein Setup um 16:10 als
 # aufgebraucht gilt. HART durchgesetzt -- anders als oben ist hier nicht die
 # Schwelle die offene Frage: bei drei Vierteln verbrauchtem Budget ist die

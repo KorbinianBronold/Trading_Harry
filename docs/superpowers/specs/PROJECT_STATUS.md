@@ -4848,6 +4848,127 @@ Dominanz-Zahl; `commodities_crypto_v3` verlangt seit C.43 nur das Spiegeln von E
 CONTEXT. **Tests:** 1052 grün, 16 übersprungen (der neue Live-Test ohne `--run-live`), Coverage 93,06 %; drei Unit-Tests
 neu, ein Live-Test neu, ein Test-Fixture auf den Live-Wert umgestellt.
 
+### C.45 — Phase-4-Review (Ranking): Entscheidungswerte aus dem Snapshot (F41), tote `data_quality`-Regel (F42), Check-Flags in der Mail (F43), Top-10-Überlauf (F44), TP-Reichweite (F45), sechs Angleichungen (F46) (2026-09-14)
+
+Elfter Durchgang des Pipeline-Reviews: `src/ranking.py`, `src/guardrails.py`,
+`src/signal_checks.py`, `src/analysis_signal.py`. Rohstoffe/Krypto laut Entscheidung vom
+14.09. (C.43) ausgeklammert — die Mechanik unten wirkt für sie mechanisch mit (dieselbe
+`_guardrail_filter`-Schleife), fachlich bewertet wurde nur der Aktienpfad.
+
+**Code-Sicht solide:** Guardrails, B.3-Checks (beide Läufe erhoben, nur 16:10 `enforce`),
+Klassifikation core/conflict/divergence, `rank_score = analysis_strength × tech_strength`
+mit NULL statt 0, Sortierschlüssel, Kopie-statt-Mutation und Persistenz entsprechen Spec
+§ 5.3–5.5, C.13 und P2.12/P2.13. Kein Claude-Call. Walkthrough 14.09. (Zellen 64–68): AAPL
+long, Stärke 3 × Technik 2 = 6, core, Entry 333,50 = Snapshot; `stop_inside_noise` feuerte
+weich (SL 0,8 % gegen Range 3,0 % = 0,27), sichtbar nur in `guardrail_rejects`.
+
+**Befunde und Umsetzung (Entscheidung Korbinian: F41–F46 in dieser Reihenfolge, F44
+Option a, F45 Startwert 0,90):**
+- **F41 — Entscheidungswerte waren Modell-Echos (behoben, Priorität).** `entry_price` und
+  `price_premarket` waren `analysis["current_price"]` (das Echo des Modells), `rr_ratio`/
+  `tp_pct`/`sl_pct` ebenfalls Modellwerte; die R/R-Guardrail prüfte die Zahl, die das Modell
+  selbst behauptet hatte, `check_stop_distance` rechnete mit dem Modell-`sl_pct`. Der
+  16:10-Pfad rechnete R/R längst deterministisch (`recompute_rr_ratio`), der Morgenpfad
+  nicht; der Prompt hatte eine Echo-Pflicht nur für `intraday_range_pct`. Beleg in der
+  lokalen DB: HD short 13.07. mit `tp_pct = −2,97` neben `sl_pct = +1,95` (gemischte
+  Vorzeichen). **Fix:** `main._signal_context()` trägt `price`, `intraday_range_pct` und
+  `data_quality` aus `td`; `ranking._normalise_from_snapshot()` erzeugt je Analyse eine
+  **Kopie** mit `current_price`/`price_premarket` = Snapshot-Kurs, `intraday_range_pct` =
+  Snapshot-Wert und `rr_ratio`/`tp_pct`/`sl_pct` aus `signal_checks.derive_levels()`
+  (unsigniert; R/R 0.0 bei falscher Seite, damit die Guardrail „below hard minimum" meldet).
+  Jede Abweichung zum Modellwert (Kurs > 0,1 %, Levels > 0,05) ist eine WARNING; fehlt
+  der Snapshot-Kurs, bleibt der Modellwert mit WARNING, nie still. Guardrails, Checks,
+  Klassifikation und Persistenz laufen auf der Kopie; das Original bleibt unberührt
+  (Test pinnt Schlüssel **und** Werte) und geht wie bisher in den 4a-Prompt. `main.py`
+  stempelt nur noch `is_premarket`. Prompt: `current_price` „mirror of the snapshot price
+  verbatim" plus Hard Rule, dass die Pipeline R/R und Prozentwerte selbst ableitet.
+  **⚠️ Für 3D:** `predictions.tp_pct`/`sl_pct` vor dem 14.09. tragen gemischte Vorzeichen
+  und stammen aus dem Modell; `entry_price` vor dem 14.09. ist das Modell-Echo (in allen
+  geprüften Zeilen gleich dem Snapshot, aber nicht garantiert). Per Datum trennen.
+- **F42 — Guardrail `data_quality` war tot (behoben, Option a).** `check_analysis` las
+  `a.get("data_quality")`, das Prompt-Schema kennt das Feld nicht, `analyze_batch` reicht
+  die rohen Modell-Dicts durch — die Regel „high confidence bei low data_quality" konnte
+  nie greifen; der Test injizierte den Schlüssel von Hand. Jetzt
+  `check_analysis(a, *, data_quality=…)` aus dem `signal_context`; ein Wert im Dict wird
+  ignoriert (Test pinnt das, damit der tote Pfad nicht zurückkehrt). Das ist der einzige
+  Abnehmer der Phase-1-Heuristik für Aktien.
+- **F43 — Weiche Checks waren in der Morgenmail unsichtbar (behoben).**
+  `rank_and_persist` warf die `_run_checks`-Ergebnisse nach `blocks()` weg; die Top-10-
+  Zeile zeigte als Flags nur 🔥 (`trend_boost`, in `_to_prediction_row` hart None, also
+  tot) und ⚠️ bei `policy_risk ≤ 4`; `earnings_warning` wurde persistiert, nie gerendert.
+  Jetzt hängt `_enrich()` die Regelnamen als `_checks` an die Kopie (cc: leere Liste),
+  `email_sender.CHECK_FLAG_LABELS` rendert sie in der Flags-Spalte der Top-10 **und** der
+  Divergenz-Tabelle („Earnings ≤2d", „Stop im Rauschen", „TP > Range", „Sektor gegen
+  Trade", „Klumpen", „VIX"); unbekannte Regeln erscheinen unter ihrem Namen. 🔥 entfernt.
+- **F44 — Top-10-Überlauf war unsichtbar (behoben, Option a).** core-Kandidaten jenseits
+  von `TOP_N` verschwanden ohne Zähler; C.26 zeigte exakt 10 Longs, ob der Deckel gebunden
+  hat, wusste niemand. Jetzt `divergence_stats["core_overflow"]`, in der Log-Zeile und im
+  Zähler-Absatz der Divergenz-Sektion („Top-10-Ueberlauf: N"). **Option b (Konflikte als
+  `candidate_class='conflict'` persistieren, damit die Zwei-Signal-Regel je ein Outcome
+  bekommt) bleibt eine 3D-Entscheidung** — heute bekommt ein Technik-Konflikt nie ein
+  Outcome; die Projektregel „hart verworfen bleibt offen und wird ausgewertet" (E5) gilt
+  für den folgenreichsten Filter des Rankings nicht. Nebenpunkt dazu: `tech_strength 1`
+  (2 von 3 Stimmen bei ADX ≤ 20) reicht, um eine voll belegte Gegenanalyse hart zu
+  verwerfen.
+- **F45 — TP liegt typisch bei einer ganzen Tagesspanne (weicher Check).** Lokale Aktien-
+  Zeilen: TP/Range Ø 1,15 (0,99–1,50), SL/Range Ø 0,66, alle sechs geschlossenen `sl_hit`;
+  PG/AVGO/META setzten das TP auf 0,99–1,00 der Range. Spiegelbild von C.22: R/R ≥ 1,5 auf
+  einem Stop im Rauschen schiebt das TP auf eine komplette Tagesbewegung. Neu
+  `signal_checks.check_tp_reach()` (`tp_beyond_range`, `config.TP_MAX_INTRADAY_RANGE_FRAC
+  = 0.90`), immer weich, in **beiden** Läufen (`ranking._run_checks`, `main._revalidate_all`).
+  **⚠️ Arithmetik:** SL ≥ 0,8 und TP ≤ 0,9 der Range ergibt R/R ≤ 1,125 < 1,5 — jedes
+  guardrail-taugliche Setup löst also **mindestens einen** der beiden Range-Beobachter
+  aus, und jede Top-10-Zeile trägt ab jetzt mindestens ein Range-Flag. Beide Schwellen
+  sind unbestätigte Startwerte; gemessen wird, wie weit die Setups ausserhalb liegen,
+  nicht ob. Wer eine der beiden scharf stellt, schaltet die Pipeline ab (wie C.22).
+- **F46 — sechs Angleichungen (behoben):** `sources_used` zählt distinkte Hosts
+  (`urlsplit`, ohne `www.`) statt Einträge, wie der Prompt es verlangt; Haltedauer „1-5"
+  und „Maximum 5" im Prompt; VIX-Schwellen greifen `>=` („ab 25 / ab 35", CLAUDE.md und
+  B.3); eine `direction` ausserhalb {long, short, none} wird hart verworfen (Regelname
+  `direction`) statt still persistiert; `ranking.py`-Docstring und ARCHITECTURE-Box
+  Phase 4 aktualisiert (nannten `probability_pct` als Sortierschlüssel und eine Check-
+  Liste ohne Earnings/Stop-Distanz, mit Gap); `min_intraday_range_pct` liest
+  `config.MIN_INTRADAY_RANGE_PCT = 1.0`. **Nur notiert, nicht geändert:** Klumpen-
+  Zählung läuft über `kept_stocks` vor Konflikt- und Top-10-Filter und mischt Long und
+  Short; `_rule_name(errs[0])` zählt in der Wochenstatistik nur die erste verletzte Regel.
+
+**Nebenbefund für Phase 4a (Schritt 2):** `main.py` stempelt `is_premarket` weiter in
+die Original-Dicts, und `portfolio_check` serialisiert dieselben Dicts als
+`CURRENT SNAPSHOT` in den Prompt — ein Schlüssel mehr in einem bezahlten Call (Klasse
+C.6, harmlos); `price_premarket` landet dort seit C.45 nicht mehr.
+
+**Regel-15-Sweep:** `trade_proposals_v1` und `portfolio_check_v2` nennen keinen der
+geänderten Bezeichner. `commodities_crypto_v3` trägt dieselben zwei Schema-Zeilen
+(`current_price` ohne Echo-Regel, Haltedauer ohne Deckel) — **bewusst nicht angefasst**
+(Entscheidung 14.09.: keine cc-Änderungen im Review), Nachzug in der cc-Sitzung; die
+Normalisierung im Code wirkt für cc-Analysen bereits mit. Kein Prompt zitiert die
+Range-Schwellen oder VIX-Zahlen.
+
+**Tests:** 1085 grün, 16 übersprungen, Coverage 93,3 %. Neu (rot zuerst, 33): `derive_levels`
+×3, `check_tp_reach` ×5, VIX-Grenze, Guardrails ×6 (data_quality als Parameter, Dict-Wert
+ignoriert, Domains ×2, Richtung, config-Schwelle), Ranking ×10 (Snapshot-Entry und Levels,
+abgeleitete R/R in der Guardrail, Rückfall mit WARNING, Range aus dem Snapshot, Original
+unverändert, data_quality blockiert, `_checks` ×2, `core_overflow`, `tp_beyond_range`
+morgens), `_rule_name` `direction`, `_signal_context` ×1, 16:10 `tp_beyond_range`, Mail
+×5, Prompt-Pin C.45. Angepasst, weil die Semantik sich änderte: drei Tests erzwangen die
+Ablehnung über den Modell-`rr_ratio` (jetzt über die Preise, `_low_rr()`), der
+`_signal_context`-Pin um drei Schlüssel, `test_no_reject_row_when_no_check_fires` nimmt
+die beiden Range-Beobachter aus (Arithmetik oben), der Integrationstest richtet die
+Fixture-Levels (178,5/184/176) am synthetischen Snapshot-Kurs aus — mit dem Modell-Echo
+als Entry hatte das nie jemand gemerkt. Walkthrough-Notebook: Zellen 63–66 und 68
+nachgezogen (Zelle 64 stempelt nur noch `is_premarket`, 66 zeigt die angereicherten
+Kopien samt `_checks` und Abweichungen zum Modell, 68 zeigt PM-Kurs/TP%/SL% und **immer**
+die `guardrail_rejects` des Laufs).
+
+**Nicht live verifiziert:** der geänderte Phase-3-Prompt (zwei Zeilen) und die
+Normalisierung liefen noch nicht gegen die API; Verifikation über Notebook-Zellen 54–68
+(Datei vorher neu öffnen). Zu prüfen: WARNING-Zeilen bei Abweichung (erwartet: keine, wenn
+das Modell den Snapshot spiegelt), `_checks` in Zelle 66, Flags in der Mail (Zelle 74).
+
+**Beobachtungsposten neu:** Verteilung von `stop_inside_noise` und `tp_beyond_range`
+(Anteil und Abstand), Häufigkeit der F41-WARNINGs (spiegelt das Modell den Snapshot?),
+`core_overflow` in Produktivläufen (bindet der Top-10-Deckel?).
+
 ## Sprint 3D — Learning Modul
 
 ⚠️ **Noch nicht ausgearbeitet — braucht eine eigene Planungssession, bevor die Implementierung

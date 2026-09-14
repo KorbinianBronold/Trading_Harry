@@ -373,3 +373,77 @@ def test_stop_budget_is_silent_without_prices():
         entry_price=None, sl_price=98.0, current_price=99.0, enforce=True) is None
     assert check_stop_budget_spent(
         entry_price=100.0, sl_price=100.0, current_price=99.0, enforce=True) is None
+
+
+# ---------- C.45 / F41: Levels aus Preisen, nicht aus dem Modell-Echo ----------
+
+def test_derive_levels_long_computes_rr_and_unsigned_pcts():
+    """F41: rr_ratio/tp_pct/sl_pct entstehen aus Entry, TP und SL -- dieselbe
+    Formel, die der Prompt dem Modell vorschreibt, nur im Code."""
+    from src.signal_checks import derive_levels
+    out = derive_levels(entry=100.0, tp=105.0, sl=98.0, direction="long")
+    assert out == {"rr_ratio": 2.5, "tp_pct": 5.0, "sl_pct": 2.0}
+
+
+def test_derive_levels_short_mirrors_the_long_case():
+    """Richtungsneutral: ein Short mit gespiegelten Preisen liefert dieselben
+    unsignierten Werte (die DB hatte bis C.45 gemischte Vorzeichen)."""
+    from src.signal_checks import derive_levels
+    out = derive_levels(entry=100.0, tp=95.0, sl=102.0, direction="short")
+    assert out == {"rr_ratio": 2.5, "tp_pct": 5.0, "sl_pct": 2.0}
+
+
+def test_derive_levels_tp_on_the_wrong_side_yields_zero_rr():
+    """Kein positiver Ertrag -> kein Verhaeltnis. 0.0 statt None, damit die
+    R/R-Guardrail 'below hard minimum' meldet und nicht 'field missing'."""
+    from src.signal_checks import derive_levels
+    out = derive_levels(entry=100.0, tp=99.0, sl=98.0, direction="long")
+    assert out["rr_ratio"] == 0.0
+
+
+# ---------- C.45 / F45: TP ausserhalb der Tagesspanne (weich) ----------
+
+def test_tp_beyond_the_range_is_flagged_but_never_enforced():
+    """Spiegelbild von check_stop_distance: TP bei einer ganzen Tagesspanne ist
+    nur an einem voll gerichteten Tag erreichbar. Reine Beobachtung."""
+    from src.signal_checks import check_tp_reach
+    r = check_tp_reach(tp_pct=2.0, intraday_range_pct=2.0)
+    assert r is not None
+    assert r.rule == "tp_beyond_range"
+    assert r.enforced is False
+    assert "1.00" in r.detail
+
+
+def test_tp_within_the_range_is_silent():
+    from src.signal_checks import check_tp_reach
+    assert check_tp_reach(tp_pct=1.5, intraday_range_pct=2.0) is None
+
+
+def test_tp_reach_boundary_is_silent():
+    """Genau auf der Schwelle (0.90) faellt nichts an."""
+    from src.signal_checks import check_tp_reach
+    assert check_tp_reach(tp_pct=1.8, intraday_range_pct=2.0) is None
+
+
+def test_tp_reach_is_silent_without_a_range():
+    from src.signal_checks import check_tp_reach
+    assert check_tp_reach(tp_pct=2.0, intraday_range_pct=None) is None
+    assert check_tp_reach(tp_pct=None, intraday_range_pct=2.0) is None
+    assert check_tp_reach(tp_pct=2.0, intraday_range_pct=0.0) is None
+
+
+def test_tp_reach_threshold_is_the_configured_start_value():
+    """0.90 ist ein Startwert (Entscheidung 14.09.), kein Messergebnis."""
+    import config
+    assert config.TP_MAX_INTRADAY_RANGE_FRAC == 0.90
+
+
+# ---------- C.45 / F46: VIX-Schwellen greifen AB dem Wert ----------
+
+def test_vix_thresholds_fire_at_the_boundary():
+    """CLAUDE.md und B.3 sagen 'ab 25' / 'ab 35' -- der Code verglich mit '>'."""
+    from src.signal_checks import check_vix
+    r = check_vix("long", "medium", 25.0, enforce=True)
+    assert r is not None and r.rule == "vix_high_confidence_only"
+    r = check_vix("long", "high", 35.0, enforce=True)
+    assert r is not None and r.rule == "vix_no_new_longs"

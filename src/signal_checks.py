@@ -115,6 +115,39 @@ def check_stop_distance(
     )
 
 
+def check_tp_reach(
+    tp_pct: float | None, intraday_range_pct: float | None,
+) -> CheckResult | None:
+    """Meldet, wenn das TP JENSEITS von TP_MAX_INTRADAY_RANGE_FRAC der typischen
+    Tagesspanne liegt (C.45 / F45) -- das Spiegelbild von check_stop_distance.
+
+    Anlass (2026-09-14): in den vorliegenden Aktien-Predictions lag das TP im
+    Mittel bei 1,15 Tagesspannen (0,99-1,50), keines darunter, und alle sechs
+    geschlossenen waren sl_hit. Ein R/R >= 1,5 auf einem Stop im Rauschen
+    schiebt das TP auf eine komplette Tagesbewegung in eine Richtung -- die nur
+    ein voll gerichteter Tag liefert.
+
+    ⚠️ IMMER WEICH (enforced=False), wie check_stop_distance, und aus demselben
+    Grund: 0,90 ist ein Startwert (Entscheidung Korbinian 14.09.), keine
+    Messung. Arithmetik, die man kennen muss: mit SL >= 0,8 und TP <= 0,9 der
+    Range ist R/R hoechstens 1,125 < RR_RATIO_MIN_HARD 1,5 -- jedes
+    guardrail-taugliche Setup loest also mindestens einen der beiden Checks
+    aus. Die Startwerte sind bewusst unvereinbar; gemessen wird, WIE weit die
+    Setups ausserhalb liegen, nicht OB."""
+    if tp_pct is None or not intraday_range_pct:
+        return None
+    frac = abs(tp_pct) / abs(intraday_range_pct)
+    if frac <= config.TP_MAX_INTRADAY_RANGE_FRAC:
+        return None
+    return CheckResult(
+        rule="tp_beyond_range",
+        detail=(f"TP bei {frac:.2f} der typischen Tagesspanne "
+                f"(TP {abs(tp_pct):.2f} % gegen Range {abs(intraday_range_pct):.2f} %, "
+                f"Schwelle {config.TP_MAX_INTRADAY_RANGE_FRAC})"),
+        enforced=False,
+    )
+
+
 def check_stop_budget_spent(
     entry_price: float | None, sl_price: float | None,
     current_price: float | None, enforce: bool = False,
@@ -176,7 +209,8 @@ def check_vix(
     direction: str, confidence: str | None, vix_level: float | None, *,
     enforce: bool,
 ) -> CheckResult | None:
-    """VIX-Filter aus B.3. Die beiden Schwellen gelten KUMULATIV, nicht exklusiv:
+    """VIX-Filter aus B.3. Die beiden Schwellen gelten KUMULATIV, nicht exklusiv,
+    und greifen AB dem Schwellenwert (>=, C.45/F46):
     ab VIX_HIGH_CONFIDENCE_ONLY nur noch confidence='high' — fuer beide Richtungen
     und ohne Obergrenze —, zusaetzlich ab VIX_NO_NEW_LONGS gar keine neuen
     Long-Signale mehr. Der Filter darf mit steigender Volatilitaet nur strenger
@@ -189,17 +223,18 @@ def check_vix(
     fehlender Messwert ist kein Grund, alle Signale zu verwerfen."""
     if vix_level is None:
         return None
-    if vix_level > config.VIX_NO_NEW_LONGS and direction == "long":
+    # C.45 / F46: "ab 25" / "ab 35" (CLAUDE.md, B.3) heisst >=, nicht >.
+    if vix_level >= config.VIX_NO_NEW_LONGS and direction == "long":
         return CheckResult(
             rule="vix_no_new_longs",
-            detail=f"VIX {vix_level:.1f} > {config.VIX_NO_NEW_LONGS:.0f} — "
+            detail=f"VIX {vix_level:.1f} >= {config.VIX_NO_NEW_LONGS:.0f} — "
                    f"keine neuen Long-Signale",
             enforced=enforce,
         )
-    if vix_level > config.VIX_HIGH_CONFIDENCE_ONLY and confidence != "high":
+    if vix_level >= config.VIX_HIGH_CONFIDENCE_ONLY and confidence != "high":
         return CheckResult(
             rule="vix_high_confidence_only",
-            detail=f"VIX {vix_level:.1f} > {config.VIX_HIGH_CONFIDENCE_ONLY:.0f} — "
+            detail=f"VIX {vix_level:.1f} >= {config.VIX_HIGH_CONFIDENCE_ONLY:.0f} — "
                    f"nur confidence='high', hier '{confidence}'",
             enforced=enforce,
         )
@@ -345,3 +380,23 @@ def recompute_rr_ratio(
     if reward <= 0 or risk <= 0:
         return None
     return reward / risk
+
+
+def derive_levels(entry: float, tp: float, sl: float, direction: str) -> dict:
+    """rr_ratio, tp_pct und sl_pct aus den Preisen (C.45 / F41) -- dieselbe
+    Formel, die deep_analysis_v2 dem Modell vorgibt, nur im Code, damit die
+    Guardrail nicht die Zahl prueft, die das Modell selbst behauptet.
+
+    tp_pct/sl_pct sind unsigniert (Betrag in Prozent des Entry): bis C.45 kamen
+    sie aus dem Modell und trugen gemischte Vorzeichen (HD short 13.07.:
+    tp_pct -2,97 neben sl_pct +1,95). rr_ratio ist 0.0 statt None, wenn TP oder
+    SL auf der falschen Seite liegt -- so meldet die Guardrail 'below hard
+    minimum' und nicht 'required field missing'."""
+    if not entry:
+        return {"rr_ratio": 0.0, "tp_pct": None, "sl_pct": None}
+    rr = recompute_rr_ratio(entry, tp, sl, direction)
+    return {
+        "rr_ratio": round(rr, 2) if rr is not None else 0.0,
+        "tp_pct": round(abs(tp - entry) / entry * 100.0, 2),
+        "sl_pct": round(abs(entry - sl) / entry * 100.0, 2),
+    }

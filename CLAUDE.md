@@ -130,6 +130,11 @@ Kurzform zum Erkennen einer drohenden Verletzung; Begründung und Randfälle in
   die anderen sieben Dimensionen sind trade-relativ. → C.13
 - Guardrails: min. **2 Belege** je Dimension. `evidence_quality: "thin"` umgeht das
   **nur** bei exakt diesem Wert; eine thin-Dimension wird **behalten**. → §6.3
+- Entscheidungswerte kommen **nie** aus dem Modell-Echo: `entry_price`/`price_premarket`/
+  `intraday_range_pct` aus dem Snapshot, `rr_ratio`/`tp_pct`/`sl_pct` im Code aus den
+  Preisen (`ranking._normalise_from_snapshot()`, arbeitet auf einer **Kopie**, Original
+  geht in den 4a-Prompt). Guardrails prüfen die abgeleiteten Werte; `data_quality` kommt
+  als Parameter aus dem Snapshot, nie aus dem Analyse-Dict. → C.45
 - Technisches Signal deterministisch im Code; drei feste Ablesungen (RSI-Momentum,
   MACD-Histogramm, Kurs vs. SMA50 **und** SMA200 — keine Kreuzung); ADX moduliert
   die Stärke, **nie** die Richtung. → §6.2

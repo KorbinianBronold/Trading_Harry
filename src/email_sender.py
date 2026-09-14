@@ -131,10 +131,32 @@ def _section_portfolio(recs: list[dict], positions_unavailable: bool = False) ->
     )
 
 
+# C.45 / F43: Kurzlabels fuer die im Ranking angeschlagenen Checks (Regelnamen
+# aus src/signal_checks.py, die rank_and_persist() als _checks an jede Zeile
+# haengt). Eine unbekannte Regel erscheint unter ihrem Namen, nie stumm.
+CHECK_FLAG_LABELS = {
+    "earnings_imminent":        "Earnings ≤2d",
+    "stop_inside_noise":        "Stop im Rauschen",
+    "tp_beyond_range":          "TP > Range",
+    "sector_momentum":          "Sektor gegen Trade",
+    "sector_momentum_partial":  "Sektor gegen Trade (1 Signal)",
+    "sector_momentum_conflict": "Sektor uneinig",
+    "sector_cluster":           "Klumpen",
+    "vix_high_confidence_only": "VIX",
+    "vix_no_new_longs":         "VIX (keine Longs)",
+}
+
+
+def _check_flags(a: dict) -> str:
+    """Die angeschlagenen Checks einer Zeile als Labels, mit ' · ' getrennt."""
+    return " · ".join(_h(CHECK_FLAG_LABELS.get(r, r)) for r in a.get("_checks") or [])
+
+
 def _row_for_setup(rank: int, a: dict) -> str:
-    """Renders one <tr> for a single ranked stock setup, with trend/policy flag icons."""
+    """Renders one <tr> for a single ranked stock setup. Flags: die weichen
+    Checks des Laufs (C.45 / F43) plus ⚠️ bei policy_risk <= 4. Das fruehere
+    🔥 (trend_boost) stand in _to_prediction_row() hart auf None und ist weg."""
     scores = a.get("scores", {})
-    trend_flag = "🔥" if a.get("trend_boost") else ""
     policy_flag = "⚠️" if scores.get("policy_risk", {}).get("value", 10) <= 4 else ""
     return (
         f'<tr><td>{rank}</td><td>{_h(a["ticker"])}</td>'
@@ -154,7 +176,7 @@ def _row_for_setup(rank: int, a: dict) -> str:
         f'<td>{_h(a.get("atr_pct"))}</td>'
         f'<td>{_h(a.get("intraday_range_pct"))}</td>'
         f'<td>{_h(a.get("hold_days_recommended"))}</td>'
-        f'<td>{trend_flag}{policy_flag}</td>'
+        f'<td>{" · ".join(x for x in (_check_flags(a), policy_flag) if x)}</td>'
         f'<td>{_h(a.get("summary", ""))[:160]}</td></tr>'
     )
 
@@ -194,6 +216,7 @@ def _row_for_divergence(a: dict) -> str:
         f'<td>{_h(a.get("tp_price"))}</td>'
         f'<td>{_h(a.get("sl_price"))}</td>'
         f'<td>{_h(a.get("rr_ratio"))}</td>'
+        f'<td>{_check_flags(a)}</td>'
         f'<td>{_h(a.get("summary", ""))[:160]}</td></tr>'
     )
 
@@ -208,14 +231,16 @@ def _section_divergence(divergence: list[dict], stats: dict) -> str:
         f'<p><i>Enthaltungen mit Technik-Richtung: '
         f'{_h(stats.get("tech_only_abstentions", 0))} · '
         f'Technik-Konflikte verworfen: {_h(stats.get("conflicts", 0))} · '
-        f'Deckel-Ueberlauf: {_h(stats.get("overflow", 0))}</i></p>'
+        f'Deckel-Ueberlauf: {_h(stats.get("overflow", 0))} · '
+        f'Top-10-Ueberlauf: {_h(stats.get("core_overflow", 0))}</i></p>'
     )
     if not divergence:
         return ('<h2>Divergenz-Kandidaten</h2>'
                 '<p><i>Keine.</i></p>' + counters)
     head = (
         '<tr><th>Ticker</th><th>Richtung</th><th>Analysis-Strength</th>'
-        '<th>Kurs</th><th>TP</th><th>SL</th><th>R/R</th><th>Begründung</th></tr>'
+        '<th>Kurs</th><th>TP</th><th>SL</th><th>R/R</th><th>Flags</th>'
+        '<th>Begründung</th></tr>'
     )
     rows = "".join(_row_for_divergence(a) for a in divergence)
     return (

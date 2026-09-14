@@ -1,6 +1,18 @@
 # Shares_Future – Architektur & Design
 
-**Zuletzt aktualisiert:** 2026-08-20 — 🧊 **Trainingsdaten-Fundament (C.20).**
+**Zuletzt aktualisiert:** 2026-09-14 — 🎯 **Phase-4-Review (C.45): Entscheidungswerte
+aus dem Snapshot statt aus dem Modell-Echo.** `entry_price`/`price_premarket` und
+`intraday_range_pct` kommen jetzt aus dem Phase-1-Snapshot, `rr_ratio`/`tp_pct`/`sl_pct`
+werden im Code aus den Preisen abgeleitet (`ranking._normalise_from_snapshot()`, arbeitet
+auf einer Kopie); die Guardrails prüfen die abgeleiteten Werte, `data_quality` kommt als
+Parameter aus dem Snapshot (die Regel war tot). Neu: weicher `check_tp_reach`
+(`tp_beyond_range`, beide Läufe), `_checks` an jeder Ranking-Zeile und als Flags in der
+Morgenmail, `core_overflow` in `divergence_stats`, Quellen als distinkte Domains, VIX
+`>=`, unbekannte `direction` hart verworfen, `MIN_INTRADAY_RANGE_PCT` in `config`.
+In diesem Dokument geändert: Phase-4-Box, Module 6, 10 und 10a. Details: PROJECT_STATUS
+**C.45**.
+
+Davor, 2026-08-20 — 🧊 **Trainingsdaten-Fundament (C.20).**
 `predictions` friert jetzt zusätzlich den **Wissensstand** ein: Fundamental-Rohwerte,
 Analysten-Konsens samt Periode und `relative_strength` (sieben neue Spalten).
 Grund: `fundamentals_cache` hält nur eine Zeile je Ticker und überschreibt sie —
@@ -294,11 +306,17 @@ DB-Close.
                               ↓
 ┌─────────────────────────────────────────────────────────────────┐
 │         PHASE 4: RANKING & PERSISTIERUNG                         │
-│  Input: deep_analysis[], commodities_crypto[]                    │
-│  Logik: Guardrail-Filter → Top-10 Long/Short nach prob_pct      │
-│  Checks: src/signal_checks.py (VIX, Klumpen, rel. Stärke, Gap)  │
-│          enforce=True nur im 16:10-Lauf, sonst weiche Warnung   │
-│  Output: {top_long[], top_short[], commodities_crypto[]}        │
+│  Input: deep_analysis[], commodities_crypto[], signal_context    │
+│  Logik: Snapshot-Normalisierung (Entry/Range aus td, R/R+Pct   │
+│         aus Preisen, C.45) → Guardrails → B.3-Checks →          │
+│         core/divergence/conflict → Top-10 je Richtung nach      │
+│         rank_score = analysis_strength × tech_strength (C.13)   │
+│  Checks: src/signal_checks.py (VIX, Sektor-Momentum, Klumpen,  │
+│          Earnings, Stop-Distanz, TP-Reichweite) — erhoben in   │
+│          beiden Läufen, enforce nur 16:10 (_revalidate_all);   │
+│          Gap + Stop-Budget nur 16:10                            │
+│  Output: {top_long[], top_short[], commodities_crypto[],        │
+│           divergence[], divergence_stats} (+ _checks je Zeile)  │
 │  DB: predictions + guardrail_rejects schreiben                   │
 │  Learnable: Alle = true (außer skip-by-guardrails)             │
 │  Cost: ~0.00 EUR                                                 │
@@ -903,15 +921,23 @@ def rank_and_persist(
     stock_analyses: list[dict],       # Phase 3 output
     commodity_crypto_analyses: list,  # Phase 3b output
     market_context: dict,
-    signal_context: dict[str, dict],  # Technik-Signal + C.1-Indikatoren + news_strength je Ticker (main.py::_signal_context())
+    signal_context: dict[str, dict],  # Technik-Signal + C.1-Indikatoren + news_strength + Snapshot-Kurs/Range/data_quality je Ticker (main.py::_signal_context())
     sector_momentum: dict[int, dict] | None = None,
     enforce_checks: bool = False,
 ) -> dict:
     """
     Logik (Spec § 5):
-    1. Guardrail-Filter (hold_days ≤ 5, intraday_range ≥ 1%, R/R ≥ 1.5, no "none")
-    2. Checks aus src/signal_checks.py (VIX, Klumpen, relative Stärke, Gap,
-       Earnings) — erhoben in BEIDEN Läufen, durchgesetzt nur bei enforce=True (16:10)
+    0. Normalisierung auf einer KOPIE (C.45 / F41): current_price und
+       price_premarket = Snapshot-Kurs, intraday_range_pct = Snapshot-Wert,
+       rr_ratio/tp_pct/sl_pct aus den Preisen (signal_checks.derive_levels);
+       Abweichung zum Modell-Echo = WARNING, fehlender Snapshot-Kurs = WARNING
+    1. Guardrail-Filter auf der Kopie (hold_days ≤ 5, intraday_range ≥
+       config.MIN_INTRADAY_RANGE_PCT, abgeleitete R/R ≥ 1.5, ≥ 2 distinkte
+       Quell-Domains, direction ∈ {long, short}, data_quality aus signal_context)
+    2. Checks aus src/signal_checks.py (VIX, Sektor-Momentum, Klumpen, Earnings,
+       Stop-Distanz, TP-Reichweite) — erhoben in BEIDEN Läufen, durchgesetzt nur
+       bei enforce=True (16:10); die angeschlagenen Regeln hängen als _checks
+       an der angereicherten Kopie (Flags in der Mail, C.45 / F43)
     3. Klassifikation je Kandidat (_classify(), § 5.3): core (Technik-Richtung
        stimmt mit Analyse überein), divergence (Technik neutral/fehlt, wird
        persistiert, eigene Mail-Sektion), conflict (Technik gegenläufig — verworfen
@@ -926,7 +952,8 @@ def rank_and_persist(
        analysis_strength, news_strength); Verworfenes nach db.guardrail_rejects
 
     Returns: {top_long[], top_short[], commodities_crypto[], divergence[],
-              divergence_stats: {tech_only_abstentions, conflicts, overflow}}
+              divergence_stats: {tech_only_abstentions, conflicts, overflow,
+                                 core_overflow}}   # core_overflow: C.45 / F44
     """
 ```
 
@@ -1084,15 +1111,22 @@ Qualitätskontrolle auf analysen vor Ranking.
 
 ```python
 class GuardrailsChecker:
-    def check_analysis(analysis: dict) -> bool:
+    def check_analysis(analysis: dict, *, data_quality: str | None = None) -> tuple[bool, list[str]]:
         """
-        Prüft:
-        1. Alle 8 Dimensionen vorhanden + scores 0-10
-        2. Jede Dimension ≥ 2 Belege
-        3. R/R Ratio ≥ 1.5
-        4. hold_days_recommended: 1-5
-        5. intraday_range_pct ≥ 1.0
-        6. direction ≠ "none"
+        Prüft (seit C.45 die NORMALISIERTE Kopie aus ranking, s. Modul 6):
+        1. Pflichtfelder; direction ∈ {long, short, none} (sonst harter Reject, C.45)
+        2. sources_used: ≥ 2 DISTINKTE Domains (nicht Einträge, C.45)
+        3. Jede Dimension ≥ 2 Belege (evidence_quality "thin" ausgenommen, § 6.3)
+        4. TP/SL auf der richtigen Seite des Entry
+        5. R/R Ratio ≥ 1.5 — der aus den Preisen abgeleitete Wert, nie das Modell-Echo
+        6. confidence 'high' nicht bei data_quality 'low' — data_quality kommt als
+           Parameter aus dem Snapshot (bis C.45 las die Regel einen Schlüssel, den
+           das Prompt-Schema nicht kennt; sie war tot)
+        7. momentum-Wert passend zur Richtung (long ≥ 6, short ≤ 4)
+        8. hold_days_recommended ≤ config.MAX_HOLD_DAYS
+        9. intraday_range_pct ≥ config.MIN_INTRADAY_RANGE_PCT
+        direction 'none' wird vorher in ranking._guardrail_filter() als Enthaltung
+        gezählt und erreicht den Checker nicht.
         """
 ```
 
@@ -1105,14 +1139,24 @@ bekommt bereits erhobene Werte (Markt-Kontext aus Phase 0b, Sektor-Momentum aus 
 Kurse aus `price_history`) und gibt ein Urteil zurück. Dadurch ohne Mocking testbar.
 
 ```python
-check_vix(...)             -> CheckResult | None   # kumulativ: ab 25 nur high,
-                                                   # zusätzlich ab 35 keine neuen Longs
+check_vix(...)             -> CheckResult | None   # kumulativ: ab 25 (>=) nur high,
+                                                   # zusätzlich ab 35 (>=) keine neuen Longs
 check_sector_momentum(...) -> CheckResult | None   # hart nur bei Übereinstimmung
-check_cluster(...)         -> CheckResult | None   # Klumpenrisiko im Sub-Sektor
-check_opening_gap(...)     -> CheckResult | None   # Gap pre_market → 16:10
+check_cluster(...)         -> CheckResult | None   # Klumpenrisiko im Sub-Sektor (immer weich)
+check_earnings(...)        -> CheckResult | None   # Earnings in <= 2 Tagen (hart nur 16:10)
+check_stop_distance(...)   -> CheckResult | None   # Stop < 0.8 Range (immer weich, C.22)
+check_tp_reach(...)        -> CheckResult | None   # TP > 0.9 Range (immer weich, C.45)
+check_opening_gap(...)     -> CheckResult | None   # Gap pre_market → 16:10 (nur 16:10)
+check_stop_budget_spent(...) -> CheckResult | None # Risikobudget verbraucht (hart, nur 16:10)
+derive_levels(entry, tp, sl, direction) -> dict    # rr_ratio/tp_pct/sl_pct aus Preisen (C.45)
 compute_relative_strength(...)                     # Ticker vs. Sub-Sektor
 blocks(results)            -> bool                 # blockiert irgendein Ergebnis?
 ```
+
+⚠️ **Die beiden Range-Beobachter sind rechnerisch unvereinbar** (C.45): Stop ≥ 0,8
+und TP ≤ 0,9 der Range ergibt R/R ≤ 1,125 < 1,5. Jedes guardrail-taugliche Setup
+löst also mindestens einen von beiden aus; gemessen wird, wie weit die Setups
+ausserhalb liegen, nicht ob. Beide Schwellen sind unbestätigte Startwerte.
 
 **Zwei Regeln, die man hier leicht falsch macht:**
 - Ein Check, der **nicht** anschlägt, gibt `None` zurück und erzeugt **keine** Zeile —

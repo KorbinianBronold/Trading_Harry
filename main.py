@@ -154,8 +154,10 @@ def _signal_context(
 ) -> dict[str, dict]:
     """Buendelt je Ticker die Werte, die Phase 4 (Ranking) braucht, aber weder
     im Claude-Analyse-Dict noch im td-Snapshot allein stehen: das
-    Technik-Signal aus dem Sidecar, die drei C.1-Indikatoren, und (nur bei
-    Aktien, ueber news_strength_by_ticker) den Phase-2-Scan-Wert.
+    Technik-Signal aus dem Sidecar, die drei C.1-Indikatoren, (nur bei
+    Aktien, ueber news_strength_by_ticker) den Phase-2-Scan-Wert und seit
+    C.45 den Snapshot-Kurs, die Range und data_quality -- Entry und Guardrails
+    laufen auf dem Snapshot, nicht auf dem Modell-Echo (F41/F42).
 
     Getrennt von td gehalten aus demselben Grund wie der Sidecar selbst (R1):
     kein zusaetzlicher Key landet in einem der Claude-Prompts."""
@@ -174,6 +176,12 @@ def _signal_context(
             "volume_ratio":   td.get("volume_ratio"),
             "earnings_in_days": td.get("earnings_in_days"),
             "news_strength":  news_strength_by_ticker.get(t),
+            # C.45 / F41+F42: Entscheidungskurs, Range und Phase-1-Qualitaet
+            # aus dem Snapshot -- ranking._normalise_from_snapshot() und
+            # GuardrailsChecker(data_quality=...) lesen genau diese drei.
+            "price":          td.get("price"),
+            "intraday_range_pct": td.get("intraday_range_pct"),
+            "data_quality":   td.get("data_quality"),
             # Spec E2/E3: die Fundamental-Rohwerte reisen mit, damit
             # _to_prediction_row() sie DAUERHAFT in die Zeile schreiben kann.
             # fundamentals_cache haelt nur eine Zeile je Ticker und
@@ -696,9 +704,10 @@ def run_pipeline(run_type: str, date: str, db_path: str) -> None:
         # Der 15:00-Kurs ist regulaer vorboerslich (09:00 ET). Die Markierung
         # geht in die Prediction-Zeile und in den Re-Validierungs-Prompt --
         # ein duenn gehandelter Vorboersenkurs ist kein Sitzungskurs.
+        # price_premarket selbst setzt seit C.45 das Ranking aus dem Snapshot
+        # (F41), nicht mehr das Modell-Echo current_price.
         _pm = _premarket_flag(date)
         for _a in deep_stocks + deep_cc:
-            _a["price_premarket"] = _a.get("current_price")
             _a["is_premarket"] = _pm
 
         current_phase = "ranking"
@@ -1152,6 +1161,10 @@ def _revalidate_all(
             # Statistik beide Entscheidungspunkte abdeckt.
             signal_checks.check_stop_distance(
                 pred["sl_pct"], snapshot.get("intraday_range_pct")),
+            # C.45 / F45: das Spiegelbild, ebenso weich, ebenso in beiden
+            # Laeufen (15:00: ranking._run_checks).
+            signal_checks.check_tp_reach(
+                pred["tp_pct"], snapshot.get("intraday_range_pct")),
             # Spec G4: HART. Ist das Morgen-Risikobudget vor der Eroeffnung
             # aufgebraucht, ist die Praemisse widerlegt -- und die R/R-Huerde
             # faengt das NICHT, sie belohnt Naehe zum Stop sogar (NVDA wurde mit

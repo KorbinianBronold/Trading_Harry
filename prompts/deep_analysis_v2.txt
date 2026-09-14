@@ -46,7 +46,7 @@ Output ONLY a single JSON object, no prose before or after, with this EXACT shap
       "asset_class": "stock",
       "direction": "<'long' | 'short' | 'none'>",
       "confidence": "<'low' | 'medium' | 'high'>",
-      "current_price": <number>,
+      "current_price": <number, mirror of the snapshot price verbatim>,
       "tp_price": <number>,
       "sl_price": <number>,
       "tp_pct": <number>,
@@ -54,7 +54,7 @@ Output ONLY a single JSON object, no prose before or after, with this EXACT shap
       "rr_ratio": <number, must be >= 1.5, aim for 2.0>,
       "total_score": <number 0-10, one decimal>,
       "probability_pct": <integer 0-100>,
-      "hold_days_recommended": <integer, dein ehrlicher Schaetzwert in Handelstagen bis zum Abschluss — Learning-Modul-Feld, siehe Hard Rules>,
+      "hold_days_recommended": <integer 1-5, dein ehrlicher Schaetzwert in Handelstagen bis zum Abschluss — Learning-Modul-Feld, siehe Hard Rules>,
       "intraday_range_pct": <number, mirror of the value from the snapshot>,
       "earnings_warning": <true|false, true if earnings_in_days <= 2>,
       "summary": "<one paragraph, max 600 chars, ends with the trade thesis>",
@@ -112,8 +112,12 @@ Hard rules:
   Ersatz fuer ein nicht funktionierendes Intraday-Setup.
 - hold_days_recommended bleibt Pflichtfeld und wird vom Sprint-3-Learning-Modul ausgewertet,
   ist aber selbst kein Freibrief fuer Mehrtages-Setups — es beschreibt nur deinen ehrlichen
-  Schaetzwert, falls der Trade nicht wie geplant intraday schliesst.
-- intraday_range_pct must echo the snapshot value verbatim. Never invent.
+  Schaetzwert, falls der Trade nicht wie geplant intraday schliesst. Maximum 5; darueber
+  gilt das Setup als nicht CFD-geeignet und wird verworfen.
+- current_price and intraday_range_pct must echo the snapshot values verbatim. Never invent.
+  The pipeline uses the snapshot price as entry and derives rr_ratio, tp_pct and sl_pct from
+  your tp_price/sl_price against it — your own numbers for those three are cross-checked, not
+  trusted.
 - rr_ratio = abs(tp_price - current_price) / abs(current_price - sl_price), rounded 2 decimals.
   1.5 is the hard floor; aim for 2.0 where the chart allows it honestly. Never stretch TP or
   tighten SL just to reach a nicer ratio — a fabricated R/R is worse than a rejected setup.

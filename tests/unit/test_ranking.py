@@ -177,11 +177,18 @@ def test_rank_persists_predictions_with_score_dimensions(in_memory_db, valid_ana
 # ---------- guardrail_rejects + Sektor aus der DB (Sprint 3B / Plan 1, Task 8) ----------
 
 
+def _low_rr(a: dict) -> dict:
+    """Seit C.45 (F41) zaehlt die aus den Preisen abgeleitete R/R, nicht die
+    Zahl im Dict -- ein Reject wird ueber die Preise erzwungen: 3.0 / 2.5 = 1.2."""
+    a["tp_price"], a["sl_price"] = a["current_price"] + 3.0, a["current_price"] - 2.5
+    return a
+
+
 def test_guardrail_reject_is_persisted(in_memory_db):
     db.init_schema(in_memory_db)
     rank_and_persist(
         conn=in_memory_db, date="2026-07-27", run_type="pre_market",
-        stock_analyses=[_analysis("BAD", momentum=8.0, rr=1.0)],
+        stock_analyses=[_low_rr(_analysis("BAD", momentum=8.0))],
         commodity_crypto_analyses=[], market_context=_market_ctx(),
         signal_context={},
     )
@@ -200,7 +207,7 @@ def test_rejected_analysis_is_not_persisted_as_prediction(in_memory_db):
     db.init_schema(in_memory_db)
     rank_and_persist(
         conn=in_memory_db, date="2026-07-27", run_type="pre_market",
-        stock_analyses=[_analysis("BAD", momentum=8.0, rr=1.0)],
+        stock_analyses=[_low_rr(_analysis("BAD", momentum=8.0))],
         commodity_crypto_analyses=[], market_context=_market_ctx(),
         signal_context={},
     )
@@ -288,7 +295,7 @@ def test_guardrail_reject_rule_names_are_grouped_per_violation(in_memory_db):
     rank_and_persist(
         conn=in_memory_db, date="2026-07-27", run_type="pre_market",
         stock_analyses=[
-            _analysis("R", momentum=8.0, rr=1.0),
+            _low_rr(_analysis("R", momentum=8.0)),
             _analysis("H", momentum=8.0, hold_days=9),
             _analysis("I", momentum=8.0, intraday=0.3),
             _analysis("M", direction="long", momentum=2.0),
@@ -400,7 +407,12 @@ def test_soft_check_writes_reject_row_but_keeps_the_signal(in_memory_db, valid_a
 
 
 def test_no_reject_row_when_no_check_fires(in_memory_db, valid_analysis):
-    """B.3.1: kein Signal vorhanden -> kein Check, KEIN Log-Eintrag."""
+    """B.3.1: kein Signal vorhanden -> kein Check, KEIN Log-Eintrag.
+
+    Ausgenommen sind die beiden Range-Beobachter (stop_inside_noise,
+    tp_beyond_range, C.22/C.45): mit SL >= 0,8 und TP <= 0,9 der Range waere
+    R/R hoechstens 1,125 < 1,5 -- ein guardrail-taugliches Setup loest also
+    IMMER mindestens einen der beiden aus (s. config.TP_MAX_INTRADAY_RANGE_FRAC)."""
     db.init_schema(in_memory_db)
     from src.ranking import rank_and_persist
     rank_and_persist(
@@ -408,9 +420,9 @@ def test_no_reject_row_when_no_check_fires(in_memory_db, valid_analysis):
         stock_analyses=[valid_analysis], commodity_crypto_analyses=[],
         market_context={}, sector_momentum={}, signal_context={},
     )
-    n = in_memory_db.execute(
-        "SELECT COUNT(*) AS n FROM guardrail_rejects").fetchone()["n"]
-    assert n == 0
+    rules = {r["rule"] for r in in_memory_db.execute(
+        "SELECT rule FROM guardrail_rejects").fetchall()}
+    assert rules - {"stop_inside_noise", "tp_beyond_range"} == set()
 
 
 @pytest.mark.parametrize("message, expected", [
@@ -424,6 +436,7 @@ def test_no_reject_row_when_no_check_fires(in_memory_db, valid_analysis):
     ("Confidence 'high' incompatible with data_quality 'low'", "confidence_data_quality"),
     ("Long TP 99 not above entry 100",                         "tp_sl_direction"),
     ("Short SL 99 not above entry 100",                        "tp_sl_direction"),
+    ("Unknown direction 'Long' (expected long/short/none)",     "direction"),
     ("Etwas voellig Neues",                                    "other"),
 ])
 def test_rule_name_maps_every_guardrail_message(message, expected):
@@ -467,7 +480,9 @@ def test_no_warning_when_predictions_were_persisted(in_memory_db, caplog):
             stock_analyses=[_analysis("AAPL", momentum=8.0)],
             commodity_crypto_analyses=[],
             market_context=_market_ctx(),
-            signal_context={"AAPL": _ctx(tech_direction="long", tech_strength=3)},
+            # Normalfall heisst seit C.45 auch: ein Snapshot-Kurs liegt vor.
+            signal_context={"AAPL": _ctx(tech_direction="long", tech_strength=3,
+                                         price=100.0)},
         )
 
     assert result["top_long"] or result["top_short"], "Testaufbau: es muss etwas durchkommen"
@@ -830,3 +845,190 @@ def test_to_prediction_row_relative_strength_is_none_without_sector(in_memory_db
         "2026-05-19", "pre_market", {}, in_memory_db, {})
 
     assert row["relative_strength"] is None
+
+
+# ---------- C.45 / F41: Entscheidungskurs und Levels aus dem Snapshot ----------
+
+def test_entry_and_levels_come_from_the_snapshot_not_the_model_echo(in_memory_db, caplog):
+    """F41: entry_price/price_premarket sind der Snapshot-Kurs aus Phase 1, nicht
+    das Echo des Modells; rr_ratio/tp_pct/sl_pct werden aus den Preisen
+    abgeleitet. Das Modell meldet 100.0 mit R/R 2.5 und ein signiertes sl_pct --
+    persistiert wird gegen 100.5, unsigniert, mit WARNING zur Abweichung."""
+    import logging
+    db.init_schema(in_memory_db)
+    a = _analysis("AAPL", momentum=8.0, current=100.0)      # tp 105, sl 98
+    a["sl_pct"] = -2.0
+    with caplog.at_level(logging.WARNING, logger="shares_future.ranking"):
+        out = rank_and_persist(
+            conn=in_memory_db, date="2026-09-14", run_type="pre_market",
+            stock_analyses=[a], commodity_crypto_analyses=[],
+            market_context=_market_ctx(),
+            signal_context={"AAPL": _ctx(price=100.5)},
+        )
+    row = in_memory_db.execute(
+        "SELECT entry_price, price_premarket, rr_ratio, tp_pct, sl_pct "
+        "FROM predictions").fetchone()
+    assert row["entry_price"] == 100.5
+    assert row["price_premarket"] == 100.5
+    assert row["rr_ratio"] == 1.8            # (105-100.5)/(100.5-98)
+    assert row["tp_pct"] == 4.48             # 4.5/100.5
+    assert row["sl_pct"] == 2.49             # 2.5/100.5, unsigniert
+    assert out["top_long"][0]["current_price"] == 100.5, "die Mail zeigt den Snapshot-Kurs"
+    assert "AAPL" in caplog.text and "100.5" in caplog.text, \
+        "die Abweichung zum Modellwert muss als WARNING sichtbar sein"
+
+
+def test_guardrail_rr_uses_the_derived_ratio_not_the_model_claim(in_memory_db):
+    """Das Modell behauptet R/R 2.5, die Preise ergeben 1.2 -- die Guardrail
+    muss die Preise glauben."""
+    db.init_schema(in_memory_db)
+    a = _analysis("AAPL", momentum=8.0, current=100.0, rr=2.5)
+    a["tp_price"], a["sl_price"] = 103.0, 97.5         # 3.0 / 2.5 = 1.2
+    out = rank_and_persist(
+        conn=in_memory_db, date="2026-09-14", run_type="pre_market",
+        stock_analyses=[a], commodity_crypto_analyses=[],
+        market_context=_market_ctx(),
+        signal_context={"AAPL": _ctx(price=100.0)},
+    )
+    assert out["top_long"] == []
+    rej = in_memory_db.execute("SELECT rule, detail FROM guardrail_rejects").fetchone()
+    assert rej["rule"] == "rr_ratio"
+    assert "1.2" in rej["detail"]
+
+
+def test_model_price_is_kept_with_a_warning_when_the_snapshot_has_none(in_memory_db, caplog):
+    """Rueckfall ist erlaubt, aber nie still: ohne Snapshot-Kurs im
+    signal_context bleibt der Modellwert und eine WARNING sagt es."""
+    import logging
+    db.init_schema(in_memory_db)
+    a = _analysis("AAPL", momentum=8.0, current=100.0)
+    with caplog.at_level(logging.WARNING, logger="shares_future.ranking"):
+        rank_and_persist(
+            conn=in_memory_db, date="2026-09-14", run_type="pre_market",
+            stock_analyses=[a], commodity_crypto_analyses=[],
+            market_context=_market_ctx(),
+            signal_context={"AAPL": _ctx()},
+        )
+    row = in_memory_db.execute(
+        "SELECT entry_price, price_premarket FROM predictions").fetchone()
+    assert row["entry_price"] == 100.0
+    assert row["price_premarket"] == 100.0
+    assert "kein Snapshot-Kurs" in caplog.text
+
+
+def test_intraday_range_comes_from_the_snapshot_too(in_memory_db):
+    """Der Prompt verlangt ein Echo des Snapshot-Werts -- der Code nimmt ihn
+    gleich selbst aus dem Snapshot."""
+    db.init_schema(in_memory_db)
+    a = _analysis("AAPL", momentum=8.0, intraday=1.5)
+    rank_and_persist(
+        conn=in_memory_db, date="2026-09-14", run_type="pre_market",
+        stock_analyses=[a], commodity_crypto_analyses=[],
+        market_context=_market_ctx(),
+        signal_context={"AAPL": _ctx(price=100.0, intraday_range_pct=2.2)},
+    )
+    row = in_memory_db.execute("SELECT intraday_range_pct FROM predictions").fetchone()
+    assert row["intraday_range_pct"] == 2.2
+
+
+def test_normalisation_never_touches_the_original_analysis(in_memory_db):
+    """Die Originale gehen in den Phase-4a-Prompt (C.6): weder Schluesselmenge
+    noch WERTE duerfen sich aendern."""
+    db.init_schema(in_memory_db)
+    a = _analysis("AAPL", momentum=8.0, current=100.0)
+    a["sl_pct"] = -2.0
+    before = dict(a)
+    rank_and_persist(
+        conn=in_memory_db, date="2026-09-14", run_type="pre_market",
+        stock_analyses=[a], commodity_crypto_analyses=[],
+        market_context=_market_ctx(),
+        signal_context={"AAPL": _ctx(price=100.5)},
+    )
+    assert a == before
+
+
+# ---------- C.45 / F42: data_quality aus dem Snapshot ----------
+
+def test_low_snapshot_data_quality_blocks_a_high_confidence_call(in_memory_db):
+    """F42: die Regel 'high confidence bei low data_quality' war tot, weil das
+    Analyse-Dict den Schluessel nie trug. Jetzt kommt er aus signal_context."""
+    db.init_schema(in_memory_db)
+    a = _analysis("AAPL", momentum=8.0)                     # confidence high
+    out = rank_and_persist(
+        conn=in_memory_db, date="2026-09-14", run_type="pre_market",
+        stock_analyses=[a], commodity_crypto_analyses=[],
+        market_context=_market_ctx(),
+        signal_context={"AAPL": _ctx(price=100.0, data_quality="low")},
+    )
+    assert out["top_long"] == []
+    rej = in_memory_db.execute("SELECT rule FROM guardrail_rejects").fetchone()
+    assert rej["rule"] == "confidence_data_quality"
+
+
+# ---------- C.45 / F43: angeschlagene Checks reisen an der Kopie mit ----------
+
+def test_enriched_rows_carry_the_fired_check_rules(in_memory_db, valid_analysis):
+    """Die weichen Checks wurden bis C.45 nach blocks() weggeworfen -- die
+    Morgenmail konnte sie nicht zeigen. Jetzt haengt _enrich() die Regelnamen
+    als _checks an die KOPIE; das Original bleibt schluesselgleich (C.6)."""
+    db.init_schema(in_memory_db)
+    sid = _seed_sector_for(in_memory_db)
+    out = rank_and_persist(
+        conn=in_memory_db, date="2026-07-30", run_type="pre_market",
+        stock_analyses=[valid_analysis], commodity_crypto_analyses=[],
+        market_context={"vix_level": 40.0},
+        sector_momentum={sid: {"etf_momentum": -1.2, "db_momentum": None,
+                               "ticker_count": 1}},
+        signal_context={"AAPL": _ctx(price=100.0)},
+    )
+    checks = out["top_long"][0]["_checks"]
+    assert {"vix_no_new_longs", "sector_momentum_partial"} <= set(checks)
+    assert "_checks" not in valid_analysis
+
+
+def test_divergence_rows_carry_the_fired_checks_too(in_memory_db, valid_analysis):
+    db.init_schema(in_memory_db)
+    out = rank_and_persist(
+        conn=in_memory_db, date="2026-07-30", run_type="pre_market",
+        stock_analyses=[valid_analysis], commodity_crypto_analyses=[],
+        market_context={"vix_level": 40.0},
+        signal_context={"AAPL": _ctx(price=100.0, tech_direction="neutral",
+                                     tech_strength=0)},
+    )
+    assert out["divergence"][0]["_checks"] == ["vix_no_new_longs"] or \
+        "vix_no_new_longs" in out["divergence"][0]["_checks"]
+
+
+# ---------- C.45 / F44: Top-10-Ueberlauf zaehlen ----------
+
+def test_core_candidates_beyond_top_n_are_counted_as_overflow(in_memory_db):
+    """C.26 zeigte exakt 10 Longs -- ob der Deckel gebunden hat und wie viele
+    Kandidaten er abgeschnitten hat, war nirgends zu sehen."""
+    db.init_schema(in_memory_db)
+    analyses = [_analysis(f"T{i:02d}", momentum=8.0) for i in range(12)]
+    out = rank_and_persist(
+        conn=in_memory_db, date="2026-09-14", run_type="pre_market",
+        stock_analyses=analyses, commodity_crypto_analyses=[],
+        market_context=_market_ctx(),
+        signal_context={a["ticker"]: _ctx(price=100.0) for a in analyses},
+    )
+    assert len(out["top_long"]) == 10
+    assert out["divergence_stats"]["core_overflow"] == 2
+
+
+# ---------- C.45 / F45: TP ausserhalb der Range, morgens weich erhoben ----------
+
+def test_tp_beyond_the_range_is_collected_softly_in_the_morning(in_memory_db):
+    db.init_schema(in_memory_db)
+    a = _analysis("AAPL", momentum=8.0, intraday=1.5)       # tp_pct 5.0 -> 3.3x
+    out = rank_and_persist(
+        conn=in_memory_db, date="2026-09-14", run_type="pre_market",
+        stock_analyses=[a], commodity_crypto_analyses=[],
+        market_context=_market_ctx(),
+        signal_context={"AAPL": _ctx(price=100.0, intraday_range_pct=1.5)},
+    )
+    assert len(out["top_long"]) == 1, "weich -- darf nie blockieren"
+    rows = {r["rule"]: r["enforced"] for r in in_memory_db.execute(
+        "SELECT rule, enforced FROM guardrail_rejects").fetchall()}
+    assert rows["tp_beyond_range"] == 0
+    assert "tp_beyond_range" in out["top_long"][0]["_checks"]

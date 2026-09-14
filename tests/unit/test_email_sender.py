@@ -854,3 +854,64 @@ def test_daily_html_labels_the_model_score_as_such():
     html = render_daily_html(_sample_payload())
     assert "<th>Modell-Score</th>" in html
     assert "<th>Score</th>" not in html
+
+
+# ---------- C.45 / F43+F44: Check-Flags in der Morgenmail, Ueberlauf-Zaehler ----------
+
+def test_daily_html_renders_fired_checks_as_flags():
+    """F43: die weichen Checks des Morgenlaufs (Earnings, Stop im Rauschen,
+    Sektor gegen Trade, Klumpen) waren bis C.45 nur in guardrail_rejects
+    sichtbar, nie in der Mail. rank_and_persist() haengt sie als _checks an."""
+    payload = _sample_payload()
+    payload["top_long"][0]["_checks"] = [
+        "earnings_imminent", "stop_inside_noise",
+        "sector_momentum_partial", "sector_cluster", "tp_beyond_range",
+    ]
+    html = render_daily_html(payload)
+    # '>' steht im Quelltext HTML-escaped; der Leser sieht "TP > Range".
+    for label in ("Earnings", "Stop im Rauschen", "Sektor gegen Trade",
+                  "Klumpen", "TP &gt; Range"):
+        assert label in html, label
+
+
+def test_daily_html_renders_no_flags_when_nothing_fired():
+    payload = _sample_payload()
+    payload["top_long"][0]["_checks"] = []
+    html = render_daily_html(payload)
+    assert "Earnings" not in html.split("Aktien Top-10 Long")[1].split("</table>")[0]
+
+
+def test_daily_html_dropped_the_dead_trend_boost_flag():
+    """trend_boost stand in _to_prediction_row() hart auf None -- das Feuer-
+    Symbol konnte nie erscheinen und ist gestrichen."""
+    payload = _sample_payload()
+    payload["top_long"][0]["trend_boost"] = True
+    assert "🔥" not in render_daily_html(payload)
+
+
+def test_divergence_rows_render_fired_checks_as_flags():
+    payload = {
+        "date": "2026-09-14", "run_type": "pre_market",
+        "divergence": [{
+            "ticker": "AAPL", "direction": "long", "current_price": 230.0,
+            "tp_price": 235.0, "sl_price": 228.0, "rr_ratio": 2.5,
+            "_analysis_strength": 6, "_checks": ["earnings_imminent"],
+            "summary": "Strong news, neutral technicals",
+        }],
+        "divergence_stats": {"tech_only_abstentions": 0, "conflicts": 0,
+                             "overflow": 0, "core_overflow": 0},
+    }
+    html = render_daily_html(payload)
+    assert "Earnings" in html
+
+
+def test_divergence_counters_show_the_top10_overflow():
+    """F44: 'nichts gefunden' von 'vieles abgeschnitten' unterscheidbar halten."""
+    payload = {
+        "date": "2026-09-14", "run_type": "pre_market",
+        "divergence": [], "divergence_stats": {
+            "tech_only_abstentions": 0, "conflicts": 0, "overflow": 0,
+            "core_overflow": 2},
+    }
+    html = render_daily_html(payload)
+    assert "Top-10-Ueberlauf: 2" in html

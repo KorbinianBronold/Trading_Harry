@@ -1,8 +1,28 @@
 """Quality gate every deep-analysis/commodities-crypto result must pass before it's
 eligible for ranking — enforces required fields, evidence counts, R/R ratio, signal
-consistency, and CFD-specific hold-day/intraday-range limits."""
+consistency, and CFD-specific hold-day/intraday-range limits.
+
+Seit C.45 prueft der Checker die NORMALISIERTE Analyse (ranking._normalise_from_snapshot):
+current_price, intraday_range_pct, rr_ratio, tp_pct und sl_pct kommen dort aus dem
+Snapshot bzw. aus den Preisen, nicht aus dem Modell-Echo (F41). data_quality ist eine
+Phase-1-Tatsache und kommt als Parameter, nie aus dem Analyse-Dict (F42)."""
 from dataclasses import dataclass
+from urllib.parse import urlsplit
+
 import config
+
+
+def _domain(url: str) -> str:
+    """Host einer URL ohne 'www.' -- 'reuters.com/a' und 'https://www.reuters.com/b'
+    sind dieselbe Quelle (C.45 / F46: der Prompt verlangt distinkte Domains)."""
+    u = str(url).strip()
+    netloc = urlsplit(u if "://" in u else "//" + u).netloc.lower()
+    return netloc[4:] if netloc.startswith("www.") else netloc
+
+
+def _distinct_domains(urls) -> set[str]:
+    """Menge der Hosts aus einer Quellenliste; leere Eintraege zaehlen nicht."""
+    return {d for d in (_domain(u) for u in urls) if d}
 
 
 @dataclass
@@ -13,7 +33,7 @@ class GuardrailsChecker:
     momentum_long_min: float = config.MOMENTUM_LONG_MIN
     momentum_short_max: float = config.MOMENTUM_SHORT_MAX
     max_hold_days: int = config.MAX_HOLD_DAYS
-    min_intraday_range_pct: float = 1.0
+    min_intraday_range_pct: float = config.MIN_INTRADAY_RANGE_PCT
 
     REQUIRED_FIELDS = (
         "ticker", "direction", "confidence", "current_price",
@@ -22,10 +42,19 @@ class GuardrailsChecker:
         "hold_days_recommended", "intraday_range_pct",
     )
 
-    def check_analysis(self, a: dict) -> tuple[bool, list[str]]:
+    def check_analysis(
+        self, a: dict, *, data_quality: str | None = None,
+    ) -> tuple[bool, list[str]]:
         """Validates one analysis dict against all guardrail rules and returns
         (passed, error_messages). Short-circuits with just the missing-field
-        errors if any required field is absent."""
+        errors if any required field is absent, and with a single error if the
+        direction is not one of long/short/none (C.45 / F46 -- 'Long' passierte
+        bis dahin jede Regel, weil keine Richtungspruefung griff).
+
+        data_quality ist die Phase-1-Einstufung aus dem Snapshot (td), die der
+        Aufrufer ueber signal_context mitgibt (C.45 / F42). Bis dahin las die
+        Regel a['data_quality'] -- einen Schluessel, den das Prompt-Schema nicht
+        kennt; sie war tot."""
         errors: list[str] = []
 
         for f in self.REQUIRED_FIELDS:
@@ -35,9 +64,17 @@ class GuardrailsChecker:
         if errors:
             return False, errors
 
-        if len(a.get("sources_used", [])) < self.min_sources:
+        d = a["direction"]
+        if d not in ("long", "short", "none"):
+            return False, [f"Unknown direction '{d}' (expected long/short/none)"]
+
+        # C.45 / F46: der Prompt verlangt ">= 2 distinct domains"; Eintraege zu
+        # zaehlen liess zwei Seiten derselben Domain durch.
+        domains = _distinct_domains(a.get("sources_used") or [])
+        if len(domains) < self.min_sources:
             errors.append(
-                f"Too few sources: {len(a['sources_used'])} < {self.min_sources}"
+                f"Too few sources: {len(domains)} distinct domain(s) < "
+                f"{self.min_sources} ({len(a['sources_used'])} entries)"
             )
 
         scores = a.get("scores", {})
@@ -63,7 +100,6 @@ class GuardrailsChecker:
         p = a["current_price"]
         tp = a["tp_price"]
         sl = a["sl_price"]
-        d = a["direction"]
         if d == "long":
             if tp <= p:
                 errors.append(f"Long TP {tp} not above entry {p}")
@@ -78,7 +114,7 @@ class GuardrailsChecker:
         if a.get("rr_ratio", 0) < self.min_rr_hard:
             errors.append(f"R/R {a['rr_ratio']} below hard minimum {self.min_rr_hard}")
 
-        if a.get("data_quality") == "low" and a.get("confidence") == "high":
+        if data_quality == "low" and a.get("confidence") == "high":
             errors.append("Confidence 'high' incompatible with data_quality 'low'")
 
         momentum = scores.get("momentum", {}).get("value")

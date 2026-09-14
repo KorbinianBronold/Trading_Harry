@@ -1,8 +1,15 @@
 """Phase 4: Rank guardrail-passing analyses and persist to predictions.
 
-Stocks: top 10 by probability_pct per direction (long / short).
+Stocks: core candidates (Technik und Analyse in derselben Richtung), Top-10 je
+Richtung nach rank_score = analysis_strength x tech_strength (C.13); Divergenz-
+Kandidaten (Technik neutral) in eigener, auf DIVERGENCE_TOP_N gedeckelter Liste;
+Konflikte (Technik gegenlaeufig) als guardrail_reject verworfen (Spec 5.3-5.5).
 Commodities + crypto: always all kept, regardless of score.
-Every selected analysis is written as a learnable=True predictions row."""
+Every selected analysis is written as a learnable=True predictions row.
+
+Seit C.45 (F41) laufen Guardrails, Checks und Persistenz auf einer
+NORMALISIERTEN Kopie jeder Analyse: Entscheidungskurs und Range aus dem
+Snapshot, rr_ratio/tp_pct/sl_pct aus den Preisen -- nie aus dem Modell-Echo."""
 import logging
 from typing import Iterable
 
@@ -39,6 +46,8 @@ def _rule_name(error_message: str) -> str:
         return "confidence_data_quality"
     if "not above entry" in msg or "not below entry" in msg:
         return "tp_sl_direction"
+    if msg.startswith("unknown direction"):
+        return "direction"
     return "other"
 
 
@@ -102,11 +111,70 @@ def _rank_key(strength: int, rank_score: int | None, ticker: str) -> tuple:
     return (-primary, -strength, ticker)
 
 
+# C.45 / F41: ab welcher Abweichung zwischen Modell-Echo und Snapshot bzw.
+# abgeleitetem Wert gewarnt wird. Diagnose-Schwellen, keine Handelsparameter.
+_PRICE_TOLERANCE_PCT = 0.1
+_LEVEL_TOLERANCE = 0.05
+
+
+def _normalise_from_snapshot(a: dict, ctx: dict) -> dict:
+    """KOPIE der Analyse, in der die Entscheidungswerte aus dem Snapshot kommen
+    statt aus dem Modell-Echo (C.45 / F41): current_price und price_premarket =
+    Snapshot-Kurs (signal_context['price']), intraday_range_pct = Snapshot-Wert,
+    rr_ratio/tp_pct/sl_pct aus den Preisen (signal_checks.derive_levels).
+
+    Bis C.45 war entry_price das Echo des Modells, die R/R-Guardrail prueft die
+    Zahl, die das Modell selbst behauptet hatte, und die persistierten
+    Prozentspalten trugen gemischte Vorzeichen. Der 16:10-Pfad rechnete R/R
+    laengst selbst (_persist_revision), der Morgenpfad nicht.
+
+    Jede Abweichung zum Modellwert ist eine WARNING -- ein Modell, das den
+    Snapshot nicht spiegelt, ist ein Befund. Fehlt der Snapshot-Kurs (kein
+    signal_context-Eintrag), bleibt der Modellwert, ebenfalls mit WARNING, nie
+    still. Das Original bleibt unberuehrt: es geht in den Phase-4a-Prompt (C.6)."""
+    out = dict(a)
+    ticker = a.get("ticker", "?")
+    model_price = a.get("current_price")
+    price = ctx.get("price")
+    if price is None:
+        log.warning(f"{ticker}: kein Snapshot-Kurs im signal_context -- "
+                    f"Modell-Kurs {model_price} bleibt Entry")
+        price = model_price
+    elif model_price is not None and price and \
+            abs(model_price - price) / price * 100.0 > _PRICE_TOLERANCE_PCT:
+        log.warning(f"{ticker}: Modell-Kurs {model_price} weicht vom Snapshot "
+                    f"{price} ab -- der Snapshot gilt als Entry")
+    out["current_price"] = price
+    out["price_premarket"] = price
+
+    rng = ctx.get("intraday_range_pct")
+    if rng is not None:
+        model_rng = a.get("intraday_range_pct")
+        if model_rng is not None and abs(model_rng - rng) > _LEVEL_TOLERANCE:
+            log.warning(f"{ticker}: intraday_range_pct laut Modell {model_rng}, "
+                        f"Snapshot {rng} -- der Snapshot gilt")
+        out["intraday_range_pct"] = rng
+
+    tp, sl, direction = a.get("tp_price"), a.get("sl_price"), a.get("direction")
+    if price and tp is not None and sl is not None and direction in ("long", "short"):
+        for key, val in signal_checks.derive_levels(price, tp, sl, direction).items():
+            model_val = a.get(key)
+            if model_val is not None and val is not None and \
+                    abs(abs(model_val) - val) > _LEVEL_TOLERANCE:
+                log.warning(f"{ticker}: {key} laut Modell {model_val}, aus den "
+                            f"Preisen {val} -- die Preise gelten")
+            out[key] = val
+    return out
+
+
 def _guardrail_filter(
     analyses: Iterable[dict], conn, date: str, run_type: str,
+    signal_context: dict[str, dict],
 ) -> tuple[list[dict], int]:
     """Drops analyses with direction='none' or that fail GuardrailsChecker.
-    Gibt (behaltene Analysen, Zahl der Enthaltungen) zurueck.
+    Gibt (behaltene Analysen als NORMALISIERTE Kopien, Zahl der Enthaltungen)
+    zurueck -- s. _normalise_from_snapshot; data_quality kommt aus dem
+    signal_context (C.45 / F42).
 
     Jede Ablehnung wird zusaetzlich als guardrail_rejects-Zeile persistiert, damit
     die Weekly-Mail auswerten kann, welche Regeln wie oft greifen (Sprint 3B / B.9).
@@ -120,7 +188,9 @@ def _guardrail_filter(
         if a.get("direction") == "none":
             abstained += 1
             continue
-        ok, errs = checker.check_analysis(a)
+        ctx = signal_context.get(a.get("ticker", ""), {})
+        a = _normalise_from_snapshot(a, ctx)
+        ok, errs = checker.check_analysis(a, data_quality=ctx.get("data_quality"))
         if not ok:
             ticker = a.get("ticker", "?")
             log.info(f"{ticker}: dropped by guardrails: {'; '.join(errs)}")
@@ -251,6 +321,10 @@ def _run_checks(
             # eine Messung ist statt einer Annahme.
             signal_checks.check_stop_distance(
                 analysis.get("sl_pct"), analysis.get("intraday_range_pct")),
+            # C.45 / F45: das Spiegelbild -- TP jenseits der Tagesspanne, ebenso
+            # weich, ebenso in beiden Laeufen (16:10: main._revalidate_all).
+            signal_checks.check_tp_reach(
+                analysis.get("tp_pct"), analysis.get("intraday_range_pct")),
         ) if r is not None
     ]
 
@@ -279,9 +353,11 @@ def rank_and_persist(
     divergence_stats} und schreibt je Auswahl eine predictions-Zeile.
 
     signal_context: dict[ticker -> dict] mit dem Technik-Signal, den drei
-    C.1-Indikatoren und dem Phase-2-Scan-Wert je Ticker (main.py baut das ueber
+    C.1-Indikatoren, dem Phase-2-Scan-Wert und seit C.45 dem Snapshot-Kurs,
+    der Range und data_quality je Ticker (main.py baut das ueber
     _signal_context()). Fehlt ein Ticker darin, verhaelt sich das wie ein
-    fehlendes Technik-Signal (_classify() faellt auf 'divergence').
+    fehlendes Technik-Signal (_classify() faellt auf 'divergence') und der
+    Modell-Kurs bleibt Entry (WARNING).
 
     enforce_checks steuert Entscheidung E4. ⚠️ Faktisch uebergibt HEUTE kein
     Aufrufer True: rank_and_persist() laeuft nur im Morgenlauf (run_pipeline),
@@ -296,12 +372,13 @@ def rank_and_persist(
     -> eigene, auf DIVERGENCE_TOP_N je Richtung gedeckelte Liste, conflict ->
     verworfen als guardrail_reject (rule='tech_news_conflict'). Rohstoffe/
     Krypto (cc=True in _classify) werden nie als conflict verworfen (Spec
-    20.5 #2)."""
+    20.5 #2). core-Kandidaten jenseits von TOP_N werden gezaehlt
+    (divergence_stats['core_overflow'], C.45 / F44), nicht persistiert."""
     sector_momentum = sector_momentum or {}
     kept_stocks, abstained_stocks = _guardrail_filter(
-        stock_analyses, conn, date, run_type)
+        stock_analyses, conn, date, run_type, signal_context)
     kept_cc, abstained_cc = _guardrail_filter(
-        commodity_crypto_analyses, conn, date, run_type)
+        commodity_crypto_analyses, conn, date, run_type, signal_context)
     abstained = abstained_stocks + abstained_cc
 
     # Spec 5.5, mittlere Tabellenzeile: Technik hat Richtung, Analyse enthielt
@@ -318,6 +395,9 @@ def rank_and_persist(
 
     counts = cluster_counts(conn, [a["ticker"] for a in kept_stocks])
     surviving_stocks: list[dict] = []
+    # C.45 / F43: die angeschlagenen (weichen) Checks reisen als Regelnamen an
+    # der angereicherten Kopie mit, damit die Morgenmail sie als Flags zeigt.
+    checks_by_ticker: dict[str, list[str]] = {}
     for a in kept_stocks:
         ctx = signal_context.get(a["ticker"], {})
         results = _run_checks(
@@ -329,6 +409,7 @@ def rank_and_persist(
             log.info(f"{a['ticker']}: durch B.3-Check verworfen "
                      f"({', '.join(r.rule for r in results if r.enforced)})")
             continue
+        checks_by_ticker[a["ticker"]] = [r.rule for r in results]
         surviving_stocks.append(a)
 
     # ⚠️ KOPIE, NICHT MUTATION -- das ist keine Stilfrage. Die Analyse-Dicts in
@@ -343,7 +424,8 @@ def rank_and_persist(
     # Mail; die Originale bleiben unberuehrt.
     def _enrich(a: dict, klasse: str, strength: int, rank_score: int | None) -> dict:
         return {**a, "_candidate_class": klasse,
-                "_analysis_strength": strength, "_rank_score": rank_score}
+                "_analysis_strength": strength, "_rank_score": rank_score,
+                "_checks": checks_by_ticker.get(a["ticker"], [])}
 
     core: list[dict] = []
     divergence: list[dict] = []
@@ -374,8 +456,13 @@ def rank_and_persist(
     def _key(a: dict) -> tuple:
         return _rank_key(a["_analysis_strength"], a["_rank_score"], a["ticker"])
 
-    longs  = sorted((a for a in core if a["direction"] == "long"),  key=_key)[:TOP_N]
-    shorts = sorted((a for a in core if a["direction"] == "short"), key=_key)[:TOP_N]
+    core_long  = sorted((a for a in core if a["direction"] == "long"),  key=_key)
+    core_short = sorted((a for a in core if a["direction"] == "short"), key=_key)
+    # C.45 / F44: was der Top-10-Deckel abschneidet, wird gezaehlt -- C.26
+    # zeigte exakt 10 Longs, ohne dass sichtbar war, ob und wie viel er kappte.
+    core_overflow = (max(0, len(core_long) - TOP_N)
+                     + max(0, len(core_short) - TOP_N))
+    longs, shorts = core_long[:TOP_N], core_short[:TOP_N]
 
     div_long  = sorted((a for a in divergence if a["direction"] == "long"),  key=_key)
     div_short = sorted((a for a in divergence if a["direction"] == "short"), key=_key)
@@ -401,7 +488,8 @@ def rank_and_persist(
         f"Phase 4 done: {len(longs)} long, {len(shorts)} short, "
         f"{len(divergence_kept)} divergence, {len(cc_sorted)} commodity/crypto "
         f"persisted (aus {n_in} Analysen, davon {abstained} enthalten, "
-        f"{conflicts} Technik-Konflikte, {overflow} Divergenz-Deckel-Ueberlauf)"
+        f"{conflicts} Technik-Konflikte, {overflow} Divergenz-Deckel-Ueberlauf, "
+        f"{core_overflow} Top-10-Ueberlauf)"
     )
 
     if n_out == 0:
@@ -418,5 +506,6 @@ def rank_and_persist(
             "tech_only_abstentions": tech_only_abstentions,
             "conflicts": conflicts,
             "overflow": overflow,
+            "core_overflow": core_overflow,
         },
     }

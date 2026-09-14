@@ -2023,6 +2023,9 @@ def test_signal_context_bundles_tech_signal_and_c1_indicators():
         "tech_adx_band": "normal", "tech_strength": 3,
         "atr_pct": 2.5, "rsi_14": 55.0, "volume_ratio": 0.9,
         "earnings_in_days": 3, "news_strength": 2,
+        # C.45 / F41+F42: Snapshot-Kurs, Range, Phase-1-Qualitaet (hier nicht
+        # im td -> None, s. test_signal_context_carries_snapshot_price_...)
+        "price": None, "intraday_range_pct": None, "data_quality": None,
         # Spec E2/E3: reisen seit 2026-08-20 mit, damit sie in der Prediction
         # eingefroren werden koennen. Hier None, weil das td sie nicht traegt.
         "pe_ratio": None, "forward_pe": None, "market_cap_b": None,
@@ -2443,3 +2446,44 @@ def test_run_pipeline_passes_the_cc_sidecar_and_computed_extras_to_phase_3b(
     assert kw["extra_context"]["gold_silver_ratio"] == 80.0
     assert kw["extra_context"]["btc_dominance_pct"] == 54.2
     assert kw["extra_context"]["fear_greed_value"] == 62
+
+
+# ---------- C.45 / F41+F42: signal_context traegt Snapshot-Kurs, Qualitaet, Range ----------
+
+def test_signal_context_carries_snapshot_price_quality_and_range():
+    """Phase 4 braucht den Snapshot-Kurs (Entry statt Modell-Echo, F41), die
+    Phase-1-Datenqualitaet (F42) und die Range (Echo-Pruefung) -- alle drei
+    stehen nur in td, und td geht nicht ins Ranking."""
+    from main import _signal_context
+    td = {"ticker": "AAPL", "price": 101.0, "data_quality": "low",
+          "intraday_range_pct": 2.2}
+    out = _signal_context([td], {})
+    assert out["AAPL"]["price"] == 101.0
+    assert out["AAPL"]["data_quality"] == "low"
+    assert out["AAPL"]["intraday_range_pct"] == 2.2
+
+
+# ---------- C.45 / F45: TP ausserhalb der Range auch um 16:10 erhoben ----------
+
+def test_tp_beyond_range_is_collected_at_1610(in_memory_db, mocker):
+    """'Beide Laeufe' heisst auch hier: derselbe weiche Check wie um 15:00,
+    damit die Verteilung beide Entscheidungspunkte abdeckt (wie G1/G3)."""
+    from src import db
+    from src.cost_tracker import CostTracker
+    db.init_schema(in_memory_db)
+    _pred_row(in_memory_db, tp_pct=6.0)                      # Entry 100, TP 106
+    reval = mocker.patch("main.revalidate_one", return_value={
+        "verdict": "bestaetigt", "probability_pct": 71, "reason": "haelt"})
+
+    from main import _revalidate_all
+    out: list[dict] = []
+    _revalidate_all(
+        conn=in_memory_db, date="2026-07-30",
+        snapshots={"AAPL": {"price": 101.0, "intraday_range_pct": 2.0}},
+        sector_mom={}, market_ctx={"vix_level": 18.0}, policy_context={},
+        cost_tracker=CostTracker(), out=out,
+    )
+    fired = {c.rule: c for c in reval.call_args.kwargs["checks"]}
+    assert "tp_beyond_range" in fired, "Check laeuft um 16:10 nicht mit"
+    assert fired["tp_beyond_range"].enforced is False
+    assert out[0]["verdict"] == "bestaetigt", "weich -- darf nie blockieren"

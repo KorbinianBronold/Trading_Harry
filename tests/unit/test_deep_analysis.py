@@ -682,3 +682,15 @@ def test_deep_token_ceiling_keeps_a_third_margin_over_the_c42_measurement():
     zweiten Call."""
     measured_n1 = 6009
     assert max_tokens_for_batch(1) >= measured_n1 * 1.3
+
+
+def test_deep_analysis_v2_pins_the_c45_contract():
+    """C.45: current_price ist ein Echo des Snapshot-Kurses (F41, der Code
+    nimmt den Snapshot ohnehin selbst), und der Haltedauer-Deckel aus
+    config.MAX_HOLD_DAYS steht im Prompt (F46, Regel 15)."""
+    v2 = Path(__file__).parent.parent.parent / "prompts" / "deep_analysis_v2.txt"
+    lines = v2.read_text().splitlines()
+    price_line = next(l for l in lines if '"current_price"' in l)
+    assert "mirror" in price_line.lower() and "snapshot" in price_line.lower()
+    hold_line = next(l for l in lines if '"hold_days_recommended"' in l)
+    assert "1-5" in hold_line
