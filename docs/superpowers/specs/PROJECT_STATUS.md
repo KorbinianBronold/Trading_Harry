@@ -4751,13 +4751,15 @@ Technik wird für sie nie klassifiziert; nur notiert.
 F33 sichtbar („FOMC … two days outside today's intraday/pre-market window"), F35 greift
 (`company_quality` und `valuation` ehrlich `thin`: „No ETF-flow or COT positioning data
 available"; Quellen Al Jazeera plus cambridgecurrencies — Quellenstufe weiter gemischt).
-GOLD `direction='none'` mit Widerspruchs-Begründung, R/R 1,76. **F16/F38 dort noch nicht
-verifiziert:** die gespeicherte Zelle 62 trug beim Lauf nur den F33-Stand (mein zweiter
-Notebook-Edit war durch das Speichern der Editor-Fassung überschrieben; `extra` in der
-Antwort daher `btc_dominance_pct: null`). Zelle erneut nachgezogen; `fetch_btc_dominance()`
-separat live geprüft (s. C.44-Sitzung). Prüfpunkte beim nächsten Lauf: `extra_context` mit
-Dominanz, in `show_call(n)` `technical_signal` je Asset und `snapshot` ohne
-`sector`/`data_quality`.
+GOLD `direction='none'` mit Widerspruchs-Begründung, R/R 1,76. Beim ersten Lauf trug die
+gespeicherte Zelle 62 nur den F33-Stand (mein zweiter Notebook-Edit war durch das Speichern
+der Editor-Fassung überschrieben) — Zelle nachgezogen, **zweiter Lauf 14.09. verifiziert
+F16 und F38:** `extra_context` = `{fear_greed 57, gold_silver_ratio None (kein SILVER im
+Walkthrough), btc_dominance_pct 63.94}`, der `extra`-Block der Antwort trägt exakt diese
+Werte (Überschreibung greift, F40-Fix live sichtbar), die Summary zitiert das Sidecar
+(„Technical signal is flat (neutral, strength 0)"), `company_quality`/`catalyst` `thin`,
+Quellen CNBC plus atfxcapital, kein Kurs-Seiten-Zitat. GOLD 4 708 Tokens ohne Websuche,
+BTCUSD 6 693 mit zwei Suchen, zusammen 0,21 €.
 
 **Nebenbefund Token-Zählung:** der BTCUSD-Call zeigt `out=11 641` bei einer Decke von 8 392
 (n=1) und `stop_reason=end_turn`, ohne Kappung. `usage.output_tokens` summiert bei
@@ -4765,9 +4767,25 @@ Server-Tools über alle internen Iterationen (vor und nach der Websuche), `max_t
 je Iteration. Die Auslastungs-Prozente in C.42/C.43 sind damit Obergrenzen, keine exakten
 Decken-Auslastungen; die Kappungs-Erkennung über `stop_reason` bleibt davon unberührt.
 
-**Offen (Korbinian, hintangestellt):** Rohstoffe und Krypto sind nahezu rund um die Uhr
-handelbar — die Vorbörsen-Logik (`is_premarket`, `price_premarket`, 16:10-Revalidierung)
-ist auf US-Aktien gemünzt und für diese Asset-Klassen zu prüfen.
+**Entscheidung Korbinian (14.09.): Rohstoffe und Krypto werden im laufenden Review ab
+jetzt aussen vor gelassen.** Sie sind nahezu rund um die Uhr handelbar, die Vorbörsen-
+Logik (`is_premarket`, `price_premarket`, 16:10-Revalidierung, Tagesbar-Grenze 08:00 UTC,
+`MAX_HOLD_DAYS` in Handelstagen) ist auf US-Aktien gemünzt. Korbinian hat dazu eine
+**eigene Idee — eigene Pipeline mit angepasster Logik und eigenem Cron-Job —, die in einer
+gesonderten Sitzung ausgearbeitet wird** (Regel 2: erst gemeinsam ausarbeiten, dann Code).
+Vorab-Einschätzung aus dieser Sitzung: Aufwand mittel (vier bis sechs Sitzungen). Modul,
+Prompt, Batching, Ranking-Schiene, Mail-Abschnitt und seit C.43 Snapshot/Sidecar sind
+bereits getrennt; neu zu entscheiden sind (1) Cron und DB — die `concurrency`-Gruppe in
+`analyze.yml` serialisiert alle Läufe auf `db-latest`, ein cc-Job muss ein eigenes
+Zeitfenster bekommen, DST wie gehabt; (2) Kontext — Trend/Policy aus der Morgenzeile lesen
+(0 €) oder eigene Calls (~0,50 €/Lauf); (3) Auswertung — cc-Predictions reiten heute auf
+Revalidierung und `final_close` der Aktien mit, für 24/7-Märkte stimmt weder „intraday"
+noch die Bar-Grenze, ein eigener Horizont im Evaluator ist der grösste fachliche Brocken;
+(4) Guardrails je Asset-Klasse (F14: Range-Schwelle, VIX-Regel für Gold umgekehrt, EIA/
+OPEC/Funding statt Earnings/Sektor); (5) Run-Type-Name und Bezugsrahmen im Prompt (Regel
+15). Empfohlener Einstieg: zweiter Run-Type in `main.py` (1b → 3b → cc-Ranking → cc-Mail,
+Kontext aus der DB, Cron nach dem Aktienlauf) statt eines zweiten Orchestrators; Evaluator
+und Guardrails erst, wenn die Logik wirklich abweicht. Siehe auch Abschnitt 2b.
 
 **Regel-15-Sweep:** kein anderer Prompt nennt `gold_silver_ratio`/`btc_dominance`/
 `fear_greed`; `technical_signal` steht nur in `deep_analysis_v2` und jetzt hier, gleiche
@@ -4987,6 +5005,7 @@ nicht verloren gehen.**
 | **SQLite später ggf. auf DuckDB/DWH** | Bewusst *nicht* jetzt. Erst relevant, wenn die Auswertungen über einzelne Läufe hinausgehen (3D/3F). |
 | **Gap-Analyse Final-Close → nächster Open** | Mit `price_open` und der finalen Tages-OHLC liegen seit dem Preismodell-Umbau (P3) beide Seiten vor. Offen ist, ob die Lücke prognostisch etwas trägt. |
 | **Fair-Value-Gap-Erkennung im Lernmodul** | Setzt die Gap-Analyse voraus. Gehört zu 3D, nicht davor. |
+| **Eigene Pipeline für Rohstoffe/Krypto mit eigenem Cron** (Korbinian, 2026-09-14) | Idee für eine gesonderte Sitzung; Vorab-Einschätzung und die fünf offenen Entscheidungen stehen in C.43. Bis dahin bleiben Rohstoffe/Krypto im Pipeline-Review aussen vor. |
 
 ---
 
