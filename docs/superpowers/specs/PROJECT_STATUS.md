@@ -4679,6 +4679,27 @@ page", „outside the snapshot"), Cutoff trägt `news_note`, Mail-Label „Model
 nacktes „Score" mehr), `main.py` reicht `date`/`run_type` durch. `MAX_TOKENS_POLICY` ist
 ein Kalibrierwert ohne eigenen Test (wie C.18).
 
+#### Nachtrag — C.42 im Notebook verifiziert, Phase-3-Decke auf 8 000 je Ticker (2026-09-14)
+
+Korbinians Lauf vom 14.09. (Notebook, Calls #5/#6): **alle vier Änderungen sind in der
+Antwort sichtbar.** F33: „Wednesday's FOMC" (16.09. ist Mittwoch), „enters the session",
+„iOS 27 rolling out today". F34: die Catalyst-Belegzeile zitiert „news_strength 0, empty
+note", die Summary den Vorbörsen-Gap −0,33 % (exakt der Cutoff-Wert). F35: `sources_used`
+sind ein Artikel und ein Live-Marktblog, keine Kurs-Seiten; `valuation` und `catalyst`
+ehrlich `thin` (nur Snapshot-Werte), `company_quality` mit externer Zeile. Ergebnis long,
+R/R 2,3, Haltedauer 1, medium; `analysis_strength` wäre 3, `rank_score` 6.
+
+**Decke:** der Einzel-Batch brauchte **6 009 von 6 200 Tokens (97 %)**, vor C.42 4 543
+(73 %) — der Prompt kostet rund 1 500 Ausgabe-Tokens mehr je Ticker, und die Denk-Tokens
+skalieren nicht linear mit n, kleine Batches sind die knappsten. `TOKENS_PER_TICKER_DEEP`
+6 000 → **8 000** (Entscheidung Korbinian; ein Drittel Marge über dem Messwert, Test pinnt
+genau das; n=8 jetzt 64 200). Policy-Call #5 mit Decke 12 288: 4 007 Tokens (33 %),
+45 s, 0,26 €, Schema vollständig; Quellenstufe weiter schwach (thriveinmarkets,
+presidentialprayerteam.org, Kanzlei-Tracker) — die Prompt-Regel allein reicht nicht,
+`allowed_domains`/`blocked_domains` des Web-Search-Tools wären der harte Hebel (offen).
+Ein vermutetes Steuerzeichen in der Policy-Ausgabe war die 4 000-Zeichen-Kürzung von
+`show_json`, kein C.26.
+
 ## Sprint 3D — Learning Modul
 
 ⚠️ **Noch nicht ausgearbeitet — braucht eine eigene Planungssession, bevor die Implementierung

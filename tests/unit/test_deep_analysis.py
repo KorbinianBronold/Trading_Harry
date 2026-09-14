@@ -181,11 +181,11 @@ def test_max_tokens_for_batch_scales_with_size():
     """Abgeleitet statt fest: 4096 war fuer EINEN Ticker ausgelegt.
 
     Seit der Sonnet-5-Recalibrierung (TOKENS_PER_TICKER_DEEP 2500 -> 6000,
-    s. deep_analysis.py) bindet der Boden fuer kein n >= 1 mehr: 1*6000+200
-    liegt schon ueber MAX_TOKENS_DEEP_MIN."""
-    assert max_tokens_for_batch(8) == 48200     # 8 * 6000 + 200
-    assert max_tokens_for_batch(1) == 6200      # 1 * 6000 + 200, Boden greift nicht mehr
-    assert max_tokens_for_batch(20) == 120200
+    C.42-Nachtrag 6000 -> 8000, s. deep_analysis.py) bindet der Boden fuer
+    kein n >= 1 mehr: 1*8000+200 liegt schon ueber MAX_TOKENS_DEEP_MIN."""
+    assert max_tokens_for_batch(8) == 64200     # 8 * 8000 + 200
+    assert max_tokens_for_batch(1) == 8200      # 1 * 8000 + 200, Boden greift nicht mehr
+    assert max_tokens_for_batch(20) == 160200
 
 
 def test_max_tokens_per_ticker_never_falls_below_the_per_ticker_value():
@@ -669,3 +669,12 @@ def test_deep_analysis_v2_pins_the_c42_additions():
         assert key in text, f"{key} fehlt im Prompt"
     assert "quote page" in text.lower()
     assert "outside the snapshot" in text.lower()
+
+
+def test_deep_token_ceiling_keeps_a_third_margin_over_the_c42_measurement():
+    """C.42-Nachtrag: mit dem C.42-Prompt brauchte ein Einzel-Batch 6 009
+    Ausgabe-Tokens (97 % der Decke fuer n=1). Die Decke haelt ab jetzt ein
+    Drittel Marge ueber dem gemessenen Bedarf -- sonst zahlt jede Kappung einen
+    zweiten Call."""
+    measured_n1 = 6009
+    assert max_tokens_for_batch(1) >= measured_n1 * 1.3

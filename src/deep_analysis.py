@@ -58,7 +58,13 @@ MODEL = config.CLAUDE_MODEL_SONNET
 # Denken nicht deterministisch ist. Re-Verifikationslauf gegen die echte API:
 # s. config.py-Kommentar bei BATCH_SIZE_DEEP (dort stand vorher der jetzt
 # veraltete Sonnet-4.6-Befund "0 Kappungen bei 47-54% Auslastung", C.11).
-TOKENS_PER_TICKER_DEEP = 6000
+#
+# ⚠️ C.42-Nachtrag (2026-09-14): mit dem C.42-Prompt (TIME FRAME, Belegregel,
+# news_scan-Block) brauchte der Einzel-Batch im Walkthrough 6 009 Tokens --
+# 97 % der 6 200er-Decke fuer n=1, vorher 4 543. Die Denk-Tokens skalieren
+# nicht linear mit n, kleine Batches sind deshalb die knappsten. 8000 haelt
+# ein Drittel Marge ueber dem gemessenen Bedarf (Test pinnt genau das).
+TOKENS_PER_TICKER_DEEP = 8000
 BATCH_TOKEN_RESERVE = 200
 MAX_TOKENS_DEEP_MIN = 4096
 # ⚠️ 3072 war gegen claude-sonnet-4-6 bemessen und war nach der Sonnet-5-Migration
