@@ -280,14 +280,16 @@ DB-Close.
                               ↓
 ┌─────────────────────────────────────────────────────────────────┐
 │      PHASE 3b: COMMODITIES & CRYPTO (7 Fixed Assets)             │
-│  Input: trend_context, policy_context, Fear&Greed Index         │
+│  Input: trend_context, policy_context, date/run_type (C.43),    │
+│         je Asset {snapshot ohne Aktien-Felder, technical_signal} │
 │  Assets: Gold, Silver, Brent, BTC, ETH, SOL, XRP                │
-│  Claude: Sonnet × 7 Calls + web_search                          │
-│  Output: list[{ticker="Gold", direction, scores{8}, ...}]       │
-│  Extra Context: fear_greed_value, btc_dominance_pct, ratio      │
+│  Claude: Sonnet × 2 Calls (je asset_class, C.15) + web_search   │
+│  Output: list[{ticker="GOLD", direction, scores{8}, extra}]     │
+│  Extra Context (aus dem Code, C.43): fear_greed_value,          │
+│         gold_silver_ratio (Snapshots), btc_dominance_pct (API)  │
 │  Cost: ~0.35 EUR                                                 │
 │  Guardrails: Same as Phase 3 (8-Dim, R/R, hold_days, range)    │
-│  Fail: ✅ Skip Asset, continue                                    │
+│  Fail: ✅ Batch (bis 4 Assets) als missing, Lauf geht weiter     │
 └─────────────────────────────────────────────────────────────────┘
                               ↓
 ┌─────────────────────────────────────────────────────────────────┐
@@ -795,6 +797,10 @@ class CapitalComProvider(DataProvider):
 ```
 
 **Fundamentals** werden separat von `FinnhubProvider.get_fundamentals()` abgerufen und in `fundamentals_cache`-Tabelle mit 7-Tage TTL gecacht. Im täglichen Run wird der Cache aus der DB gelesen, kein Live-Call.
+`debt_equity` = Finnhub `totalDebt/totalEquityQuarterly` (aktuelles Quartal, **Ratio**, unskaliert;
+Rückfall `…Annual`) — bis C.44 (2026-09-14) las der Provider den Fiskaljahreswert und teilte
+durch 100 (AAPL 0,0135 statt 0,78). Werte vor dem 14.09. in `fundamentals_cache`/`predictions`
+sind entsprechend verzerrt (PROJECT_STATUS C.44).
 
 ⚠️ **Ratenbegrenzung (Sprint 3C / Plan 2, Task 11):** `FinnhubProvider._respect_rate_limit()`
 drosselt auf 60 **Requests**/60s (Sliding-Window, **instanzgebunden** — nicht modulweit).
@@ -838,15 +844,28 @@ def analyze_batch(
     ticker_datas: list[dict],
     trend_context: dict,
     policy_context: dict,
-    extra_context: dict,  # {fear_greed_value, btc_dominance, ...}
+    extra_context: dict,  # {fear_greed_value, fear_greed_label, gold_silver_ratio, btc_dominance_pct}
     cost_tracker: CostTracker,
+    date: str, run_type: str,                        # C.43/F33: Datumsanker
+    signal_by_ticker: dict[str, dict] | None = None, # C.43/F16: 1b-Sidecar
     max_tokens_override: int | None = None,
 ) -> tuple[list[dict], list[str]]:
     """
     EIN gestreamter Sonnet-Call fuer einen ganzen asset_class-Batch + web_search.
+    User-Message beginnt mit "Today is {date}. Run type: {run_type}.";
+    je Asset ein _batch_entry(): {snapshot: td OHNE STOCK_ONLY_SNAPSHOT_KEYS
+    (pe_ratio, sector, data_quality, earnings_*, analyst_*; C.43/F37),
+    technical_signal: {direction, strength}} -- td selbst unveraendert.
     Same schema as deep_analysis (results-Liste, 8-Dim + hold_days + intraday_range).
     Raises BatchTruncatedError bei stop_reason == 'max_tokens'.
     """
+
+def fetch_btc_dominance() -> float | None:
+    """C.43/F38: BTC-Anteil an der Krypto-Marktkapitalisierung (alternative.me
+    v2/global) oder None -- optionale Anreicherung wie fetch_fear_greed()."""
+
+def gold_silver_ratio(ticker_datas) -> float | None:
+    """C.43/F38: GOLD-Kurs / SILVER-Kurs aus den Snapshots, None wenn einer fehlt."""
 
 def analyze_commodities_and_crypto(
     ticker_datas: dict,
@@ -854,9 +873,14 @@ def analyze_commodities_and_crypto(
     policy_context: dict,
     extra_context: dict,
     cost_tracker: CostTracker,
+    date: str, run_type: str,
+    signal_by_ticker: dict[str, dict] | None = None,
 ) -> list[dict]:
     """Sonnet × 2 (1 pro asset_class) statt × 7. Ruft build_batches() + analyze_batch()
-    mit Retry-Schale (_run_one_batch_with_recovery: einmal wiederholen, kein Halbieren)."""
+    mit Retry-Schale (_run_one_batch_with_recovery: einmal wiederholen, kein Halbieren).
+    Nach dem Call wird a["extra"] fuer EXTRA_KEYS mit den Werten aus extra_context
+    ueberschrieben (C.43/F38): die Mail zeigt Ratio/Dominanz aus dem Code, nie aus
+    dem Modell."""
 ```
 
 **Fail-Verhalten:** ein Batch-Call, der zweimal fehlschlägt (unparsebar oder

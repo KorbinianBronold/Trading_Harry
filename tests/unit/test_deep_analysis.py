@@ -577,6 +577,10 @@ def test_policy_monitor_v1_pins_contract_the_code_relies_on():
     # F30: dieselbe GICS-Liste wie market_context_v1
     for sector in ("Information Technology", "Communication Services", "Real Estate"):
         assert sector in text
+    # Aenderung B (2026-09-14): Ausschlussliste fuer Quellen, nicht nur Vorzugsliste --
+    # presidentialprayerteam.org wurde live zitiert
+    assert "Do not cite blogs" in text
+    assert "search again" in text.lower()
 
 
 # --- run_policy_monitor: Normalisierung des Risiko-Levels (C.41, P1) ---------

@@ -21,7 +21,8 @@ from src.trend_analyzer import analyze_trends, TrendAnalyzerError
 from src.broad_scan import broad_scan_batch, cutoff_candidates
 from src.deep_analysis import run_policy_monitor, analyze_batches
 from src.commodities_crypto import (
-    analyze_commodities_and_crypto, fetch_fear_greed,
+    analyze_commodities_and_crypto, fetch_fear_greed, fetch_btc_dominance,
+    gold_silver_ratio,
 )
 from src.market_context import (fetch_market_context, vix_only_context,
                                 MarketContextError)
@@ -660,14 +661,18 @@ def run_pipeline(run_type: str, date: str, db_path: str) -> None:
         current_phase = "commodities_crypto"
         # Phase 3b commodities + crypto
         fg = fetch_fear_greed() or {}
+        # C.43/F38: Ratio und Dominanz kommen aus dem Code, nicht aus dem Modell.
         extra_context = {
             "fear_greed_value": fg.get("value"),
             "fear_greed_label": fg.get("label"),
+            "gold_silver_ratio": gold_silver_ratio(cc_tds),
+            "btc_dominance_pct": fetch_btc_dominance(),
         }
         deep_cc = analyze_commodities_and_crypto(
             ticker_datas=cc_tds, trend_context=trend_context,
             policy_context=policy_context, extra_context=extra_context,
-            cost_tracker=cost_tracker,
+            cost_tracker=cost_tracker, date=date, run_type=run_type,
+            signal_by_ticker=cc_sidecar,        # C.43/F16: Technik-Sidecar wie Phase 3
         )
 
         # C.16: fear_greed_value (Phase 3b) und policy_risk_level (Phase 3)

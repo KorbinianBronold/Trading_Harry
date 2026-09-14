@@ -2398,3 +2398,48 @@ def test_run_pipeline_passes_date_and_run_type_to_phase_3(mocker, tmp_db_path):
 
     kw = deep.call_args.kwargs
     assert (kw["date"], kw["run_type"]) == ("2026-05-19", "pre_market")
+
+
+def test_run_pipeline_passes_date_and_run_type_to_phase_3b(mocker, tmp_db_path):
+    """F33 (C.43): auch Phase 3b bekommt den Datumsanker aus main."""
+    _mock_all_other_phases(mocker)
+    cc = mocker.patch("main.analyze_commodities_and_crypto", return_value=[])
+    mocker.patch("main.rank_and_persist", return_value={
+        "top_long": [], "top_short": [], "commodities_crypto": [],
+        "divergence": [], "divergence_stats": {
+            "tech_only_abstentions": 0, "conflicts": 0, "overflow": 0}})
+    mocker.patch("main.check_open_positions", return_value=[])
+
+    run_pipeline(run_type="pre_market", date="2026-05-19", db_path=str(tmp_db_path))
+
+    kw = cc.call_args.kwargs
+    assert (kw["date"], kw["run_type"]) == ("2026-05-19", "pre_market")
+
+
+def test_run_pipeline_passes_the_cc_sidecar_and_computed_extras_to_phase_3b(
+        mocker, tmp_db_path):
+    """C.43: F16 (Technik-Sidecar) und F38 (Ratio/Dominanz aus dem Code) laufen
+    ueber main in den 3b-Call."""
+    _mock_all_other_phases(mocker)
+    sidecar = {"GOLD": {"tech_direction": "long", "tech_strength": 3},
+               "SILVER": {"tech_direction": "none", "tech_strength": 0}}
+    mocker.patch("main.collect", return_value=(
+        [{"ticker": "GOLD", "price": 4000.0, "intraday_range_pct": 1.5},
+         {"ticker": "SILVER", "price": 50.0, "intraday_range_pct": 2.0}],
+        0, sidecar))
+    mocker.patch("main.fetch_fear_greed", return_value={"value": 62, "label": "Greed"})
+    mocker.patch("main.fetch_btc_dominance", return_value=54.2)
+    cc = mocker.patch("main.analyze_commodities_and_crypto", return_value=[])
+    mocker.patch("main.rank_and_persist", return_value={
+        "top_long": [], "top_short": [], "commodities_crypto": [],
+        "divergence": [], "divergence_stats": {
+            "tech_only_abstentions": 0, "conflicts": 0, "overflow": 0}})
+    mocker.patch("main.check_open_positions", return_value=[])
+
+    run_pipeline(run_type="pre_market", date="2026-05-19", db_path=str(tmp_db_path))
+
+    kw = cc.call_args.kwargs
+    assert kw["signal_by_ticker"] == sidecar
+    assert kw["extra_context"]["gold_silver_ratio"] == 80.0
+    assert kw["extra_context"]["btc_dominance_pct"] == 54.2
+    assert kw["extra_context"]["fear_greed_value"] == 62

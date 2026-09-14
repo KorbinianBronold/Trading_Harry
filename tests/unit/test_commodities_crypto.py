@@ -100,6 +100,7 @@ def test_analyze_batch_returns_one_analysis_per_asset():
 
     with patch("src.commodities_crypto.call_claude", return_value=fake) as cc:
         analyses, missing = analyze_batch(
+            date="2026-05-19", run_type="pre_market",
             ticker_datas=batch, trend_context=_trend(), policy_context=_policy(),
             extra_context={"fear_greed_value": 62}, cost_tracker=tracker,
         )
@@ -117,6 +118,7 @@ def test_analyze_batch_bills_cost_tracker():
 
     with patch("src.commodities_crypto.call_claude", return_value=fake):
         analyze_batch(
+            date="2026-05-19", run_type="pre_market",
             ticker_datas=batch, trend_context=_trend(), policy_context=_policy(),
             extra_context={"fear_greed_value": 62}, cost_tracker=tracker,
         )
@@ -135,6 +137,7 @@ def test_analyze_batch_keeps_partial_results():
 
     with patch("src.commodities_crypto.call_claude", return_value=fake):
         analyses, missing = analyze_batch(
+            date="2026-05-19", run_type="pre_market",
             ticker_datas=batch, trend_context=_trend(), policy_context=_policy(),
             extra_context={}, cost_tracker=tracker,
         )
@@ -150,6 +153,7 @@ def test_analyze_batch_raises_on_unparseable_response():
     with patch("src.commodities_crypto.call_claude", return_value=fake):
         with pytest.raises(CommoditiesCryptoError):
             analyze_batch(
+            date="2026-05-19", run_type="pre_market",
                 ticker_datas=[_td("GOLD", "commodity")],
                 trend_context=_trend(), policy_context=_policy(),
                 extra_context={}, cost_tracker=tracker,
@@ -164,6 +168,7 @@ def test_analyze_batch_raises_when_output_was_truncated():
     with patch("src.commodities_crypto.call_claude", return_value=fake):
         with pytest.raises(BatchTruncatedError, match="max_tokens"):
             analyze_batch(
+            date="2026-05-19", run_type="pre_market",
                 ticker_datas=[_td("GOLD", "commodity"), _td("SILVER", "commodity")],
                 trend_context=_trend(), policy_context=_policy(),
                 extra_context={}, cost_tracker=tracker,
@@ -177,6 +182,7 @@ def test_analyze_batch_max_tokens_override_is_used():
 
     with patch("src.commodities_crypto.call_claude", return_value=fake) as cc:
         analyze_batch(
+            date="2026-05-19", run_type="pre_market",
             ticker_datas=batch, trend_context=_trend(), policy_context=_policy(),
             extra_context={}, cost_tracker=tracker, max_tokens_override=99999,
         )
@@ -199,6 +205,7 @@ def test_analyze_commodities_and_crypto_runs_one_batch_per_asset_class():
 
     with patch("src.commodities_crypto.call_claude", return_value=fake) as cc:
         analyze_commodities_and_crypto(
+            date="2026-05-19", run_type="pre_market",
             ticker_datas=tds, trend_context=_trend(), policy_context=_policy(),
             extra_context={"fear_greed_value": 62}, cost_tracker=tracker,
         )
@@ -215,6 +222,7 @@ def test_analyze_commodities_and_crypto_retries_once_then_succeeds():
 
     with patch("src.commodities_crypto.call_claude", side_effect=responses) as cc:
         out = analyze_commodities_and_crypto(
+            date="2026-05-19", run_type="pre_market",
             ticker_datas=batch, trend_context=_trend(), policy_context=_policy(),
             extra_context={}, cost_tracker=tracker,
         )
@@ -232,6 +240,7 @@ def test_analyze_commodities_and_crypto_gives_up_after_two_failures():
 
     with patch("src.commodities_crypto.call_claude", side_effect=responses):
         out = analyze_commodities_and_crypto(
+            date="2026-05-19", run_type="pre_market",
             ticker_datas=batch, trend_context=_trend(), policy_context=_policy(),
             extra_context={}, cost_tracker=tracker,
         )
@@ -249,6 +258,7 @@ def test_truncated_batch_is_retried_with_a_larger_ceiling():
 
     with patch("src.commodities_crypto.call_claude", side_effect=responses) as cc:
         analyze_commodities_and_crypto(
+            date="2026-05-19", run_type="pre_market",
             ticker_datas=batch, trend_context=_trend(), policy_context=_policy(),
             extra_context={}, cost_tracker=tracker,
         )
@@ -266,6 +276,7 @@ def test_analyze_commodities_and_crypto_cost_cap_propagates():
     with patch("src.commodities_crypto.call_claude", return_value=fake):
         with pytest.raises(CostCapExceeded):
             analyze_commodities_and_crypto(
+            date="2026-05-19", run_type="pre_market",
                 ticker_datas=batch, trend_context=_trend(), policy_context=_policy(),
                 extra_context={}, cost_tracker=tracker,
             )
@@ -298,6 +309,7 @@ def test_user_message_includes_extra_context_keys():
     tracker = CostTracker(hard_cap_eur=10.0)
     with patch("src.commodities_crypto.call_claude", return_value=fake) as mock_call:
         analyze_batch(
+            date="2026-05-19", run_type="pre_market",
             ticker_datas=[_td("BTCUSD", "crypto")],
             trend_context=_trend(), policy_context=_policy(),
             extra_context={"fear_greed_value": 62, "btc_dominance_pct": 54.2},
@@ -336,3 +348,182 @@ def test_commodities_crypto_module_uses_v3():
     import src.commodities_crypto as cc
     assert "evidence_quality" in cc.SYSTEM_PROMPT
     assert '"results"' in cc.SYSTEM_PROMPT
+
+
+# --- C.43: Datumsanker (F33) und Quellen-/Beleg-Regel (F35) fuer Phase 3b ----
+
+def test_analyze_batch_user_message_starts_with_the_date_anchor():
+    """F33 (C.43): wie in Phase 3 (C.42) argumentiert der Prompt mit 'heute',
+    die Nutzlast trug aber kein Datum."""
+    fake = _fake_result(BATCH_FIXTURE.read_text())
+    tracker = CostTracker(hard_cap_eur=10.0)
+    with patch("src.commodities_crypto.call_claude", return_value=fake) as mock_call:
+        analyze_batch(
+            ticker_datas=[_td("BTCUSD", "crypto")],
+            trend_context=_trend(), policy_context=_policy(),
+            extra_context={"fear_greed_value": 62},
+            cost_tracker=tracker, date="2026-09-14", run_type="pre_market",
+        )
+    user_msg = mock_call.call_args.kwargs["user"]
+    assert user_msg.startswith("Today is 2026-09-14. Run type: pre_market.")
+
+
+def test_analyze_commodities_and_crypto_threads_the_date_through():
+    """Der Orchestrator reicht date/run_type bis in den Call durch."""
+    fake = _fake_result(BATCH_FIXTURE.read_text())
+    tracker = CostTracker(hard_cap_eur=10.0)
+    with patch("src.commodities_crypto.call_claude", return_value=fake) as mock_call:
+        analyze_commodities_and_crypto(
+            ticker_datas=[_td("GOLD", "commodity")],
+            trend_context=_trend(), policy_context=_policy(),
+            extra_context={}, cost_tracker=tracker,
+            date="2026-09-14", run_type="pre_market",
+        )
+    assert mock_call.call_args.kwargs["user"].startswith("Today is 2026-09-14.")
+
+
+def test_commodities_crypto_v3_pins_the_c43_additions():
+    """F33: TIME FRAME mit dem Unterschied zu Aktien (Gold/Oel/Krypto handeln
+    schon, wenn der 09:00-ET-Lauf laeuft); F35: Kurs-Seiten sind keine Quelle,
+    ein Beleg ohne Datum/Zahl/Quelle ausserhalb des Snapshots macht 'thin'."""
+    text = CC_V3.read_text()
+    assert "date given in the user message" in text
+    assert "pre_market" in text
+    assert "already trading" in text.lower()
+    assert "quote page" in text.lower()
+    assert "outside the snapshot" in text.lower()
+
+
+# --- C.43: Snapshot-Filter (F37), Technik-Sidecar (F16), extra aus dem Code (F38)
+
+def _batch_entries(user_msg: str) -> list[dict]:
+    lines = user_msg.split("\n")
+    start = lines.index("BATCH (one asset per line, JSON):") + 1
+    return [json.loads(l) for l in lines[start:] if l.startswith("{")]
+
+
+def test_batch_payload_strips_stock_only_fields_from_the_asset_snapshot():
+    """F37: der 3b-Snapshot trug das volle Aktienschema -- pe_ratio/market_cap
+    null, sector 'Unknown', data_quality 'medium' aus einer Aktien-Heuristik.
+    Die Nutzlast laesst die Aktien-Schluessel weg; td selbst bleibt unangetastet
+    (Sidecar-Invariante)."""
+    from src.commodities_crypto import _build_batch_user_message
+    td = {**_td("GOLD", "commodity"), "pe_ratio": None, "market_cap_b": None,
+          "sector": "Unknown", "data_quality": "medium",
+          "earnings_in_days": None, "analyst_consensus_period": None}
+    before = dict(td)
+
+    msg = _build_batch_user_message([td], _trend(), _policy(), {},
+                                    date="2026-09-14", run_type="pre_market")
+
+    assert td == before
+    snap = _batch_entries(msg)[0]["snapshot"]
+    for k in ("pe_ratio", "market_cap_b", "sector", "data_quality",
+              "earnings_in_days", "analyst_consensus_period"):
+        assert k not in snap, f"{k} gehoert nicht in den Rohstoff-Snapshot"
+    assert snap["price"] == 2380.0
+    assert snap["rsi_14"] == 60.0
+    assert snap["asset_class"] == "commodity"
+
+
+def test_batch_payload_carries_the_technical_signal_beside_the_snapshot():
+    """F16 (C.34, offen seit dem 1b-Walkthrough): Phase 3 sieht das
+    deterministische Technik-Signal, 3b sah nichts, obwohl rank_score es
+    hinterher verrechnet. Gleicher Sidecar-Block wie in Phase 3."""
+    from src.commodities_crypto import _build_batch_user_message
+    msg = _build_batch_user_message(
+        [_td("GOLD", "commodity")], _trend(), _policy(), {},
+        date="2026-09-14", run_type="pre_market",
+        signal_by_ticker={"GOLD": {"tech_direction": "long", "tech_strength": 3,
+                                   "tech_agreement": 3}},
+    )
+    assert _batch_entries(msg)[0]["technical_signal"] == {
+        "direction": "long", "strength": 3}
+
+
+def test_batch_payload_without_sidecar_sends_an_empty_signal():
+    from src.commodities_crypto import _build_batch_user_message
+    msg = _build_batch_user_message(
+        [_td("BTCUSD", "crypto")], _trend(), _policy(), {},
+        date="2026-09-14", run_type="pre_market")
+    assert _batch_entries(msg)[0]["technical_signal"] == {
+        "direction": None, "strength": None}
+
+
+def test_analyze_commodities_and_crypto_threads_the_signal_sidecar_through():
+    fake = _fake_result(BATCH_FIXTURE.read_text())
+    tracker = CostTracker(hard_cap_eur=10.0)
+    with patch("src.commodities_crypto.call_claude", return_value=fake) as mock_call:
+        analyze_commodities_and_crypto(
+            ticker_datas=[_td("GOLD", "commodity"), _td("SILVER", "commodity")],
+            trend_context=_trend(), policy_context=_policy(),
+            extra_context={}, cost_tracker=tracker,
+            date="2026-09-14", run_type="pre_market",
+            signal_by_ticker={"GOLD": {"tech_direction": "short", "tech_strength": 2}},
+        )
+    entries = _batch_entries(mock_call.call_args.kwargs["user"])
+    by = {e["snapshot"]["ticker"]: e["technical_signal"] for e in entries}
+    assert by["GOLD"] == {"direction": "short", "strength": 2}
+    assert by["SILVER"] == {"direction": None, "strength": None}
+
+
+def test_gold_silver_ratio_is_computed_from_the_two_snapshots():
+    """F38: die Ratio ist Arithmetik ueber zwei Snapshots, kein Modell-Output."""
+    from src.commodities_crypto import gold_silver_ratio
+    assert gold_silver_ratio([{"ticker": "GOLD", "price": 4000.0},
+                              {"ticker": "SILVER", "price": 50.0}]) == 80.0
+    assert gold_silver_ratio([{"ticker": "GOLD", "price": 4000.0}]) is None
+    assert gold_silver_ratio([{"ticker": "GOLD", "price": 4000.0},
+                              {"ticker": "SILVER", "price": None}]) is None
+    assert gold_silver_ratio([{"ticker": "GOLD", "price": 4000.0},
+                              {"ticker": "SILVER", "price": 0.0}]) is None
+
+
+def test_fetch_btc_dominance_parses_alternative_me_global_format():
+    """C.44: der Endpunkt liefert unter dem Schluessel 'percentage' einen ANTEIL
+    (Live-Sonde 2026-09-14: 0.638978 = 63,9 %). Die Pipeline fuehrt die
+    Dominanz in Prozent (Mail: '{btc_dom}%'), also x100 -- dieselbe
+    Einheitenfalle wie bei debt_equity (F39), nur umgekehrt."""
+    from src.commodities_crypto import fetch_btc_dominance
+    with patch("src.commodities_crypto.requests.get") as mock_get:
+        mock_get.return_value.json.return_value = {
+            "data": {"bitcoin_percentage_of_market_cap": 0.638978074972638}}
+        mock_get.return_value.raise_for_status = lambda: None
+        out = fetch_btc_dominance()
+    assert out == pytest.approx(63.9, abs=0.01)
+
+
+def test_fetch_btc_dominance_returns_none_on_failure():
+    from src.commodities_crypto import fetch_btc_dominance
+    with patch("src.commodities_crypto.requests.get", side_effect=RuntimeError("down")):
+        assert fetch_btc_dominance() is None
+
+
+def test_extra_block_is_overwritten_with_the_supplied_context_values():
+    """F38: was die Mail als Gold-Silber-Ratio und BTC-Dominanz zeigt, kommt aus
+    dem Code, nicht aus dem Modell -- auch wenn das Modell andere Zahlen
+    zurueckgibt."""
+    payload = json.loads(BATCH_FIXTURE.read_text())
+    payload["results"][0]["extra"] = {"fear_greed_value": 1,
+                                      "gold_silver_ratio": 1.0,
+                                      "btc_dominance_pct": 1.0}
+    fake = _fake_result(json.dumps(payload))
+    tracker = CostTracker(hard_cap_eur=10.0)
+    ctx = {"fear_greed_value": 62, "fear_greed_label": "Greed",
+           "gold_silver_ratio": 80.0, "btc_dominance_pct": 54.2}
+    with patch("src.commodities_crypto.call_claude", return_value=fake):
+        out = analyze_commodities_and_crypto(
+            ticker_datas=[_td("GOLD", "commodity"), _td("SILVER", "commodity")],
+            trend_context=_trend(), policy_context=_policy(),
+            extra_context=ctx, cost_tracker=tracker,
+            date="2026-09-14", run_type="pre_market",
+        )
+    assert out[0]["extra"] == {"fear_greed_value": 62, "gold_silver_ratio": 80.0,
+                               "btc_dominance_pct": 54.2}
+
+
+def test_commodities_crypto_v3_pins_the_sidecar_and_extra_contract():
+    text = CC_V3.read_text()
+    assert '"technical_signal"' in text
+    assert "not your job" in text.lower()
+    assert "EXTRA CONTEXT" in text

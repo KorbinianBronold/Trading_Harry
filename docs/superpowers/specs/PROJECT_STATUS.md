@@ -4126,7 +4126,7 @@ README nennt `OIL_CRUDE` weiter (Finaldurchgang).
   (Sa/So sind echte Sitzungen, BTC Sa Ø 1,89 %). Optionen: Sonntagsbars für
   `COMMODITY_TICKERS` in `final_close` nicht schreiben (+ einmalige Bereinigung), oder
   beim Laden der Indikator-Historie herausfiltern.
-- **F12 — Rohstoffe/Krypto tragen immer `data_quality = "medium"` und `sector =
+- **F12 *(Prompt-Seite behoben in C.43/F37, td-Heuristik selbst offen)* — Rohstoffe/Krypto tragen immer `data_quality = "medium"` und `sector =
   "Unknown"`.** `_classify_data_quality` stuft nach `pe_ratio`/`market_cap_b`/`sector` ab,
   die es für Gold nie gibt. Claude sieht in Phase 3b für jedes Asset jeden Tag „medium"
   und „Unknown" — ein Aktien-Label ohne Bedeutung für die Asset-Klasse. Hängt mit F5
@@ -4143,7 +4143,7 @@ README nennt `OIL_CRUDE` weiter (Finaldurchgang).
   Monate), SMA200 = 200 Kalendertage. Konsistent innerhalb der Asset-Klasse, nur beim
   Vergleich mit Aktien-Schwellen zu bedenken. Nur notiert.
 
-- **F16 — Phase 3b bekommt kein Technik-Signal.** Der 1b-Sidecar (`tech_direction`,
+- **F16 *(behoben in C.43)* — Phase 3b bekommt kein Technik-Signal.** Der 1b-Sidecar (`tech_direction`,
   `tech_strength`, `premarket_change_pct`) fließt nur über `_signal_context()` in die
   Persistierung (`main.py`), nie in den `commodities_crypto_v3`-Prompt — Phase 3 (Aktien)
   sieht `technical_signal {direction, strength}` aus dem Cutoff, Phase 3b nicht. Asymmetrie,
@@ -4699,6 +4699,136 @@ presidentialprayerteam.org, Kanzlei-Tracker) — die Prompt-Regel allein reicht 
 `allowed_domains`/`blocked_domains` des Web-Search-Tools wären der harte Hebel (offen).
 Ein vermutetes Steuerzeichen in der Policy-Ausgabe war die 4 000-Zeichen-Kürzung von
 `show_json`, kein C.26.
+
+### C.43 — Phase-3b-Review (`commodities_crypto`): Datumsanker (F33), Quellen-/Beleg-Regel (F35), Snapshot ohne Aktien-Felder (F37), Technik-Sidecar (F16), `extra` aus dem Code (F38) (2026-09-14)
+
+Zehnter Durchgang des Pipeline-Reviews. **Code-Sicht solide:** dieselbe Form wie Phase 3
+ohne Halbierung (Batches höchstens 4), zwei Batches je Lauf (Rohstoffe 3, Krypto 4),
+Decke 8 192 je Asset (n=3: 24 776, n=4: 32 968), Retry mit doppelter Decke, Kosten vor
+jeder Prüfung gebucht, fehlende Assets gezählt. Im Ranking laufen Rohstoffe/Krypto an den
+B.3-Checks vorbei und sind immer „core" (`_classify(cc=True)`) — ein Konflikt mit der
+Technik wird für sie nie klassifiziert; nur notiert.
+
+**Befunde und Umsetzung (Entscheidung Korbinian: F33/F35 vorab, F37/F16/F38 „go"):**
+- **F33 — Kein Datumsanker (behoben).** Wie C.42: `date`/`run_type` Pflichtparameter
+  durch `analyze_commodities_and_crypto()` → `_run_one_batch_with_recovery()` →
+  `analyze_batch()` → `_build_batch_user_message()`, User-Message beginnt mit „Today is …".
+  TIME-FRAME-Block mit dem Unterschied zu Aktien: Gold, Silber, Öl und Krypto handeln um
+  09:00 ET bereits (London, Krypto rund um die Uhr), der Snapshot-Kurs ist live,
+  `price_change_1d` misst gegen die vorige Tagesbar, die US-Eröffnung steht noch aus.
+  `main.py` reicht durch (Test), 12 Test-Aufrufstellen ergänzt, Notebook-Zelle 61.
+- **F35 — Quellen- und Beleg-Regel (Prompt).** Wie C.42, mit Rohstoff-/Krypto-Beispielen
+  für Belege von ausserhalb des Snapshots (COT-Positionierung, ETF-Flows, OPEC/IEA-Daten,
+  On-chain-/Funding-Daten); Kurs- und Übersichtsseiten zählen nicht als Quelle;
+  `momentum`/`risk` ausgenommen.
+- **F37 — Aktien-Felder im Rohstoff-Snapshot (behoben).** Der 3b-Snapshot war das volle
+  27-Schlüssel-Aktienschema: `pe_ratio`/`market_cap_b`/`debt_equity`/`analyst_*`/
+  `earnings_*` null, `sector` „Unknown", `data_quality` „medium" aus der Aktien-Heuristik
+  (F12, C.34). Neu `STOCK_ONLY_SNAPSHOT_KEYS` + `_asset_snapshot()`: die **Nutzlast** lässt
+  die elf Aktien-Schlüssel weg, `td` selbst bleibt unangetastet (Sidecar-Invariante, Test
+  pinnt Gleichheit). Die td-Heuristik selbst (`_classify_data_quality`) bleibt — für
+  Rohstoffe wirkt sie ausserhalb des Prompts nirgends (der einzige `data_quality`-Guardrail
+  greift bei `low`).
+- **F16 (C.34) — Technik-Sidecar für 3b (behoben).** `_batch_entry()` liefert je Asset
+  `{snapshot, technical_signal: {direction, strength}}` — dieselbe Form wie Phase 3, ohne
+  `news_scan` (3b hat keinen Scan). `signal_by_ticker` optional durch alle Ebenen,
+  `main.py` gibt `cc_sidecar`. Prompt: Absatz „TECHNICAL READINGS ARE FACTS, NOT YOUR JOB"
+  aus `deep_analysis_v2` übernommen, der 3b-Prompt hatte ihn nie.
+- **F38 — `extra`-Werte aus dem Code (behoben).** `gold_silver_ratio` und
+  `btc_dominance_pct` waren Modell-Ausgaben (gesucht oder geschätzt) und standen so in der
+  Mail. Neu `gold_silver_ratio()` (GOLD-Kurs / SILVER-Kurs aus den Snapshots, zwei
+  Dezimalen) und `fetch_btc_dominance()` (alternative.me `v2/global`,
+  `bitcoin_percentage_of_market_cap`, None bei jedem Fehler — wie `fetch_fear_greed()`),
+  beide in `extra_context`; nach dem Call überschreibt `EXTRA_KEYS` den `extra`-Block jeder
+  Analyse mit den Kontextwerten (Test: Modell liefert andere Zahlen, die Mail bekommt die
+  aus dem Code). Prompt: „mirror EXTRA CONTEXT verbatim, never look them up". ⚠️ Der
+  Dominanz-Endpunkt ist nur gemockt getestet — Live-Probe beim nächsten Notebook-Lauf
+  (Zelle 61 gibt `extra_context` aus).
+- **Nur notiert:** Fear & Greed geht auch an den Rohstoff-Batch (harmlos). F11 seit C.36
+  behoben; F14 (Range-Guardrail 1,0 % und VIX-Sperre für Gold-Longs) bleibt Phase-4-Thema.
+
+**Live-Verifikation (Korbinians Lauf 14.09., Notebook-Zelle 62, GOLD + BTCUSD):**
+F33 sichtbar („FOMC … two days outside today's intraday/pre-market window"), F35 greift
+(`company_quality` und `valuation` ehrlich `thin`: „No ETF-flow or COT positioning data
+available"; Quellen Al Jazeera plus cambridgecurrencies — Quellenstufe weiter gemischt).
+GOLD `direction='none'` mit Widerspruchs-Begründung, R/R 1,76. **F16/F38 dort noch nicht
+verifiziert:** die gespeicherte Zelle 62 trug beim Lauf nur den F33-Stand (mein zweiter
+Notebook-Edit war durch das Speichern der Editor-Fassung überschrieben; `extra` in der
+Antwort daher `btc_dominance_pct: null`). Zelle erneut nachgezogen; `fetch_btc_dominance()`
+separat live geprüft (s. C.44-Sitzung). Prüfpunkte beim nächsten Lauf: `extra_context` mit
+Dominanz, in `show_call(n)` `technical_signal` je Asset und `snapshot` ohne
+`sector`/`data_quality`.
+
+**Nebenbefund Token-Zählung:** der BTCUSD-Call zeigt `out=11 641` bei einer Decke von 8 392
+(n=1) und `stop_reason=end_turn`, ohne Kappung. `usage.output_tokens` summiert bei
+Server-Tools über alle internen Iterationen (vor und nach der Websuche), `max_tokens` gilt
+je Iteration. Die Auslastungs-Prozente in C.42/C.43 sind damit Obergrenzen, keine exakten
+Decken-Auslastungen; die Kappungs-Erkennung über `stop_reason` bleibt davon unberührt.
+
+**Offen (Korbinian, hintangestellt):** Rohstoffe und Krypto sind nahezu rund um die Uhr
+handelbar — die Vorbörsen-Logik (`is_premarket`, `price_premarket`, 16:10-Revalidierung)
+ist auf US-Aktien gemünzt und für diese Asset-Klassen zu prüfen.
+
+**Regel-15-Sweep:** kein anderer Prompt nennt `gold_silver_ratio`/`btc_dominance`/
+`fear_greed`; `technical_signal` steht nur in `deep_analysis_v2` und jetzt hier, gleiche
+Form. ARCHITECTURE-Box 3b korrigiert (nannte noch „Sonnet × 7 Calls" und „Skip Asset").
+
+**Tests:** 1049 grün, 15 übersprungen, Coverage 93,05 %. Neu (rot zuerst): Datumsanker ×2,
+Prompt-Pins ×2, Snapshot-Filter, Sidecar ×3, Ratio, Dominanz ×2, `extra`-Überschreibung,
+`main`-Durchreichung ×2.
+
+### C.44 — `debt_equity` war Faktor 100 zu klein und ein Fiskaljahr alt (F39); BTC-Dominanz kam als Anteil statt Prozent (F40) (2026-09-14)
+
+Anlass: Korbinians Live-Review des AAPL-Outputs vom 14.09. — eine `company_quality`-
+Belegzeile nannte „Debt/equity is extremely low at 0.0135, reflecting a fortress balance
+sheet", extern verifiziert falsch (AAPL ≈ 0,78). Erster Verdacht war ein Erinnerungsfehler
+des Modells mit Prompt-Fix; die Prüfung ergab: **die Zahl stand so im Snapshot**
+(`td["debt_equity"] = 0.0135`), das Modell hat korrekt zitiert, was die Pipeline lieferte.
+Kein Prompt-Change — F35 (Snapshot-Zeile als Beleg) bleibt richtig.
+
+**F39 — zwei Fehler im Finnhub-Provider (behoben).** `finnhub_provider.py` las
+`totalDebt/totalEquityAnnual` und teilte durch 100. Live-Sonde
+`company_basic_financials("AAPL", "all")` am 14.09.:
+
+| Feld | Wert | Stichtag |
+|---|---|---|
+| `totalDebt/totalEquityQuarterly` | **0,7844** | 2026-06-27 |
+| `totalDebt/totalEquityAnnual` | 1,3547 | 2025-09-27 (Fiskaljahr) |
+| externe Referenz stockanalysis.com | 0,78 = 84,34 / 107,52 Mrd. $ | 2026-09-14 |
+
+Finnhub liefert also eine **Ratio**, kein Prozent (die Division machte 0,0135 daraus),
+und der Annual-Wert ist der letzte Fiskaljahres-Stichtag — Apples Eigenkapital lag damals
+bei ~62 Mrd. $, heute bei ~107 Mrd. $; die Divisions-Korrektur allein hätte den Fehler
+nur von Faktor 100 auf Faktor 1,7 verkleinert (Korbinians Verdacht, bestätigt). Weitere
+Referenzen: XOM Quarterly 0,1633 gegen stockanalysis 0,16; MSFT 0,2416 gegen 0,29
+(stockanalysis zählt Leasingverbindlichkeiten zur Schuld, Finnhub nicht — Definitions-,
+kein Skalierungsunterschied). **Fix:** Quartalswert zuerst, Jahreswert nur als Rückfall,
+keine Division. Tests rot zuerst: aufgezeichnete Finnhub-Antwort → 0,7844 innerhalb der
+Referenzspanne 0,70–0,85; Rückfall auf Annual; None ohne beide Felder. Dazu ein Live-Test
+(`tests/live/test_api_connectivity.py`, `live_api`): AAPL im Band 0,3–2,0 — ein Wert um
+0,01 hiesse „Division wieder drin", um 1,35 „wieder der Jahreswert". Gelaufen:
+`AAPL=0.7844`. Der alte Provider-Test hatte `debt_equity` nie asserted.
+
+**⚠️ Für 3D:** `fundamentals_cache.debt_equity` und `predictions.debt_equity` vor dem
+14.09. sind um Faktor 100 zu klein **und** auf Fiskaljahresbasis — per Datum trennen,
+nicht umrechnen (die Periode lässt sich nicht rückwirkend korrigieren). Der Cache heilt
+sich über den Sonntagsjob (7-Tage-TTL); die lokale Kopie zeigt AAPL bis dahin weiter
+0,0135 im Walkthrough. `db-latest` ebenso — kein manueller Eingriff nötig.
+
+**F40 — BTC-Dominanz als Anteil (behoben, gefunden beim Live-Check von C.43/F38).**
+`fetch_btc_dominance()` gab den Wert des alternative.me-Felds
+`bitcoin_percentage_of_market_cap` unverändert zurück; der Endpunkt liefert trotz des
+Namens einen **Anteil** (Sonde: 0,638978 für 63,9 %), die Mail rendert `{btc_dom}%`.
+Fix ×100 mit rotem Test (Fixture auf den Live-Wert), Sonde nach dem Fix: 63,9.
+Dieselbe Einheitenfalle wie F39, in der anderen Richtung — Lehre für beide: **ein
+Provider-Feld ohne Einheit im Namen wird gegen eine externe Referenz gemessen, bevor es
+in einen Prompt oder eine Mail geht.** Das Feld war nie in einer Antwort sichtbar, weil die
+Notebook-Zelle beim 3b-Lauf noch den alten Stand hatte (s. C.43).
+
+**Regel-15-Sweep:** kein Prompt zitiert einen `debt_equity`-Wert oder eine
+Dominanz-Zahl; `commodities_crypto_v3` verlangt seit C.43 nur das Spiegeln von EXTRA
+CONTEXT. **Tests:** 1052 grün, 16 übersprungen (der neue Live-Test ohne `--run-live`), Coverage 93,06 %; drei Unit-Tests
+neu, ein Live-Test neu, ein Test-Fixture auf den Live-Wert umgestellt.
 
 ## Sprint 3D — Learning Modul
 

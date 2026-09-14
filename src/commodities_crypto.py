@@ -28,7 +28,25 @@ SYSTEM_PROMPT = (Path(__file__).resolve().parent.parent
 
 MODEL = config.CLAUDE_MODEL_SONNET
 FEAR_GREED_URL = "https://api.alternative.me/fng/"
+# C.43/F38: BTC-Dominanz vom selben Anbieter wie Fear & Greed -- vorher hat
+# das Modell die Zahl gesucht oder geschaetzt, und die Mail zeigte sie an.
+BTC_DOMINANCE_URL = "https://api.alternative.me/v2/global/"
 FEAR_GREED_TIMEOUT_SEC = 5
+
+# C.43/F37: der Rohstoff-/Krypto-Snapshot ist dasselbe td wie bei Aktien und
+# traegt deshalb Aktien-Felder ohne Bedeutung (pe_ratio null, sector "Unknown",
+# data_quality "medium" aus einer Aktien-Heuristik). Die Nutzlast laesst sie
+# weg; td selbst bleibt unangetastet (Sidecar-Invariante, wie in Phase 3).
+STOCK_ONLY_SNAPSHOT_KEYS = (
+    "pe_ratio", "forward_pe", "market_cap_b", "debt_equity", "sector",
+    "analyst_target_upside", "analyst_consensus", "analyst_consensus_period",
+    "earnings_in_days", "earnings_beat_pct", "data_quality",
+)
+
+# C.43/F38: die drei Werte des extra-Blocks kommen aus dem Code (Fear & Greed
+# und BTC-Dominanz per API, Gold-Silber-Ratio aus den Snapshots) und
+# ueberschreiben nach dem Call, was das Modell gespiegelt oder erfunden hat.
+EXTRA_KEYS = ("fear_greed_value", "gold_silver_ratio", "btc_dominance_pct")
 
 # Gleiche Herleitung wie TOKENS_PER_TICKER_DEEP (deep_analysis.py, C.10): die
 # alte Einzel-Asset-Decke war 3584 fuer EIN Asset -- das wird jetzt der
@@ -77,6 +95,53 @@ def fetch_fear_greed() -> dict | None:
         return None
 
 
+def fetch_btc_dominance() -> float | None:
+    """BTC-Anteil an der Krypto-Marktkapitalisierung in PROZENT (alternative.me,
+    globaler Endpunkt) oder None bei jedem Fehler -- optionale Anreicherung wie
+    fetch_fear_greed().
+
+    ⚠️ Der Schluessel heisst 'bitcoin_percentage_of_market_cap', der Wert ist
+    aber ein Anteil (Live-Sonde 2026-09-14: 0.638978 fuer 63,9 %). Die Pipeline
+    und die Mail fuehren die Dominanz in Prozent, deshalb x100 -- dieselbe
+    Einheitenfalle wie debt_equity in C.44/F39, nur in der anderen Richtung."""
+    try:
+        r = requests.get(BTC_DOMINANCE_URL, timeout=FEAR_GREED_TIMEOUT_SEC)
+        r.raise_for_status()
+        share = float(r.json()["data"]["bitcoin_percentage_of_market_cap"])
+        return round(share * 100, 2)
+    except Exception as e:  # broad on purpose: optional enrichment
+        log.warning(f"fetch_btc_dominance failed: {e}")
+        return None
+
+
+def gold_silver_ratio(ticker_datas: list[dict]) -> float | None:
+    """Gold-Silber-Ratio aus den beiden Snapshots (GOLD-Kurs / SILVER-Kurs, zwei
+    Dezimalen). None, wenn einer der beiden fehlt oder keinen Kurs hat."""
+    prices = {td.get("ticker"): td.get("price") for td in ticker_datas}
+    gold, silver = prices.get("GOLD"), prices.get("SILVER")
+    if not gold or not silver:
+        return None
+    return round(gold / silver, 2)
+
+
+def _asset_snapshot(td: dict) -> dict:
+    """Kopie des td ohne die Aktien-Felder (F37) -- fuer die Nutzlast, nie fuer td."""
+    return {k: v for k, v in td.items() if k not in STOCK_ONLY_SNAPSHOT_KEYS}
+
+
+def _batch_entry(td: dict, signal: dict) -> dict:
+    """Ein Eintrag der Batch-Nutzlast: gefilterter Snapshot plus das
+    deterministische Technik-Signal aus dem Sidecar (F16) -- dieselbe Form wie
+    deep_analysis._batch_entry(), ohne news_scan (3b hat keinen Scan)."""
+    return {
+        "snapshot": _asset_snapshot(td),
+        "technical_signal": {
+            "direction": signal.get("tech_direction"),
+            "strength": signal.get("tech_strength"),
+        },
+    }
+
+
 def max_tokens_for_batch(n: int) -> int:
     """Output-Token-Budget fuer einen Batch von n Assets."""
     return max(MAX_TOKENS_CC_MIN, n * TOKENS_PER_ASSET_CC + BATCH_TOKEN_RESERVE_CC)
@@ -107,17 +172,25 @@ def _build_batch_user_message(
     trend_context: dict,
     policy_context: dict,
     extra_context: dict,
+    date: str,
+    run_type: str,
+    signal_by_ticker: dict[str, dict] | None = None,
 ) -> str:
-    """Komponiert die User-Message fuer einen ganzen Batch: gemeinsamer Trend-,
-    Policy- und Extra-Kontext einmal, dann je Asset ein Eintrag."""
+    """Komponiert die User-Message fuer einen ganzen Batch: Datumsanker
+    (C.43/F33, wie C.42 fuer Phase 3), gemeinsamer Trend-, Policy- und
+    Extra-Kontext einmal, dann je Asset ein Eintrag aus _batch_entry()
+    (gefilterter Snapshot + Technik-Signal aus dem Sidecar, C.43)."""
+    signal_by_ticker = signal_by_ticker or {}
     parts = [
+        f"Today is {date}. Run type: {run_type}.",
         "TREND CONTEXT:", json.dumps(trend_context, ensure_ascii=False),
         "\nPOLICY CONTEXT:", json.dumps(policy_context, ensure_ascii=False),
         "\nEXTRA CONTEXT:", json.dumps(extra_context, ensure_ascii=False),
         "\nBATCH (one asset per line, JSON):",
     ]
     for td in ticker_datas:
-        parts.append(json.dumps(td, ensure_ascii=False))
+        entry = _batch_entry(td, signal_by_ticker.get(td["ticker"], {}))
+        parts.append(json.dumps(entry, ensure_ascii=False))
     parts.append(
         "\nReturn the JSON object defined in your system prompt with one entry "
         "per asset above, in the same order."
@@ -131,6 +204,9 @@ def analyze_batch(
     policy_context: dict,
     extra_context: dict,
     cost_tracker: CostTracker,
+    date: str,
+    run_type: str,
+    signal_by_ticker: dict[str, dict] | None = None,
     max_tokens_override: int | None = None,
 ) -> tuple[list[dict], list[str]]:
     """Analysiert einen ganzen Asset-Klassen-Batch in EINEM gestreamten
@@ -144,7 +220,8 @@ def analyze_batch(
         return [], []
 
     user_msg = _build_batch_user_message(
-        ticker_datas, trend_context, policy_context, extra_context)
+        ticker_datas, trend_context, policy_context, extra_context,
+        date=date, run_type=run_type, signal_by_ticker=signal_by_ticker)
     max_tokens = max_tokens_override or max_tokens_for_batch(len(ticker_datas))
 
     result = call_claude(
@@ -195,6 +272,9 @@ def _run_one_batch_with_recovery(
     policy_context: dict,
     extra_context: dict,
     cost_tracker: CostTracker,
+    date: str,
+    run_type: str,
+    signal_by_ticker: dict[str, dict] | None = None,
 ) -> tuple[list[dict], list[str]]:
     """Einmal wiederholen, dann aufgeben -- kein Halbieren wie in
     deep_analysis.py: die Batches sind mit hoechstens 4 Assets (asset_class-
@@ -215,7 +295,9 @@ def _run_one_batch_with_recovery(
             return analyze_batch(
                 ticker_datas=batch, trend_context=trend_context,
                 policy_context=policy_context, extra_context=extra_context,
-                cost_tracker=cost_tracker, max_tokens_override=override,
+                cost_tracker=cost_tracker, date=date, run_type=run_type,
+                signal_by_ticker=signal_by_ticker,
+                max_tokens_override=override,
             )
         except BatchTruncatedError as e:
             faktor = TRUNCATION_RETRY_FACTOR
@@ -245,9 +327,17 @@ def analyze_commodities_and_crypto(
     policy_context: dict,
     extra_context: dict,
     cost_tracker: CostTracker,
+    date: str,
+    run_type: str,
+    signal_by_ticker: dict[str, dict] | None = None,
 ) -> list[dict]:
     """Phase 3b: batcht die 7 fixen Assets nach asset_class (2 Batches statt
     7 Einzelcalls) und analysiert jeden mit der Retry-Schale oben.
+
+    signal_by_ticker ist der 1b-Sidecar (tech_direction/tech_strength je
+    Asset, C.43/F16). Der extra-Block jeder Analyse wird nach dem Call mit den
+    Werten aus extra_context ueberschrieben (C.43/F38) -- die Mail zeigt
+    damit Zahlen aus dem Code, nie aus dem Modell.
 
     CostCapExceeded propagiert weiterhin -- der Orchestrator verschickt die
     Teilergebnis-Mail."""
@@ -257,10 +347,15 @@ def analyze_commodities_and_crypto(
         a, f = _run_one_batch_with_recovery(
             batch=batch, trend_context=trend_context,
             policy_context=policy_context, extra_context=extra_context,
-            cost_tracker=cost_tracker,
+            cost_tracker=cost_tracker, date=date, run_type=run_type,
+            signal_by_ticker=signal_by_ticker,
         )
         analyses.extend(a)
         failed.extend(f)
+
+    for a in analyses:
+        a["extra"] = {**(a.get("extra") or {}),
+                      **{k: extra_context.get(k) for k in EXTRA_KEYS}}
 
     if failed:
         log.warning(

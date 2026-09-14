@@ -16,10 +16,14 @@ China / Taiwan headlines, named-company statements by heads of government. Trump
 is one possible source of policy_risk events — not a fixpoint.
 
 SOURCES: prefer primary sources (central banks, government and regulator releases,
-court filings) and tier-1 financial media (Reuters, Bloomberg, FT, WSJ, CNBC). Cite the
-URL you actually used. as_of is the publication date of that source — never today's
-date by default, never a guess. Never invent dates or URLs; skip an event rather than
-fabricate a source.
+court filings) and tier-1 financial media (Reuters, Bloomberg, FT, WSJ, CNBC). Before
+citing a URL, check that the domain is a recognised primary source (government,
+regulator, central bank) or a major financial news outlet. Do not cite blogs, advocacy
+or opinion sites, prayer pages, law-firm trackers or unfamiliar aggregator domains —
+search again for a better source rather than using the first result. Cite the URL you
+actually used. as_of is the publication date of that source — never today's date by
+default, never a guess. Never invent dates or URLs; skip an event rather than fabricate
+a source.
 
 Output ONLY a single JSON object, no prose before or after, with this EXACT shape:
 
