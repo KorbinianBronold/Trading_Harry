@@ -164,7 +164,7 @@ def _section_stocks(top_long: list[dict], top_short: list[dict]) -> str:
     if not top_long and not top_short:
         return '<h2>Aktien Top-10</h2><p><i>Keine Setups gefunden.</i></p>'
     head = (
-        '<tr><th>#</th><th>Ticker</th><th>Score</th><th>P%</th>'
+        '<tr><th>#</th><th>Ticker</th><th>Modell-Score</th><th>P%</th>'
         '<th>Rank-Score</th><th>Analysis-Strength</th>'
         '<th>Kurs</th><th>TP</th><th>SL</th><th>R/R</th>'
         '<th>ATR/Tag</th><th>Range/Tag</th><th>Haltedauer</th>'
@@ -302,7 +302,7 @@ def _section_commodities_crypto(items: list[dict]) -> str:
     return (
         '<h2>Commodities + Crypto</h2>'
         '<table border="1" cellpadding="4" cellspacing="0">'
-        '<tr><th>Ticker</th><th>Dir</th><th>Score</th><th>P%</th>'
+        '<tr><th>Ticker</th><th>Dir</th><th>Modell-Score</th><th>P%</th>'
         '<th>Kurs</th><th>TP</th><th>SL</th><th>F&amp;G</th>'
         '<th>Einschätzung</th></tr>'
         + "".join(rows) + '</table>' + footer

@@ -2381,3 +2381,20 @@ def test_run_pipeline_persists_policy_events_in_news_summaries(mocker, tmp_db_pa
         "WHERE source='policy_monitor' ORDER BY ticker").fetchall()
     conn.close()
     assert rows == [("F", "bearish", "high"), ("GM", "bearish", "high")]
+
+
+def test_run_pipeline_passes_date_and_run_type_to_phase_3(mocker, tmp_db_path):
+    """F33 (C.42): der Datumsanker kommt aus main -- ohne Durchreichung bleibt
+    der Prompt datumslos."""
+    _mock_all_other_phases(mocker)
+    deep = mocker.patch("main.analyze_batches", return_value=([], []))
+    mocker.patch("main.rank_and_persist", return_value={
+        "top_long": [], "top_short": [], "commodities_crypto": [],
+        "divergence": [], "divergence_stats": {
+            "tech_only_abstentions": 0, "conflicts": 0, "overflow": 0}})
+    mocker.patch("main.check_open_positions", return_value=[])
+
+    run_pipeline(run_type="pre_market", date="2026-05-19", db_path=str(tmp_db_path))
+
+    kw = deep.call_args.kwargs
+    assert (kw["date"], kw["run_type"]) == ("2026-05-19", "pre_market")

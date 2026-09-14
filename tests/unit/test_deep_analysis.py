@@ -207,6 +207,7 @@ def test_analyze_batch_returns_one_analysis_per_ticker():
 
     with patch("src.deep_analysis.call_claude", return_value=fake) as cc:
         analyses, missing = analyze_batch(
+            date="2026-05-19", run_type="pre_market",
             ticker_datas=batch,
             cutoff_by_ticker={"AAPL": _cutoff("AAPL"), "MSFT": _cutoff("MSFT")},
             trend_context={}, policy_context={}, cost_tracker=tracker,
@@ -229,6 +230,7 @@ def test_analyze_batch_keeps_partial_results():
 
     with patch("src.deep_analysis.call_claude", return_value=fake):
         analyses, missing = analyze_batch(
+            date="2026-05-19", run_type="pre_market",
             ticker_datas=batch,
             cutoff_by_ticker={"AAPL": _cutoff("AAPL"), "MSFT": _cutoff("MSFT")},
             trend_context={}, policy_context={}, cost_tracker=tracker,
@@ -247,6 +249,7 @@ def test_analyze_batch_raises_on_unparseable_response():
     with patch("src.deep_analysis.call_claude", return_value=fake):
         with pytest.raises(DeepAnalysisError):
             analyze_batch(
+            date="2026-05-19", run_type="pre_market",
                 ticker_datas=[_std("AAPL", "Technology")],
                 cutoff_by_ticker={"AAPL": _cutoff("AAPL")},
                 trend_context={}, policy_context={}, cost_tracker=tracker,
@@ -263,6 +266,7 @@ def test_analyze_batch_raises_when_output_was_truncated():
     with patch("src.deep_analysis.call_claude", return_value=fake):
         with pytest.raises(DeepAnalysisError, match="max_tokens"):
             analyze_batch(
+            date="2026-05-19", run_type="pre_market",
                 ticker_datas=[_std("AAPL", "Technology"), _std("MSFT", "Technology")],
                 cutoff_by_ticker={"AAPL": _cutoff("AAPL"), "MSFT": _cutoff("MSFT")},
                 trend_context={}, policy_context={}, cost_tracker=tracker,
@@ -277,6 +281,7 @@ def test_analyze_batch_payload_does_not_mutate_td():
 
     with patch("src.deep_analysis.call_claude", return_value=fake):
         analyze_batch(
+            date="2026-05-19", run_type="pre_market",
             ticker_datas=[td], cutoff_by_ticker={"AAPL": _cutoff("AAPL")},
             trend_context={}, policy_context={},
             cost_tracker=CostTracker(hard_cap_eur=10.0),
@@ -298,6 +303,7 @@ def test_analyze_batches_retries_once_then_succeeds():
 
     with patch("src.deep_analysis.call_claude", side_effect=responses) as cc:
         analyses, failed = analyze_batches(
+            date="2026-05-19", run_type="pre_market",
             ticker_datas=tds,
             cutoff_by_ticker={t["ticker"]: _cutoff(t["ticker"]) for t in tds},
             trend_context={}, policy_context={},
@@ -322,6 +328,7 @@ def test_analyze_batches_halves_after_two_failures():
 
     with patch("src.deep_analysis.call_claude", side_effect=responses) as cc:
         analyses, failed = analyze_batches(
+            date="2026-05-19", run_type="pre_market",
             ticker_datas=tds,
             cutoff_by_ticker={t["ticker"]: _cutoff(t["ticker"]) for t in tds},
             trend_context={}, policy_context={},
@@ -340,6 +347,7 @@ def test_analyze_batches_gives_up_after_halving():
 
     with patch("src.deep_analysis.call_claude", side_effect=responses) as cc:
         analyses, failed = analyze_batches(
+            date="2026-05-19", run_type="pre_market",
             ticker_datas=tds,
             cutoff_by_ticker={t["ticker"]: _cutoff(t["ticker"]) for t in tds},
             trend_context={}, policy_context={},
@@ -359,6 +367,7 @@ def test_analyze_batches_single_ticker_batch_does_not_halve():
 
     with patch("src.deep_analysis.call_claude", side_effect=responses) as cc:
         analyses, failed = analyze_batches(
+            date="2026-05-19", run_type="pre_market",
             ticker_datas=tds, cutoff_by_ticker={"AAPL": _cutoff("AAPL")},
             trend_context={}, policy_context={},
             cost_tracker=CostTracker(hard_cap_eur=10.0), batch_size=8,
@@ -383,6 +392,7 @@ def test_truncated_batch_is_retried_with_a_larger_ceiling():
 
     with patch("src.deep_analysis.call_claude", side_effect=responses) as cc:
         analyses, failed = analyze_batches(
+            date="2026-05-19", run_type="pre_market",
             ticker_datas=tds,
             cutoff_by_ticker={t["ticker"]: _cutoff(t["ticker"]) for t in tds},
             trend_context={}, policy_context={},
@@ -405,6 +415,7 @@ def test_unparseable_batch_is_retried_with_the_same_ceiling():
 
     with patch("src.deep_analysis.call_claude", side_effect=responses) as cc:
         analyze_batches(
+            date="2026-05-19", run_type="pre_market",
             ticker_datas=tds,
             cutoff_by_ticker={t["ticker"]: _cutoff(t["ticker"]) for t in tds},
             trend_context={}, policy_context={},
@@ -433,6 +444,7 @@ def test_halves_keep_the_larger_ceiling_after_a_truncation():
 
     with patch("src.deep_analysis.call_claude", side_effect=responses) as cc:
         analyses, failed = analyze_batches(
+            date="2026-05-19", run_type="pre_market",
             ticker_datas=tds,
             cutoff_by_ticker={t["ticker"]: _cutoff(t["ticker"]) for t in tds},
             trend_context={}, policy_context={},
@@ -460,6 +472,7 @@ def test_analyze_batches_cost_cap_propagates():
     with patch("src.deep_analysis.call_claude", side_effect=CostCapExceeded("cap")):
         with pytest.raises(CostCapExceeded):
             analyze_batches(
+            date="2026-05-19", run_type="pre_market",
                 ticker_datas=tds, cutoff_by_ticker={"AAPL": _cutoff("AAPL")},
                 trend_context={}, policy_context={},
                 cost_tracker=CostTracker(hard_cap_eur=10.0), batch_size=8,
@@ -602,3 +615,57 @@ def test_run_policy_monitor_user_message_anchors_the_window_to_the_last_close():
     assert "Today is 2026-09-14" in user
     assert "last US cash close" in user
     assert "2-5" not in user
+
+
+# --- C.42: Datumsanker (F33) und Scan-Befund (F34) in der Batch-Nutzlast ------
+
+def test_analyze_batch_user_message_starts_with_the_date_anchor():
+    """F33 (C.42): der Prompt argumentiert mit 'heute' und 'vorboerslich morgen',
+    die Nutzlast trug aber kein Datum -- derselbe Befund wie F22 fuer broad_scan."""
+    fake = _fake_result(BATCH_FIXTURE.read_text())
+    tracker = CostTracker(hard_cap_eur=10.0)
+    batch = [_std("AAPL", "Technology"), _std("MSFT", "Technology")]
+
+    with patch("src.deep_analysis.call_claude", return_value=fake) as cc:
+        analyze_batch(
+            ticker_datas=batch,
+            cutoff_by_ticker={"AAPL": _cutoff("AAPL"), "MSFT": _cutoff("MSFT")},
+            trend_context={}, policy_context={}, cost_tracker=tracker,
+            date="2026-09-14", run_type="pre_market",
+        )
+
+    user = cc.call_args.kwargs["user"]
+    assert user.startswith("Today is 2026-09-14. Run type: pre_market.")
+
+
+def test_batch_entry_carries_scan_note_and_premarket_gap_beside_td():
+    """F34 (C.42): der Prompt verlangt gezielte Suche bei 'a concrete catalyst
+    named in the scan result' -- bis C.42 kam nur die Zahl an. Sidecar-Invariante:
+    td selbst bleibt unveraendert."""
+    from src.deep_analysis import _batch_entry
+    td = _std("AAPL", "Technology")
+    before = dict(td)
+    cutoff = {**_cutoff("AAPL"), "news_note": "Q3 beat, guidance raised",
+              "premarket_change_pct": 2.1}
+
+    entry = _batch_entry(td, cutoff)
+
+    assert entry["snapshot"] is td and td == before
+    assert set(entry["news_scan"]) == {
+        "news_strength", "news_note", "premarket_change_pct"}
+    assert entry["news_scan"]["news_note"] == "Q3 beat, guidance raised"
+    assert entry["news_scan"]["premarket_change_pct"] == 2.1
+
+
+def test_deep_analysis_v2_pins_the_c42_additions():
+    """F33: Datumsanker und Bezugsrahmen; F34: der news_scan-Block traegt Notiz und
+    Gap; F35: Kurs-Seiten sind keine Quelle, ein Beleg ohne Datum/Zahl/Quelle
+    ausserhalb des Snapshots macht die Dimension 'thin'."""
+    text = (Path(__file__).parent.parent.parent
+            / "prompts" / "deep_analysis_v2.txt").read_text()
+    assert "date given in the user message" in text
+    assert "pre_market" in text
+    for key in ('"news_note"', '"premarket_change_pct"'):
+        assert key in text, f"{key} fehlt im Prompt"
+    assert "quote page" in text.lower()
+    assert "outside the snapshot" in text.lower()

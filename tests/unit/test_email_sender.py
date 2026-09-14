@@ -845,3 +845,12 @@ def test_portfolio_rows_show_pnl_and_positions_without_analysis():
     ]
     html = render_daily_html(payload)
     assert "3.2" in html and "PPHE" in html and "KEINE ANALYSE" in html
+
+
+def test_daily_html_labels_the_model_score_as_such():
+    """F36 (C.42): total_score ist eine Gewichtung IM MODELL, kein
+    Sortierschluessel (C.13 hat die Gewichtung aus dem Code entfernt). Die Spalte
+    heisst deshalb Modell-Score -- in beiden Tabellen, nie mehr nackt 'Score'."""
+    html = render_daily_html(_sample_payload())
+    assert "<th>Modell-Score</th>" in html
+    assert "<th>Score</th>" not in html

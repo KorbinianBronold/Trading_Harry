@@ -758,3 +758,18 @@ def test_cutoff_all_evaluated_includes_non_selected():
     assert {e["ticker"] for e in evaluated} == {"IN", "OUT"}
     out_row = next(e for e in evaluated if e["ticker"] == "OUT")
     assert out_row["selected"] is False
+
+
+def test_cutoff_carries_the_scan_note_for_phase_3():
+    """F34 (C.42): Phase 3 soll den Katalysator aus dem Scan sehen, nicht nur
+    die Zahl. cutoff_log schreibt weiterhin nur seine festen Spalten."""
+    ticker_datas = [_td("A")]
+    scans = [{**_scan("A", news_strength=2), "news_note": "FDA decision due Thursday"}]
+    sidecar = {"A": {"tech_strength": 0}}
+
+    selected, _ = cutoff_candidates(
+        ticker_datas=ticker_datas, broad_scan_results=scans, sidecar=sidecar,
+        forced_candidates=set(), max_deep_analysis=50,
+    )
+
+    assert selected[0]["news_note"] == "FDA decision due Thursday"

@@ -4593,6 +4593,92 @@ Normalisierung — für 3D per Datum trennen. **Beobachtungsposten:** Verteilung
 `policy_risk_level` (greift die Skala, oder bleibt „high" der Normalwert?), Quellenstufe
 der `source_url`, Länge von `detail`.
 
+### C.42 — Phase-3-Review (`deep_analysis`): Datumsanker (F33), Scan-Befund in der Nutzlast (F34), Quellen- und Beleg-Regel (F35), Modell-Score beschriftet (F36) (2026-09-14)
+
+Neunter Durchgang des Pipeline-Reviews. Grundlage: Korbinians Walkthrough-Lauf vom
+13.09. (Notebook, Zellen 51–58) nach dem C.41-Commit.
+
+**Vorweg — C.41 im Notebook verifiziert (Call #4, `pre_market`):** high, 4 Events, FOMC
+zuerst, `effective_date` gesetzt, Gewinner/Verlierer getrennt (Raffinerie-Event: VLO/PSX/MPC
+gegen DAL/UAL/AAL), Sektoren nur aus der GICS-Liste, Summary 417 Zeichen, 0,28 €, 66,8 s.
+Das Briefing-Bullet zeigt jetzt das FOMC-Event. **Ausgabe 6 122 von 9 216 Tokens (66 %)**
+gegen ~3 700 in den Skript-Calls ohne `detail` → `MAX_TOKENS_POLICY` von 9 216 auf
+**12 288** (4× der alten 3 072er-Decke, Marge ~50 %; die Decke kostet nur, was sie nutzt).
+UAL/AAL/STZ/TAP liegen ausserhalb des 150er-Universums — als Kontext-Ticker vertretbar.
+
+**Phase 3, Code-Sicht solide:** Batching je Sub-Sektor (First-Fit-Decreasing), ein
+gestreamter Call je Batch, Kosten vor jeder Prüfung gebucht, Kappung als eigener Fehlertyp
+mit 2×-Decke, dann Halbierung, fehlende Ticker gezählt statt verschluckt. Walkthrough-Call
+#5: 1 Ticker (AAPL), 2 Websuchen, 50,6 s, 0,11 €, **4 543 von 6 200 Tokens (73 %)** —
+n=1 ist die knappste Konstellation der Formel, `end_turn`. Ergebnis `direction='none'` mit
+sauberer Begründung (Kurs am oberen Bollinger-Band, Scan-Stärke 0, FOMC-Woche).
+Kleinigkeiten: vom Modell erfundene oder doppelte Ticker werden still ignoriert (nur
+notiert); `db.load_predictions_for_date()` (sortierte nach `total_score`) hatte keinen
+Aufrufer mehr → entfernt.
+
+**Befunde und Umsetzung (Entscheidung Korbinian: F33–F36, Decke 12 288):**
+- **F33 — Kein Datumsanker in Phase 3 (behoben).** Die Batch-Nutzlast trug weder Datum
+  noch Run-Type; der Prompt argumentiert durchgehend mit „heute", „vorbörslich morgen",
+  „earnings imminent". Derselbe Befund wie F22 (C.39) für `broad_scan`. Fix: `date`/
+  `run_type` als **Pflichtparameter** durch `analyze_batches()` →
+  `_run_one_batch_with_recovery()` → `analyze_batch()` → `_build_batch_user_message()`;
+  die User-Message beginnt mit „Today is {date}. Run type: {run_type}.". Prompt: neuer
+  TIME-FRAME-Block (`pre_market` = ~09:00 ET **vor** der Eröffnung, Snapshot-Kurs =
+  Vorbörse, `price_change_1d` = Vortag, „today's session has not started yet"). `main.py`
+  reicht durch (Test), 13 Test-Aufrufstellen ergänzt, Notebook-Zelle 54 nachgezogen.
+- **F34 — Der Scan-Befund kam nicht an (behoben).** Der Prompt verlangt gezielte Suche bei
+  „a concrete catalyst named in the scan result", der Code übergab nur `news_strength` als
+  Zahl: `news_note` (das Was) blieb in `broad_results`, `premarket_change_pct` (der
+  stärkste Intraday-Hinweis, Sortierschlüssel des Cutoffs) im Cutoff-Dict. Fix:
+  `cutoff_candidates()` trägt `news_note` aus dem Scan mit (`cutoff_log` schreibt weiter
+  nur seine festen Spalten — unverändert); `_batch_entry()` liefert `news_scan =
+  {news_strength, news_note, premarket_change_pct}`. **Sidecar-Invariante gewahrt:** `td`
+  bleibt dasselbe Objekt, ein Test pinnt Identität und Schlüsselmenge. Prompt beschreibt
+  den Block („a large gap with an empty note is a reason to search; a note names what to
+  verify").
+- **F35 — Belege ohne Recherche (Prompt).** Bei AAPL stammten sieben von acht Dimensionen
+  aus Snapshot oder Kontext (P/E 40,7, D/E 0,0135, RSI 58,7, ATR), alle „ok", und die
+  Quellenpflicht wurde mit Kurs-Seiten erfüllt (cnbc/quotes, morningstar/quote,
+  yahoo/quote). Keine Recherche für ruhige Ticker ist bewusstes Design (C.11), aber dann
+  erzeugt „≥ 2 Domains" Schein-Compliance. Neu im Prompt: `sources_used` sind Seiten, die
+  eine Beleg-Zeile stützen (Artikel, Filing, Transcript, Datenveröffentlichung), Kurs- und
+  Übersichtsseiten zählen nicht, ruhige Ticker dürfen die Breitsuchen des Batches
+  wiederverwenden. Beleg-Regel: für `company_quality`, `valuation`, `catalyst`,
+  `sector_trend`, `market_environment`, `policy_risk` muss mindestens eine der zwei Zeilen
+  von **ausserhalb des Snapshots** kommen (datierte Nachricht, Zahl aus einer Quelle,
+  Termin, gelieferter Trend-/Policy-Kontext), sonst `thin`. **`momentum` und `risk`
+  ausgenommen** — ihre Belege sind die Indikatoren selbst; ohne Ausnahme wäre `momentum`
+  systematisch `thin` und fiele aus `analysis_strength` heraus. Der Guardrail
+  (`min_sources = 2`) bleibt unverändert. **Folge für 3D:** `thin`-Anteil steigt und
+  `analysis_strength` sinkt voraussichtlich für ruhige Ticker — per Datum trennen.
+- **F36 — `total_score` ist eine Gewichtung im Modell (Entscheidung: beschriften).** C.13
+  hat die Gewichtung aus dem Code entfernt, das Ranking läuft über `rank_score`; das
+  Modell liefert weiter einen Gesamtscore, der in der Mail als „Score" stand. Jetzt
+  „Modell-Score" in beiden Tabellen (Aktien-Top-10, Rohstoffe/Krypto), `predictions`
+  behält die Spalte für 3D. Toter Leser `load_predictions_for_date()` entfernt.
+- **Nur notiert:** Score-Polarität bei `direction='none'` ist undefiniert („besser für den
+  Trade" ohne Trade) — die Analysen werden ohnehin nicht persistiert, nur ihre Summary
+  landet in `news_summaries`. `hold_days_recommended` 3 bei Intraday-Ziel ist laut §4 ein
+  reines Lernfeld. `tech_agreement` (3/3) wird nicht übergeben, nur Richtung und Stärke.
+
+**Nicht live verifiziert:** der geänderte Phase-3-Prompt lief noch nicht gegen die API.
+Verifikation über Notebook-Zellen 54–58 (Datei vorher neu öffnen); zu prüfen: „Today is"
+und `news_scan`-Block in der User-Message (`show_call(5)`), `thin`-Anteil, `sources_used`
+ohne Kurs-Seiten.
+
+**Regel-15-Sweep:** `commodities_crypto_v3` trägt dieselbe Quellenregel („sources_used >=
+2 distinct domains") und die 3b-User-Message (`commodities_crypto._build_batch_user_message`)
+hat ebenfalls **keinen Datumsanker** — F33 und F35 gelten dort mit, Umsetzung im
+3b-Schritt. `broad_scan_v1` hat den Anker seit C.39; `portfolio_check_v2`/
+`trade_proposals_v1` nennen keine Quellenregel.
+
+**Tests:** 1034 grün, 15 übersprungen, Coverage 92,99 %. Neu (rot zuerst): Datumsanker in
+der Batch-User-Message, `_batch_entry`-Sidecar (Identität von `td`, Schlüsselmenge von
+`news_scan`), Prompt-Pins C.42 (TIME FRAME, `news_note`/`premarket_change_pct`, „quote
+page", „outside the snapshot"), Cutoff trägt `news_note`, Mail-Label „Modell-Score" (kein
+nacktes „Score" mehr), `main.py` reicht `date`/`run_type` durch. `MAX_TOKENS_POLICY` ist
+ein Kalibrierwert ohne eigenen Test (wie C.18).
+
 ## Sprint 3D — Learning Modul
 
 ⚠️ **Noch nicht ausgearbeitet — braucht eine eigene Planungssession, bevor die Implementierung

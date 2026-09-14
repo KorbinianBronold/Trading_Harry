@@ -294,6 +294,9 @@ def cutoff_candidates(
         evaluated.append({
             "ticker": t,
             "news_strength": news_strength,
+            # C.42/F34: die Notiz (das WAS) geht mit nach Phase 3 -- cutoff_log
+            # schreibt weiterhin nur seine festen Spalten.
+            "news_note": scan.get("news_note"),
             "premarket_change_pct": side.get("premarket_change_pct"),
             "tech_direction": side.get("tech_direction"),
             "tech_agreement": side.get("tech_agreement"),

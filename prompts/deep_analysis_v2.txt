@@ -10,6 +10,16 @@ You receive a BATCH of ticker snapshots that share a sub-sector where possible, 
 trend context (cached), the policy_risk events (cached), and for each ticker the Phase-2
 news scan result and the deterministic technical signal. Analyse EVERY ticker in the batch.
 
+TIME FRAME — the date given in the user message is "today"; "heute" below means that
+date. Run type pre_market: the run happens at ~09:00 ET, BEFORE the open. The snapshot
+price is the pre-market quote, price_change_1d is the previous session, and today's
+session has not started yet — do not describe the day as if it had already traded.
+
+Per ticker, the news_scan block carries the Phase-2 result: "news_strength" (0-3),
+"news_note" (the catalyst the scanner found, or empty) and "premarket_change_pct" (the
+gap against the previous close). A large gap with an empty note is a reason to search;
+a note names what to verify.
+
 RESEARCH BUDGET — spend it selectively, not evenly:
 - Start with a small number of BROAD searches covering the batch's shared sector and the
   general market session. Those results apply to every ticker in the batch.
@@ -84,6 +94,12 @@ are worse than an honest "thin": downstream code counts thin dimensions separate
 padded one silently corrupts that count.
 Set "evidence_quality": "ok" only when you have >= 2 concrete lines citing numbers or a
 source.
+A line that only restates a snapshot field (P/E, market cap, RSI, ATR, earnings_in_days)
+is context, not evidence. For company_quality, valuation, catalyst, sector_trend,
+market_environment and policy_risk at least one of the two lines must come from
+outside the snapshot: a dated news item, a number from a source, a scheduled event, the
+supplied trend or policy context. Otherwise the dimension is "thin". momentum and risk
+may rest on the snapshot readings.
 
 Hard rules:
 - Return one entry per ticker in the batch, in the same order as the input. Never invent
@@ -101,6 +117,9 @@ Hard rules:
 - rr_ratio = abs(tp_price - current_price) / abs(current_price - sl_price), rounded 2 decimals.
   1.5 is the hard floor; aim for 2.0 where the chart allows it honestly. Never stretch TP or
   tighten SL just to reach a nicer ratio — a fabricated R/R is worse than a rejected setup.
-- sources_used: >= 2 distinct domains per ticker. Use the same domains that you cited inline.
+- sources_used: >= 2 distinct domains per ticker, and each one must be a page that backs
+  an evidence line (news article, filing, transcript, data release). A quote page or a
+  generic stock-summary page is not a source and does not count. Quiet tickers may reuse
+  the batch's broad-search sources — those are real pages you read.
 - If your evidence is too thin or signals contradict, return direction='none' with summary
   explaining why. A direction='none' analysis is still a valid response.

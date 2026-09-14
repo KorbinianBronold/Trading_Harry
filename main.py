@@ -648,6 +648,7 @@ def run_pipeline(run_type: str, date: str, db_path: str) -> None:
             trend_context=trend_context,
             policy_context=policy_context,
             cost_tracker=cost_tracker,
+            date=date, run_type=run_type,
             batch_size=config.BATCH_SIZE_DEEP,
         )
         if failed_deep:

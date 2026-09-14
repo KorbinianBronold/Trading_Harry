@@ -68,11 +68,15 @@ MAX_TOKENS_DEEP_MIN = 4096
 # lief im ersten Lauf ebenfalls sauber und kappte im dritten. 9216 = 3x, dieselbe
 # Anhebung wie bei trend_analyzer; die Decke kostet nur, was sie nutzt.
 #
+# C.42 (2026-09-14): mit dem C.41-Schema (detail-Feld, bis zu 6 Events) stieg die
+# Ausgabe im Walkthrough auf 6 122 Tokens (66 % von 9216; die Skript-Calls ohne
+# detail lagen bei ~3 700). 12288 = 4x der alten 3072er-Decke, Marge ~50 %.
+#
 # ⚠️ Der Aufrufer faengt PolicyMonitorError NICHT ab (main.py, Phase
 # "policy_monitor"): eine Kappung riss vor C.18 den ganzen pre_market-Lauf mit,
 # genau wie der Phase-0-Fall. Deshalb laeuft der Call ueber
 # call_claude_retry_on_truncation() und nicht ueber das nackte call_claude().
-MAX_TOKENS_POLICY = 9216
+MAX_TOKENS_POLICY = 12288
 
 # Eine identische Wiederholung nach einer Kappung liefert deterministisch
 # dieselbe Kappung -- im Testlauf fuenfmal beobachtet, je ~2-3 Minuten fuer ein
@@ -213,7 +217,13 @@ def _batch_entry(td: dict, cutoff: dict) -> dict:
     stillschweigend vier Prompts."""
     return {
         "snapshot": td,
-        "news_scan": {"news_strength": cutoff.get("news_strength")},
+        # C.42/F34: der Prompt verlangt gezielte Suche bei "a concrete catalyst
+        # named in the scan result" -- bis C.42 kam nur die Zahl an.
+        "news_scan": {
+            "news_strength": cutoff.get("news_strength"),
+            "news_note": cutoff.get("news_note"),
+            "premarket_change_pct": cutoff.get("premarket_change_pct"),
+        },
         "technical_signal": {
             "direction": cutoff.get("tech_direction"),
             "strength": cutoff.get("tech_strength"),
@@ -226,10 +236,15 @@ def _build_batch_user_message(
     cutoff_by_ticker: dict[str, dict],
     trend_context: dict,
     policy_context: dict,
+    date: str,
+    run_type: str,
 ) -> str:
-    """Komponiert die User-Message fuer einen ganzen Batch: gemeinsamer Trend-
-    und Policy-Kontext einmal, dann je Ticker ein Eintrag."""
+    """Komponiert die User-Message fuer einen ganzen Batch: Datumsanker
+    (C.42/F33 -- der Prompt argumentiert mit "heute", ohne Anker riet das Modell
+    das Datum aus Suchtreffern), gemeinsamer Trend- und Policy-Kontext einmal,
+    dann je Ticker ein Eintrag."""
     parts = [
+        f"Today is {date}. Run type: {run_type}.",
         "TREND CONTEXT:", json.dumps(trend_context, ensure_ascii=False),
         "\nPOLICY CONTEXT:", json.dumps(policy_context, ensure_ascii=False),
         "\nBATCH (one ticker per line, JSON):",
@@ -250,6 +265,8 @@ def analyze_batch(
     trend_context: dict,
     policy_context: dict,
     cost_tracker: CostTracker,
+    date: str,
+    run_type: str,
     max_tokens_override: int | None = None,
 ) -> tuple[list[dict], list[str]]:
     """Analysiert einen ganzen Batch in EINEM gestreamten Sonnet-Call.
@@ -271,7 +288,8 @@ def analyze_batch(
         return [], []
 
     user_msg = _build_batch_user_message(
-        ticker_datas, cutoff_by_ticker, trend_context, policy_context)
+        ticker_datas, cutoff_by_ticker, trend_context, policy_context,
+        date=date, run_type=run_type)
     max_tokens = max_tokens_override or max_tokens_for_batch(len(ticker_datas))
 
     result = call_claude(
@@ -322,6 +340,8 @@ def _run_one_batch_with_recovery(
     trend_context: dict,
     policy_context: dict,
     cost_tracker: CostTracker,
+    date: str,
+    run_type: str,
 ) -> tuple[list[dict], list[str]]:
     """Spec 10: einmal wiederholen -> einmal halbieren (jede Haelfte genau
     einmal) -> aufgeben. Bewusst begrenzte Tiefe: ein kaputter Prompt soll
@@ -348,7 +368,8 @@ def _run_one_batch_with_recovery(
         return analyze_batch(
             ticker_datas=tds, cutoff_by_ticker=cutoff_by_ticker,
             trend_context=trend_context, policy_context=policy_context,
-            cost_tracker=cost_tracker, max_tokens_override=override,
+            cost_tracker=cost_tracker, date=date, run_type=run_type,
+            max_tokens_override=override,
         )
 
     for versuch in (1, 2):
@@ -400,6 +421,8 @@ def analyze_batches(
     trend_context: dict,
     policy_context: dict,
     cost_tracker: CostTracker,
+    date: str,
+    run_type: str,
     batch_size: int = config.BATCH_SIZE_DEEP,
 ) -> tuple[list[dict], list[str]]:
     """Phase 3: gruppiert die Kandidaten in Sub-Sektor-Batches und analysiert
@@ -414,7 +437,7 @@ def analyze_batches(
         a, f = _run_one_batch_with_recovery(
             batch=batch, cutoff_by_ticker=cutoff_by_ticker,
             trend_context=trend_context, policy_context=policy_context,
-            cost_tracker=cost_tracker,
+            cost_tracker=cost_tracker, date=date, run_type=run_type,
         )
         analyses.extend(a)
         failed.extend(f)

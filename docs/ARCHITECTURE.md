@@ -700,12 +700,18 @@ def max_tokens_for_batch(n) -> int:
 
 def analyze_batch(
     ticker_datas, cutoff_by_ticker, trend_context, policy_context, cost_tracker,
-    max_tokens_override=None,
+    date, run_type, max_tokens_override=None,
 ) -> tuple[list[dict], list[str]]:
     """
     EIN gestreamter Sonnet+web_search-Call fuer den ganzen Batch.
+    User-Message beginnt mit "Today is {date}. Run type: {run_type}."
+    (C.42/F33 -- ohne Anker riet das Modell das Datum aus Suchtreffern).
     Nutzlast je Ticker (Sidecar-Invariante!): {snapshot: td,
-    news_scan: {...}, technical_signal: {...}} — td selbst unveraendert.
+    news_scan: {news_strength, news_note, premarket_change_pct},
+    technical_signal: {direction, strength}} — td selbst unveraendert.
+    news_note/premarket_change_pct kommen seit C.42 aus dem Cutoff-Dict
+    (F34: der Prompt verlangt gezielte Suche beim im Scan genannten
+    Katalysator, vorher kam nur die Zahl an).
 
     Returns: (analyses, missing_tickers) — Teilergebnisse werden
     uebernommen, fehlende Ticker gemeldet statt still verschluckt.
@@ -714,7 +720,7 @@ def analyze_batch(
     Ergebnis wird NIE teilverwertet (Spec 4.8).
     """
 
-def analyze_batches(...) -> tuple[list[dict], list[str]]:
+def analyze_batches(..., date, run_type, batch_size) -> tuple[list[dict], list[str]]:
     """
     Umschliesst analyze_batch() mit dem Fehlerpfad aus Spec 10:
     1× wiederholen → 1× halbieren (jede Haelfte genau einmal) → aufgeben.

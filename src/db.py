@@ -1530,17 +1530,6 @@ def update_outcome_close(
         )
 
 
-def load_predictions_for_date(
-    conn: sqlite3.Connection, date: str, run_type: str,
-) -> list[sqlite3.Row]:
-    """Returns all predictions for a given date/run_type, best score first."""
-    return conn.execute(
-        """SELECT * FROM predictions
-           WHERE date=? AND run_type=?
-           ORDER BY total_score DESC""",
-        (date, run_type),
-    ).fetchall()
-
 
 def load_predictions_for_revalidation(
     conn: sqlite3.Connection, date: str,
