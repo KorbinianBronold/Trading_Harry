@@ -441,6 +441,10 @@ class CapitalComProvider(DataProvider):
         (ticker = Epic, direction, entry/current price, TP/SL, P&L, deal_id,
         size, opened_at).
 
+        current_price ist der Bid der Marktzeile -- fuer einen Long der Exit-Kurs,
+        fuer einen Short liegt der Exit am Ask (um den Spread daneben, C.46 / F54).
+        profit_loss kommt vom Broker und ist in beiden Faellen massgeblich.
+
         C.37: Fehler werden NICHT mehr verschluckt. Bis dahin hiess '[]' sowohl
         'keine Position' als auch 'Abruf gescheitert' -- Phase 4a haette im
         zweiten Fall stumm keine Empfehlungen gegeben. Der Aufrufer

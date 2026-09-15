@@ -915,3 +915,33 @@ def test_divergence_counters_show_the_top10_overflow():
     }
     html = render_daily_html(payload)
     assert "Top-10-Ueberlauf: 2" in html
+
+
+# ---------- C.46 / F51+F53: einzelnes Level, NICHT GEPRUEFT ----------
+
+def test_anpassen_renders_only_the_levels_it_got():
+    """F51: ANPASSEN darf nur den Stop nachziehen -- 'neues TP None' waere
+    falsch."""
+    payload = _sample_payload()
+    payload["portfolio_recs"] = [
+        {"ticker": "AAPL", "epic": "AAPL", "action": "ANPASSEN", "reason": "trail",
+         "new_sl_price": 179.0, "new_tp_price": None,
+         "entry_price": 178.0, "current_price": 181.2, "direction": "long", "profit_loss": 3.2},
+    ]
+    html = render_daily_html(payload)
+    assert "neuer SL 179.0" in html
+    assert "neues TP" not in html and "None" not in html.split("Portfolio-Empfehlungen")[1].split("</table>")[0]
+
+
+def test_pending_portfolio_rows_render_as_nicht_geprueft():
+    """F53: ein Abbruch vor oder in 4a darf nicht wie 'keine Positionen' lesen."""
+    payload = _sample_payload()
+    payload["portfolio_recs"] = [
+        {"ticker": "GOLD", "epic": "GOLD", "action": "NICHT GEPRUEFT",
+         "reason": "Portfolio-Check noch nicht gelaufen", "new_sl_price": None,
+         "new_tp_price": None, "entry_price": 4344.75, "current_price": 4290.31,
+         "direction": "long", "profit_loss": -245.43},
+    ]
+    html = render_daily_html(payload)
+    assert "NICHT GEPRUEFT" in html and "GOLD" in html
+    assert "Keine offenen Positionen" not in html

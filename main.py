@@ -26,7 +26,7 @@ from src.commodities_crypto import (
 )
 from src.market_context import (fetch_market_context, vix_only_context,
                                 MarketContextError)
-from src.portfolio_check import check_open_positions
+from src.portfolio_check import check_open_positions, pending_rows
 from src.ranking import rank_and_persist
 from src.evaluator import evaluate_open_predictions
 from src.universe import full_universe, stock_universe, thin_history_tickers, is_commodity_or_crypto, has_weekend_sessions, is_partial_weekend_bar
@@ -575,6 +575,10 @@ def run_pipeline(run_type: str, date: str, db_path: str) -> None:
         positions = _open_broker_positions(price_provider)
         forced = _forced_tickers(positions)
         payload["positions_unavailable"] = positions is None
+        # C.46 / F53: bis Phase 4a gelaufen ist, stehen die Positionen als
+        # NICHT GEPRUEFT im Payload -- ein Abbruch in Phase 3/4 darf in der
+        # Mail nicht wie 'keine Positionen' lesen. 4a ersetzt die Zeilen in place.
+        payload["portfolio_recs"] = pending_rows(positions)
 
         current_phase = "sector_momentum"
         # Phase 1d — beide Momentum-Signale je Sub-Sektor (B.3.1 / D9). Muss NACH
@@ -743,15 +747,20 @@ def run_pipeline(run_type: str, date: str, db_path: str) -> None:
         # Phase 4a — Portfolio-Check auf den FERTIGEN Phase-3-Analysen (B.5).
         # Die Mail-Reihenfolge bleibt davon unberuehrt: die Portfolio-Sektion ist
         # weiterhin die erste Sektion der Tagesmail (dokumentierte Invariante).
+        # C.46 / F48: der Prompt bekommt einen deterministischen Payload aus
+        # td (Technik), Sidecar (Technik-Signal) und Phase-3-Analyse -- nicht
+        # mehr das rohe Analyse-Dict mit Pipeline-Markern (C.6-Klasse).
         analyses_by_ticker = {a["ticker"]: a for a in (deep_stocks + deep_cc)}
-        portfolio_recs = check_open_positions(
+        payload["portfolio_recs"] = check_open_positions(
             conn=conn, today=date, run_type=run_type,
             positions=positions,
             analyses_by_ticker=analyses_by_ticker,
+            tds_by_ticker={td["ticker"]: td for td in (*sp500_tds, *cc_tds)},
+            signal_by_ticker={**sp500_sidecar, **cc_sidecar},
             trend_context=trend_context, policy_context=policy_context,
             cost_tracker=cost_tracker,
+            out=payload["portfolio_recs"],
         )
-        payload["portfolio_recs"] = portfolio_recs
 
     except CostCapExceeded as e:
         log.warning(f"Run aborted in phase '{current_phase}': {e}")
@@ -940,16 +949,19 @@ def run_trade_proposals(date: str, db_path: str) -> None:
 
         current_phase = "data_collection"
         _tickers = stock_universe()
-        sp_tds, _, _ = collect(
+        # C.46 / F48: der Sidecar (Technik-Signal) geht um 16:10 in den
+        # Portfolio-Check -- bis dahin wurde er hier verworfen.
+        sp_tds, _, sp_sidecar = collect(
             tickers=_tickers, price_provider=price_provider,
             earnings_provider=earnings_provider,
             conn=conn, date=date, run_type="trade_proposals")
         cc_tickers = [d["ticker"] for d in build_commodity_crypto_inputs()]
-        cc_tds, _, _ = collect(
+        cc_tds, _, cc_sidecar = collect(
             tickers=cc_tickers, price_provider=price_provider,
             earnings_provider=earnings_provider,
             conn=conn, date=date, run_type="trade_proposals")
         snapshots = {td["ticker"]: td for td in (sp_tds + cc_tds)}
+        signal_by_ticker = {**sp_sidecar, **cc_sidecar}
 
         opens = _opening_prices(
             price_provider, [td["ticker"] for td in sp_tds], date)
@@ -966,6 +978,7 @@ def run_trade_proposals(date: str, db_path: str) -> None:
         positions = _open_broker_positions(price_provider)   # C.37: Quelle fuer 4a
         _forced_tickers(positions)                            # nur fuer den Log
         payload["positions_unavailable"] = positions is None
+        payload["portfolio_recs"] = pending_rows(positions)   # C.46 / F53
 
         current_phase = "sector_momentum"
         sector_mom: dict[int, dict] = {}
@@ -1042,12 +1055,17 @@ def run_trade_proposals(date: str, db_path: str) -> None:
             },
             "macro_summary": morning_ctx.get("macro_summary"),
         }
+        # C.46 / F48: keine Phase 3 um 16:10 -- analyses_by_ticker bleibt leer,
+        # der Check laeuft auf Technik (Snapshot + Sidecar) und Policy.
         payload["portfolio_recs"] = check_open_positions(
             conn=conn, today=date, run_type="trade_proposals",
             positions=positions,
-            analyses_by_ticker=snapshots,
+            analyses_by_ticker={},
+            tds_by_ticker=snapshots,
+            signal_by_ticker=signal_by_ticker,
             trend_context=trend_ctx,
             policy_context=policy_context, cost_tracker=cost_tracker,
+            out=payload["portfolio_recs"],
         )
 
     except CostCapExceeded as e:

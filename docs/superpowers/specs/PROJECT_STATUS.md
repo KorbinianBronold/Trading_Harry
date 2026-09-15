@@ -5003,6 +5003,122 @@ mindestens einer Richtung offen (Zellen 66/68/74).
   Review-Fahrplan nannte Sonnet.
 - Kosten 1,89 € für 3 Ticker inkl. zwei Wiederholungen, 30 Websuchen.
 
+### C.46 — Phase-4a-Review (Portfolio-Check): Datumsanker (F47), deterministischer Snapshot (F48/F49), Horizont statt Intraday (F50), ANPASSEN mit einem Level plus Seitenprüfung (F51), Kappungs-Helfer und Sonnet 5 (F52), NICHT GEPRUEFT bei Abbruch (F53), Kleineres (F54) (2026-09-15)
+
+Zwölfter Durchgang des Pipeline-Reviews: `src/portfolio_check.py`,
+`prompts/portfolio_check_v2.txt`, Verdrahtung in beiden Läufen. Grundlage: der
+Walkthrough vom 15.09. mit einer echten GOLD-Long-Position (−245 €, eröffnet 11.09.,
+kein Broker-TP), Haiku empfahl SCHLIESSEN. Rohstoffe/Krypto bleiben aussen vor, auch
+wenn die Beispielposition zufällig Gold ist.
+
+**Code-Sicht: Struktur richtig, Nähte offen.** Ein Broker-Abruf je Lauf, `None` gegen
+`[]` getrennt, Position ohne Analyse als Zeile ohne Call, `predictions` wird nie
+gelesen, Broker-Felder überschreiben das Modell-Echo, eine `position_checks`-Zeile je
+Deal und Lauf. Die Nähte lagen beim Prompt-Input (zwei verschiedene Objekte unter
+demselben Prompt) und beim Fehlerpfad (Abbruch liest wie „keine Positionen").
+
+**Befunde und Umsetzung (Entscheidung Korbinian: alles; Sonnet auf meine Empfehlung;
+Belegzeilen und Score-Werte mit; F51 nach Empfehlung; `reason` auf Englisch):**
+- **F47 — Kein Datumsanker, kein Run-Type (behoben).** Wie F22/F33: die User-Message
+  trug weder Datum noch Lauf; „execute at market open" stimmte nur um 15:00, das Alter
+  aus `opened_at` war nicht berechenbar. `date`/`run_type` als Pflichtparameter bis in
+  `_build_user_message` („Today is …. Run type: ….") plus TIME-FRAME-Block im Prompt
+  (pre_market: vor der Eröffnung, Ausführung zur Eröffnung; trade_proposals: Sitzung
+  läuft, Ausführung sofort).
+- **F48 — Zwei Läufe, zwei Snapshots (behoben).** Um 15:00 ging das Phase-3-Analyse-Dict
+  in den Prompt (Richtung, TP/SL, Belegtext, Quellen, `is_premarket` — C.6-Klasse), um
+  16:10 das rohe `td` mit 27 Schlüsseln; der Prompt behauptete „the snapshot carries the
+  current technicals", um 15:00 stimmte das nicht (Haiku kannte RSI/MACD nur aus
+  Belegzeilen). Das deterministische Technik-Signal fehlte in beiden Läufen, und kein
+  Prompt nannte seine Skala — die cc-Analyse schrieb „strength only 1/10", Haiku
+  übernahm es. Neu `build_snapshot(td, tech, analysis)`: `technicals` (14 td-Schlüssel:
+  Kurs, Änderungen 1d/5d, RSI mit Trend, MACD-Label, SMA-Abstände, BB, ATR, Range,
+  Volumen, Earnings-Termin), `technical_signal` {Richtung, Stärke 0–4}, `analysis`
+  (Richtung, Confidence, Wahrscheinlichkeit, Summary, Konsistenz-Check, Scores mit
+  Belegen) oder `null` um 16:10 — in **beiden** Läufen dieselbe Form, neue Dicts, kein
+  fremder Schlüssel (Test pinnt `is_premarket`/`sources_used` raus). Ein Call findet
+  statt, sobald `td` **oder** Analyse vorliegt; um 16:10 läuft der Check damit auf Technik
+  plus Policy statt auf dem rohen `td`. `main.py` reicht `tds_by_ticker` und
+  `signal_by_ticker` in beiden Läufen durch; um 16:10 wurde der Sidecar bis dahin
+  verworfen (`sp_tds, _, _ = collect(...)`). Skala-Zeile auch in `deep_analysis_v2`
+  („0-4, not a percentage, never x/10"); `commodities_crypto_v3` in der cc-Sitzung.
+- **F49 — TP/SL einer Enthaltung galten als Meinung (behoben).** Die GOLD-Analyse hatte
+  `direction: "none"` und trotzdem TP 4230 unter dem Kurs (Schema-Pflichtzahl); Haiku:
+  „Current snapshot's own TP is 4230.24, far below entry, signalling downside bias" als
+  Teil der SCHLIESSEN-Begründung. `build_snapshot` lässt `tp_price`/`sl_price`/`rr_ratio`
+  bei `none` weg; Prompt: „direction none … is NOT a signal against your position".
+- **F50 — Intraday-Absatz passte nicht zu einer bestehenden Position (behoben).** „TP und
+  SL muessen innerhalb eines Handelstages erreichbar sein" war aus Phase 3 kopiert; für
+  eine Tage alte Position mit fernem Stop ist das per Definition „falsch" und drückt
+  Richtung SCHLIESSEN. Ersetzt durch den HORIZON-Block (Position kann Tage alt sein, Stop
+  ausserhalb der Tagesspanne ist kein Schliessgrund, Frage ist, ob die heutige Sitzung
+  das Halten stützt; Risiko = Stop-Distanz gegen `intraday_range_pct`, P&L gegen Entry).
+  `test_prompts_contain_intraday_focus` nimmt 4a aus und pinnt stattdessen HORIZON.
+- **F51 — ANPASSEN verlangte beide Levels, niemand prüfte sie (behoben).** Eine Position
+  ohne Broker-TP (GOLD) konnte nicht nachgezogen werden, ohne ein TP zu erfinden; ein
+  neuer SL auf der falschen Seite wäre bei Ausführung ein sofortiger Stop-out gewesen.
+  Prompt: mindestens ein Level, das andere `null`, Seitenregel genannt. Code
+  `_level_error()`: long SL < Kurs < TP, short gespiegelt, „gar kein Level" ebenfalls
+  ungültig; ungültig → **HALTEN** mit `[Levels ungueltig: … -- herabgestuft auf HALTEN]`
+  vor `reason`, Levels `null`, WARNING — die Zeile wird so persistiert (3D sieht es).
+  Mail rendert nur gelieferte Levels („neuer SL x" ohne „neues TP None").
+- **F52 — Keine Kappungs-Erkennung; Modell (behoben, Entscheidung Sonnet).** Nackter
+  `call_claude` ohne `stop_reason`; eine Kappung kam als JSON-Fehler an, die Position
+  bekam still keine Empfehlung. Jetzt `call_claude_retry_on_truncation` (Wiederholung mit
+  doppelter Decke, beide Versuche gebucht; Test). **Modell: Sonnet 5 statt Haiku 4.5** —
+  4a ist die einzige Phase, deren Ausgabe eine Handlung an echtem Kapital ist; Aufpreis
+  etwa 0,03 € je Position, produktiv 0–3 Positionen. Decke 2048 → **6144** (wie
+  `revalidation`; adaptives Denken teilt die Decke, C.18). `_fake_result` in den Tests
+  liest das Modell aus `config`. **⚠️ Messlauf nach dem Wechsel steht aus** (C.18): der
+  nächste Notebook-Lauf mit einer Position liefert Tokens, Kosten und `stop_reason`.
+  CLAUDE.md-Modelltabelle und Memory nachgezogen.
+- **F53 — Kostendeckel-Abbruch las wie „Keine offenen Positionen" (behoben).**
+  `check_open_positions` sammelte `out` lokal; ein Abbruch in Phase 3/4 oder mitten in
+  der 4a-Schleife liess `payload["portfolio_recs"]` leer, die erste Mail-Sektion
+  behauptete „keine Positionen". Neu `pending_rows(positions)` → Zeilen `NICHT GEPRUEFT`
+  direkt nach Phase 1c im Payload (beide Läufe); `check_open_positions(out=…)` füllt die
+  Liste des Aufrufers in place (Spec-7.1-Muster wie `_revalidate_all`) und ersetzt Zeile
+  für Zeile. Ein gescheiterter Einzel-Call bleibt jetzt ebenfalls als `NICHT GEPRUEFT`
+  mit Fehlergrund sichtbar statt aus der Mail zu verschwinden (Test angepasst). Tests:
+  Abbruch in Phase 3 → Mail-Payload mit `NICHT GEPRUEFT`; Deckel mitten in der Schleife →
+  erste Zeile fertig, zweite `NICHT GEPRUEFT`.
+- **F54 — Kleineres:** `reason` ausdrücklich auf Englisch (Entscheidung; Haiku lieferte
+  ohnehin Englisch, die Mail ist Deutsch); `current_price` ist der Bid, für Shorts um den
+  Spread neben dem Exit — nur im Provider-Docstring vermerkt, `profit_loss` vom Broker ist
+  massgeblich; `position_checks` hat keinen Leser (3D-Historie, in der ARCHITECTURE-Box
+  vermerkt); `market_context_changed` vergleicht mit Bedingungen, die das Modell nie
+  sieht — bleibt als Spalte, keine Steuerung daran; ARCHITECTURE-Kosten 0,03 € statt
+  0,006 € (Haiku-Messwert vom 15.09.). `reason` > 600 Zeichen prüft weiterhin niemand.
+
+**Regel-15-Sweep:** `trade_proposals_v1` und `broad_scan_v1` nennen keinen geänderten
+Bezeichner; `deep_analysis_v2` trägt jetzt die Skala-Zeile; `commodities_crypto_v3`
+(Skala, `current_price`-Echo, Haltedauer-Deckel) bleibt für die cc-Sitzung offen.
+CLAUDE.md: Modelltabelle (portfolio_check → Sonnet 5) und §6.4-Einzeiler (NICHT GEPRUEFT,
+`build_snapshot`) ergänzt.
+
+**Tests:** 1107 grün, 16 übersprungen, Coverage 93,4 %. Neu (rot zuerst, 22):
+Datumsanker, `build_snapshot` ×3, Call ohne Analyse mit `analysis: null`, keine fremden
+Schlüssel, ANPASSEN mit einem Level, ungültige Levels ×5 (parametrisiert), Kappung mit
+doppelter Buchung, Sonnet aus `config`, `pending_rows`, `out` in place beim Deckel,
+Prompt-Pin C.46, Mail ×2 (einzelnes Level, NICHT GEPRUEFT), `main` ×3 (beide Läufe
+reichen `tds`/Sidecar/`out` durch; Abbruch in Phase 3 zeigt NICHT GEPRUEFT). Angepasst:
+alle Patches auf `src.utils.call_claude` (Helfer), `date`/`run_type` an vier
+Aufrufstellen, Fixture-Levels zur MSFT-Position (Seitenprüfung), Intraday-Pin nimmt 4a
+aus, Integrationstest patcht den Helfer. Walkthrough-Notebook: Zellen 69/70 nachgezogen
+(zeigt `build_snapshot` der ersten Position, neue Signatur, `out`).
+
+**Nicht live verifiziert:** Prompt, Snapshot-Form und Sonnet-Call liefen noch nicht
+gegen die API; Verifikation über Notebook-Zelle 70 (Datei vorher neu öffnen), solange
+die GOLD-Position offen ist. Zu prüfen: „Today is" in der User-Message, `technicals`/
+`technical_signal`/`analysis` im gezeigten Snapshot (bei GOLD ohne TP/SL, Richtung
+`none`), Tokens/Kosten/`stop_reason` des Sonnet-Calls (Messwert für C.18), Sprache und
+Länge von `reason`, Verhalten der Empfehlung ohne den falsch gelesenen TP.
+
+**Beobachtungsposten neu:** Anteil ANPASSEN-Herabstufungen (`[Levels ungueltig` in
+`position_checks.reason`), Auslastung der 6144er-Decke, Verteilung HALTEN/SCHLIESSEN/
+ANPASSEN unter Sonnet gegen die Haiku-Zeilen davor (per Datum trennen: vor dem 15.09.
+Haiku, altes Prompt, roher Snapshot).
+
 ## Sprint 3D — Learning Modul
 
 ⚠️ **Noch nicht ausgearbeitet — braucht eine eigene Planungssession, bevor die Implementierung

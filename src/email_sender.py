@@ -97,10 +97,12 @@ def _section_briefing(bullets: list[str]) -> str:
 
 
 def _section_portfolio(recs: list[dict], positions_unavailable: bool = False) -> str:
-    """Renders the Phase-4a table (HALTEN/SCHLIESSEN/ANPASSEN/KEINE ANALYSE) for
-    the positions actually open at Capital.com (C.37), the first section of the
-    daily and the 16:10 e-mail. `positions_unavailable` = the broker call failed:
-    say so instead of rendering an empty section that reads like 'all closed'."""
+    """Renders the Phase-4a table (HALTEN/SCHLIESSEN/ANPASSEN/KEINE ANALYSE/
+    NICHT GEPRUEFT) for the positions actually open at Capital.com (C.37), the
+    first section of the daily and the 16:10 e-mail. `positions_unavailable` =
+    the broker call failed: say so instead of rendering an empty section that
+    reads like 'all closed'. NICHT GEPRUEFT rows come from portfolio_check.
+    pending_rows() and survive a cost-cap abort before or during 4a (C.46 / F53)."""
     if positions_unavailable:
         return ('<h2>Portfolio-Empfehlungen</h2>'
                 '<p><i>Capital.com-Positionen nicht abrufbar, keine Empfehlungen.</i></p>')
@@ -111,8 +113,11 @@ def _section_portfolio(recs: list[dict], positions_unavailable: bool = False) ->
     for r in recs:
         new_lvls = ""
         if r["action"] == "ANPASSEN":
-            new_lvls = (f' (neuer SL {_h(r.get("new_sl_price"))}, '
-                        f'neues TP {_h(r.get("new_tp_price"))})')
+            # C.46 / F51: ANPASSEN darf ein einzelnes Level nachziehen -- nur
+            # gelieferte Levels rendern, nie 'neues TP None'.
+            parts = [f'neuer SL {_h(r["new_sl_price"])}' if r.get("new_sl_price") is not None else "",
+                     f'neues TP {_h(r["new_tp_price"])}' if r.get("new_tp_price") is not None else ""]
+            new_lvls = " (" + ", ".join(x for x in parts if x) + ")"
         label = r.get("ticker") or r.get("epic")
         rows.append(
             f'<tr><td><b>{_h(r["action"])}</b></td>'

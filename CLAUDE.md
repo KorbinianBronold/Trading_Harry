@@ -54,9 +54,10 @@ Kurzfassung Sprint-Stand:
 Jedes Modul liest sein Modell aus `config` (`CLAUDE_MODEL_SONNET = claude-sonnet-5`,
 `CLAUDE_MODEL_HAIKU = claude-haiku-4-5`) — nie hart kodieren; Test-Fixtures lesen
 ebenfalls aus `config`.
-- **Haiku 4.5:** `broad_scan` (News-Scoring), `portfolio_check`, `quick_filter` (tot).
+- **Haiku 4.5:** `broad_scan` (News-Scoring), `quick_filter` (tot).
 - **Sonnet 5:** `deep_analysis`, `commodities_crypto`, `trend_analyzer`,
-  `market_context`, `revalidation`.
+  `market_context`, `revalidation`, `portfolio_check` (seit C.46: die einzige Phase,
+  deren Ausgabe eine Handlung an echtem Kapital ist).
 - **Opus 5:** nur Sprint 3D (nie produktiv gelaufen). **Fable 5:** teuerstes und
   fähigstes Modell — **keine** Spar-Option.
 - ⚠️ Ein Modellwechsel ist nie nur ein String-Swap: Tokenizer, Denk-Verhalten und
@@ -84,7 +85,10 @@ Kurzform zum Erkennen einer drohenden Verletzung; Begründung und Randfälle in
 - Offene Position (Phase 1c, 4a, Mail) = **live bei Capital.com** (`get_open_positions`,
   jeder Lauf, ein Abruf). Predictions sind Papier-Vorschläge und laufen getrennt durch die
   Auswertung; Phase 4a liest `predictions` **nie**. Abruf gescheitert = keine Empfehlung
-  plus Hinweis in der Mail, nie eine leere Sektion. → §6.4 / C.37
+  plus Hinweis in der Mail, nie eine leere Sektion; Check nicht gelaufen = Zeilen
+  `NICHT GEPRUEFT` (`pending_rows`, ab Phase 1c im Payload). Der 4a-Prompt bekommt in
+  **beiden** Läufen denselben dreiteiligen Snapshot aus `build_snapshot()` (Technik aus
+  `td`, Technik-Signal, Phase-3-Analyse oder `null`), nie ein rohes Dict. → §6.4 / C.37 / C.46
 - `fundamentals_cache`: eine Zeile je Ticker, keine Historie. Was in eine
   Entscheidung einfliesst, wird in `predictions` eingefroren.
   `save_fundamentals_cache()` = `INSERT OR REPLACE` der **ganzen** Zeile (immer

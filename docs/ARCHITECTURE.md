@@ -1,6 +1,17 @@
 # Shares_Future – Architektur & Design
 
-**Zuletzt aktualisiert:** 2026-09-14 — 🎯 **Phase-4-Review (C.45): Entscheidungswerte
+**Zuletzt aktualisiert:** 2026-09-15 — 🛡️ **Phase-4a-Review (C.46): Portfolio-Check auf
+Sonnet 5 mit deterministischem Snapshot.** `portfolio_check.build_snapshot()` baut in
+beiden Läufen denselben dreiteiligen Payload (Technik aus `td`, Technik-Signal mit Skala
+0-4, Phase-3-Analyse oder `null`; TP/SL einer Enthaltung fallen weg), die User-Message
+trägt Datum und Run-Type, der Prompt eine Horizont-Regel statt des Intraday-Absatzes,
+ANPASSEN darf ein einzelnes Level nachziehen und der Code prüft die Seite (ungültig →
+HALTEN), Kappungen fängt `call_claude_retry_on_truncation`, und `pending_rows()` hält
+die Positionen ab Phase 1c als `NICHT GEPRUEFT` im Payload (Spec-7.1-Muster mit `out`).
+Modell: Sonnet 5 statt Haiku 4.5 (Entscheidung Korbinian). In diesem Dokument geändert:
+Phase-4a-Box, Modul 7. Details: PROJECT_STATUS **C.46**.
+
+Davor, 2026-09-14 — 🎯 **Phase-4-Review (C.45): Entscheidungswerte
 aus dem Snapshot statt aus dem Modell-Echo.** `entry_price`/`price_premarket` und
 `intraday_range_pct` kommen jetzt aus dem Phase-1-Snapshot, `rr_ratio`/`tp_pct`/`sl_pct`
 werden im Code aus den Preisen abgeleitet (`ranking._normalise_from_snapshot()`, arbeitet
@@ -325,20 +336,26 @@ DB-Close.
                               ↓
 ┌─────────────────────────────────────────────────────────────────┐
 │       PHASE 4a: PORTFOLIO-CHECK (Capital.com-Positionen)         │
-│  ⚠️ Läuft seit B.5 NACH Phase 4 und nutzt deren fertige         │
-│     Phase-3-Analysen — kein eigener web_search mehr.             │
+│  ⚠️ Läuft seit B.5 NACH Phase 4 — kein eigener web_search.      │
 │  Input: positions aus Phase 1c (LIVE bei Capital.com, C.37),    │
-│         analyses_by_ticker, trend_context, policy_context       │
-│  Claude: Haiku × N offene Positionen, OHNE web_search           │
+│         build_snapshot(td, Sidecar, Phase-3-Analyse|null) je    │
+│         Ticker (C.46, beide Läufe gleich), trend/policy_context │
+│  User-Message: "Today is <date>. Run type: <run_type>." (C.46)  │
+│  Claude: Sonnet 5 × N offene Positionen, OHNE web_search,       │
+│          call_claude_retry_on_truncation (Decke 6144)           │
 │  Output: list[{deal_id, action="HALTEN|SCHLIESSEN|ANPASSEN|     │
-│                KEINE ANALYSE", ...}]                              │
+│                KEINE ANALYSE|NICHT GEPRUEFT", ...}]              │
+│  ANPASSEN: >= 1 Level; Seite wird im Code geprüft, ungültig →   │
+│            HALTEN mit Hinweis in reason (C.46 / F51)            │
 │  Hinweis: liest `predictions` NICHT — Predictions sind Papier-  │
 │           Vorschläge fürs Lernmodul, keine Positionen.           │
 │  positions=None (Abruf gescheitert): keine Empfehlungen,        │
-│           Mail sagt „nicht abrufbar".                            │
-│  Cost: ~0.03 EUR je echter Position                              │
-│  Fail: ✅ Skip Position, continue                                │
-│  DB: position_checks (je Deal); position_recommendations tot    │
+│           Mail sagt „nicht abrufbar". Abbruch vor/in 4a:        │
+│           Positionen bleiben als NICHT GEPRUEFT sichtbar (F53). │
+│  Cost: ~0.03 EUR je echter Position (Sonnet; Haiku war 0.006)   │
+│  Fail: ✅ Position bleibt NICHT GEPRUEFT, continue              │
+│  DB: position_checks (je Deal, ohne Leser: 3D-Historie);        │
+│      position_recommendations tot                                │
 └─────────────────────────────────────────────────────────────────┘
                               ↓
 ┌─────────────────────────────────────────────────────────────────┐
@@ -975,29 +992,45 @@ Originale unverändert.
 Prüft die bei **Capital.com tatsächlich offenen Positionen** (C.37, 2026-09-11) —
 Quelle ist `main._open_broker_positions()` aus Phase 1c, ein Abruf je Lauf. Liest
 `predictions` nicht: Predictions sind Papier-Vorschläge und laufen getrennt durch
-die mehrtägige Auswertung. **Läuft seit B.5 nach Phase 4** auf deren fertigen
-Phase-3-Analysen (16:10: auf den Phase-1-Snapshots).
+die mehrtägige Auswertung. **Läuft seit B.5 nach Phase 4.** Seit C.46 bekommt der
+Prompt in **beiden** Läufen denselben dreiteiligen Snapshot aus `build_snapshot()`
+statt des rohen Analyse-Dicts (15:00) bzw. rohen `td` (16:10); Modell Sonnet 5.
 
 ```python
+def build_snapshot(td, tech, analysis) -> dict:
+    """{"technicals": <14 td-Schlüssel: Kurs, Änderungen, RSI+Trend, MACD-Label,
+        SMA-Abstände, BB, ATR, Range, Volumen, Earnings-Termin> | None,
+        "technical_signal": {"direction", "strength" (0-4)} | None,
+        "analysis": {direction, confidence, probability_pct, summary,
+                     signal_consistency_check, scores (Werte + Belege);
+                     tp/sl/rr NUR bei long/short (F49)} | None}
+    Neue Dicts: Originale unberührt, kein fremder Schlüssel im Prompt (C.6)."""
+
+def pending_rows(positions) -> list[dict]:
+    """Zeilen action="NICHT GEPRUEFT" je Position; main setzt sie nach Phase 1c
+    in payload["portfolio_recs"], 4a ersetzt sie in place (F53)."""
+
 def check_open_positions(
-    conn,
-    today: str,
-    run_type: str,
+    conn, today, run_type,
     positions: list[dict] | None,          # Capital.com-Positionen; None = Abruf gescheitert
-    analyses_by_ticker: dict[str, dict],   # fertige Phase-3-Analysen (16:10: Snapshots)
-    trend_context: dict,
-    policy_context: dict,
-    cost_tracker: CostTracker,
+    analyses_by_ticker: dict[str, dict],   # Phase-3-Analysen (16:10: {})
+    trend_context, policy_context, cost_tracker,
+    *, tds_by_ticker=None, signal_by_ticker=None, out=None,
 ) -> list[dict]:
     """
     Je Position (deal_id, direction, entry/current price, TP/SL, size, P&L, opened_at):
-      - Haiku-Call OHNE web_search (B.5) — der Kontext kommt aus Phase 3
+      - Sonnet-5-Call OHNE web_search (B.5), User-Message beginnt mit
+        "Today is <date>. Run type: <run_type>." (F47); Kappung → Wiederholung
+        mit doppelter Decke, beide Versuche gebucht (F52)
+      - Call, sobald td ODER Analyse vorliegt; ohne beides "KEINE ANALYSE"
       - Returns: {deal_id, ticker, action:"HALTEN"|"SCHLIESSEN"|"ANPASSEN",
-                 reason, new_sl_price, new_tp_price, market_context_changed}
-                 + Positionsfelder für die Mail
+                 reason (English), new_sl_price, new_tp_price, market_context_changed}
+                 + Positionsfelder für die Mail; ANPASSEN mit ungültigen Levels
+                 → HALTEN mit "[Levels ungueltig: …]" in reason (F51)
       - Speichert eine position_checks-Zeile je Deal und Lauf
-    Position ohne Analyse (Fremdposition, Ticker in Phase 3 übersprungen):
-      kein Call, Zeile action="KEINE ANALYSE" für die Mail.
+      - out gehört dem Aufrufer (Spec 7.1): Kostendeckel mitten in der Schleife
+        lässt fertige Zeilen plus NICHT GEPRUEFT stehen; ein gescheiterter
+        Einzel-Call bleibt als NICHT GEPRUEFT sichtbar
     positions is None: keine Empfehlungen (Mail: „nicht abrufbar").
     """
 ```

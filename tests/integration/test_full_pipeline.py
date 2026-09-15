@@ -189,7 +189,7 @@ def test_full_pipeline_writes_predictions_and_sends_email(tmp_path, monkeypatch)
          patch("src.deep_analysis.call_claude", side_effect=[sequence[3]]), \
          patch("src.commodities_crypto.call_claude",
                side_effect=[sequence[4], sequence[5]]), \
-         patch("src.portfolio_check.call_claude",
+         patch("src.utils.call_claude",   # C.46: 4a ueber call_claude_retry_on_truncation
                side_effect=lambda **kw: _r(portfolio_check_resp, web_search_calls=0)), \
          patch("src.email_sender.requests.post") as mock_sg, \
          patch("src.commodities_crypto.fetch_fear_greed",

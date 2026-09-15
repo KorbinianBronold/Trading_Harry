@@ -368,12 +368,17 @@ def test_prompts_contain_intraday_focus():
     loaded = {
         "deep_analysis":      deep_analysis.DEEP_SYSTEM_PROMPT,
         "commodities_crypto": commodities_crypto.SYSTEM_PROMPT,
-        "portfolio_check":    portfolio_check.SYSTEM_PROMPT,
     }
     for module_name, text in loaded.items():
         assert "Intraday-Horizont" in text, (
             f"{module_name}: der geladene Prompt hat den Intraday-Absatz verloren"
         )
+    # C.46 / F50: der Portfolio-Check empfiehlt keine neue Richtung, er beurteilt
+    # eine BESTEHENDE Position, die Tage alt sein kann -- dort ersetzt die
+    # Horizont-Regel den Intraday-Absatz (der jede Swing-Position mit fernem
+    # Stop per Definition falsch machte).
+    assert "HORIZON" in portfolio_check.SYSTEM_PROMPT
+    assert "Intraday-Horizont" not in portfolio_check.SYSTEM_PROMPT
 
 
 from freezegun import freeze_time
@@ -2487,3 +2492,73 @@ def test_tp_beyond_range_is_collected_at_1610(in_memory_db, mocker):
     assert "tp_beyond_range" in fired, "Check laeuft um 16:10 nicht mit"
     assert fired["tp_beyond_range"].enforced is False
     assert out[0]["verdict"] == "bestaetigt", "weich -- darf nie blockieren"
+
+
+# ---------- C.46: Phase 4a bekommt td, Sidecar und die Payload-Liste ----------
+
+def test_run_pipeline_hands_snapshots_sidecar_and_out_list_to_the_portfolio_check(
+        mocker, tmp_db_path):
+    """F48/F53: der Portfolio-Check baut seinen Payload aus td (Technik) und
+    Sidecar (Technik-Signal) statt aus dem rohen Analyse-Dict, und fuellt die
+    Payload-Liste des Aufrufers in place (Spec 7.1)."""
+    _mock_all_other_phases(mocker)
+    mocker.patch("main.rank_and_persist", return_value={
+        "top_long": [], "top_short": [], "commodities_crypto": [],
+        "divergence": [], "divergence_stats": {
+            "tech_only_abstentions": 0, "conflicts": 0, "overflow": 0}})
+    cop = mocker.patch("main.check_open_positions", return_value=[])
+
+    run_pipeline(run_type="pre_market", date="2026-05-19", db_path=str(tmp_db_path))
+
+    kw = cop.call_args.kwargs
+    assert kw["tds_by_ticker"]["AAPL"]["price"] == 178.0
+    assert "signal_by_ticker" in kw
+    assert isinstance(kw["out"], list)
+    assert kw["analyses_by_ticker"]["AAPL"]["direction"] == "long"
+
+
+def test_run_pipeline_shows_positions_as_not_checked_when_a_phase_aborts(
+        mocker, tmp_db_path):
+    """F53: reisst der Kostendeckel in Phase 3, sagte die erste Mail-Sektion
+    'Keine offenen Positionen bei Capital.com' -- obwohl es welche gab."""
+    from src.cost_tracker import CostCapExceeded
+    _mock_all_other_phases(mocker)
+    main.CapitalComProvider.return_value.get_open_positions.return_value = [{
+        "deal_id": "d-1", "ticker": "AAPL", "direction": "long",
+        "entry_price": 170.0, "current_price": 178.0, "tp_price": None,
+        "sl_price": 160.0, "size": 1, "profit_loss": 8.0,
+        "opened_at": "2026-05-15T14:00:00", "status": "open",
+    }]
+    mocker.patch("main.analyze_batches", side_effect=CostCapExceeded("cap"))
+    mocker.patch("main.rank_and_persist")
+    mocker.patch("main.check_open_positions")
+    mail = mocker.patch("main.send_daily_email")
+
+    run_pipeline(run_type="pre_market", date="2026-05-19", db_path=str(tmp_db_path))
+
+    payload = mail.call_args.args[0] if mail.call_args.args else mail.call_args.kwargs["payload"]
+    assert [r["action"] for r in payload["portfolio_recs"]] == ["NICHT GEPRUEFT"]
+    assert payload["portfolio_recs"][0]["ticker"] == "AAPL"
+
+
+def test_run_trade_proposals_hands_snapshots_and_sidecar_to_the_portfolio_check(
+        tmp_db_path, mocker):
+    """F48 um 16:10: analyses_by_ticker ist leer (keine Phase 3), die Technik
+    kommt aus den frischen Snapshots plus Sidecar."""
+    mocker.patch("main.CapitalComProvider", return_value=MagicMock())
+    mocker.patch("main.FinnhubProvider", return_value=MagicMock())
+    mocker.patch("main.collect", return_value=(
+        [{"ticker": "AAPL", "price": 181.0}], 0,
+        {"AAPL": {"tech_direction": "long", "tech_strength": 2}}))
+    _stub_trade_proposals_side_phases(mocker)
+    cop = mocker.patch("main.check_open_positions", return_value=[])
+    mocker.patch("main.send_trade_proposals_email")
+
+    from main import run_trade_proposals
+    run_trade_proposals(date="2026-07-30", db_path=str(tmp_db_path))
+
+    kw = cop.call_args.kwargs
+    assert kw["analyses_by_ticker"] == {}
+    assert kw["tds_by_ticker"]["AAPL"]["price"] == 181.0
+    assert kw["signal_by_ticker"]["AAPL"]["tech_strength"] == 2
+    assert isinstance(kw["out"], list)
