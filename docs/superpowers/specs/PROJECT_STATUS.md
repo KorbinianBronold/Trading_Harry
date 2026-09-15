@@ -4969,6 +4969,40 @@ das Modell den Snapshot spiegelt), `_checks` in Zelle 66, Flags in der Mail (Zel
 (Anteil und Abstand), Häufigkeit der F41-WARNINGs (spiegelt das Modell den Snapshot?),
 `core_overflow` in Produktivläufen (bindet der Top-10-Deckel?).
 
+#### Nachtrag — Walkthrough 15.09. (Korbinian, Zellen 54–76): drei Enthaltungen, Ranking korrekt, F41/F43 nicht ausgeübt
+
+**Alle drei Analysen kamen mit `direction='none'` zurück** — AAPL (FOMC-Woche, Technik
+long/2 bei schwachem ADX, Kurs am oberen Bollinger-Band, `valuation`/`catalyst` ehrlich
+`thin`), GOLD (Technik short/1 gegen Safe-Haven-Flows, FOMC ausserhalb des Fensters),
+BTCUSD (range-bound). Ranking-Log: 3 Analysen, 3 Enthaltungen, 3 mit Technik-Richtung,
+0 Konflikte, 0 Predictions; `guardrail_rejects` leer. **Das ist keine Ablehnung.** Die
+Zelle-68-Meldung „alle Kandidaten sind an den Guardrails gescheitert" war der alte
+Else-Text und in diesem Fall falsch — Enthaltungen erreichen weder Guardrails noch
+Normalisierung (`_guardrail_filter` filtert `none` davor). Zelle 68 unterscheidet jetzt
+Enthaltung (aus `divergence_stats`) von Ablehnung (`enforced=1` in `guardrail_rejects`).
+Der Mail-Zähler „Enthaltungen mit Technik-Richtung: 3" ist genau die Darstellung, die
+Spec 20.5 für „nichts gefunden" vorsieht.
+
+**Was der Lauf zeigt:** die Prompt-Zeile aus F41 wirkt — AAPL `current_price` 332,16 =
+Snapshot-Kurs, `intraday_range_pct` 2,661 = Snapshot; F44 sichtbar („Top-10-Ueberlauf: 0"
+im Zähler-Absatz), 🔥 weg, VIX 18,53 (capital.com), Regime risk_off, Policy high. **Nicht
+ausgeübt:** Normalisierung, abgeleitete Levels, WARNING-Pfad und `_checks`/Flags — der
+„Keine Setups gefunden"-Pfad rendert keine Tabelle. Bleibt für den nächsten Lauf mit
+mindestens einer Richtung offen (Zellen 66/68/74).
+
+**Beobachtungen ausserhalb von Phase 4:**
+- cc (für die cc-Sitzung, nicht Teil des Reviews): der GOLD-Batch (n=1) wurde bei der
+  Decke 8 392 gekappt (`out` 8 392, `max_tokens`, 0,14 €), Wiederholung mit 16 784 sauber
+  (9 201); BTCUSD 9 506 `out` bei `end_turn`. Zweite cc-Kappung seit C.43 → die n=1-Decke
+  von Phase 3b ist zu knapp. Phase 0 (`trend_analyzer`) ebenfalls einmal bei 6 144 gekappt
+  und mit 12 288 wiederholt (bekanntes Verhalten, C.18).
+- Für Schritt 2 (Phase 4a): Haiku empfahl SCHLIESSEN für die offene GOLD-Long-Position
+  (−245 €) und zitierte dabei „Current snapshot's own TP is 4230.24" — TP/SL einer Analyse
+  mit `direction='none'` gehen als `CURRENT SNAPSHOT` in den 4a-Prompt, obwohl sie ohne
+  Richtung nichts bedeuten. Zudem läuft der Portfolio-Check auf Haiku 4.5 (CLAUDE.md), der
+  Review-Fahrplan nannte Sonnet.
+- Kosten 1,89 € für 3 Ticker inkl. zwei Wiederholungen, 30 Websuchen.
+
 ## Sprint 3D — Learning Modul
 
 ⚠️ **Noch nicht ausgearbeitet — braucht eine eigene Planungssession, bevor die Implementierung
