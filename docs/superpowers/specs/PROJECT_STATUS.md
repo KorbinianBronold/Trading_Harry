@@ -5410,8 +5410,9 @@ cc-Ticker inkl. Gap-Fill für fünf, aber 0 Aktien (F73-Logik im Notebook); Setu
   Fehler). Entry-Fenster: `_window_error()` (beide Grenzen, low ≤ high, Long SL < low ≤
   high < TP, Short gespiegelt) → sonst beide None mit WARNING, Urteil bleibt. Neue
   Spalten `predictions.revision_reason`, `entry_window_low/high` (Migrations-Guard):
-  Grund und Fenster auf der Morgenzeile (`record_revision`, `supersede_prediction`),
-  Fenster auch auf der Nachfolgezeile.
+  bei `gedreht`/`verworfen` Grund **und** Fenster auf der Morgenzeile (`record_revision`);
+  bei Ablösung der Grund auf der Morgenzeile (`supersede_prediction`), das Fenster auf
+  der Nachfolgezeile — der handelbaren.
 - **F72 — Die Mail zeigte keine Preise (behoben).** `signal_changes`-Zeilen tragen
   `entry_premarket`, `price_open`, `price_1610`, `move_since_open_pct`, `tp_price`,
   `sl_price`, `rr_new`; die R/R-Ablehnung steht als `rr_ratio: …` in den Checks
@@ -5459,6 +5460,53 @@ Nachfolgezeile mit `pe_ratio`/`relative_strength`/`revision_reason`/Fenster, Mai
 **Beobachtungsposten neu:** wie oft das Technik-Signal 16:10 vom Morgen abweicht
 (Richtung/Stärke), Anteil verworfener Entry-Fenster (`Entry-Fenster verworfen` im Log),
 Häufigkeit der R/R-Ablehnung nach Opening gegen „geschwächt"/„bestätigt" des Modells.
+
+#### Nachtrag — Live-Verifikation 16.09., 20:18 Berlin (Korbinian, zweiter Notebook-Lauf)
+
+Gleiche Wegwerf-Kopie, dasselbe Signal (BTCUSD short #15), GOLD-Position, AAPL und GOLD
+als Beispiel-Ticker. Sitzung offen (14:18 ET).
+
+**Live verifiziert:**
+- **F74:** Stundenbars für alle 8 Ticker (AAPL O 330,75 / H 335,40 / L 324,95, Close =
+  Sweep-Kurs 334,58 → `price_change_1d` +0,78 %). Jede Technik-Zeile weicht vom Morgen
+  ab: AAPL RSI 62,7 → 64,6, SMA20-Abstand 3,99 → 4,40, BB 0,90 → 0,93; GOLD RSI 43,7 →
+  46,0; OIL_BRENT RSI 67,9 → 61,8 (−2,8 % am Tag), Technik-Signal long/3. BTCUSD-Bar-Close
+  75 886,6 durch den Sweep-Kurs 75 854,55 ersetzt. Das Modell las die neue Technik
+  („Tagesperformance jetzt leicht positiv statt −3,3 %").
+- **F73:** Sweep nur AAPL (Beispiel) plus die 7 cc-Ticker; Eröffnungskurs nur für AAPL
+  (332,31); ETF-Bewegung XLK +0,49 %.
+- **F67:** User-Message 1 916 Zeichen: 14 Prediction-Schlüssel, 15 Snapshot-Schlüssel,
+  „Today is 2026-09-16 … 10:10 ET", `TECHNICAL SIGNAL morning short/3 -> now short/3`,
+  `LEVELS AT CURRENT PRICE … R/R 2.06`, `MOVE … no opening bar`. Input-Tokens 1 381 →
+  956 (−31 %); Output 904 (`end_turn`, 15 % der Decke), 0,0211 €.
+- **F68:** Stop-Check meldet 0,41 der Range mit SL 0,98 % (Morgen-Prozent wäre 1,00 %);
+  Nachfolgezeile #16: `tp_pct` 2,02, `sl_pct` 0,98, `rr_ratio` 2,06 gegen Entry 75 854,55.
+- **F71:** Fenster 75 500–76 300 (Short: TP 74 323 < low ≤ high < SL 76 598) angenommen und
+  auf #16 persistiert; `revision_reason` auf #15; `probability_pct` 46; `summary` von #16
+  ist die Morgen-These.
+- **F72:** Mail-Zeile: Entry 15:00 75 840,1 · Open — · Kurs 16:10 75 854,55 · TP/SL
+  74 323,3 / 76 598,5 · R/R neu 2,06 · Fenster · Check · Begründung.
+- **C.48-Rückfallpfad:** ohne `policy_context_json` (Kopie vor C.48) Briefing-Hinweis in
+  der Mail, Revalidation preisbasiert. **C.28-Prüfpunkt:** VIX 18,39 aus der Bar des
+  laufenden Tages (19:44 noch 18,44 — die Bar läuft).
+
+**Nur Code-getestet, live nicht ausübbar mit diesem Signal:** F66 (Krypto trägt keine
+Fundamentals, `pe_ratio`/`analyst_consensus` bleiben korrekt NULL) und F69/F70 auf dem
+Aktienpfad (BTCUSD hat weder Sektor-ETF noch Eröffnungsbar → `RELATIVE STRENGTH:
+unbekannt`, Gap gegen jetzt). Braucht ein Aktiensignal.
+
+**Zwei neue Beobachtungen (Befund-Kandidaten, Entscheidung offen):**
+- **F75 — Der Lauf ist nicht idempotent.** Das 19:44 mit `verworfen` markierte Signal
+  (#15, Status bleibt `open`, E5) wurde um 20:18 **erneut** geprüft, jetzt „geschwächt"
+  und abgelöst; das erste Urteil ist überschrieben, `guardrail_rejects` trägt beide Läufe
+  (`rr_ratio` vom ersten, zweimal `stop_inside_noise`). `load_predictions_for_revalidation`
+  filtert nur `status='open' AND learnable=1`. Produktiv läuft der Cron einmal täglich;
+  ein manueller `workflow_dispatch` oder ein wiederholter Job würde aber jede
+  gedrehte/verworfene Zeile neu beurteilen und die Wochenstatistik doppelt zählen.
+  Vorschlag: `AND revision_verdict IS NULL` im Loader (eine Zeile, ein Test).
+- **F76 — Positionsalter fehlt in der 16:10-Mail.** „seit 2026-09-11" ohne „(5 Tage)":
+  `render_trade_proposals_html` reicht `today` nicht an `_section_portfolio` (C.47 / F59
+  nur für die Tagesmail verdrahtet). Eine Zeile.
 
 ## Sprint 3D — Learning Modul
 
