@@ -699,17 +699,23 @@ def test_successful_mail_leaves_no_error(tmp_db_path, mocker):
 
 # ---------- Sprint 3B / Plan 2, Task 1/13: trade_proposals ----------
 
+# C.48 / F65: Morgen-Policy-Lage, die der 16:10-Lauf aus der DB liest.
+_MORNING_POLICY = {
+    "policy_risk_level": "high", "summary": "FOMC",
+    "events": [{"headline": "FOMC decision", "detail": "", "effective_date": "2026-07-30",
+                "beneficiary_tickers": ["JPM"], "negative_tickers": []}],
+}
+
 def _stub_trade_proposals_side_phases(mocker) -> None:
     """Legt die Phasen still, die Task 13 um das urspruengliche Geruest herum
-    ergaenzt hat (Markt-Kontext, Sektor-Momentum, Policy-Monitor,
-    Portfolio-Check) — die beiden Geruest-Tests unten pruefen nur die
+    ergaenzt hat (Markt-Kontext, Sektor-Momentum, Portfolio-Check; der
+    Policy-Monitor laeuft seit C.48 nicht mehr um 16:10) — die beiden
+    Geruest-Tests unten pruefen nur die
     Kurs-Erfassung bzw. den Mailversand (Task 14) und sollen dafuer nicht
     wirklich Claude oder Capital.com anfassen."""
     mocker.patch("main.vix_only_context",
                  return_value={"vix_level": 18.0, "vix_source": "capital.com"})
     mocker.patch("main.collect_sector_momentum", return_value={})
-    mocker.patch("main.run_policy_monitor",
-                 return_value={"policy_risk_level": "low", "events": []})
     mocker.patch("main.check_open_positions", return_value=[])
 
 
@@ -748,10 +754,15 @@ def test_run_trade_proposals_sends_the_mail(tmp_db_path, mocker):
     send.assert_called_once()
 
 
-def test_run_trade_proposals_backfills_only_policy_risk_level(tmp_db_path, mocker):
-    """trade_proposals ruft fetch_fear_greed() nie (kein Phase 3b) -- nur
-    policy_risk_level darf hier nachgetragen werden, fear_greed_value bleibt
-    NULL statt eines erfundenen Werts."""
+def test_run_trade_proposals_row_carries_no_policy_level_and_no_events(tmp_db_path, mocker):
+    """Die 16:10-Zeile traegt nur den VIX (C.28). Seit C.48 / F65 gibt es um
+    16:10 keinen Policy-Call mehr -- also weder einen policy_risk_level zu
+    messen noch Events fuer news_summaries; fear_greed_value bleibt NULL
+    (kein Phase 3b). Bis dahin trug die Zeile den Wert des zweiten Calls."""
+    from src import db
+    conn = db.connect(str(tmp_db_path)); db.init_schema(conn)
+    db.save_policy_context(conn, "2026-07-30", "pre_market", _MORNING_POLICY)
+    conn.commit(); conn.close()
     mocker.patch("main.CapitalComProvider", return_value=MagicMock())
     mocker.patch("main.FinnhubProvider", return_value=MagicMock())
     mocker.patch("main.collect", return_value=([], 0, {}))
@@ -761,15 +772,17 @@ def test_run_trade_proposals_backfills_only_policy_risk_level(tmp_db_path, mocke
     from main import run_trade_proposals
     run_trade_proposals(date="2026-07-30", db_path=str(tmp_db_path))
 
-    import sqlite3
-    conn = sqlite3.connect(str(tmp_db_path))
-    conn.row_factory = sqlite3.Row
+    conn = db.connect(str(tmp_db_path))
     row = conn.execute(
         "SELECT * FROM market_context WHERE date='2026-07-30' "
         "AND run_type='trade_proposals'").fetchone()
+    n_events = conn.execute(
+        "SELECT COUNT(*) AS n FROM news_summaries WHERE source='policy_monitor' "
+        "AND run_type='trade_proposals'").fetchone()["n"]
     conn.close()
-    assert row["policy_risk_level"] == "low"
+    assert row["policy_risk_level"] is None
     assert row["fear_greed_value"] is None
+    assert n_events == 0
 
 
 # ---------- Sprint 3B / Plan 2, Task 5: Phase 1c — Pflicht-Kandidaten (B.4) ----------
@@ -1218,8 +1231,6 @@ def test_revalidation_failure_leaves_the_row_untouched(tmp_db_path, mocker):
     mocker.patch("main.vix_only_context",
                  return_value={"vix_level": 18.0, "vix_source": "capital.com"})
     mocker.patch("main.collect_sector_momentum", return_value={})
-    mocker.patch("main.run_policy_monitor", return_value={"policy_risk_level": "low",
-                                                         "events": []})
     mocker.patch("main.check_open_positions", return_value=[])
     mocker.patch("main.revalidate_one", side_effect=RevalidationError("kaputt"))
     mocker.patch("main.send_trade_proposals_email")  # Task 14: sonst echter Versand
@@ -1257,8 +1268,6 @@ def test_skipped_ticker_is_never_superseded_on_a_stale_price(tmp_db_path, mocker
     mocker.patch("main.vix_only_context",
                  return_value={"vix_level": 18.0, "vix_source": "capital.com"})
     mocker.patch("main.collect_sector_momentum", return_value={})
-    mocker.patch("main.run_policy_monitor", return_value={"policy_risk_level": "low",
-                                                         "events": []})
     mocker.patch("main.check_open_positions", return_value=[])
     reval = mocker.patch("main.revalidate_one")
     mail = mocker.patch("main.send_trade_proposals_email")
@@ -1291,8 +1300,6 @@ def _tp_run_mocks(mocker, prices):
     mocker.patch("main.vix_only_context",
                  return_value={"vix_level": 18.0, "vix_source": "capital.com"})
     mocker.patch("main.collect_sector_momentum", return_value={})
-    mocker.patch("main.run_policy_monitor", return_value={"policy_risk_level": "low",
-                                                         "events": []})
     mocker.patch("main.check_open_positions", return_value=[])
     return mocker.patch("main.send_trade_proposals_email")
 
@@ -1369,7 +1376,8 @@ def test_cost_cap_keeps_the_already_checked_signals(tmp_db_path, mocker):
 @pytest.mark.parametrize("phase,target", [
     ("data_collection", "main.collect"),
     ("sector_momentum", "main.collect_sector_momentum"),
-    ("policy_monitor",  "main.run_policy_monitor"),
+    # C.48 / F65: der 16:10-Lauf hat keinen Policy-Call mehr (Morgenlage aus
+    # der DB) -- der Parametrize-Fall 'policy_monitor' ist gegenstandslos.
     ("revalidation",    "main.revalidate_one"),
     ("portfolio_check", "main.check_open_positions"),
 ])
@@ -1389,8 +1397,6 @@ def test_cost_abort_reports_the_right_phase(tmp_db_path, mocker, phase, target):
                  return_value={"vix_level": 18.0, "vix_source": "capital.com"})
     mocker.patch("main.collect", return_value=([{"ticker": "AAPL", "price": 101.0}], 0, {}))
     mocker.patch("main.collect_sector_momentum", return_value={})
-    mocker.patch("main.run_policy_monitor",
-                 return_value={"policy_risk_level": "low", "events": []})
     mocker.patch("main.revalidate_one", return_value={
         "verdict": "bestaetigt", "probability_pct": 71, "reason": "ok"})
     mocker.patch("main.check_open_positions", return_value=[])
@@ -1433,8 +1439,6 @@ def test_portfolio_check_sees_sector_rotation_from_market_context(tmp_db_path, m
     mocker.patch("main.vix_only_context",
                  return_value={"vix_level": 18.0, "vix_source": "capital.com"})
     mocker.patch("main.collect_sector_momentum", return_value={})
-    mocker.patch("main.run_policy_monitor",
-                 return_value={"policy_risk_level": "low", "events": []})
     mock_portfolio = mocker.patch("main.check_open_positions", return_value=[])
     mocker.patch("main.send_trade_proposals_email")  # Task 14: sonst echter Versand
 
@@ -1474,8 +1478,6 @@ def test_portfolio_check_still_works_with_a_real_morning_trend_context(tmp_db_pa
     mocker.patch("main.vix_only_context",
                  return_value={"vix_level": 18.0, "vix_source": "capital.com"})
     mocker.patch("main.collect_sector_momentum", return_value={})
-    mocker.patch("main.run_policy_monitor",
-                 return_value={"policy_risk_level": "low", "events": []})
     mock_portfolio = mocker.patch("main.check_open_positions", return_value=[])
     mocker.patch("main.send_trade_proposals_email")  # Task 14: sonst echter Versand
 
@@ -1538,8 +1540,6 @@ def test_opening_gap_reaches_the_revalidation_prompt(tmp_db_path, mocker):
     mocker.patch("main.vix_only_context",
                  return_value={"vix_level": 18.0, "vix_source": "capital.com"})
     mocker.patch("main.collect_sector_momentum", return_value={})
-    mocker.patch("main.run_policy_monitor", return_value={"policy_risk_level": "low",
-                                                          "events": []})
     mocker.patch("main.check_open_positions", return_value=[])
     mocker.patch("main.send_trade_proposals_email")
     reval = mocker.patch("main.revalidate_one", return_value={
@@ -1885,8 +1885,6 @@ def test_opening_price_stays_null_for_commodities_and_crypto(tmp_db_path, mocker
     mocker.patch("main.vix_only_context",
                  return_value={"vix_level": 18.0, "vix_source": "capital.com"})
     mocker.patch("main.collect_sector_momentum", return_value={})
-    mocker.patch("main.run_policy_monitor", return_value={"policy_risk_level": "low",
-                                                         "events": []})
     mocker.patch("main.check_open_positions", return_value=[])
     mocker.patch("main.send_trade_proposals_email")
 
@@ -2309,8 +2307,6 @@ def test_trade_proposals_marks_positions_unavailable_when_capital_fails(tmp_db_p
     mocker.patch("main.vix_only_context",
                  return_value={"vix_level": 18.0, "vix_source": "capital.com"})
     mocker.patch("main.collect_sector_momentum", return_value={})
-    mocker.patch("main.run_policy_monitor",
-                 return_value={"policy_risk_level": "low", "events": []})
     mock_portfolio = mocker.patch("main.check_open_positions", return_value=[])
     mock_mail = mocker.patch("main.send_trade_proposals_email")
 
@@ -2609,3 +2605,77 @@ def test_yesterday_outcomes_on_tuesday_cover_only_monday(tmp_db_path):
 
     assert agg["long_total"] == 1 and agg["total_pl_eur"] == 25.0
     assert agg["since"] == agg["until"] == "2026-09-14"
+
+
+# ---------- C.48 / F65: der Policy-Monitor laeuft nur am Morgen ----------
+
+def _stub_1610_for_policy(mocker) -> None:
+    mocker.patch("main.CapitalComProvider", return_value=MagicMock())
+    mocker.patch("main.FinnhubProvider", return_value=MagicMock())
+    mocker.patch("main.collect", return_value=([{"ticker": "AAPL", "price": 101.0}], 0, {}))
+    mocker.patch("main.vix_only_context",
+                 return_value={"vix_level": 18.0, "vix_source": "capital.com"})
+    mocker.patch("main.collect_sector_momentum", return_value={})
+
+
+def test_run_pipeline_persists_the_morning_policy_context(tmp_db_path, mocker):
+    """F65: die Morgenlage muss den Lauf ueberleben -- der 16:10-Lauf liest sie."""
+    from src import db
+    _stub_pipeline(mocker)
+    mocker.patch("main.fetch_market_context", return_value=dict(_CTX))
+    mocker.patch("main.run_policy_monitor", return_value=dict(_MORNING_POLICY))
+    mocker.patch("main.rank_and_persist", return_value={
+        "top_long": [], "top_short": [], "commodities_crypto": [],
+        "divergence": [], "divergence_stats": {
+            "tech_only_abstentions": 0, "conflicts": 0, "overflow": 0}})
+
+    run_pipeline(run_type="pre_market", date="2026-07-27", db_path=str(tmp_db_path))
+
+    conn = db.connect(str(tmp_db_path))
+    assert db.load_policy_context(conn, "2026-07-27", "pre_market") == _MORNING_POLICY
+    conn.close()
+
+
+def test_run_trade_proposals_reuses_the_morning_policy_context_without_a_second_call(
+        tmp_db_path, mocker):
+    """C.48 / F65 (Entscheidung 16.09.): kein zweiter Policy-Call um 16:10. Die
+    Morgenlage aus der DB geht an Revalidation und Portfolio-Check."""
+    from src import db
+    conn = db.connect(str(tmp_db_path)); db.init_schema(conn)
+    _pred_row(conn)
+    db.save_policy_context(conn, "2026-07-30", "pre_market", _MORNING_POLICY)
+    conn.commit(); conn.close()
+    _stub_1610_for_policy(mocker)
+    policy = mocker.patch("main.run_policy_monitor")
+    reval = mocker.patch("main.revalidate_one", return_value={
+        "verdict": "bestaetigt", "probability_pct": 71, "reason": "ok"})
+    portfolio = mocker.patch("main.check_open_positions", return_value=[])
+    mocker.patch("main.send_trade_proposals_email")
+
+    from main import run_trade_proposals
+    run_trade_proposals(date="2026-07-30", db_path=str(tmp_db_path))
+
+    policy.assert_not_called()
+    assert reval.call_args.kwargs["policy_context"] == _MORNING_POLICY
+    assert portfolio.call_args.kwargs["policy_context"] == _MORNING_POLICY
+
+
+def test_run_trade_proposals_without_morning_policy_context_warns_and_runs_price_based(
+        tmp_db_path, mocker):
+    from src import db
+    conn = db.connect(str(tmp_db_path)); db.init_schema(conn)
+    _pred_row(conn)
+    conn.commit(); conn.close()
+    _stub_1610_for_policy(mocker)
+    reval = mocker.patch("main.revalidate_one", return_value={
+        "verdict": "bestaetigt", "probability_pct": 71, "reason": "ok"})
+    mocker.patch("main.check_open_positions", return_value=[])
+    mail = mocker.patch("main.send_trade_proposals_email")
+
+    from main import run_trade_proposals
+    run_trade_proposals(date="2026-07-30", db_path=str(tmp_db_path))
+
+    assert reval.call_args.kwargs["policy_context"] == {
+        "policy_risk_level": "unknown", "events": []}
+    briefing = mail.call_args.kwargs["payload"]["briefing"]
+    assert any("Policy" in b for b in briefing), briefing

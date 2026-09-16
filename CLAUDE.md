@@ -150,11 +150,13 @@ Kurzform zum Erkennen einer drohenden Verletzung; Begründung und Randfälle in
   Marktkontext-Wert in einem Check ist `vix_level` (`check_vix`). Nicht zusammenführen,
   ohne `market_context` bis in `analyze_batches()` durchzureichen — sonst sieht Phase 3
   gar keine Rotation mehr. → C.27 / C.28
-- Um 16:10 gibt es **keinen** Claude-Marktkontext-Call: `vix_only_context()` holt den VIX
-  deterministisch, Rotation/Makro für den Portfolio-Check kommen aus der Morgenzeile
-  (`db.load_market_context`). Die 16:10-Zeile trägt bewusst nur den VIX.
+- Um 16:10 gibt es **keinen** Claude-Marktkontext-Call und **keinen** Policy-Call:
+  `vix_only_context()` holt den VIX deterministisch, Rotation/Makro für den Portfolio-Check
+  kommen aus der Morgenzeile (`db.load_market_context`), die Policy-Lage aus
+  `market_context.policy_context_json` (`db.load_policy_context`, Morgen-Antwort als JSON).
+  Der 16:10-Lauf hat damit keine Websuche. Die 16:10-Zeile trägt bewusst nur den VIX.
   `advance_decline_ratio` wird nicht mehr erhoben (Schlüssel bleibt, immer None);
-  `sp500_change_pct` und `vix_source` werden seit C.28 persistiert. → C.28
+  `sp500_change_pct` und `vix_source` werden seit C.28 persistiert. → C.28 / C.48
 - `SECTOR_ALIASES` → 21 Sub-Sektoren; Unbekanntes bleibt ungemappt (WARN), nie
   Sammeleimer — lieber ungemappt als falsch gemappt. → B.10
 - B.3-Checks in **beiden** Läufen erhoben, nur 16:10 durchgesetzt (`enforce`).

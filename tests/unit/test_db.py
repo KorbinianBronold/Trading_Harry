@@ -2753,3 +2753,62 @@ def test_market_context_roundtrip_carries_vix_source_and_sp500_change(in_memory_
     assert row["sector_rotation_in"] == "Energy"
     assert load_market_context(in_memory_db, date="2026-09-08",
                                run_type="trade_proposals") == {}
+
+
+# ---------- C.48 / F65: Morgen-Policy-Lage fuer den 16:10-Lauf ----------
+
+_POLICY = {
+    "policy_risk_level": "high", "summary": "FOMC tomorrow",
+    "events": [{"headline": "FOMC decision", "detail": "d", "category": "central_bank",
+                "beneficiary_tickers": ["JPM"], "negative_tickers": ["GOLD"],
+                "affected_sectors": ["Financials"], "source_url": "https://x",
+                "as_of": "2026-09-15", "effective_date": "2026-09-16"}],
+}
+
+
+def test_policy_context_roundtrip_on_the_market_context_row(in_memory_db):
+    """F65: die komplette Policy-Antwort haengt als JSON an der Morgenzeile, damit
+    16:10 sie liest statt selbst zu suchen. UPDATE, kein Ueberschreiben der
+    Phase-0b-Felder."""
+    from src.db import (save_market_context, load_market_context,
+                        save_policy_context, load_policy_context)
+    init_schema(in_memory_db)
+    save_market_context(in_memory_db, {"date": "2026-09-16", "run_type": "pre_market",
+                                       "vix_level": 18.0})
+    save_policy_context(in_memory_db, "2026-09-16", "pre_market", _POLICY)
+    assert load_policy_context(in_memory_db, "2026-09-16", "pre_market") == _POLICY
+    assert load_market_context(in_memory_db, "2026-09-16", "pre_market")["vix_level"] == 18.0
+
+
+def test_policy_context_survives_a_missing_market_context_row(in_memory_db):
+    """Phase 0b kann scheitern (MarketContextError) -- die Policy-Lage darf
+    trotzdem nicht verloren gehen, sonst laeuft 16:10 blind."""
+    from src.db import save_policy_context, load_policy_context
+    init_schema(in_memory_db)
+    save_policy_context(in_memory_db, "2026-09-16", "pre_market", _POLICY)
+    assert load_policy_context(in_memory_db, "2026-09-16", "pre_market") == _POLICY
+
+
+def test_load_policy_context_returns_none_without_a_row(in_memory_db):
+    from src.db import load_policy_context, save_market_context
+    init_schema(in_memory_db)
+    assert load_policy_context(in_memory_db, "2026-09-16", "pre_market") is None
+    save_market_context(in_memory_db, {"date": "2026-09-16", "run_type": "pre_market"})
+    assert load_policy_context(in_memory_db, "2026-09-16", "pre_market") is None
+
+
+def test_migration_adds_policy_context_json_to_a_legacy_market_context():
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.execute("""CREATE TABLE market_context (
+        date TEXT NOT NULL, run_type TEXT NOT NULL, sp500_change_pct REAL,
+        vix_level REAL, market_regime TEXT, fear_greed_value INTEGER,
+        policy_risk_level TEXT, sector_rotation_in TEXT, sector_rotation_out TEXT,
+        macro_summary TEXT, advance_decline_ratio REAL, vix_source TEXT,
+        UNIQUE(date, run_type))""")
+    conn.commit()
+    init_schema(conn)
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(market_context)")}
+    assert "policy_context_json" in cols
+    init_schema(conn)   # idempotent
+    conn.close()

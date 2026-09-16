@@ -359,6 +359,11 @@ noch gültig sind, und konkrete Handlungsempfehlungen für den Tag geben.
 > gehandelt**. Das Gegensignal lief nie durch Phase 3, hat also weder Belege noch ein
 > hergeleitetes TP/SL. Es bleibt offen und wird regulär ausgewertet — nur so lässt sich
 > messen, ob die Ablehnung richtig lag.
+>
+> **Seit C.48 (2026-09-16):** der Policy-Monitor läuft **nur noch am Morgen**; der
+> 16:10-Lauf liest die Morgenlage aus `market_context.policy_context_json` und hat
+> keine Websuche mehr. Der E1-Satz „Breaking News deckt der eine Policy-Monitor-Call
+> ab" gilt damit nicht mehr.
 
 | Schritt | Was passiert |
 |---|---|
@@ -5241,6 +5246,71 @@ F43-Flags brauchen weiterhin einen Lauf mit mindestens einer Richtung (C.45).
 **Beobachtungsposten neu:** Länge der Summary-Zellen in der Praxis (600 Zeichen × 20
 Zeilen — ist die Tabelle noch lesbar?), Häufigkeit „Nicht ausgeführt" (Abbrüche pro
 Phase), ob die Rotationszeile mit dem Trend-Vokabular von Phase 0 kollidiert (C.30, Punkt 2).
+
+### C.48 — Policy-Monitor nur noch am Morgen: der 16:10-Lauf liest die Morgenlage aus der DB (F65, Entscheidung 2026-09-16)
+
+Vorgezogen aus dem `trade_proposals`-Review (Schritt 2 des Fahrplans, Notebook folgt).
+Anlass war Korbinians Frage, warum der 16:10-Lauf den Policy-Monitor ein zweites Mal
+aufruft. Befund beim Lesen: der zweite Call benutzte **denselben Prompt und dasselbe
+48-Stunden-Fenster** wie der Morgen-Call (nur Datum und Run-Type in der Nutzernachricht
+unterschieden sich) — er fand grösstenteils dieselben Ereignisse noch einmal, für
+~0,21–0,25 € je Lauf (C.41-Messwert), und war seit E1 die einzige Websuche des Laufs.
+Politik, Geopolitik und Fed fliessen am Morgen bereits dreifach ein (Phase 0 Trends,
+Phase 0b Marktkontext, Phase-3-Vorlauf Policy-Monitor) und stehen in jeder
+Tiefenanalyse als Dimension `policy_risk` mit Belegpflicht (C.42).
+
+**Entscheidung Korbinian:** „Es reicht einmal im Morgen-Call. Der Call muss kein
+zweites Mal mehr laufen."
+
+**Umsetzung (F65):**
+- Neue Spalte `market_context.policy_context_json` (Migrations-Guard, CREATE TABLE).
+  `db.save_policy_context()` hängt die **komplette** Policy-Antwort als JSON an die
+  Morgenzeile (Upsert: fehlt die Zeile, weil Phase 0b an einem `MarketContextError`
+  scheiterte, entsteht eine mit NULL-Feldern — die Lage darf nicht am Marktkontext
+  hängen); `db.load_policy_context()` liest sie, None ohne Zeile oder für Altbestand.
+  `run_pipeline()` speichert direkt nach `run_policy_monitor()`. Bewusst das volle JSON
+  statt einer Rekonstruktion aus `news_summaries`: dort liegen je Event nur Headline,
+  Detail, Wirkdatum und Ticker-Seiten, `load_news_summaries()` kollabiert zudem auf eine
+  Zeile je Ticker — Kategorie, Sektoren, Quelle und `as_of` wären weg, und 3D soll genau
+  den Kontext sehen, den das Modell sah.
+- `run_trade_proposals()`: Phase `policy_monitor` → `policy_context` (reine DB-Lektüre);
+  `policy_context = db.load_policy_context(conn, date, "pre_market")`. Fehlt die
+  Morgenlage: `{"policy_risk_level": "unknown", "events": []}`, WARNING und Briefing-
+  Hinweis „Keine Policy-Lage vom Morgen in der DB". Revalidation und Portfolio-Check
+  bekommen die Morgenlage. Entfernt: der Call, `update_market_context_extras()` (die
+  16:10-Zeile trägt weiter nur den VIX, C.28 — ohne Messung kein `policy_risk_level`)
+  und `save_news_summaries()` um 16:10 (keine neuen Events; die Morgen-Events sind die
+  einzige Datenspur des Tages). Der 16:10-Lauf hat damit **keine Websuche** mehr; bezahlt
+  werden nur Revalidation je Signal und Portfolio-Check je Position.
+- E1 (P2.1) gilt insoweit nicht mehr: „Breaking News deckt der eine Policy-Monitor-Call
+  ab" — zwischen 14:30 und 16:10 sieht der Lauf Nachrichten nur noch über den Kurs.
+  Das ist die bewusste Konsequenz der Entscheidung; ob die Revalidation bei starker
+  Kursabweichung eine gezielte Ticker-Suche braucht, bleibt Frage des
+  `trade_proposals`-Reviews.
+
+**Regel-15-Sweep:** `trade_proposals_v1.txt` nennt den POLICY CONTEXT jetzt als
+„Politik- und Geopolitik-Lage aus derselben Morgenrecherche (Stand vor der
+US-Eröffnung, kein zweiter Abruf)" statt „Nachrichten der letzten 48 Stunden";
+`portfolio_check_v2.txt` („policy_risk events (cached)") bleibt wahr;
+`policy_monitor_v1.txt` unverändert (Run-Type in der Nutzernachricht ist jetzt immer
+`pre_market`). Docstrings in `main.run_trade_proposals` und `src/revalidation.py`
+nachgezogen.
+
+**Tests:** 1145 grün, 16 übersprungen, Coverage 93,3 %. Neu (rot zuerst, 7): DB-Roundtrip
+(UPDATE ohne Überschreiben der 0b-Felder), Lage überlebt fehlende Marktkontext-Zeile,
+None ohne Zeile/Spalte, Migration auf einer Alt-Tabelle; `run_pipeline` persistiert;
+16:10 ruft keinen Monitor und reicht die Morgenlage an Revalidation und Portfolio-Check;
+16:10 ohne Morgenlage warnt und läuft preisbasiert. Angepasst: der Backfill-Test der
+16:10-Zeile prüft jetzt `policy_risk_level IS NULL` und null neue Policy-Events
+(Semantik gedreht), der Integrationstest „16:10-Events landen in news_summaries" wurde
+zu „16:10 nutzt die Morgen-Events und schreibt keine eigenen", der Parametrize-Fall
+`policy_monitor` im 16:10-Abbruchtest ist gegenstandslos; neun inerte
+`run_policy_monitor`-Patches aus 16:10-Tests entfernt.
+
+**Nicht live verifiziert:** der 16:10-Lauf mit Morgenlage aus der DB. Gehört in das
+`trade_proposals`-Notebook (Schritt 2). ⚠️ Bis zum nächsten `pre_market`-Lauf mit dem
+neuen Code hat keine Morgenzeile ein `policy_context_json` — der erste 16:10-Lauf
+danach läuft preisbasiert mit Hinweis; das ist erwartet, kein Fehler.
 
 ## Sprint 3D — Learning Modul
 

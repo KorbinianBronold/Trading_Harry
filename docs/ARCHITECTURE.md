@@ -265,17 +265,19 @@ DB-Close.
 └─────────────────────────────────────────────────────────────────┘
                               ↓
 ┌─────────────────────────────────────────────────────────────────┐
-│            PHASE 3: POLICY-MONITOR (1× pro Run)                  │
+│      PHASE 3: POLICY-MONITOR (1× am Tag, NUR pre_market; C.48)   │
 │  Input: —                                                         │
 │  Claude: 1× Sonnet + web_search                                  │
 │  Output: {policy_risk_level low|medium|high, events[], summary} │
 │  Scope: Tariffs, Zentralbank, Geopolitik, Regulierung          │
 │  Persist: policy_risk_level -> market_context (Backfill),        │
-│           Events -> news_summaries (source=policy_monitor, C.41) │
+│           komplette Antwort -> market_context.policy_context_json│
+│           (C.48 / F65), Events -> news_summaries (C.41)          │
 │  Cost: ~0.21-0.25 EUR (gemessen 2026-09-13, 4-5 Websuchen)      │
-│  Fail: pre_market ❌ PolicyMonitorError nicht gefangen -> Lauf   │
-│        bricht ab (nur der Kappungs-Retry aus C.18 schuetzt);     │
-│        trade_proposals ✅ leerer Kontext ('unknown'), weiter     │
+│  Fail: ❌ PolicyMonitorError nicht gefangen -> Lauf bricht ab    │
+│        (nur der Kappungs-Retry aus C.18 schuetzt)                │
+│  16:10: KEIN Call -- db.load_policy_context(date, 'pre_market'); │
+│        fehlt die Morgenlage: 'unknown', Hinweis in der Mail      │
 └─────────────────────────────────────────────────────────────────┘
                               ↓
 ┌─────────────────────────────────────────────────────────────────┐
@@ -1221,8 +1223,9 @@ trennen will, gruppiert nach `run_type` — Weekly-Block 3 tut das.
 ### 10b. **`src/revalidation.py`** (neu in 3B / Plan 2)
 
 Der billige Zweitcheck des `trade_proposals`-Laufs (E1). Ein Sonnet-Call je Signal,
-**ohne `web_search`** — die Recherche hat die Tiefenanalyse am Morgen bezahlt, und
-Breaking News zwischen 15:00 und 16:10 deckt der eine Policy-Monitor-Call ab.
+**ohne `web_search`** — die Recherche hat die Tiefenanalyse am Morgen bezahlt. Der
+POLICY CONTEXT im Prompt ist seit C.48 / F65 die **Morgenlage aus der DB**
+(`market_context.policy_context_json`); der 16:10-Lauf hat keine Websuche mehr.
 
 ```python
 revalidate_one(...) -> dict   # {verdict, probability_pct, reason, ...}
@@ -1321,14 +1324,18 @@ SQLite-Schema + Persistence.
   Phase-0b-Prompt erhoben (vorher nie befüllt); `vix_source` ist seit C.28 eine Spalte
   (Migrations-Guard); `advance_decline_ratio` bleibt als Spalte, wird aber nicht mehr
   erhoben (immer NULL). Die `trade_proposals`-Zeile trägt seit C.28 nur `vix_level`/
-  `vix_source` — kein zweiter Claude-Call um 16:10 (`vix_only_context()`).
+  `vix_source` — kein zweiter Claude-Call um 16:10 (`vix_only_context()`), seit C.48
+  auch kein `policy_risk_level` mehr (kein zweiter Policy-Call). `policy_context_json`
+  (C.48 / F65, Migrations-Guard) trägt auf der `pre_market`-Zeile die komplette
+  Policy-Monitor-Antwort; der 16:10-Lauf liest sie (`load_policy_context`).
 - `skipped_tickers` – Ereignis-Log je übersprungenem Ticker mit Grund; trägt die
   Weekly-Auswertung und die Deaktivierung
 - `trend_analyses` – Phase-0-Ausgaben
 - `news_summaries` – seit C.16 (2026-08-19) befüllt aus Phase 2 (`broad_scan`) **und**
   Phase 3/3b (`deep_analysis`/`commodities_crypto`), seit C.41 (2026-09-13) auch aus dem
   Policy-Monitor (`source='policy_monitor'`, je Event eine Zeile pro genanntem Ticker,
-  `ticker=NULL` für marktweite Events, in `pre_market` **und** `trade_proposals`),
+  `ticker=NULL` für marktweite Events; bis C.48 in `pre_market` **und**
+  `trade_proposals`, seitdem nur noch `pre_market` — der 16:10-Lauf sucht nicht mehr),
   Vorarbeit für Sprint 3D.
   `sentiment`/`market_impact` sind **abgeleitete** Werte (aus `direction`/`confidence`
   bzw. `news_strength`), keine direkt vom Modell gelieferten Felder. Kein
@@ -1398,6 +1405,9 @@ ist entfernt, nicht nur tot.
 - `save_market_context(conn, row)` – Phase 0b
 - `update_market_context_extras(conn, date, run_type, fear_greed_value, policy_risk_level)`
   *(C.16)* – Backfill nach Phase 3/3b, `UPDATE` statt `INSERT OR REPLACE`
+- `save_policy_context(conn, date, run_type, policy_context)` / `load_policy_context(conn,
+  date, run_type)` *(C.48 / F65)* – komplette Policy-Antwort als JSON an der Morgenzeile
+  (Upsert, überlebt einen fehlenden Phase-0b-Kontext); 16:10 liest statt zu suchen
 - `save_news_summaries(conn, rows)` *(C.16)* – Batch-Insert, mehrere Quellen je Ticker/Tag
 
 **Retention** (`cleanup_old_data`, seit 3B): `news_summaries` 30 Tage,
@@ -1610,10 +1620,10 @@ heute = 2026-05-20, run_type = "pre_market"
     Sprint-1-Illustration): PROJECT_STATUS C.7, Befund 9
 
   ↓
-[Phase 3] run_policy_monitor()
+[Phase 3] run_policy_monitor()               # nur pre_market (C.48)
   → 1 Sonnet + web_search
-  ← policy_risk_level, events
-  ✓ costs ~0.10 EUR
+  ← policy_risk_level, events → db.save_policy_context() (16:10 liest sie)
+  ✓ costs ~0.25 EUR
 
   ↓
 [Phase 3] analyze_batches()          # seit Plan 3a: Batch statt 1 Call/Ticker

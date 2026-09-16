@@ -15,8 +15,6 @@ def _mock_16_10(mocker, price: float, verdict: dict):
     mocker.patch("main.FinnhubProvider", return_value=MagicMock())
     mocker.patch("main.collect", return_value=([{"ticker": "AAPL", "price": price}], 0, {}))
     mocker.patch("main.collect_sector_momentum", return_value={})
-    mocker.patch("main.run_policy_monitor",
-                 return_value={"policy_risk_level": "low", "events": []})
     mocker.patch("main.check_open_positions", return_value=[])
     mocker.patch("main.send_trade_proposals_email")
     mocker.patch("main.revalidate_one", return_value=verdict)
@@ -118,28 +116,36 @@ def test_evaluator_closes_exactly_one_outcome(tmp_db_path, mocker):
     conn.close()
 
 
-def test_1610_policy_events_land_in_news_summaries(tmp_db_path, mocker):
-    """C.41/P2: der 16:10-Lauf hat einen eigenen Policy-Call; seine Events
-    bekommen dieselbe Datenspur wie am Morgen (source='policy_monitor')."""
+def test_1610_reuses_the_morning_policy_events_and_writes_none_of_its_own(tmp_db_path, mocker):
+    """C.48 / F65 (Entscheidung 16.09.): der 16:10-Lauf hat keinen eigenen
+    Policy-Call mehr. Die Morgen-Events (news_summaries, source='policy_monitor')
+    bleiben die einzige Datenspur des Tages, die Revalidation sieht die
+    Morgenlage aus market_context.policy_context_json."""
+    import main
+    morning = {
+        "policy_risk_level": "medium", "summary": "x",
+        "events": [{"headline": "Fed speaker turns hawkish", "detail": "",
+                    "effective_date": None,
+                    "beneficiary_tickers": ["GOLD"], "negative_tickers": []}]}
     conn = db.connect(str(tmp_db_path)); db.init_schema(conn)
     _morning_long(conn)
+    db.save_policy_context(conn, "2026-07-30", "pre_market", morning)
+    db.save_news_summaries(
+        conn, main._news_summaries_from_policy(morning, "2026-07-30", "pre_market"))
     conn.commit(); conn.close()
 
     mocker.patch("main.vix_only_context", return_value={"vix_level": 18.0})
     _mock_16_10(mocker, price=101.0,
                 verdict={"verdict": "bestaetigt", "probability_pct": 70,
                          "reason": "ok"})
-    mocker.patch("main.run_policy_monitor", return_value={
-        "policy_risk_level": "medium", "summary": "x",
-        "events": [{"headline": "Fed speaker turns hawkish", "detail": "",
-                    "effective_date": None,
-                    "beneficiary_tickers": ["GOLD"], "negative_tickers": []}]})
-    from main import run_trade_proposals
-    run_trade_proposals(date="2026-07-30", db_path=str(tmp_db_path))
+    policy = mocker.patch("main.run_policy_monitor")
+    main.run_trade_proposals(date="2026-07-30", db_path=str(tmp_db_path))
 
+    policy.assert_not_called()
+    assert main.revalidate_one.call_args.kwargs["policy_context"] == morning
     conn = db.connect(str(tmp_db_path))
     rows = conn.execute(
         "SELECT ticker, derived_direction, run_type FROM news_summaries "
         "WHERE source='policy_monitor'").fetchall()
     conn.close()
-    assert [tuple(r) for r in rows] == [("GOLD", "bullish", "trade_proposals")]
+    assert [tuple(r) for r in rows] == [("GOLD", "bullish", "pre_market")]

@@ -658,6 +658,9 @@ def run_pipeline(run_type: str, date: str, db_path: str) -> None:
         policy_context = run_policy_monitor(
             date=date, run_type=run_type, cost_tracker=cost_tracker,
         )
+        # C.48 / F65: die komplette Lage ueberlebt den Lauf -- der 16:10-Lauf
+        # liest sie statt ein zweites Mal zu suchen.
+        db.save_policy_context(conn, date, run_type, policy_context)
         payload["briefing"] = generate_daily_briefing(trend_context, policy_context)
 
         current_phase = "deep_analysis"
@@ -926,8 +929,10 @@ def run_trade_proposals(date: str, db_path: str) -> None:
     dem Opening-Rauschen billig nach und loest sie ab.
 
     Kein Phase 0 — die Megatrend-Analyse aendert sich nicht in 70 Minuten, der Run
-    liest sie aus der DB. Der Policy-Monitor laeuft dagegen MIT Websuche: seit E1
-    ist er die einzige Recherche des Laufs."""
+    liest sie aus der DB. Seit C.48 / F65 (Entscheidung 16.09.) auch kein
+    Policy-Monitor mehr: die Morgenlage kommt aus market_context.policy_context_json.
+    Der Lauf hat damit keine Websuche; bezahlt werden nur die Re-Validierung je
+    Signal und der Portfolio-Check je Position."""
     conn = db.connect(db_path)
     db.init_schema(conn)
     cost_tracker = CostTracker()
@@ -1003,35 +1008,22 @@ def run_trade_proposals(date: str, db_path: str) -> None:
         except Exception as e:
             log.warning(f"Sektor-Momentum nicht ermittelbar, Run laeuft ohne: {e}")
 
-        current_phase = "policy_monitor"
-        # Seit E1 die einzige Websuche des Laufs. Faellt sie aus, ist die
-        # Re-Validierung rein preisbasiert — immer noch besser als gar keine.
-        policy_context: dict = {"policy_risk_level": "unknown", "events": []}
-        try:
-            policy_context = run_policy_monitor(
-                date=date, run_type="trade_proposals", cost_tracker=cost_tracker)
-        except CostCapExceeded:
-            # Dieselbe Reihenfolge wie beim Sektor-Momentum: sonst liefe der Lauf
-            # ueber den Deckel hinaus weiter und die Kostenzeile nennte die
-            # falsche Phase — genau der Fehler, den B-05 beseitigt hat.
-            raise
-        except Exception as e:
-            log.warning(f"Policy-Monitor ausgefallen, Re-Validierung laeuft "
-                        f"rein preisbasiert weiter: {e}")
-            payload["briefing"] = ["⚠️ Policy-Monitor ausgefallen — "
+        current_phase = "policy_context"
+        # C.48 / F65 (Entscheidung Korbinian 16.09.): kein zweiter Policy-Call.
+        # Die Morgenlage (Phase-3-Vorlauf, dieselbe, die Phase 3 fuer die
+        # Morgen-Thesen gesehen hat) kommt aus der DB. Bis dahin suchte der Lauf
+        # mit demselben Prompt und demselben 48-Stunden-Fenster ein zweites Mal
+        # (~0,25 EUR). Fehlt die Morgenlage, laeuft die Re-Validierung rein
+        # preisbasiert, mit Hinweis in der Mail. Die 16:10-Zeile in
+        # market_context traegt weiter nur den VIX (C.28): kein Call, kein
+        # gemessener policy_risk_level, keine neuen news_summaries-Zeilen.
+        policy_context = db.load_policy_context(conn, date, "pre_market")
+        if policy_context is None:
+            log.warning("Keine Policy-Lage vom Morgen in der DB -- "
+                        "Re-Validierung laeuft rein preisbasiert")
+            policy_context = {"policy_risk_level": "unknown", "events": []}
+            payload["briefing"] = ["⚠️ Keine Policy-Lage vom Morgen in der DB — "
                                    "keine Nachrichtenlage in dieser Prüfung."]
-
-        # C.16: trade_proposals ruft fetch_fear_greed() nie (kein Phase 3b
-        # hier) -- fear_greed_value bleibt bewusst NULL statt eines erfundenen
-        # Werts, nur policy_risk_level wird nachgetragen.
-        db.update_market_context_extras(
-            conn, date=date, run_type="trade_proposals",
-            fear_greed_value=None,
-            policy_risk_level=policy_context.get("policy_risk_level"),
-        )
-        # C.41: die 16:10-Events bekommen dieselbe Datenspur wie am Morgen.
-        db.save_news_summaries(
-            conn, _news_summaries_from_policy(policy_context, date, "trade_proposals"))
 
         current_phase = "revalidation"
         # out= statt Zuweisung: bricht der Lauf hier am Kostendeckel ab, sind die

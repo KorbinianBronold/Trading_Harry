@@ -1,10 +1,11 @@
 """Der billige Zweitcheck des trade_proposals-Laufs (Entscheidung E1).
 
 Ein Sonnet-Call je Signal, OHNE web_search: die Recherche hat die Tiefenanalyse am
-Morgen bereits bezahlt, und Breaking News zwischen 15:00 und 16:10 deckt der eine
-Policy-Monitor-Call des Laufs ab. Gemessen kostet eine volle Tiefenanalyse ~0,12 EUR
-und ~54 s — 27 davon haetten den 4-EUR-Deckel gerissen und die 70-Minuten-Luecke
-zwischen den beiden Crons gesprengt.
+Morgen bereits bezahlt. Der POLICY CONTEXT im Prompt ist seit C.48 / F65 die
+Morgenlage aus der DB (Entscheidung 16.09.: der Policy-Monitor laeuft nur einmal am
+Tag) -- der 16:10-Lauf hat damit gar keine Websuche mehr. Gemessen kostet eine
+volle Tiefenanalyse ~0,12 EUR und ~54 s — 27 davon haetten den 4-EUR-Deckel
+gerissen und die 70-Minuten-Luecke zwischen den beiden Crons gesprengt.
 
 Das Modul urteilt nur. Was mit dem Urteil geschieht — Ablösung der pre_market-Zeile,
 neue Prediction oder blosse Warnung — entscheidet main.run_trade_proposals()."""

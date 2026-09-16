@@ -1,6 +1,7 @@
 """SQLite schema definition, migrations, and every DB read/write helper used by
 the pipeline. All SQL lives here — phase modules never write raw SQL themselves."""
 import logging
+import json
 import sqlite3
 from datetime import date as _date_cls, timedelta
 from pathlib import Path
@@ -92,6 +93,7 @@ CREATE TABLE IF NOT EXISTS market_context (
     sector_rotation_in TEXT, sector_rotation_out TEXT, macro_summary TEXT,
     advance_decline_ratio REAL,
     vix_source TEXT,
+    policy_context_json TEXT,
     UNIQUE(date, run_type)
 );
 
@@ -308,6 +310,12 @@ CREATE TABLE IF NOT EXISTS cutoff_log (
 def _apply_migrations(conn: sqlite3.Connection) -> None:
     """Idempotent column-add migrations for pre-existing DBs.
     SQLite does not support IF NOT EXISTS on ALTER TABLE, so we inspect first."""
+    # C.48 / F65: die komplette Policy-Monitor-Antwort des Morgens als JSON,
+    # damit der 16:10-Lauf sie liest statt ein zweites Mal zu suchen.
+    mc_cols = {r["name"] for r in conn.execute("PRAGMA table_info(market_context)")}
+    if mc_cols and "policy_context_json" not in mc_cols:
+        conn.execute("ALTER TABLE market_context ADD COLUMN policy_context_json TEXT")
+
     # C.40 / F23: cutoff_log.forced, additiv, Altzeilen tragen 0.
     cl_cols = {r["name"] for r in conn.execute("PRAGMA table_info(cutoff_log)")}
     if cl_cols and "forced" not in cl_cols:
@@ -1193,6 +1201,37 @@ def load_market_context(conn: sqlite3.Connection, date: str, run_type: str) -> d
         (date, run_type),
     ).fetchone()
     return dict(row) if row else {}
+
+
+def save_policy_context(
+    conn: sqlite3.Connection, date: str, run_type: str, policy_context: dict,
+) -> None:
+    """Haengt die komplette Policy-Monitor-Antwort als JSON an die
+    market_context-Zeile des Laufs (C.48 / F65): der 16:10-Lauf liest sie und
+    sucht nicht mehr selbst. Upsert: fehlt die Zeile, weil Phase 0b an einem
+    MarketContextError scheiterte, entsteht eine mit NULL-Feldern -- die
+    Policy-Lage darf nicht am Marktkontext haengen."""
+    conn.execute(
+        "INSERT INTO market_context (date, run_type, policy_context_json) "
+        "VALUES (?, ?, ?) ON CONFLICT(date, run_type) "
+        "DO UPDATE SET policy_context_json = excluded.policy_context_json",
+        (date, run_type, json.dumps(policy_context, ensure_ascii=False)),
+    )
+    conn.commit()
+
+
+def load_policy_context(
+    conn: sqlite3.Connection, date: str, run_type: str,
+) -> dict | None:
+    """Gegenstueck zu save_policy_context(): das Policy-Dict eines Laufs, None
+    ohne Zeile oder ohne gespeicherte Lage (Altbestand vor C.48)."""
+    row = conn.execute(
+        "SELECT policy_context_json FROM market_context WHERE date = ? AND run_type = ?",
+        (date, run_type),
+    ).fetchone()
+    if row is None or row["policy_context_json"] is None:
+        return None
+    return json.loads(row["policy_context_json"])
 
 
 def update_market_context_extras(
