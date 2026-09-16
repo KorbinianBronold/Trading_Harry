@@ -119,9 +119,18 @@ def _forced_tickers(positions: list[dict] | None) -> set[str]:
 
 
 def _aggregate_yesterday_outcomes(conn, today: str) -> dict:
-    """Aggregates yesterday's evaluated outcomes into long/short hit counts and
-    total P&L, for the daily e-mail's performance footer."""
-    yesterday = (date_cls.fromisoformat(today) - timedelta(days=1)).isoformat()
+    """Aggregiert die seit dem letzten Handelstag ausgewerteten Outcomes
+    (long/short Treffer, Summe P&L) fuer den Fussteil der Tagesmail.
+
+    C.47 / F58: Zeitraum ist der letzte Werktag vor `today` bis gestern
+    (`since`/`until` im Ergebnis), nicht der Kalender-Vortag. Montags fragte
+    die alte Fassung nach dem Sonntag -- die Freitag-Outcomes der Aktien
+    erschienen in keiner Tagesmail; Krypto-Outcomes vom Wochenende bleiben
+    im Fenster. evaluated_date ist der Handelstag der Bar (E7)."""
+    until = date_cls.fromisoformat(today) - timedelta(days=1)
+    since = until
+    while since.weekday() >= 5:          # Sa/So ueberspringen
+        since -= timedelta(days=1)
     rows = conn.execute(
         """SELECT pred_direction, COUNT(*) AS n,
                   SUM(CASE WHEN correct_direction_eod THEN 1 ELSE 0 END) AS correct,
@@ -130,13 +139,14 @@ def _aggregate_yesterday_outcomes(conn, today: str) -> dict:
              SELECT p.direction AS pred_direction,
                     o.correct_direction_eod, o.profit_loss_eur
              FROM outcomes o JOIN predictions p ON p.id = o.prediction_id
-             WHERE o.evaluated_date = ?
+             WHERE o.evaluated_date BETWEEN ? AND ?
            )
            GROUP BY pred_direction""",
-        (yesterday,),
+        (since.isoformat(), until.isoformat()),
     ).fetchall()
     agg = {"long_correct": 0, "long_total": 0,
-           "short_correct": 0, "short_total": 0, "total_pl_eur": 0.0}
+           "short_correct": 0, "short_total": 0, "total_pl_eur": 0.0,
+           "since": since.isoformat(), "until": until.isoformat()}
     for r in rows:
         if r["pred_direction"] == "long":
             agg["long_total"]   = int(r["n"])
@@ -428,9 +438,9 @@ def _opening_prices(price_provider, tickers: list[str], date: str) -> dict[str, 
 def _final_bar_warning(conn, date: str) -> str | None:
     """Warnt, wenn fuer den letzten Werktag keine finale Tagesbar vorliegt.
 
-    final_close verschickt bewusst keine Mail. Faellt er aus, wird nichts mehr
-    bewertet und niemand merkt es -- die Weekly saehe nur duenner aus. Diese
-    Pruefung macht den Ausfall in der Tagesmail sichtbar."""
+    Faellt final_close aus, kommt auch seine Auswertungs-Mail (C.17) nicht --
+    nichts wird mehr bewertet und niemand merkt es, die Weekly saehe nur
+    duenner aus. Diese Pruefung macht den Ausfall in der Tagesmail sichtbar."""
     d = date_cls.fromisoformat(date) - timedelta(days=1)
     while d.weekday() >= 5:          # Sa/So ueberspringen
         d -= timedelta(days=1)

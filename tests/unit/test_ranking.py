@@ -1032,3 +1032,24 @@ def test_tp_beyond_the_range_is_collected_softly_in_the_morning(in_memory_db):
         "SELECT rule, enforced FROM guardrail_rejects").fetchall()}
     assert rows["tp_beyond_range"] == 0
     assert "tp_beyond_range" in out["top_long"][0]["_checks"]
+
+
+# ---------- C.47 / F60: Technik-Staerke und Sub-Sektor an der Zeile ----------
+
+def test_enriched_rows_carry_tech_strength_and_sub_sector(in_memory_db, valid_analysis):
+    """F60: Rank-Score = Analyse x Technik, aber nur ein Faktor stand an der
+    Zeile; der Sub-Sektor (Bezug des Klumpen-Flags) fehlte ganz. Beides an der
+    KOPIE, das Original bleibt schluesselgleich (C.6)."""
+    db.init_schema(in_memory_db)
+    _seed_sector_for(in_memory_db)   # AAPL -> Technology Hardware
+    out = rank_and_persist(
+        conn=in_memory_db, date="2026-07-30", run_type="pre_market",
+        stock_analyses=[valid_analysis], commodity_crypto_analyses=[],
+        market_context={},
+        signal_context={"AAPL": _ctx(price=100.0, tech_strength=3)},
+    )
+    row = out["top_long"][0]
+    assert row["_tech_strength"] == 3
+    assert row["_sub_sector"] == "Technology Hardware"
+    assert "_tech_strength" not in valid_analysis
+    assert "_sub_sector" not in valid_analysis

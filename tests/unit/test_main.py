@@ -2562,3 +2562,50 @@ def test_run_trade_proposals_hands_snapshots_and_sidecar_to_the_portfolio_check(
     assert kw["tds_by_ticker"]["AAPL"]["price"] == 181.0
     assert kw["signal_by_ticker"]["AAPL"]["tech_strength"] == 2
     assert isinstance(kw["out"], list)
+
+
+# ---------- C.47 / F58: Vortags-Performance = letzter Handelstag bis gestern ----------
+
+def _closed_outcome(conn, ticker, direction, evaluated_date, pl):
+    from src import db
+    pid = db.save_prediction(conn, {
+        "date": "2026-09-09", "run_type": "pre_market", "ticker": ticker,
+        "direction": direction, "entry_price": 100.0, "tp_price": 105.0,
+        "sl_price": 98.0})
+    db.save_outcome(conn, {
+        "prediction_id": pid, "direction": direction,
+        "evaluated_date": evaluated_date, "correct_direction_eod": 1,
+        "profit_loss_eur": pl})
+
+
+def test_yesterday_outcomes_on_monday_cover_friday_through_sunday(tmp_db_path):
+    """F58: der Kalender-Vortag war am Montag der Sonntag -- die Freitag-Outcomes
+    der Aktien erschienen in keiner Tagesmail. Jetzt: letzter Handelstag bis
+    gestern (Krypto-Outcomes vom Wochenende bleiben drin)."""
+    from main import _aggregate_yesterday_outcomes
+    from src import db
+    conn = db.connect(str(tmp_db_path))
+    db.init_schema(conn)
+    _closed_outcome(conn, "AAPL", "long", "2026-09-11", 25.0)      # Freitag
+    _closed_outcome(conn, "BTCUSD", "short", "2026-09-13", -10.0)  # Sonntag
+    _closed_outcome(conn, "MSFT", "long", "2026-09-10", 99.0)      # Donnerstag: zu alt
+
+    agg = _aggregate_yesterday_outcomes(conn, today="2026-09-14")  # Montag
+
+    assert agg["long_total"] == 1 and agg["short_total"] == 1
+    assert agg["total_pl_eur"] == 15.0
+    assert agg["since"] == "2026-09-11" and agg["until"] == "2026-09-13"
+
+
+def test_yesterday_outcomes_on_tuesday_cover_only_monday(tmp_db_path):
+    from main import _aggregate_yesterday_outcomes
+    from src import db
+    conn = db.connect(str(tmp_db_path))
+    db.init_schema(conn)
+    _closed_outcome(conn, "AAPL", "long", "2026-09-14", 25.0)   # Montag
+    _closed_outcome(conn, "MSFT", "long", "2026-09-11", 99.0)   # Freitag: zu alt
+
+    agg = _aggregate_yesterday_outcomes(conn, today="2026-09-15")  # Dienstag
+
+    assert agg["long_total"] == 1 and agg["total_pl_eur"] == 25.0
+    assert agg["since"] == agg["until"] == "2026-09-14"

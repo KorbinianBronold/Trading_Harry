@@ -184,8 +184,11 @@ Kurzform zum Erkennen einer drohenden Verletzung; Begründung und Randfälle in
 
 **Mail & Sonstiges**
 - Resend: `2xx` heisst nur „angenommen"; echter Zustellstatus über `GET /emails/{id}`.
-  Portfolio-Sektion **zuerst** in der Mail; davor nur der Kopf (Briefing-Box + eine
-  Marktlage-Zeile: VIX, S&P-Tagesänderung, Regime — keine Sektion). → C.30
+  Portfolio-Sektion **zuerst** in der Mail; davor nur der Kopf (Abbruch-Balken, Briefing-Box
+  mit Ergebnis-Bullet, Marktlage- und Rotationszeile — keine Sektion). Kostendeckel-Abbruch:
+  `email_sender.PHASE_ORDER` spiegelt die `current_phase`-Literale von `run_pipeline()`
+  (Test pinnt die Reihenfolge); Sektionen ab der Abbruchphase melden „Nicht ausgeführt",
+  nie „Keine". Kürzen immer per `_cut()` **vor** `_h()`. → C.30 / C.47
 - `random/` ist Korbinians interner Ordner — **nie** anfassen, nie in Aufräum-,
   Doku- oder Toter-Code-Betrachtungen aufnehmen.
 - Neuen Code dokumentieren (Modul-Docstring, 1–2-Satz-Funktions-Docstring). Tests

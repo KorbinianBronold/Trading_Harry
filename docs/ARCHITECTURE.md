@@ -327,7 +327,8 @@ DB-Close.
 │          beiden Läufen, enforce nur 16:10 (_revalidate_all);   │
 │          Gap + Stop-Budget nur 16:10                            │
 │  Output: {top_long[], top_short[], commodities_crypto[],        │
-│           divergence[], divergence_stats} (+ _checks je Zeile)  │
+│           divergence[], divergence_stats} (+ _checks,           │
+│           _tech_strength, _sub_sector je Zeile: C.45 / C.47)     │
 │  DB: predictions + guardrail_rejects schreiben                   │
 │  Learnable: Alle = true (außer skip-by-guardrails)             │
 │  Cost: ~0.00 EUR                                                 │
@@ -366,12 +367,19 @@ DB-Close.
                               ↓
 ┌─────────────────────────────────────────────────────────────────┐
 │              PHASE 5: E-MAIL & REPORTING                         │
-│  Input: top_10_long, top_10_short, commodities_crypto,          │
-│         yesterday_outcomes_agg, cost_summary                     │
-│  HTML: 4 Sektionen (Portfolio → Stocks → Trends → Commodities)  │
-│  Resend: E-Mail an EMAIL_TO                                      │
+│  Input: der payload aus run_pipeline (portfolio_recs, top_long/  │
+│         short, divergence(+stats), trends, commodities_crypto,   │
+│         market_context, briefing, yesterday_outcomes,            │
+│         cost_summary). Kein Claude-Call.                         │
+│  HTML: Kopf (Abbruch-Balken bei Kostendeckel, Briefing-Box mit  │
+│        Ergebnis-Bullet, Marktlage- + Rotationszeile) → 5 Sekt.: │
+│        Portfolio → Aktien L/S → Divergenz → Trends → Commodities │
+│        (Test pinnt die Sequenz, C.47). Sektionen, die der        │
+│        Abbruch nicht erreichte: „Nicht ausgeführt", nie „Keine". │
+│  Resend: E-Mail an EMAIL_TO; Betreff mit Abbruch/Aktionen/L-S   │
 │  Cost: ~0.00 EUR (Freikontingent)                               │
-│  Fail: ⚠️ Log, aber keine Abort (beste Anstrengung)             │
+│  Fail: ❌ MailDeliveryError → roter Job; Daten sind zu dem       │
+│        Zeitpunkt committet (B-10, kein Abbruch der Analyse)      │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -1109,31 +1117,33 @@ Rendert HTML und sendet via **Resend** (`POST https://api.resend.com/emails`).
 > `GET /emails/{id}` als `last_event="failed"`.
 
 ```python
-def render_daily_html(
-    date: str,
-    top_long: list[dict],
-    top_short: list[dict],
-    portfolio_recs: list[dict],  # Phase 4a output
-    commodity_crypto: list[dict],
-    yesterday_outcomes: dict,     # {long_correct, long_total, ...}
-    cost_summary: dict,           # {total_eur, aborted_at_phase, ...}
-    trends: list[dict],
-) -> str:
+def render_daily_html(payload: dict) -> str:
     """
-    Kopf (keine Sektion): Briefing-Box "Was heute zaehlt" + EINE Marktlage-Zeile
-    (VIX, S&P-500-Tagesaenderung, Regime) aus dem morgendlichen market_context
-    (C.30). Portfolio bleibt die erste Sektion.
-    4 Sektionen (in dieser Reihenfolge):
-      1. Portfolio-Empfehlungen (Phase 4a: HALTEN/SCHLIESSEN/ANPASSEN)
-      2. Stock Rankings (Top-10 Long + Top-10 Short)
-      3. Trends (Makro-Trends + Sector-Rotation)
-      4. Commodities & Crypto
-    
-    Footer: Tages-Outcomes, Skipped, Cost, Disclaimer
+    Kopf (keine Sektion): Abbruch-Balken (nur nach Kostendeckel-Abbruch, C.47),
+    Briefing-Box "Was heute zaehlt" — erster Bullet = result_bullet(payload):
+    Portfolio-Aktionen, Setups je Seite, Divergenz-Kandidaten (C.47) — dann
+    EINE Marktlage-Zeile (VIX mit der aktiven VIX-Regel, S&P-500-Tagesaenderung,
+    Regime; C.30 / C.47) und EINE Rotations-/Makro-Zeile aus dem morgendlichen
+    market_context (C.47). Portfolio bleibt die erste Sektion.
+    5 Sektionen (in dieser Reihenfolge, ein Test pinnt die Sequenz):
+      1. Portfolio-Empfehlungen (Phase 4a; je Zeile Groesse, Alter, Broker-SL/TP,
+         Bewegung seit Entry; ANPASSEN mit altem Level daneben, C.47)
+      2. Aktien Top-10 Long + Top-10 Short (Sub-Sektor, Confidence, Rank-Score
+         mit beiden Faktoren, TP/SL mit abgeleitetem Prozent, Flags, volle Summary)
+      3. Divergenz-Kandidaten + Zaehler (Enthaltungen, Konflikte, Ueberlauf)
+      4. Trends (Karten aus Phase 0)
+      5. Commodities & Crypto
+    Sektionen 2, 3 und 5 sagen nach einem Abbruch vor/in Phase 'ranking'
+    „Nicht ausgeführt (Abbruch in Phase X)" statt „Keine …" — PHASE_ORDER
+    spiegelt die current_phase-Literale von run_pipeline() (Test pinnt).
+    Footer: Outcomes seit dem letzten Handelstag mit Simulationsbasis
+    (500 EUR × Hebel 5), Skipped, Cost, Disclaimer.
+    Kuerzungen laufen ueber _cut() VOR _h() — _h(x)[:n] zerschnitt Entities.
     """
 
-def send_daily_email(to: str, html: str, date: str) -> bool:
-    """Resend API Call"""
+def send_daily_email(payload: dict, api_key: str, email_from: str, email_to: str) -> None:
+    """Betreff: '[Shares_Future] <date> <run_type> — [ABBRUCH <phase> ·] <Aktionen> · Top nL / mS';
+    raises EmailSendError (main: MailDeliveryError)."""
 ```
 
 ---
@@ -1554,7 +1564,8 @@ current_phase = "..."           # wird durch den try-Block mitgeführt
 try:
     phases_1_to_4(cost_tracker)
 except CostCapExceeded as e:
-    send_partial_email(cost_summary={"aborted_at_phase": current_phase})
+    cost_tracker.aborted_at_phase = current_phase
+# danach IMMER: cost_summary + Mail (Abbruch-Balken im Kopf, C.47)
 ```
 ✅ Seit `7c4c311` (Bug B-05) steht dort die **echte** Phase: `run_pipeline()` führt
 `current_phase` mit, der `except`-Zweig liest sie. Das frühere
@@ -1628,19 +1639,22 @@ heute = 2026-05-20, run_type = "pre_market"
 
   ↓
 [Phase 4a] check_open_positions()          # seit B.5 NACH Phase 4
-  → if db.predictions[status='open' & learnable=1 & date < today] exists
-  → Sonnet × N Calls, OHNE web_search (nutzt die Phase-3-Analysen)
-  ← N Empfehlungen (HALTEN/SCHLIESSEN/ANPASSEN)
-  ✓ costs ~0.20 EUR
+  → je LIVE bei Capital.com offener Position (Phase 1c, C.37; liest predictions NIE)
+  → build_snapshot(td, Sidecar, Phase-3-Analyse|null) je Ticker (C.46)
+  → Sonnet × N Calls, OHNE web_search
+  ← N Empfehlungen (HALTEN/SCHLIESSEN/ANPASSEN), ersetzt die NICHT-GEPRUEFT-Zeilen in place
+  ✓ costs ~0.03 EUR je Position
 
   ↓
 [Phase 5] render_daily_html() + send_daily_email()
-  → 4 HTML-Sektionen
+  → Kopf + 5 HTML-Sektionen (Portfolio → Aktien L/S → Divergenz → Trends → Commodities)
   → Resend API
   ✓ costs ~0.00 EUR
 
 TOTAL: ~3.50 EUR
-[Phase 4a Cost Cap Hit] → send_partial_email(aborted=True) → exit
+[Cost Cap Hit in Phase X] → cost_tracker.aborted_at_phase = X → Mail trotzdem:
+  Balken im Kopf + Betreff „ABBRUCH X", nicht erreichte Sektionen „Nicht ausgeführt",
+  Positionen NICHT GEPRUEFT (C.46 / C.47)
 ```
 
 ---

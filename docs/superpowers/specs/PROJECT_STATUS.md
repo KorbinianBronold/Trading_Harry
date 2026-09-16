@@ -5119,6 +5119,129 @@ Länge von `reason`, Verhalten der Empfehlung ohne den falsch gelesenen TP.
 ANPASSEN unter Sonnet gegen die Haiku-Zeilen davor (per Datum trennen: vor dem 15.09.
 Haiku, altes Prompt, roher Snapshot).
 
+### C.47 — Phase-5-Review (Mail): Abbruch sichtbar oben (F55), Kürzen vor Escapen (F56), Rotation und VIX-Regel im Kopf (F57), Performance seit dem letzten Handelstag (F58), Portfolio-Zeile mit Levels/Alter/Größe (F59), Top-10 mit Confidence/Technik/TP%/Sub-Sektor (F60), Ergebnis-Bullet und Betreff (F61), Sequenz-Test (F62), Doku-Drift (F63), Kleineres (F64) (2026-09-16)
+
+Dreizehnter Durchgang des Pipeline-Reviews: `src/email_sender.py` (Tagesmail:
+`render_daily_html`, `generate_daily_briefing`, `send_daily_email`), die Verdrahtung in
+`run_pipeline()` (Payload, `_aggregate_yesterday_outcomes`), Tests, Notebook-Zellen
+72–76 und die gerenderte Mail vom 15.09. Phase 5 hat keinen Claude-Call. Rohstoffe/
+Krypto: der gemeinsame Renderer wurde angeschaut, keine cc-Befunde (Entscheidung C.43);
+ein Render-Detail (leerer Wert in der Gold/Silver-Fussnote) ist für die cc-Sitzung vorgemerkt.
+
+**Code-Sicht: Struktur richtig, Leserführung unvollständig.** Sektionsreihenfolge
+(Portfolio zuerst, C.30), Flags-Spalte (C.45), Zähler-Absatz, NICHT-GEPRUEFT-Zeilen und
+Zustellung (`_send`, B-10) stimmten. Was fehlte, lag beim Abbruchpfad (Hinweis am Ende der
+Mail), bei der Kürzung (`_h(x)[:n]`) und bei dem, was der Leser für die Entscheidung
+braucht (Broker-Levels, Confidence, Rotation, Ergebnis des Laufs). Zwei Läufe am 15.09.:
+die Datei im Temp-Ordner (15:20, 1,26 €) stammt aus einem anderen Durchlauf als die
+Notebook-Outputs (1,89 €) — für die Befunde unerheblich.
+
+**Befunde und Umsetzung (Entscheidung Korbinian 16.09.: alles, Empfehlungen bei den
+offenen Punkten — volle Summary, Rotation aus `market_context`, Ergebnis-Bullet plus
+Betreff, Sub-Sektor in die Top-10):**
+- **F55 — Abbruch-Balken stand im Fußteil (behoben).** `_section_footer` renderte
+  `aborted_at_phase` vor dem `<hr>` am Ende; bei Abbruch in `deep_analysis` las der
+  Leser von oben NICHT GEPRUEFT, „Keine Setups gefunden", „Divergenz: Keine.", cc „Keine
+  Daten." und erfuhr erst unten, warum — dieselbe Klasse wie F53, nur für Aktien/Divergenz/
+  cc. Neu: `_section_abort()` als roter Balken direkt unter der H1 (Tages- **und**
+  16:10-Mail, der Fußteil trägt die Zeile nicht mehr); `PHASE_ORDER` spiegelt die
+  `current_phase`-Literale von `run_pipeline()` (ein Test liest `main.py` und pinnt
+  Menge **und** Reihenfolge); `_not_run(payload, "ranking")` lässt Aktien, Divergenz und
+  Commodities „Nicht ausgeführt (Abbruch in Phase X)." sagen — alle drei werden in der
+  Phase `ranking` befüllt; ein Abbruch in `portfolio_check` zeigt die echten Top-10.
+  Betreff-Präfix „ABBRUCH <phase>". Unbekannte Phasennamen gelten als gelaufen.
+- **F56 — Escape vor Kürzung zerschnitt Entities (behoben).** `_h(summary)[:160]`
+  (Top-10, Divergenz) und `_h(reason)[:200]` (16:10) — nachgestellt: `Fed&#` bzw. `&am`
+  standen als Text in der Mail; zudem kein Kürzungszeichen, Schnitt mitten im Wort, und
+  der Prompt erlaubt 600 Zeichen Summary, die **mit der These endet** — der Schnitt bei 160
+  verlor genau die. Neu `_cut(s, n)` (Wortgrenze, „…"), **immer vor** `_h()`; Summary in
+  Top-10/Divergenz bis `_SUMMARY_MAX = 600` (Prompt-Maximum, nur Sicherheitsnetz), 16:10-
+  Begründung 200, Briefing-Bullets 100/140/80 statt 70/80/60 mitten im Wort („frontier-mod",
+  „hike odds f", „after hawki" in der Mail vom 15.09.).
+- **F57 — Rotation und Makro erreichten den Leser nie (behoben).** Der
+  `_section_trends`-Docstring versprach „megatrends + sector rotation", gerendert wurden
+  nur Karten; die Phase-0-Rotation verwirft `main.py`, die aus `market_context`
+  (persistiert, GICS-Namen, C.28) stand samt `macro_summary` im Payload, `_market_line`
+  las nur VIX/S&P/Regime. Beide steuern Phase 2/3/4a per Prompt. Neu `_rotation_line()`
+  als zweite Kopfzeile aus `market_context` („Rotation: in … · out … · Makro: …"),
+  Listen- und String-Form (`_as_list`); dazu `_vix_rule()` an der VIX-Zahl („ab 25: nur
+  high confidence" / „ab 35: keine neuen Longs", Werte aus `config`) — in beiden Mails,
+  um 16:10 wird die Regel durchgesetzt. `test_market_line_shows_only_what_is_known`
+  bekam VIX 18,4 statt 28,4 (der Test prüft „nur belegte Werte", nicht die Regel).
+- **F58 — Vortags-Performance montags leer, Basis fehlte (behoben).**
+  `_aggregate_yesterday_outcomes` nahm den Kalender-Vortag; `evaluated_date` ist der
+  Handelstag der Bar (E7). Montag fragte nach Sonntag: Freitag-Outcomes der Aktien
+  erschienen in keiner Tagesmail (nur in der final_close-Mail, C.17). Neu: Fenster vom
+  letzten Werktag bis gestern (`BETWEEN`, `since`/`until` im Dict; Krypto-Outcomes vom
+  Wochenende bleiben drin), Fußteil „Performance 2026-09-11 – 2026-09-13" bzw. ein Datum,
+  Basis „(je Signal 500 EUR Margin × Hebel 5)" aus `config`. Ohne Outcome-Dict entfällt
+  die Zeile — die 16:10-Mail trägt keins und zeigte bis dahin „Long /, Short /, sim. P/L
+  EUR". `_final_bar_warning`-Docstring („final_close verschickt bewusst keine Mail") seit
+  C.17 falsch, korrigiert.
+- **F59 — Portfolio-Zeile zeigte nicht, was die Empfehlung braucht (behoben).** Jede
+  Zeile trug bereits Broker-SL/TP, `size`, `opened_at` (`_POSITION_FIELDS`), gerendert war
+  „long @ Entry (jetzt Kurs)". Neu `_position_cell()`: „long 1.0 @ 4344.75 → 4286.77
+  (−1.33 %)" plus „seit 2026-09-11 (5 Tage) · SL 4200.0 / TP —"; ANPASSEN „neuer SL 4250.0
+  (vorher 4200.0)" — ohne das alte Level war der Nachzug nicht beurteilbar (GOLD ohne
+  Broker-TP war genau die F51-Falle). Bewegung aus Sicht der Position (Short gespiegelt);
+  `profit_loss` vom Broker bleibt massgeblich (F54). Reine Render-Änderung.
+- **F60 — Top-10 ohne Confidence, Technik-Stärke, TP%/SL%, Sub-Sektor (behoben).**
+  `confidence` steuert die VIX-Regel (B.3) und stand auf der Zeile; Rank-Score =
+  Analyse × Technik, nur ein Faktor sichtbar; `tp_pct`/`sl_pct` (seit C.45 abgeleitet)
+  sind genau die Werte der Range-Flags. Neu: Spalten Sub-Sektor, Conf., Technik; TP/SL als
+  „920.0 (4.55 %)"; „Kurs (Snapshot)" statt „Kurs". `ranking._enrich()` hängt
+  `_tech_strength` (aus `signal_context`) und `_sub_sector` (`db.get_ticker_sector`, None
+  für ungemappte und cc) an die Kopie — Original bleibt schlüsselgleich (C.6, Test).
+- **F61 — Briefing-Box und Betreff kannten das Ergebnis nicht (behoben).**
+  `generate_daily_briefing` läuft vor Phase 3/4/4a. Neu `result_bullet(payload)` als
+  erster Bullet („Heute: 1× SCHLIESSEN, 1× ANPASSEN · 3 Long / 1 Short Setups · 2
+  Divergenz-Kandidaten"; „keine offene Position" / „Positionen nicht abrufbar"; None bei
+  Abbruch — der Balken sagt dann, was fehlt), rein aus dem Payload im Renderer, kein
+  `main.py`-Plumbing. Betreff „[Shares_Future] <date> <run_type> — [ABBRUCH x ·]
+  1× SCHLIESSEN · Top 3L / 1S". Beneficiary-Bullet mit Trendname und bis zu drei Tickern
+  („Trend-Beneficiary: JPM" nannte den Trend nicht; erster Ticker der ersten Liste).
+- **F62 — Tests pinnten vier Anker (behoben).** Ein Test pinnt jetzt die komplette
+  Sequenz H1 → Briefing → Marktlage → Rotation → Portfolio → Long → Short → Divergenz →
+  Trends → Commodities → Performance → Kosten → Disclaimer. Zwei Fixtures trugen
+  `run_type: "close"` (tot seit C.14) → `pre_market`.
+- **F63 — Doku-Drift (behoben).** Modul-Docstring „four sections" (Divergenz fehlte),
+  `render_daily_html` „5-section"; ARCHITECTURE §9 zeigte Signaturen, die es nie gab
+  (`render_daily_html(date, top_long, …)`, `send_daily_email(to, html, date) -> bool`),
+  Pipeline-Box „4 Sektionen" und „Fail: Log, aber keine Abort" (tatsächlich
+  `MailDeliveryError` → roter Job, B-10), Fluss-Diagramm Phase 4a las noch `predictions`
+  (seit C.37 falsch) und nannte `send_partial_email`, das nie existierte. Notebook Zelle 73
+  (Zeilennummer, „Portfolio zuerst, dann Briefing") nachgezogen.
+- **F64 — Kleineres (behoben):** Trend-Karten zeigen „—" statt „+" mit leerer Liste und
+  „Catalyst: TBD"; ist nur eine Top-10-Seite leer, steht „Keine Long-/Short-Setups." statt
+  einer Kopfzeile ohne Zeilen; Divergenz-Zeilen bekommen die Policy-⚠️ wie die Top-10
+  (`_flags()` für beide).
+
+**Für die cc-Sitzung vorgemerkt:** die Fussnote rendert „Gold/Silver-Ratio:   |" mit
+leerem Wert, wenn nur einer der beiden Werte vorliegt.
+
+**Regel-15-Sweep:** kein Prompt berührt. `policy_monitor_v1` („the first event is the one
+the briefing shows") bleibt wahr; `deep_analysis_v2` „summary max 600 chars" ist jetzt
+die Mail-Obergrenze statt eines Widerspruchs.
+
+**Tests:** 1139 grün, 16 übersprungen, Coverage 93,3 %. Neu (rot zuerst, 32): Sequenz,
+Abbruch ×5 (Balken vor der ersten Sektion, Sektionen „Nicht ausgeführt", Abbruch in 4a
+zeigt echte Top-10, `PHASE_ORDER` gegen `main.py`, Betreff), Kürzung ×4 (`_cut`,
+16:10-Entity, volle Summary, Briefing-Wortgrenze), Kopf ×4 (Rotation String/Liste, ohne
+Rotation, VIX-Regel), Fußteil ×3, Portfolio ×2, Top-10-Spalten, Ergebnis-Bullet ×4,
+Betreff, Beneficiary, Kleineres ×3, Ranking (`_tech_strength`/`_sub_sector`),
+`_aggregate_yesterday_outcomes` ×2 (Montag/Dienstag). Angepasst: VIX-Wert in einem
+Marktlage-Test (s. F57), zwei `run_type`-Fixtures.
+
+**Nicht live verifiziert:** die neue Mail lief noch nicht gegen einen echten Lauf;
+Verifikation über Notebook-Zellen 74/76 (Datei vorher neu öffnen) — zu prüfen: Kopf
+(Ergebnis-Bullet, Marktlage mit VIX-Regel falls ≥ 25, Rotation aus der Morgenzeile),
+Portfolio-Zelle der GOLD-Position (Alter, SL/TP —), Fußteil-Zeitraum. F60-Spalten und
+F43-Flags brauchen weiterhin einen Lauf mit mindestens einer Richtung (C.45).
+
+**Beobachtungsposten neu:** Länge der Summary-Zellen in der Praxis (600 Zeichen × 20
+Zeilen — ist die Tabelle noch lesbar?), Häufigkeit „Nicht ausgeführt" (Abbrüche pro
+Phase), ob die Rotationszeile mit dem Trend-Vokabular von Phase 0 kollidiert (C.30, Punkt 2).
+
 ## Sprint 3D — Learning Modul
 
 ⚠️ **Noch nicht ausgearbeitet — braucht eine eigene Planungssession, bevor die Implementierung

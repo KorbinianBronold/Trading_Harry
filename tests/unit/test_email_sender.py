@@ -9,7 +9,7 @@ from src.email_sender import (
 
 def _sample_payload() -> dict:
     return {
-        "date": "2026-05-19", "run_type": "close",
+        "date": "2026-05-19", "run_type": "pre_market",
         "portfolio_recs": [
             {"ticker": "AAPL", "action": "ANPASSEN",
              "reason": "Halber Weg zum TP, SL hochziehen",
@@ -779,8 +779,8 @@ def test_market_line_renders_vix_sp500_and_regime():
 
 def test_market_line_shows_only_what_is_known():
     from src.email_sender import _market_line
-    assert _market_line({"vix_level": 28.4, "sp500_change_pct": None,
-                         "market_regime": None}) == "VIX 28.4"
+    assert _market_line({"vix_level": 18.4, "sp500_change_pct": None,
+                         "market_regime": None}) == "VIX 18.4"
     assert _market_line({}) == ""
 
 
@@ -945,3 +945,321 @@ def test_pending_portfolio_rows_render_as_nicht_geprueft():
     html = render_daily_html(payload)
     assert "NICHT GEPRUEFT" in html and "GOLD" in html
     assert "Keine offenen Positionen" not in html
+
+
+# ---------- C.47 / F55-F64: Phase-5-Review ----------
+
+def _full_payload() -> dict:
+    """Payload mit ALLEN Bausteinen der Tagesmail (Kopf, Divergenz, Rotation),
+    fuer Reihenfolge- und Kopf-Tests."""
+    p = _sample_payload()
+    p.update({
+        "briefing": ["Oelschock"],
+        "market_context": {
+            "vix_level": 17.6, "sp500_change_pct": -0.5, "market_regime": "risk_off",
+            "sector_rotation_in": "Energy, Health Care",
+            "sector_rotation_out": "Information Technology",
+            "macro_summary": "Hawkish Fed repricing.",
+        },
+        "divergence": [{
+            "ticker": "MSFT", "direction": "short", "current_price": 400.0,
+            "tp_price": 390.0, "sl_price": 405.0, "rr_ratio": 2.0,
+            "_analysis_strength": 5, "_checks": [], "summary": "d",
+            "scores": {"policy_risk": {"value": 7}},
+        }],
+        "divergence_stats": {"tech_only_abstentions": 1, "conflicts": 0,
+                             "overflow": 0, "core_overflow": 0},
+    })
+    return p
+
+
+def _posted_subject(mocker, payload: dict) -> str:
+    resp = MagicMock()
+    resp.status_code = 200
+    resp.json.return_value = {"id": "x"}
+    post = mocker.patch("src.email_sender.requests.post", return_value=resp)
+    send_daily_email(payload=payload, api_key="k", email_from="a@b.c", email_to="d@e.f")
+    return post.call_args.kwargs["json"]["subject"]
+
+
+# F62 -- die komplette Sequenz, nicht vier Anker
+
+def test_daily_mail_pins_the_complete_section_sequence():
+    """F62: bisher pinnten die Tests vier Anker -- Kopf (Briefing, Marktlage,
+    Rotation) und Divergenz standen in keiner Reihenfolge-Pruefung."""
+    html = render_daily_html(_full_payload())
+    anchors = ["<h1>", "Was heute zaehlt", "Marktlage:", "Rotation:",
+               "<h2>Portfolio-Empfehlungen</h2>", "<h2>Aktien Top-10 Long</h2>",
+               "<h2>Aktien Top-10 Short</h2>", "<h2>Divergenz-Kandidaten</h2>",
+               "<h2>Trends</h2>", "<h2>Commodities + Crypto</h2>",
+               "Performance", "Run-Kosten", "Disclaimer"]
+    positions = [html.find(a) for a in anchors]
+    missing = [a for a, p in zip(anchors, positions) if p < 0]
+    assert not missing, f"fehlt in der Mail: {missing}"
+    assert positions == sorted(positions), list(zip(anchors, positions))
+
+
+# F55 -- Abbruch sichtbar oben, Sektionen sagen 'nicht ausgefuehrt'
+
+def test_abort_banner_stands_in_the_header_before_the_first_section():
+    payload = _sample_payload()
+    payload["cost_summary"]["aborted_at_phase"] = "deep_analysis"
+    html = render_daily_html(payload)
+    assert html.index("abgebrochen") < html.index("<h2>Portfolio-Empfehlungen</h2>")
+
+
+def test_sections_after_the_abort_phase_say_not_run_instead_of_nothing_found():
+    """Dieselbe Klasse wie F53: 'Keine Setups gefunden' nach einem Abbruch in
+    Phase 3 las wie ein Ergebnis."""
+    payload = _sample_payload()
+    payload["top_long"], payload["top_short"] = [], []
+    payload["divergence"], payload["commodities_crypto"] = [], []
+    payload["cost_summary"]["aborted_at_phase"] = "deep_analysis"
+    html = render_daily_html(payload)
+    assert "Keine Setups gefunden" not in html
+    assert "Keine Daten" not in html
+    assert html.count("icht ausgef") >= 3, "Aktien, Divergenz, Commodities"
+    assert "deep_analysis" in html
+
+
+def test_sections_before_the_abort_phase_render_normally():
+    """Abbruch in 4a: das Ranking war fertig, die Top-10 sind echt."""
+    payload = _sample_payload()
+    payload["cost_summary"]["aborted_at_phase"] = "portfolio_check"
+    html = render_daily_html(payload)
+    assert "NVDA" in html
+    sections = html.split("<h2>Portfolio-Empfehlungen</h2>")[1]
+    assert "Nicht ausgeführt" not in sections
+
+
+def test_phase_order_mirrors_run_pipeline():
+    """Die Sektions-Logik braucht die Phasenreihenfolge aus main.run_pipeline();
+    ein neuer current_phase-Wert dort muss hier auftauchen -- in derselben Folge."""
+    import re
+    from pathlib import Path
+    import main
+    from src.email_sender import PHASE_ORDER
+    src = Path(main.__file__).read_text(encoding="utf-8")
+    body = src.split("def run_pipeline(")[1].split("\ndef ")[0]
+    literals = re.findall(r'current_phase = "([a-z_0-9]+)"', body)
+    assert literals == list(PHASE_ORDER)
+
+
+def test_subject_carries_the_abort_phase(mocker):
+    payload = _sample_payload()
+    payload["cost_summary"]["aborted_at_phase"] = "deep_analysis"
+    assert "ABBRUCH deep_analysis" in _posted_subject(mocker, payload)
+
+
+# F56 -- erst kuerzen (Wortgrenze, Ellipse), dann escapen
+
+def test_cut_ends_at_a_word_boundary_with_an_ellipsis():
+    from src.email_sender import _cut
+    assert _cut("Fed hawkish repricing hits duration", 20) == "Fed hawkish…"
+    assert _cut("short", 20) == "short"
+    assert _cut(None, 20) == ""
+
+
+def test_reason_is_cut_before_escaping_so_entities_stay_whole():
+    """_h(x)[:n] zerschnitt Entities: '&am' und 'Fed&#' standen als Text in der Mail."""
+    from src.email_sender import render_trade_proposals_html
+    reason = "y" * 197 + "& more text"
+    html = render_trade_proposals_html({"date": "2026-09-16", "signal_changes": [
+        {"ticker": "AAPL", "direction": "long", "verdict": "bestaetigt",
+         "probability_before": 60, "reason": reason}]})
+    cell = html.split("<td>" + "y" * 10)[1].split("</td>")[0]
+    assert cell.endswith("&amp;…"), cell[-20:]
+
+
+def test_top10_shows_the_full_summary_up_to_the_prompt_limit():
+    """Der Prompt erlaubt 600 Zeichen und die Summary ENDET mit der These --
+    der Schnitt bei 160 verlor genau die."""
+    payload = _sample_payload()
+    payload["top_long"][0]["summary"] = "w" * 300 + " THESE"
+    assert "w" * 300 + " THESE" in render_daily_html(payload)
+
+
+def test_briefing_cuts_trend_summaries_at_a_word_boundary():
+    from src.email_sender import generate_daily_briefing
+    summary = ("AI executives incl. Amodei calling for slower frontier-model "
+               "development triggered a broad chip selloff and more words here")
+    bullets = generate_daily_briefing({"trends": [
+        {"name": "semis", "strength": 9, "summary": summary,
+         "beneficiary_tickers": [], "next_catalyst": "TBD"}]}, {})
+    b = bullets[0]
+    assert b.startswith("semis: ") and b.endswith("…"), b
+    cut = b[len("semis: "):-1]
+    assert summary.startswith(cut) and summary[len(cut)] == " ", cut
+
+
+# F57 -- Rotation und Makro im Kopf, VIX-Regel benannt
+
+def test_header_shows_rotation_and_macro_from_the_morning_context():
+    html = render_daily_html(_daily_payload(market_context={
+        "vix_level": 18.0, "sector_rotation_in": "Energy, Health Care",
+        "sector_rotation_out": "Information Technology",
+        "macro_summary": "Hawkish Fed repricing."}))
+    assert "Rotation:" in html
+    assert "Energy, Health Care" in html and "Information Technology" in html
+    assert "Hawkish Fed repricing." in html
+    assert html.index("Rotation:") < html.index("<h2>"), "gehoert in den Kopf"
+
+
+def test_header_rotation_accepts_the_list_form_too():
+    html = render_daily_html(_daily_payload(market_context={
+        "sector_rotation_in": ["Energy", "Utilities"], "sector_rotation_out": []}))
+    assert "Energy, Utilities" in html
+
+
+def test_header_without_rotation_has_no_rotation_line():
+    assert "Rotation:" not in render_daily_html(_daily_payload(market_context={
+        "vix_level": 18.0}))
+
+
+def test_market_line_names_the_active_vix_rule():
+    from src.email_sender import _market_line
+    assert "high confidence" in _market_line({"vix_level": 26.0})
+    assert "keine neuen Longs" in _market_line({"vix_level": 36.0})
+    assert "high confidence" not in _market_line({"vix_level": 18.0})
+
+
+# F58 -- Zeitraum und Basis im Fussteil
+
+def test_footer_names_the_period_and_the_pl_basis():
+    payload = _sample_payload()
+    payload["yesterday_outcomes"].update({"since": "2026-09-11", "until": "2026-09-13"})
+    html = render_daily_html(payload)
+    assert "2026-09-11" in html and "2026-09-13" in html
+    assert "500 EUR" in html and "Hebel 5" in html
+
+
+def test_footer_names_a_single_day_when_since_equals_until():
+    payload = _sample_payload()
+    payload["yesterday_outcomes"].update({"since": "2026-09-14", "until": "2026-09-14"})
+    html = render_daily_html(payload)
+    assert "2026-09-14" in html
+    assert "2026-09-14 – 2026-09-14" not in html
+
+
+def test_footer_skips_the_performance_line_without_outcomes():
+    """Die 16:10-Mail traegt keine yesterday_outcomes -- bisher stand dort
+    'Long /, Short /, sim. P/L  EUR'."""
+    html = render_daily_html(_daily_payload(yesterday_outcomes={}))
+    assert "Performance" not in html
+
+
+# F59 -- die Portfolio-Zeile traegt, was die Empfehlung braucht
+
+def test_portfolio_row_shows_size_age_and_broker_levels():
+    payload = _sample_payload()
+    payload["date"] = "2026-09-15"
+    payload["portfolio_recs"] = [{
+        "ticker": "GOLD", "action": "HALTEN", "reason": "ok", "new_sl_price": None,
+        "new_tp_price": None, "direction": "long", "entry_price": 4344.75,
+        "current_price": 4286.77, "profit_loss": -261.08, "size": 1.0,
+        "opened_at": "2026-09-11T08:05:12.345", "sl_price": 4200.0, "tp_price": None}]
+    html = render_daily_html(payload)
+    cell = html.split("<h2>Portfolio-Empfehlungen</h2>")[1].split("</table>")[0]
+    assert "1.0" in cell                                 # Groesse
+    assert "2026-09-11" in cell and "4 Tage" in cell     # seit / Alter
+    assert "SL 4200.0" in cell and "TP —" in cell        # Broker-Levels, kein TP
+    assert "-1.33 %" in cell                             # Kursbewegung seit Entry
+
+
+def test_anpassen_shows_the_old_level_next_to_the_new_one():
+    payload = _sample_payload()
+    payload["portfolio_recs"] = [{
+        "ticker": "AAPL", "action": "ANPASSEN", "reason": "trail",
+        "new_sl_price": 179.0, "new_tp_price": None, "entry_price": 178.0,
+        "current_price": 181.2, "direction": "long", "profit_loss": 3.2,
+        "sl_price": 176.0, "tp_price": 184.0}]
+    assert "neuer SL 179.0 (vorher 176.0)" in render_daily_html(payload)
+
+
+# F60 -- Confidence, Technik-Staerke, TP%/SL%, Sub-Sektor
+
+def test_top10_shows_confidence_tech_strength_levels_pct_and_sub_sector():
+    payload = _sample_payload()
+    payload["top_long"][0].update({
+        "confidence": "high", "_tech_strength": 3, "_analysis_strength": 7,
+        "_rank_score": 21, "tp_pct": 4.55, "sl_pct": 2.27,
+        "_sub_sector": "Semiconductors"})
+    html = render_daily_html(payload)
+    table = html.split("<h2>Aktien Top-10 Long</h2>")[1].split("</table>")[0]
+    for col in ("Conf.", "Technik", "Sub-Sektor"):
+        assert col in table, col
+    assert "high" in table and "Semiconductors" in table
+    assert "<td>3</td>" in table                          # Technik-Staerke
+    assert "920.0 (4.55 %)" in table and "860.0 (2.27 %)" in table
+
+
+# F61 -- Ergebnis-Bullet und Betreff
+
+def test_briefing_starts_with_the_result_bullet():
+    """F61: die Box entsteht vor Phase 3/4/4a und kannte das Ergebnis nicht."""
+    html = render_daily_html(_full_payload())
+    box = html.split("Was heute zaehlt")[1].split("</ul>")[0]
+    first = box.split("<li>")[1].split("</li>")[0]
+    assert first.startswith("Heute:"), first
+    assert "1× SCHLIESSEN" in first and "1× ANPASSEN" in first
+    assert "1 Long / 0 Short" in first and "1 Divergenz" in first
+
+
+def test_result_bullet_names_unavailable_positions():
+    from src.email_sender import result_bullet
+    assert "nicht abrufbar" in result_bullet(_daily_payload(positions_unavailable=True))
+
+
+def test_result_bullet_names_the_empty_book():
+    from src.email_sender import result_bullet
+    assert "keine offene Position" in result_bullet(_daily_payload())
+
+
+def test_result_bullet_is_skipped_on_abort():
+    from src.email_sender import result_bullet
+    assert result_bullet(_daily_payload(
+        cost_summary={"aborted_at_phase": "deep_analysis"})) is None
+
+
+def test_subject_carries_portfolio_actions_and_setup_counts(mocker):
+    subject = _posted_subject(mocker, _sample_payload())
+    assert "1× SCHLIESSEN" in subject and "1× ANPASSEN" in subject
+    assert "1L / 0S" in subject
+
+
+def test_briefing_beneficiary_bullet_names_the_trend_and_up_to_three_tickers():
+    from src.email_sender import generate_daily_briefing
+    bullets = generate_daily_briefing({"trends": [
+        {"name": "semis-selloff", "strength": 9, "summary": "s",
+         "beneficiary_tickers": [], "negative_tickers": ["NVDA"], "next_catalyst": "TBD"},
+        {"name": "fed-repricing", "strength": 8, "summary": "s",
+         "beneficiary_tickers": ["JPM", "WFC", "USB", "PNC"], "next_catalyst": "TBD"},
+    ]}, {})
+    b = next(x for x in bullets if x.startswith("Trend-Beneficiary"))
+    assert "fed-repricing" in b and "JPM, WFC, USB" in b and "PNC" not in b
+
+
+# F64 -- Kleineres
+
+def test_trend_card_shows_a_dash_for_empty_lists_and_tbd():
+    payload = _sample_payload()
+    payload["trends"] = [{
+        "name": "x", "strength": 5, "duration_estimate": "3-5d", "summary": "s",
+        "beneficiary_tickers": [], "negative_tickers": ["INTC"], "next_catalyst": "TBD"}]
+    card = render_daily_html(payload).split("<h2>Trends</h2>")[1]
+    assert "<b>+</b> —" in card
+    assert "Catalyst:</b> —" in card
+
+
+def test_empty_short_side_says_so_instead_of_a_bare_table_head():
+    html = render_daily_html(_sample_payload())   # top_short = []
+    assert "Keine Short-Setups" in html
+    assert "NVDA" in html
+
+
+def test_divergence_rows_carry_the_policy_flag_like_the_top10():
+    payload = _full_payload()
+    payload["divergence"][0]["scores"] = {"policy_risk": {"value": 3}}
+    table = render_daily_html(payload).split(
+        "<h2>Divergenz-Kandidaten</h2>")[1].split("</table>")[0]
+    assert "⚠️" in table

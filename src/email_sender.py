@@ -3,22 +3,30 @@
 Error-Mail: send_error_email() is called by main.py on any unhandled exception.
 It replaces the normal run email so the user is informed via the same channel.
 
-Daily mail: a header (the "Was heute zaehlt" briefing box plus ONE Marktlage
-line -- VIX, S&P 500 change, regime; C.30) followed by four sections in this
-fixed order:
+Daily mail: a header -- abort banner (only after a cost-cap abort, C.47), the
+"Was heute zaehlt" briefing box (first bullet = the run's result, C.47), ONE
+Marktlage line (VIX with the active VIX rule, S&P 500 change, regime; C.30) and
+ONE Rotation/Makro line from the morning market_context (C.47) -- followed by
+five sections in this fixed order (a test pins the whole sequence):
   1. Portfolio-Empfehlungen (Phase 4a) — directly actionable on market open
   2. Aktien Top-10 Long + Top-10 Short
-  3. Trends (dark cards)
-  4. Commodities + Crypto
+  3. Divergenz-Kandidaten (Spec 5.5) with the abstention/conflict counters
+  4. Trends (dark cards)
+  5. Commodities + Crypto
 
-Plus a footer with yesterday's outcomes, skipped tickers, disclaimer, costs.
-Weekly mail is a shorter HTML body with the same delivery infra."""
+Plus a footer with the evaluated outcomes since the last trading day, skipped
+tickers, run cost and the disclaimer. Sections the run never reached after a
+cost-cap abort say so instead of "nothing found" (C.47 / F55). No Claude call
+in this phase. Weekly mail is a shorter HTML body with the same delivery infra."""
 import html
 import logging
 import re
+from datetime import date as date_cls
 from typing import Any
 
 import requests
+
+import config
 
 log = logging.getLogger("shares_future.email_sender")
 
@@ -39,6 +47,25 @@ _DISCLAIMER = (
     "zum Totalverlust führen. Keine Garantie für Prognosen."
 )
 
+# C.47 / F55: Phasenreihenfolge von main.run_pipeline() (die current_phase-
+# Literale dort, in derselben Folge -- ein Test pinnt das). Damit weiss die
+# Mail, welche Sektionen ein Kostendeckel-Abbruch gar nicht mehr erreicht hat.
+PHASE_ORDER = (
+    "trend_analysis", "market_context", "data_collection", "data_collection_cc",
+    "open_positions", "sector_momentum", "broad_scan", "fundamentals_2b",
+    "policy_monitor", "deep_analysis", "commodities_crypto", "ranking",
+    "portfolio_check",
+)
+
+# Reihenfolge der Portfolio-Aktionen im Ergebnis-Bullet und im Betreff (F61):
+# handlungsrelevant zuerst, Platzhalter zuletzt.
+_ACTION_ORDER = ("SCHLIESSEN", "ANPASSEN", "HALTEN", "KEINE ANALYSE", "NICHT GEPRUEFT")
+
+# Obergrenze der Summary in den Aktien-Tabellen: das Prompt-Maximum von
+# deep_analysis_v2 ("max 600 chars, ends with the trade thesis"). Ein Schnitt
+# darunter verlor die These (C.47 / F56).
+_SUMMARY_MAX = 600
+
 
 def _h(s: Any) -> str:
     """HTML-escapes `s`, returning an empty string for None."""
@@ -47,8 +74,27 @@ def _h(s: Any) -> str:
     return html.escape(str(s))
 
 
+def _cut(s: Any, n: int) -> str:
+    """Kuerzt `s` auf hoechstens `n` Zeichen an einer Wortgrenze und haengt '…'
+    an; None -> ''. IMMER vor _h() aufrufen: _h(x)[:n] zerschnitt Entities, in
+    der Mail stand dann 'Fed&#' oder '&am' als Text (C.47 / F56)."""
+    if s is None:
+        return ""
+    s = str(s)
+    if len(s) <= n:
+        return s
+    head = s[:n]
+    space = head.rfind(" ")
+    if space > n // 2:
+        head = head[:space]
+    return head.rstrip() + "…"
+
+
 def generate_daily_briefing(trend_context: dict, policy_context: dict) -> list[str]:
-    """Returns 4-6 bullet strings for the 'Was heute zaehlt' box."""
+    """Returns 4-6 bullet strings for the 'Was heute zaehlt' box -- rein
+    deterministisch aus Phase 0 und dem Policy-Monitor, ohne Claude-Call. Das
+    Ergebnis des Laufs (Positionen, Setups) kennt diese Funktion nicht; das
+    stellt render_daily_html() per result_bullet() voran (C.47 / F61)."""
     bullets: list[str] = []
     strong = sorted(
         [t for t in (trend_context.get("trends") or []) if t.get("strength", 0) >= 7],
@@ -56,17 +102,18 @@ def generate_daily_briefing(trend_context: dict, policy_context: dict) -> list[s
     )
     for t in strong[:2]:
         name = t.get("name") or t.get("trend_name", "Trend")
-        summary = (t.get("summary") or "")[:70]
-        bullets.append(f"{name}: {summary}")
+        bullets.append(f"{name}: {_cut(t.get('summary'), 100)}")
     if (policy_context.get("policy_risk_level") or "").lower() == "high":
         events = policy_context.get("events") or []
         if events:
-            headline = (events[0].get("headline") or "")[:80]
-            bullets.append(f"Policy-Risiko HOCH: {headline}")
+            bullets.append(f"Policy-Risiko HOCH: {_cut(events[0].get('headline'), 140)}")
     for t in (trend_context.get("trends") or []):
         tickers = t.get("beneficiary_tickers") or []
         if tickers:
-            bullets.append(f"Trend-Beneficiary: {tickers[0]}")
+            # F61: mit Trendname und bis zu drei Tickern -- 'Trend-Beneficiary:
+            # JPM' allein sagte nicht, welcher Trend gemeint ist.
+            name = t.get("name") or t.get("trend_name", "Trend")
+            bullets.append(f"Trend-Beneficiary ({name}): {', '.join(tickers[:3])}")
             break
     for t in (trend_context.get("trends") or []):
         cat = t.get("next_catalyst")
@@ -77,9 +124,67 @@ def generate_daily_briefing(trend_context: dict, policy_context: dict) -> list[s
         # kommt nur durch, was ein ISO-Datum traegt. Das deckt beide Fehlformen
         # mit einer Regel ab.
         if cat and re.search(r"\d{4}-\d{2}-\d{2}", cat):
-            bullets.append(f"Naechster Katalysator: {cat[:60]}")
+            bullets.append(f"Naechster Katalysator: {_cut(cat, 80)}")
             break
     return bullets[:6]
+
+
+def _book_summary(payload: dict) -> str:
+    """Portfolio-Stand in einem Halbsatz: '1× SCHLIESSEN, 2× HALTEN', 'keine
+    offene Position' oder 'Positionen nicht abrufbar' (C.47 / F61)."""
+    if payload.get("positions_unavailable"):
+        return "Positionen nicht abrufbar"
+    recs = payload.get("portfolio_recs") or []
+    if not recs:
+        return "keine offene Position"
+    counts: dict[str, int] = {}
+    for r in recs:
+        counts[r.get("action") or "?"] = counts.get(r.get("action") or "?", 0) + 1
+    order = [a for a in _ACTION_ORDER if a in counts] + \
+            [a for a in counts if a not in _ACTION_ORDER]
+    return ", ".join(f"{counts[a]}× {a}" for a in order)
+
+
+def result_bullet(payload: dict) -> str | None:
+    """Erster Bullet der Briefing-Box (C.47 / F61): was der Lauf ergeben hat --
+    Portfolio-Aktionen, Setups je Seite, Divergenz-Kandidaten. None bei einem
+    Kostendeckel-Abbruch: dann sagt der Balken im Kopf, was fehlt."""
+    if (payload.get("cost_summary") or {}).get("aborted_at_phase"):
+        return None
+    n_long = len(payload.get("top_long") or [])
+    n_short = len(payload.get("top_short") or [])
+    n_div = len(payload.get("divergence") or [])
+    return (f"Heute: {_book_summary(payload)} · {n_long} Long / {n_short} Short "
+            f"Setups · {n_div} Divergenz-Kandidaten")
+
+
+def _not_run(payload: dict, phase: str) -> str | None:
+    """Hinweistext, wenn `phase` beim Kostendeckel-Abbruch nicht mehr fertig
+    wurde (C.47 / F55) -- sonst None. 'Keine Setups gefunden' nach einem
+    Abbruch in Phase 3 las wie ein Ergebnis (dieselbe Klasse wie F53).
+    Unbekannte Phasennamen gelten als gelaufen: lieber echte Daten zeigen als
+    sie faelschlich fuer fehlend erklaeren."""
+    aborted = (payload.get("cost_summary") or {}).get("aborted_at_phase")
+    if not aborted or aborted not in PHASE_ORDER or phase not in PHASE_ORDER:
+        return None
+    if PHASE_ORDER.index(aborted) <= PHASE_ORDER.index(phase):
+        return f"Nicht ausgeführt (Abbruch in Phase {aborted})."
+    return None
+
+
+def _section_abort(payload: dict) -> str:
+    """Roter Balken im KOPF der Mail bei einem Kostendeckel-Abbruch (C.47 / F55).
+    Bis dahin stand die Zeile im Fussteil -- der Leser sah oben NICHT GEPRUEFT
+    und 'Keine Setups' und erfuhr erst ganz unten, warum."""
+    aborted = (payload.get("cost_summary") or {}).get("aborted_at_phase")
+    if not aborted:
+        return ""
+    return (
+        '<p style="background:#c00;color:#fff;padding:10px;margin:0 0 16px 0;">'
+        f'<b>⚠️ Lauf abgebrochen in Phase {_h(aborted)}</b> (Kostendeckel erreicht). '
+        'Sektionen ab dieser Phase sind nicht ausgeführt; offene Positionen '
+        'stehen als NICHT GEPRUEFT.</p>'
+    )
 
 
 def _section_briefing(bullets: list[str]) -> str:
@@ -96,13 +201,64 @@ def _section_briefing(bullets: list[str]) -> str:
     )
 
 
-def _section_portfolio(recs: list[dict], positions_unavailable: bool = False) -> str:
+def _move_pct(entry: Any, current: Any, direction: Any) -> float | None:
+    """Kursbewegung seit dem Einstieg in Prozent, aus Sicht der Position
+    (Short gespiegelt); None ohne beide Kurse."""
+    try:
+        e, c = float(entry), float(current)
+    except (TypeError, ValueError):
+        return None
+    if e == 0:
+        return None
+    pct = (c - e) / e * 100.0
+    return -pct if direction == "short" else pct
+
+
+def _since(opened_at: Any, today: Any) -> str:
+    """'seit 2026-09-11 (4 Tage)' aus dem Broker-Zeitstempel; '' wenn er fehlt
+    oder nicht als Datum lesbar ist."""
+    try:
+        opened = date_cls.fromisoformat(str(opened_at)[:10])
+    except (TypeError, ValueError):
+        return ""
+    out = f"seit {opened.isoformat()}"
+    try:
+        age = (date_cls.fromisoformat(str(today)) - opened).days
+        out += f" ({age} Tage)"
+    except (TypeError, ValueError):
+        pass
+    return out
+
+
+def _position_cell(r: dict, today: Any) -> str:
+    """Positionszelle (C.47 / F59): Richtung, Groesse, Entry -> Kurs mit
+    Bewegung seit Entry, darunter Alter und die Broker-Levels. Bis dahin sah
+    der Leser 'long @ 4344.75 (jetzt 4286.77)' -- ohne Stop, Alter, Groesse."""
+    entry, cur = r.get("entry_price"), r.get("current_price")
+    head = _h(r.get("direction"))
+    if r.get("size") is not None:
+        head += f' {_h(r["size"])}'
+    head += f' @ {_h(entry)}'
+    if cur is not None:
+        head += f' → {_h(cur)}'
+        move = _move_pct(entry, cur, r.get("direction"))
+        if move is not None:
+            head += f' ({move:+.2f} %)'
+    levels = (f'SL {_h(r.get("sl_price")) or "—"} / '
+              f'TP {_h(r.get("tp_price")) or "—"}')
+    tail = " · ".join(x for x in (_since(r.get("opened_at"), today), levels) if x)
+    return f'{head}<br><small>{tail}</small>'
+
+
+def _section_portfolio(recs: list[dict], positions_unavailable: bool = False,
+                       today: Any = None) -> str:
     """Renders the Phase-4a table (HALTEN/SCHLIESSEN/ANPASSEN/KEINE ANALYSE/
     NICHT GEPRUEFT) for the positions actually open at Capital.com (C.37), the
     first section of the daily and the 16:10 e-mail. `positions_unavailable` =
     the broker call failed: say so instead of rendering an empty section that
     reads like 'all closed'. NICHT GEPRUEFT rows come from portfolio_check.
-    pending_rows() and survive a cost-cap abort before or during 4a (C.46 / F53)."""
+    pending_rows() and survive a cost-cap abort before or during 4a (C.46 / F53).
+    `today` (ISO) dient nur dem Positionsalter (C.47 / F59)."""
     if positions_unavailable:
         return ('<h2>Portfolio-Empfehlungen</h2>'
                 '<p><i>Capital.com-Positionen nicht abrufbar, keine Empfehlungen.</i></p>')
@@ -114,16 +270,21 @@ def _section_portfolio(recs: list[dict], positions_unavailable: bool = False) ->
         new_lvls = ""
         if r["action"] == "ANPASSEN":
             # C.46 / F51: ANPASSEN darf ein einzelnes Level nachziehen -- nur
-            # gelieferte Levels rendern, nie 'neues TP None'.
-            parts = [f'neuer SL {_h(r["new_sl_price"])}' if r.get("new_sl_price") is not None else "",
-                     f'neues TP {_h(r["new_tp_price"])}' if r.get("new_tp_price") is not None else ""]
-            new_lvls = " (" + ", ".join(x for x in parts if x) + ")"
+            # gelieferte Levels rendern, nie 'neues TP None'. C.47 / F59: das
+            # alte Level daneben, sonst ist der Nachzug nicht beurteilbar.
+            parts = []
+            if r.get("new_sl_price") is not None:
+                parts.append(f'neuer SL {_h(r["new_sl_price"])} '
+                             f'(vorher {_h(r.get("sl_price")) or "—"})')
+            if r.get("new_tp_price") is not None:
+                parts.append(f'neues TP {_h(r["new_tp_price"])} '
+                             f'(vorher {_h(r.get("tp_price")) or "—"})')
+            new_lvls = " · " + ", ".join(parts)
         label = r.get("ticker") or r.get("epic")
         rows.append(
             f'<tr><td><b>{_h(r["action"])}</b></td>'
             f'<td>{_h(label)}</td>'
-            f'<td>{_h(r["direction"])} @ {_h(r.get("entry_price"))}'
-            f' (jetzt {_h(r.get("current_price"))})</td>'
+            f'<td>{_position_cell(r, today)}</td>'
             f'<td>{_h(r.get("profit_loss"))}</td>'
             f'<td>{_h(r.get("reason", ""))}{new_lvls}</td></tr>'
         )
@@ -157,56 +318,81 @@ def _check_flags(a: dict) -> str:
     return " · ".join(_h(CHECK_FLAG_LABELS.get(r, r)) for r in a.get("_checks") or [])
 
 
+def _policy_flag(a: dict) -> str:
+    """⚠️ bei policy_risk <= 4 (trade-relative Skala: tief = riskant, C.13)."""
+    scores = a.get("scores") or {}
+    return "⚠️" if (scores.get("policy_risk") or {}).get("value", 10) <= 4 else ""
+
+
+def _flags(a: dict) -> str:
+    """Flags-Zelle: weiche Checks des Laufs (C.45 / F43) plus Policy-⚠️ --
+    seit C.47 / F64 in Top-10 UND Divergenz dieselbe Zelle."""
+    return " · ".join(x for x in (_check_flags(a), _policy_flag(a)) if x)
+
+
+def _level(price: Any, pct: Any) -> str:
+    """'920.0 (4.55 %)' -- Level mit dem aus den Preisen abgeleiteten Abstand
+    (C.45), auf den sich die Range-Flags beziehen (C.47 / F60)."""
+    return f'{_h(price)} ({_h(pct)} %)' if pct is not None else _h(price)
+
+
+_STOCK_TABLE_HEAD = (
+    '<tr><th>#</th><th>Ticker</th><th>Sub-Sektor</th><th>Modell-Score</th>'
+    '<th>P%</th><th>Conf.</th>'
+    '<th>Rank-Score</th><th>Analysis-Strength</th><th>Technik</th>'
+    '<th>Kurs (Snapshot)</th><th>TP</th><th>SL</th><th>R/R</th>'
+    '<th>ATR/Tag</th><th>Range/Tag</th><th>Haltedauer</th>'
+    '<th>Flags</th><th>Begründung</th></tr>'
+)
+
+
 def _row_for_setup(rank: int, a: dict) -> str:
-    """Renders one <tr> for a single ranked stock setup. Flags: die weichen
-    Checks des Laufs (C.45 / F43) plus ⚠️ bei policy_risk <= 4. Das fruehere
-    🔥 (trend_boost) stand in _to_prediction_row() hart auf None und ist weg."""
-    scores = a.get("scores", {})
-    policy_flag = "⚠️" if scores.get("policy_risk", {}).get("value", 10) <= 4 else ""
+    """Renders one <tr> for a single ranked stock setup. Das fruehere 🔥
+    (trend_boost) stand in _to_prediction_row() hart auf None und ist weg."""
     return (
         f'<tr><td>{rank}</td><td>{_h(a["ticker"])}</td>'
+        f'<td>{_h(a.get("_sub_sector"))}</td>'
         f'<td>{_h(a.get("total_score"))}</td>'
         f'<td>{_h(a.get("probability_pct"))}%</td>'
+        f'<td>{_h(a.get("confidence"))}</td>'
         # I5 (Plan-3b-Gesamtreview): Score/P% sind NICHT der Sortierschluessel --
-        # das ist rank_score. Ohne diese Spalte war die Top-10-Reihenfolge fuer
-        # einen Mail-Leser ohne DB-Zugriff nicht nachvollziehbar (Score/P% oben
-        # bleiben als vertraute Kennzahlen erhalten, sind aber nicht die Antwort
-        # auf "warum steht das hier vorne").
+        # das ist rank_score = analysis_strength x tech_strength. Ohne diese
+        # Spalten war die Top-10-Reihenfolge fuer einen Mail-Leser ohne
+        # DB-Zugriff nicht nachvollziehbar; seit C.47 / F60 stehen beide
+        # Faktoren daneben.
         f'<td>{_h(a.get("_rank_score"))}</td>'
         f'<td>{_h(a.get("_analysis_strength"))}</td>'
+        f'<td>{_h(a.get("_tech_strength"))}</td>'
         f'<td>{_h(a.get("current_price"))}</td>'
-        f'<td>{_h(a.get("tp_price"))}</td>'
-        f'<td>{_h(a.get("sl_price"))}</td>'
+        f'<td>{_level(a.get("tp_price"), a.get("tp_pct"))}</td>'
+        f'<td>{_level(a.get("sl_price"), a.get("sl_pct"))}</td>'
         f'<td>{_h(a.get("rr_ratio"))}</td>'
         f'<td>{_h(a.get("atr_pct"))}</td>'
         f'<td>{_h(a.get("intraday_range_pct"))}</td>'
         f'<td>{_h(a.get("hold_days_recommended"))}</td>'
-        f'<td>{" · ".join(x for x in (_check_flags(a), policy_flag) if x)}</td>'
-        f'<td>{_h(a.get("summary", ""))[:160]}</td></tr>'
+        f'<td>{_flags(a)}</td>'
+        f'<td>{_h(_cut(a.get("summary", ""), _SUMMARY_MAX))}</td></tr>'
     )
 
 
-def _section_stocks(top_long: list[dict], top_short: list[dict]) -> str:
-    """Renders the Top-10 Long and Top-10 Short stock tables."""
+def _section_stocks(top_long: list[dict], top_short: list[dict],
+                    not_run: str | None = None) -> str:
+    """Renders the Top-10 Long and Top-10 Short stock tables. `not_run` (C.47 /
+    F55) ersetzt beide Tabellen durch den Abbruch-Hinweis."""
+    if not_run:
+        return f'<h2>Aktien Top-10</h2><p><i>{_h(not_run)}</i></p>'
     if not top_long and not top_short:
         return '<h2>Aktien Top-10</h2><p><i>Keine Setups gefunden.</i></p>'
-    head = (
-        '<tr><th>#</th><th>Ticker</th><th>Modell-Score</th><th>P%</th>'
-        '<th>Rank-Score</th><th>Analysis-Strength</th>'
-        '<th>Kurs</th><th>TP</th><th>SL</th><th>R/R</th>'
-        '<th>ATR/Tag</th><th>Range/Tag</th><th>Haltedauer</th>'
-        '<th>Flags</th><th>Begründung</th></tr>'
-    )
-    long_rows = "".join(_row_for_setup(i + 1, a) for i, a in enumerate(top_long))
-    short_rows = "".join(_row_for_setup(i + 1, a) for i, a in enumerate(top_short))
-    return (
-        '<h2>Aktien Top-10 Long</h2>'
-        '<table border="1" cellpadding="4" cellspacing="0">' + head + long_rows +
-        '</table>'
-        '<h2>Aktien Top-10 Short</h2>'
-        '<table border="1" cellpadding="4" cellspacing="0">' + head + short_rows +
-        '</table>'
-    )
+
+    def _table(rows: list[dict], side: str) -> str:
+        if not rows:
+            return f'<p><i>Keine {side}-Setups.</i></p>'
+        return ('<table border="1" cellpadding="4" cellspacing="0">' + _STOCK_TABLE_HEAD
+                + "".join(_row_for_setup(i + 1, a) for i, a in enumerate(rows))
+                + '</table>')
+
+    return ('<h2>Aktien Top-10 Long</h2>' + _table(top_long, "Long")
+            + '<h2>Aktien Top-10 Short</h2>' + _table(top_short, "Short"))
 
 
 def _row_for_divergence(a: dict) -> str:
@@ -218,19 +404,24 @@ def _row_for_divergence(a: dict) -> str:
         f'<tr><td>{_h(a["ticker"])}</td><td>{_h(a["direction"])}</td>'
         f'<td>{_h(a.get("_analysis_strength"))}</td>'
         f'<td>{_h(a.get("current_price"))}</td>'
-        f'<td>{_h(a.get("tp_price"))}</td>'
-        f'<td>{_h(a.get("sl_price"))}</td>'
+        f'<td>{_level(a.get("tp_price"), a.get("tp_pct"))}</td>'
+        f'<td>{_level(a.get("sl_price"), a.get("sl_pct"))}</td>'
         f'<td>{_h(a.get("rr_ratio"))}</td>'
-        f'<td>{_check_flags(a)}</td>'
-        f'<td>{_h(a.get("summary", ""))[:160]}</td></tr>'
+        f'<td>{_flags(a)}</td>'
+        f'<td>{_h(_cut(a.get("summary", ""), _SUMMARY_MAX))}</td></tr>'
     )
 
 
-def _section_divergence(divergence: list[dict], stats: dict) -> str:
+def _section_divergence(divergence: list[dict], stats: dict,
+                        not_run: str | None = None) -> str:
     """Spec 5.5: eigener, klar getrennter Abschnitt -- niemals vermischt mit
     den Top-10-Listen. Die Zaehler stehen daneben, damit 'nichts gefunden' von
     'vieles verworfen' unterscheidbar bleibt (der dominierende Fall laut dem
-    Verifikationslauf vom 2026-08-17: 16 von 19 Analysen enthielten sich)."""
+    Verifikationslauf vom 2026-08-17: 16 von 19 Analysen enthielten sich).
+    `not_run` (C.47 / F55): Abbruch vor dem Ranking -- keine Zaehler, die
+    waeren Nullen ohne Bedeutung."""
+    if not_run:
+        return f'<h2>Divergenz-Kandidaten</h2><p><i>{_h(not_run)}</i></p>'
     stats = stats or {}
     counters = (
         f'<p><i>Enthaltungen mit Technik-Richtung: '
@@ -244,7 +435,7 @@ def _section_divergence(divergence: list[dict], stats: dict) -> str:
                 '<p><i>Keine.</i></p>' + counters)
     head = (
         '<tr><th>Ticker</th><th>Richtung</th><th>Analysis-Strength</th>'
-        '<th>Kurs</th><th>TP</th><th>SL</th><th>R/R</th><th>Flags</th>'
+        '<th>Kurs (Snapshot)</th><th>TP</th><th>SL</th><th>R/R</th><th>Flags</th>'
         '<th>Begründung</th></tr>'
     )
     rows = "".join(_row_for_divergence(a) for a in divergence)
@@ -258,11 +449,14 @@ def _section_divergence(divergence: list[dict], stats: dict) -> str:
 
 
 def _section_trends(trends: list[dict]) -> str:
-    """Renders the dark-card trends section (megatrends + sector rotation)."""
+    """Renders the dark-card trends section (ein Karte je Megatrend aus Phase 0).
+    Die Sektor-Rotation steht seit C.47 / F57 als Zeile im Kopf der Mail, aus
+    dem persistierten market_context -- nicht hier."""
     if not trends:
         return '<h2>Trends</h2><p><i>Keine Trends erkannt.</i></p>'
     cards = []
     for t in trends:
+        catalyst = t.get("next_catalyst")
         cards.append(
             '<div style="background:#1a1a1a;color:#eee;padding:12px;'
             'margin:6px 0;border-radius:8px;">'
@@ -270,17 +464,22 @@ def _section_trends(trends: list[dict]) -> str:
             f'<small>(Stärke {_h(t.get("strength"))}, '
             f'{_h(t.get("duration_estimate"))})</small></h3>'
             f'<p>{_h(t.get("summary"))}</p>'
-            f'<p><b>+</b> {_h(", ".join(t.get("beneficiary_tickers") or []))}<br>'
-            f'<b>−</b> {_h(", ".join(t.get("negative_tickers") or []))}<br>'
-            f'<b>Catalyst:</b> {_h(t.get("next_catalyst"))}</p>'
+            f'<p><b>+</b> {_h(", ".join(t.get("beneficiary_tickers") or [])) or "—"}<br>'
+            f'<b>−</b> {_h(", ".join(t.get("negative_tickers") or [])) or "—"}<br>'
+            f'<b>Catalyst:</b> '
+            f'{_h(catalyst) if catalyst and catalyst != "TBD" else "—"}</p>'
             '</div>'
         )
     return '<h2>Trends</h2>' + "".join(cards)
 
 
-def _section_commodities_crypto(items: list[dict]) -> str:
+def _section_commodities_crypto(items: list[dict],
+                                not_run: str | None = None) -> str:
     """Renders the commodities/crypto table plus the gold/silver-ratio and
-    BTC-dominance footnote when available."""
+    BTC-dominance footnote when available. `not_run` (C.47 / F55): Abbruch
+    vor dem Ranking der Morgenmail."""
+    if not_run:
+        return f'<h2>Commodities + Crypto</h2><p><i>{_h(not_run)}</i></p>'
     if not items:
         return ('<h2>Commodities + Crypto</h2>'
                 '<p><i>Keine Daten.</i></p>')
@@ -339,26 +538,40 @@ def _section_commodities_crypto(items: list[dict]) -> str:
     )
 
 
-def _section_footer(payload: dict) -> str:
-    """Renders the e-mail footer: abort warning (if any), yesterday's performance,
-    skipped tickers, run cost, and the disclaimer."""
-    cost = payload.get("cost_summary") or {}
-    y = payload.get("yesterday_outcomes") or {}
-    skipped = payload.get("skipped_tickers") or []
-    aborted_line = ""
-    if cost.get("aborted_at_phase"):
-        aborted_line = (
-            f'<p style="color:#c00"><b>Run wurde abgebrochen in Phase: '
-            f'{_h(cost["aborted_at_phase"])}</b> (Hard-Cap erreicht).</p>'
-        )
+def _performance_line(y: dict) -> str:
+    """Fussteil-Zeile mit den ausgewerteten Outcomes (C.47 / F58): Zeitraum
+    (letzter Handelstag bis gestern, main._aggregate_yesterday_outcomes) und
+    die Simulationsbasis, ohne die 'sim. P/L 25 EUR' nichts sagt. Leer ohne
+    Outcome-Dict -- die 16:10-Mail traegt keins."""
+    if not y:
+        return ""
+    since, until = y.get("since"), y.get("until")
+    if since and until and since != until:
+        label = f"Performance {_h(since)} – {_h(until)}"
+    elif since or until:
+        label = f"Performance {_h(since or until)}"
+    else:
+        label = "Performance"
     return (
-        aborted_line +
-        '<hr>'
-        '<p><b>Vortags-Performance:</b> '
+        f'<p><b>{label}:</b> '
         f'Long {_h(y.get("long_correct"))}/{_h(y.get("long_total"))}, '
         f'Short {_h(y.get("short_correct"))}/{_h(y.get("short_total"))}, '
-        f'sim. P/L {_h(y.get("total_pl_eur"))} EUR</p>'
-        f'<p><b>Übersprungene Aktien:</b> {_h(", ".join(skipped)) or "—"}</p>'
+        f'sim. P/L {_h(y.get("total_pl_eur"))} EUR '
+        f'<small>(je Signal {config.CFD_MARGIN_EUR} EUR Margin × '
+        f'Hebel {config.CFD_LEVERAGE})</small></p>'
+    )
+
+
+def _section_footer(payload: dict) -> str:
+    """Renders the e-mail footer: evaluated outcomes, skipped tickers, run cost,
+    and the disclaimer. Der Abbruch-Hinweis steht seit C.47 / F55 im Kopf
+    (_section_abort), nicht mehr hier."""
+    cost = payload.get("cost_summary") or {}
+    skipped = payload.get("skipped_tickers") or []
+    return (
+        '<hr>'
+        + _performance_line(payload.get("yesterday_outcomes") or {})
+        + f'<p><b>Übersprungene Aktien:</b> {_h(", ".join(skipped)) or "—"}</p>'
         '<p><b>Run-Kosten:</b> '
         f'{_h(cost.get("total_eur"))} EUR | '
         f'Cache-Hit-Rate: {_h(round((cost.get("cache_hit_rate") or 0) * 100, 1))}% | '
@@ -370,23 +583,35 @@ def _section_footer(payload: dict) -> str:
 
 
 def render_daily_html(payload: dict) -> str:
-    """Build the 5-section daily e-mail body."""
+    """Build the daily e-mail body: Kopf (Abbruch-Balken, Briefing-Box mit
+    Ergebnis-Bullet, Marktlage- und Rotationszeile), dann die Sektionen
+    Portfolio -> Aktien Top-10 Long/Short -> Divergenz -> Trends ->
+    Commodities + Crypto, dann der Fussteil. Ein Test pinnt die Sequenz."""
+    bullets = [b for b in (result_bullet(payload), *(payload.get("briefing") or [])) if b]
+    # Aktien, Divergenz und Commodities kommen alle aus Phase 4 (payload wird
+    # in der Phase 'ranking' befuellt) -- ein Abbruch davor laesst sie leer.
+    not_run = _not_run(payload, "ranking")
     return (
         '<html><body style="font-family:sans-serif;font-size:14px;">'
         f'<h1>Shares_Future — {_h(payload.get("date"))} '
         f'({_h(payload.get("run_type"))})</h1>'
-        + _section_briefing(payload.get("briefing") or [])
+        + _section_abort(payload)
+        + _section_briefing(bullets)
         + _section_market_line(payload.get("market_context") or {})
         + _section_portfolio(payload.get("portfolio_recs") or [],
-                             positions_unavailable=bool(payload.get("positions_unavailable")))
+                             positions_unavailable=bool(payload.get("positions_unavailable")),
+                             today=payload.get("date"))
         + _section_stocks(
             payload.get("top_long") or [], payload.get("top_short") or [],
+            not_run=not_run,
         )
         + _section_divergence(
             payload.get("divergence") or [], payload.get("divergence_stats"),
+            not_run=not_run,
         )
         + _section_trends(payload.get("trends") or [])
-        + _section_commodities_crypto(payload.get("commodities_crypto") or [])
+        + _section_commodities_crypto(payload.get("commodities_crypto") or [],
+                                      not_run=not_run)
         + _section_footer(payload)
         + '</body></html>'
     )
@@ -581,7 +806,7 @@ def _section_signal_changes(changes: list[dict]) -> str:
             f'{_VERDICT_LABEL.get(c.get("verdict"), _h(c.get("verdict")))}</td>'
             f'<td>{arrow}</td><td>{window}</td>'
             f'<td>{_h("; ".join(c.get("checks") or []))}</td>'
-            f'<td>{_h(c.get("reason", ""))[:200]}</td></tr>'
+            f'<td>{_h(_cut(c.get("reason", ""), 200))}</td></tr>'
         )
     return (
         '<h2>Signal-Prüfung 16:10</h2>'
@@ -592,6 +817,47 @@ def _section_signal_changes(changes: list[dict]) -> str:
     )
 
 
+def _vix_rule(vix: Any) -> str:
+    """Die aktive VIX-Regel als Zusatz zur Marktlage (C.47 / F57): ab 25 nur
+    high confidence, ab 35 keine neuen Longs (B.3, config). Bis dahin sah der
+    Leser die Zahl, nicht die Folge."""
+    try:
+        v = float(vix)
+    except (TypeError, ValueError):
+        return ""
+    if v >= config.VIX_NO_NEW_LONGS:
+        return f' (ab {config.VIX_NO_NEW_LONGS:g}: keine neuen Longs)'
+    if v >= config.VIX_HIGH_CONFIDENCE_ONLY:
+        return f' (ab {config.VIX_HIGH_CONFIDENCE_ONLY:g}: nur high confidence)'
+    return ""
+
+
+def _as_list(raw: Any) -> list[str]:
+    """Sektorliste aus market_context: das Modell liefert einen kommaseparierten
+    String (Prompt), die DB-Zeile ebenso, main._split_sectors() eine Liste --
+    alle drei Formen landen hier als Liste."""
+    if raw is None:
+        return []
+    if isinstance(raw, (list, tuple)):
+        return [str(x).strip() for x in raw if str(x).strip()]
+    return [x.strip() for x in str(raw).split(",") if x.strip()]
+
+
+def _rotation_line(ctx: dict) -> str:
+    """Zweite Kopfzeile (C.47 / F57): Sektor-Rotation und Makro-Einzeiler aus
+    dem morgendlichen market_context (GICS-Namen, persistiert). Beide steuern
+    Phase 2/3/4a per Prompt, der Leser sah bis dahin keins von beiden."""
+    into, out = _as_list(ctx.get("sector_rotation_in")), _as_list(ctx.get("sector_rotation_out"))
+    macro = (ctx.get("macro_summary") or "").strip()
+    parts = []
+    if into or out:
+        parts.append(f'<b>Rotation:</b> in {_h(", ".join(into)) or "—"} '
+                     f'· out {_h(", ".join(out)) or "—"}')
+    if macro:
+        parts.append(f'<b>Makro:</b> {_h(macro)}')
+    return f'<p style="margin:0 0 16px 0;">{" &middot; ".join(parts)}</p>' if parts else ""
+
+
 def _market_line(ctx: dict) -> str:
     """'VIX 17.67 &middot; S&amp;P 500 -0.71 % &middot; Regime risk_off' -- nur
     belegte Werte, leerer String wenn keiner. Gemeinsamer Kern fuer Tages- und
@@ -600,7 +866,7 @@ def _market_line(ctx: dict) -> str:
     parts = []
     vix = ctx.get("vix_level")
     if vix is not None:
-        parts.append(f'VIX {_h(vix)}')
+        parts.append(f'VIX {_h(vix)}{_vix_rule(vix)}')
     spx = ctx.get("sp500_change_pct")
     if spx is not None:
         try:
@@ -626,8 +892,8 @@ def _section_market_line(ctx: dict) -> str:
     steuern. Bewusst keine <h2>-Sektion: Portfolio bleibt die erste Sektion
     (dokumentierte Invariante)."""
     line = _market_line(ctx)
-    return (f'<p style="margin:0 0 16px 0;"><b>Marktlage:</b> {line}</p>'
-            if line else "")
+    return ((f'<p style="margin:0 0 16px 0;"><b>Marktlage:</b> {line}</p>'
+             if line else "") + _rotation_line(ctx))
 
 
 def render_trade_proposals_html(payload: dict) -> str:
@@ -641,6 +907,7 @@ def render_trade_proposals_html(payload: dict) -> str:
     return (
         '<html><body style="font-family:sans-serif;font-size:14px;">'
         f'<h1>Shares_Future — {_h(payload.get("date"))} (16:10 Nachprüfung)</h1>'
+        + _section_abort(payload)
         + _section_briefing(payload.get("briefing") or [])
         + _section_portfolio(payload.get("portfolio_recs") or [],
                              positions_unavailable=bool(payload.get("positions_unavailable")))
@@ -735,11 +1002,16 @@ def send_daily_email(
 ) -> None:
     """Renders and sends the daily pre_market e-mail via Resend."""
     html_body = render_daily_html(payload)
-    subject = (
-        f"[Shares_Future] {payload.get('date')} {payload.get('run_type')} — "
+    # C.47 / F55+F61: Abbruch und Portfolio-Aktionen gehoeren in den Betreff --
+    # 'Top 0L / 0S' sah nach einem ruhigen Tag aus, auch bei Abbruch in Phase 3.
+    aborted = (payload.get("cost_summary") or {}).get("aborted_at_phase")
+    parts = ([f"ABBRUCH {aborted}"] if aborted else []) + [
+        _book_summary(payload),
         f"Top {len(payload.get('top_long') or [])}L / "
-        f"{len(payload.get('top_short') or [])}S"
-    )
+        f"{len(payload.get('top_short') or [])}S",
+    ]
+    subject = (f"[Shares_Future] {payload.get('date')} {payload.get('run_type')} — "
+               + " · ".join(parts))
     _send(api_key, email_from, email_to, subject, html_body)
 
 

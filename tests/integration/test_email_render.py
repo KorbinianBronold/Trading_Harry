@@ -4,7 +4,7 @@ from src.email_sender import render_daily_html
 
 def test_render_daily_html_contains_all_sections_in_order():
     payload = {
-        "date": "2026-05-19", "run_type": "close",
+        "date": "2026-05-19", "run_type": "pre_market",
         "portfolio_recs": [
             {"ticker": "AAPL", "action": "HALTEN",
              "reason": "These intakt", "new_sl_price": None,

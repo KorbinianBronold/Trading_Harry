@@ -423,9 +423,15 @@ def rank_and_persist(
     # Die angereicherten Kopien wandern in den Rueckgabewert und damit in die
     # Mail; die Originale bleiben unberuehrt.
     def _enrich(a: dict, klasse: str, strength: int, rank_score: int | None) -> dict:
+        # C.47 / F60: der zweite Faktor des rank_score und der Sub-Sektor
+        # (Bezug des Klumpen-Flags) reisen fuer die Mail mit; None fuer
+        # ungemappte Ticker und Rohstoffe/Krypto.
+        sector = db.get_ticker_sector(conn, a["ticker"])
         return {**a, "_candidate_class": klasse,
                 "_analysis_strength": strength, "_rank_score": rank_score,
-                "_checks": checks_by_ticker.get(a["ticker"], [])}
+                "_checks": checks_by_ticker.get(a["ticker"], []),
+                "_tech_strength": signal_context.get(a["ticker"], {}).get("tech_strength"),
+                "_sub_sector": sector["name"] if sector else None}
 
     core: list[dict] = []
     divergence: list[dict] = []
