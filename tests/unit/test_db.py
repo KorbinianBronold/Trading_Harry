@@ -2861,3 +2861,22 @@ def test_supersede_prediction_writes_the_reason_on_the_old_row_and_the_window_on
     new = in_memory_db.execute("SELECT * FROM predictions WHERE id=?", (new_id,)).fetchone()
     assert old["revision_reason"] == "haelt nach Opening"
     assert (new["entry_window_low"], new["entry_window_high"]) == (100.5, 101.5)
+
+
+# ---------- C.50 / F75: der 16:10-Lauf beurteilt jede Zeile nur einmal ----------
+
+def test_revalidation_loader_skips_rows_that_already_carry_a_verdict(in_memory_db):
+    """F75: 'gedreht'/'verworfen' lassen die Morgenzeile offen (E5) -- ein zweiter
+    16:10-Lauf (manueller Dispatch, wiederholter Job, Notebook) beurteilte sie
+    erneut, ueberschrieb das Urteil und verdoppelte guardrail_rejects."""
+    from src.db import save_prediction, record_revision, load_predictions_for_revalidation
+    init_schema(in_memory_db)
+    judged = save_prediction(in_memory_db, {
+        "date": "2026-09-16", "run_type": "pre_market", "ticker": "AAPL",
+        "direction": "long", "entry_price": 100.0, "tp_price": 106.0, "sl_price": 98.0})
+    fresh = save_prediction(in_memory_db, {
+        "date": "2026-09-16", "run_type": "pre_market", "ticker": "MSFT",
+        "direction": "long", "entry_price": 400.0, "tp_price": 410.0, "sl_price": 395.0})
+    record_revision(in_memory_db, judged, "verworfen", reason="x")
+    ids = [r["id"] for r in load_predictions_for_revalidation(in_memory_db, "2026-09-16")]
+    assert ids == [fresh]

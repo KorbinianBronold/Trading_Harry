@@ -932,7 +932,8 @@ def render_trade_proposals_html(payload: dict) -> str:
         + _section_abort(payload)
         + _section_briefing(payload.get("briefing") or [])
         + _section_portfolio(payload.get("portfolio_recs") or [],
-                             positions_unavailable=bool(payload.get("positions_unavailable")))
+                             positions_unavailable=bool(payload.get("positions_unavailable")),
+                             today=payload.get("date"))   # C.50 / F76: Positionsalter
         + _section_signal_changes(payload.get("signal_changes") or [])
         + _section_commodities_crypto(payload.get("commodities_crypto") or [])
         + _section_market_warnings(payload.get("market_context") or {})

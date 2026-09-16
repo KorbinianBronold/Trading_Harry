@@ -5513,6 +5513,26 @@ unbekannt`, Gap gegen jetzt). Braucht ein Aktiensignal.
   `render_trade_proposals_html` reicht `today` nicht an `_section_portfolio` (C.47 / F59
   nur für die Tagesmail verdrahtet). Eine Zeile.
 
+### C.50 — `trade_proposals`-Review, Teil 2: Loader idempotent (F75), Positionsalter in der 16:10-Mail (F76), echter Zeitanker (F77) (2026-09-16)
+
+Drei Kandidaten aus dem C.49-Nachtrag, Entscheidung Korbinian: alle.
+- **F75 — Der 16:10-Lauf beurteilte gedrehte/verworfene Zeilen erneut (behoben).**
+  `load_predictions_for_revalidation` filtert jetzt `revision_verdict IS NULL`. Im
+  Walkthrough hatte der zweite Lauf das 19:44-Urteil „verworfen" mit „geschwächt"
+  überschrieben und `guardrail_rejects` doppelt gefüllt; produktiv träfe das jeden
+  manuellen Dispatch oder wiederholten Job.
+- **F76 — Positionsalter fehlte in der 16:10-Mail (behoben).** `render_trade_proposals_html`
+  reicht `today` an `_section_portfolio` („seit 2026-09-11 (5 Tage)").
+- **F77 — Fester Anker „10:10 ET" (behoben).** `_clock_anchor()`: „Today is <date>, 10:47 ET
+  (77 minutes after the 09:30 open)" bzw. „… BEFORE the 09:30 open" aus der echten Uhr
+  (`now_utc`, einmal je Lauf in `_revalidate_all`; `signal_window.regular_open_utc`).
+  Prompt: „planmässig 10:10 ET; richte ‚seit der Eröffnung' an der ersten Zeile aus".
+
+**Tests:** 1179 grün, 16 übersprungen, Coverage 93,3 %. Neu (rot zuerst, 5): Loader,
+Positionsalter, Anker nach/vor der Eröffnung, Uhr durch `revalidate_one`; angepasst: der
+Anker-Test aus C.49 (neues Format), `_revalidate_all` reicht `now_utc` durch. Nicht live
+verifiziert; sichtbar im nächsten Notebook-Lauf (erste Zeile der User-Message, Mail).
+
 ## Sprint 3D — Learning Modul
 
 ⚠️ **Noch nicht ausgearbeitet — braucht eine eigene Planungssession, bevor die Implementierung

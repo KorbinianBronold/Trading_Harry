@@ -1291,3 +1291,16 @@ def test_trade_proposals_mail_survives_rows_without_the_new_keys():
     from src.email_sender import render_trade_proposals_html
     html = render_trade_proposals_html(VERDICT_PAYLOAD)
     assert "MSFT" in html and "None" not in html.split("Signal-Prüfung 16:10")[1].split("</table>")[0]
+
+
+# ---------- C.50 / F76: Positionsalter auch in der 16:10-Mail ----------
+
+def test_trade_proposals_mail_shows_the_position_age():
+    from src.email_sender import render_trade_proposals_html
+    payload = {**VERDICT_PAYLOAD, "date": "2026-09-16", "portfolio_recs": [{
+        "ticker": "GOLD", "action": "HALTEN", "reason": "ok", "new_sl_price": None,
+        "new_tp_price": None, "direction": "long", "entry_price": 4344.75,
+        "current_price": 4314.96, "profit_loss": -134.67, "size": 5.2,
+        "opened_at": "2026-09-11T14:39:15.528", "sl_price": 3876.46, "tp_price": None}]}
+    html = render_trade_proposals_html(payload)
+    assert "seit 2026-09-11 (5 Tage)" in html

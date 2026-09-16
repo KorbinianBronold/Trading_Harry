@@ -11,10 +11,13 @@ Das Modul urteilt nur. Was mit dem Urteil geschieht — Ablösung der pre_market
 neue Prediction oder blosse Warnung — entscheidet main.run_trade_proposals()."""
 import json
 import logging
+from datetime import datetime, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import config
 from src.cost_tracker import CostTracker
+from src import signal_window
 from src.portfolio_check import TECHNICAL_KEYS
 from src.signal_checks import CheckResult, derive_levels
 from src.utils import call_claude_retry_on_truncation, extract_json_blob
@@ -85,10 +88,27 @@ def _pct(a: float | None, b: float | None) -> str:
     return f"{(b - a) / a * 100:+.2f} %"
 
 
+def _clock_anchor(date: str, now_utc: str | None) -> str:
+    """'Today is <date>, 10:47 ET (77 minutes after the 09:30 open).' -- die
+    ECHTE Uhrzeit des Laufs (C.50 / F77): der Cron feuert 35-40 min zu spaet
+    (F.1), das Notebook laeuft wann es will; ein fester '10:10 ET' war eine
+    Behauptung, keine Messung. Ohne `now_utc` die Systemuhr."""
+    now = (datetime.fromisoformat(now_utc).replace(tzinfo=timezone.utc) if now_utc
+           else datetime.now(timezone.utc))
+    et = now.astimezone(ZoneInfo("America/New_York"))
+    opened = datetime.fromisoformat(signal_window.regular_open_utc(date)).replace(
+        tzinfo=timezone.utc)
+    minutes = int(round((now - opened).total_seconds() / 60))
+    rel = (f"{minutes} minutes after the 09:30 open" if minutes >= 0
+           else f"{-minutes} minutes BEFORE the 09:30 open")
+    return f"Today is {date}, {et:%H:%M} ET ({rel}). Run type: trade_proposals."
+
+
 def _build_user_message(
     prediction, snapshot: dict, checks: list[CheckResult],
     relative_strength: float | None, policy_context: dict,
     tech: dict | None = None, date: str | None = None,
+    now_utc: str | None = None,
 ) -> str:
     """Serialisiert Datumsanker, Morgen-These (PREDICTION_KEYS), 16:10-Snapshot
     (SNAPSHOT_KEYS), Technik-Signal Morgen -> jetzt (0-4), die Levels gegen den
@@ -118,8 +138,7 @@ def _build_user_message(
     fired = [f"{c.rule}: {c.detail}" for c in checks] or ["keine"]
     rs = ("unbekannt" if relative_strength is None
           else f"{relative_strength:+.2f} Punkte (seit gestern Schluss, gegen den Sub-Sektor-ETF)")
-    head = ([f"Today is {date}. Run type: trade_proposals "
-             f"(about 40 minutes after the US open, 10:10 ET).\n"] if date else [])
+    head = [_clock_anchor(date, now_utc) + "\n"] if date else []
     return "\n".join([
         *head,
         "ORIGINAL PREDICTION (pre_market, before the open):",
@@ -168,6 +187,7 @@ def revalidate_one(
     cost_tracker: CostTracker,
     tech: dict | None = None,
     date: str | None = None,
+    now_utc: str | None = None,
 ) -> dict:
     """Prueft EIN Morgensignal gegen frische Kurse. Gibt das geparste Urteil zurueck,
     ergaenzt um den Ticker. Wirft RevalidationError bei unlesbarer Antwort,
@@ -178,7 +198,7 @@ def revalidate_one(
     von jetzt, `date` der Datumsanker."""
     user_msg = _build_user_message(
         prediction, snapshot, checks, relative_strength, policy_context,
-        tech=tech, date=date)
+        tech=tech, date=date, now_utc=now_utc)
     # Bucht jeden Versuch selbst -- auch einen verworfenen gekappten.
     result = call_claude_retry_on_truncation(
         model=MODEL, system=SYSTEM_PROMPT, user=user_msg,

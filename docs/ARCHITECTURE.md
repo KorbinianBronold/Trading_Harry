@@ -1241,12 +1241,17 @@ revalidate_one(...) -> dict   # {verdict, probability_pct, reason, ...}
 Vorbörsen-Entry, TP/SL, Prozente, R/R, P, Confidence, Haltedauer, Range, Summary),
 `snapshot_view()` = die 14 `TECHNICAL_KEYS` des Portfolio-Checks plus `price_open`,
 dazu „Today is …", `TECHNICAL SIGNAL morning x/n -> now y/m` (0–4), `LEVELS AT CURRENT
-PRICE` (`derive_levels` gegen den 16:10-Kurs), `MOVE` (Vorbörse → Open → jetzt),
+PRICE` (`derive_levels` gegen den 16:10-Kurs), `MOVE` (Vorbörse → Open → jetzt), der
+Anker trägt die **echte** Uhrzeit in ET und die Minuten seit 09:30 (C.50 / F77),
 `RELATIVE STRENGTH` intraday (seit gestern Schluss gegen den Sub-Sektor-ETF,
 `main._etf_intraday_changes`), Checks, Morgen-Policy-Lage. Bis C.49 gingen die rohe
 `predictions`-Zeile (`SELECT *`, ~60 Spalten) und das rohe `td` in den Call. Der Code
 prüft `probability_pct` (0–100, sonst `RevalidationError`) und das Entry-Fenster (beide
 Grenzen, low ≤ high, zwischen SL und TP; sonst beide None mit WARNING, Urteil bleibt).
+
+**Idempotent (C.50 / F75):** `load_predictions_for_revalidation()` liefert nur Zeilen ohne
+`revision_verdict` — gedrehte/verworfene bleiben offen (E5), werden aber nicht erneut
+beurteilt.
 
 **Technik von jetzt (C.49 / F74):** `run_trade_proposals()` gibt `collect()` je Ticker
 die laufende Sitzung als Tagesbar (`main._intraday_bars`, Stundenbars ab 00:00 UTC,

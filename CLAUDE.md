@@ -91,6 +91,8 @@ Kurzform zum Erkennen einer drohenden Verletzung; Begründung und Randfälle in
   NULL (C.13 `candidate_class`, C.49 die sieben E2/E3-Spalten). `tp_pct`/`sl_pct`/`rr_ratio`
   der 16:10-Zeile aus `derive_levels()` gegen den 16:10-Kurs; `summary` bleibt die
   Morgen-These, die 16:10-Begründung steht als `revision_reason` auf der Morgenzeile. → C.49
+  `load_predictions_for_revalidation()` nimmt nur Zeilen **ohne** `revision_verdict` — ein
+  zweiter 16:10-Lauf am selben Tag beurteilt nichts erneut. → C.50
 - Offene Position (Phase 1c, 4a, Mail) = **live bei Capital.com** (`get_open_positions`,
   jeder Lauf, ein Abruf). Predictions sind Papier-Vorschläge und laufen getrennt durch die
   Auswertung; Phase 4a liest `predictions` **nie**. Abruf gescheitert = keine Empfehlung

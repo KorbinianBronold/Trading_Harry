@@ -1258,6 +1258,8 @@ def _revalidate_all(
     log.info(f"Re-Validierung: {len(open_preds)} offene pre_market-Signale")
     signal_by_ticker = signal_by_ticker or {}
     etf_changes = etf_changes or {}
+    # C.50 / F77: die echte Uhrzeit des Laufs in den Prompt-Anker, einmal je Lauf.
+    now_utc = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
 
     counts = signal_checks.cluster_counts(conn, [p["ticker"] for p in open_preds])
     for pred in open_preds:
@@ -1342,7 +1344,7 @@ def _revalidate_all(
                 prediction=pred, snapshot=snapshot, checks=checks,
                 relative_strength=rel_strength,
                 policy_context=policy_context, cost_tracker=cost_tracker,
-                tech=signal_by_ticker.get(ticker), date=date,
+                tech=signal_by_ticker.get(ticker), date=date, now_utc=now_utc,
             )
         except CostCapExceeded:
             # Deckel gilt fuer den ganzen Lauf, nicht fuer ein Signal — muss

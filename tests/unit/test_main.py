@@ -2907,6 +2907,7 @@ def test_revalidate_all_passes_tech_and_date_to_the_call(in_memory_db, mocker):
                            tech={"tech_direction": "long", "tech_strength": 2})
     assert reval.call_args.kwargs["tech"] == {"tech_direction": "long", "tech_strength": 2}
     assert reval.call_args.kwargs["date"] == "2026-07-30"
+    assert reval.call_args.kwargs["now_utc"], "C.50 / F77: die echte Uhrzeit geht mit"
 
 
 def test_etf_intraday_changes_use_the_batch_sweep_against_the_last_final_close(in_memory_db, mocker):

@@ -151,8 +151,10 @@ def test_user_message_starts_with_date_and_names_both_technical_signals():
     from src.revalidation import _build_user_message
     msg = _build_user_message(
         _row(FULL_PRED), FULL_SNAP, [], relative_strength=None, policy_context={},
-        tech={"tech_direction": "short", "tech_strength": 2}, date="2026-09-16")
-    assert msg.startswith("Today is 2026-09-16. Run type: trade_proposals")
+        tech={"tech_direction": "short", "tech_strength": 2}, date="2026-09-16",
+        now_utc="2026-09-16T14:10:00")
+    assert msg.startswith("Today is 2026-09-16, 10:10 ET (40 minutes after the 09:30 open). "
+                          "Run type: trade_proposals")
     assert "TECHNICAL SIGNAL" in msg and "short/3" in msg and "short/2" in msg
     assert "LEVELS AT CURRENT PRICE" in msg and "0.98" in msg, "R/R gegen den 16:10-Kurs"
     assert '"rank_score"' not in msg and '"created_at"' not in msg
@@ -213,3 +215,34 @@ def test_trade_proposals_prompt_pins_contract():
                    "laufenden Sitzung", "Morgenrecherche"):
         assert needle in SYSTEM_PROMPT, needle
     assert "48 Stunden" not in SYSTEM_PROMPT
+
+
+# ---------- C.50 / F77: echter Zeitanker statt festem 10:10 ET ----------
+
+def test_user_message_anchors_the_real_clock_time_in_et():
+    """Der Cron feuert 35-40 min zu spaet (F.1), das Notebook laeuft wann es will --
+    'about 40 minutes after the open, 10:10 ET' war eine Behauptung, keine Messung."""
+    from src.revalidation import _build_user_message
+    msg = _build_user_message(
+        _row(FULL_PRED), FULL_SNAP, [], relative_strength=None, policy_context={},
+        date="2026-09-16", now_utc="2026-09-16T14:47:00")
+    assert msg.startswith("Today is 2026-09-16, 10:47 ET (77 minutes after the 09:30 open). "
+                          "Run type: trade_proposals"), msg.splitlines()[0]
+
+
+def test_user_message_says_so_when_the_run_is_before_the_open():
+    from src.revalidation import _build_user_message
+    msg = _build_user_message(
+        _row(FULL_PRED), FULL_SNAP, [], relative_strength=None, policy_context={},
+        date="2026-09-16", now_utc="2026-09-16T13:00:00")
+    assert "09:00 ET (30 minutes BEFORE the 09:30 open)" in msg.splitlines()[0]
+
+
+def test_revalidate_one_passes_the_clock_through(mocker):
+    call = mocker.patch("src.utils.call_claude", return_value=_claude(OK_JSON))
+    from src.revalidation import revalidate_one
+    revalidate_one(prediction=PRED, snapshot={"ticker": "AAPL", "price": 179.0},
+                   checks=[], relative_strength=None, policy_context={},
+                   cost_tracker=CostTracker(), date="2026-09-16",
+                   now_utc="2026-09-16T14:47:00")
+    assert "10:47 ET" in call.call_args.kwargs["user"]

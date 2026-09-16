@@ -1594,12 +1594,19 @@ def update_outcome_close(
 def load_predictions_for_revalidation(
     conn: sqlite3.Connection, date: str,
 ) -> list[sqlite3.Row]:
-    """Die heutigen offenen pre_market-Predictions — Eingangsmenge der
-    Re-Validierung im 16:10-Lauf."""
+    """Die heutigen offenen pre_market-Predictions ohne Urteil — Eingangsmenge
+    der Re-Validierung im 16:10-Lauf.
+
+    C.50 / F75: `revision_verdict IS NULL`, damit der Lauf idempotent ist.
+    'gedreht'/'verworfen' lassen die Zeile offen (E5); ohne den Filter
+    beurteilte ein zweiter Lauf am selben Tag (manueller Dispatch, wiederholter
+    Job, Notebook) sie erneut, ueberschrieb das Urteil und verdoppelte
+    guardrail_rejects -- am 16.09. im Walkthrough genau so passiert."""
     return conn.execute(
         """SELECT * FROM predictions
            WHERE date = ? AND run_type = 'pre_market'
              AND status = 'open' AND learnable = 1
+             AND revision_verdict IS NULL
            ORDER BY probability_pct DESC""",
         (date,),
     ).fetchall()
