@@ -502,7 +502,9 @@ def test_deep_analysis_v2_pins_contract_the_code_relies_on():
 # --- run_policy_monitor: Kappungs-Erkennung (C.18-Nachtrag) -----------------
 # Vierter Sonnet-5-Einzelcall, beim ersten Durchgang uebersehen: 3072 war die
 # knappste verbliebene Decke, und eine Kappung kam als JSONDecodeError an.
-# main.py:499 faengt PolicyMonitorError NICHT -> der ganze pre_market-Lauf faellt.
+# Bis C.52 fing main.py PolicyMonitorError nicht -> der ganze pre_market-Lauf
+# fiel. Die Kappungs-Erkennung bleibt trotzdem: eine gekappte Antwort darf nie
+# als 'kaputtes JSON' in die Wiederholung unten laufen.
 
 def test_run_policy_monitor_retries_a_truncated_answer_instead_of_parsing_it():
     """Eine Kappung darf nicht als 'kaputtes JSON' durchgereicht werden."""
@@ -532,6 +534,58 @@ def test_run_policy_monitor_bills_the_discarded_truncated_attempt():
                            cost_tracker=tracker)
 
     # beide Versuche gebucht, nicht nur der verwertete
+    assert tracker.input_tokens == 5000 * 2
+
+
+# --- run_policy_monitor: unbrauchbare Antwort einmal wiederholen (C.52) -----
+# 2026-09-16: ein Syntaxfehler in der Antwort (end_turn, kein max_tokens) kam als
+# PolicyMonitorError bis in main.py und riss den ganzen pre_market-Lauf mit.
+# Das Modellverhalten ist nicht deterministisch (s. extract_json_blob) -- ein
+# zweiter Versuch kostet ~0,25 EUR, der verlorene Lauf hatte 0,50 EUR gekostet.
+
+_BROKEN_POLICY = '{"policy_risk_level": "high", "events": [],\n}'   # Komma vor }
+
+
+def test_run_policy_monitor_retries_once_on_an_unparseable_answer():
+    payload = (FIXTURE_DIR / "mock_policy_monitor_response.json").read_text()
+    broken, clean = _fake_result(_BROKEN_POLICY), _fake_result(payload)
+    tracker = CostTracker(hard_cap_eur=10.0)
+
+    with patch("src.utils.call_claude", side_effect=[broken, clean]) as mock_call:
+        out = run_policy_monitor(date="2026-09-16", run_type="pre_market",
+                                 cost_tracker=tracker)
+
+    assert out["policy_risk_level"] == "medium"
+    assert mock_call.call_count == 2
+    assert tracker.input_tokens == 5000 * 2      # beide Versuche gebucht
+
+
+def test_run_policy_monitor_retries_an_answer_without_the_required_keys_too():
+    payload = (FIXTURE_DIR / "mock_policy_monitor_response.json").read_text()
+    no_events = _fake_result(json.dumps({"policy_risk_level": "low", "summary": "x"}))
+    tracker = CostTracker(hard_cap_eur=10.0)
+
+    with patch("src.utils.call_claude",
+               side_effect=[no_events, _fake_result(payload)]) as mock_call:
+        out = run_policy_monitor(date="2026-09-16", run_type="pre_market",
+                                 cost_tracker=tracker)
+
+    assert out["policy_risk_level"] == "medium"
+    assert mock_call.call_count == 2
+
+
+def test_run_policy_monitor_gives_up_after_the_second_unparseable_answer():
+    from src.deep_analysis import PolicyMonitorError
+    tracker = CostTracker(hard_cap_eur=10.0)
+
+    with patch("src.utils.call_claude",
+               side_effect=[_fake_result(_BROKEN_POLICY),
+                            _fake_result(_BROKEN_POLICY)]) as mock_call:
+        with pytest.raises(PolicyMonitorError):
+            run_policy_monitor(date="2026-09-16", run_type="pre_market",
+                               cost_tracker=tracker)
+
+    assert mock_call.call_count == 2                 # genau EINE Wiederholung
     assert tracker.input_tokens == 5000 * 2
 
 

@@ -2636,6 +2636,56 @@ def test_run_pipeline_persists_the_morning_policy_context(tmp_db_path, mocker):
     conn.close()
 
 
+# ---------- C.52: der Policy-Monitor ist nicht mehr fatal ----------
+
+_RANKED_EMPTY = {
+    "top_long": [], "top_short": [], "commodities_crypto": [],
+    "divergence": [], "divergence_stats": {
+        "tech_only_abstentions": 0, "conflicts": 0, "overflow": 0}}
+
+
+@pytest.mark.parametrize("exc", [
+    pytest.param(lambda: __import__("src.deep_analysis", fromlist=["x"])
+                 .PolicyMonitorError("Could not parse JSON: line 33"), id="parse"),
+    pytest.param(lambda: __import__("src.utils", fromlist=["x"])
+                 .ClaudeTruncatedError("auch bei 24576 abgeschnitten"), id="truncated"),
+])
+def test_run_pipeline_continues_without_policy_context_when_the_monitor_fails(
+        tmp_db_path, mocker, exc):
+    """C.52 (2026-09-16): eine unbrauchbare Policy-Antwort riss den ganzen
+    pre_market-Lauf (Phase 0-2b bezahlt, keine Mail). Jetzt laeuft der Rest wie
+    Phase 0b ohne Kontext weiter: Phase 3 bekommt 'unknown', die Mail einen
+    Hinweis, policy_context_json bleibt NULL (der 16:10-Lauf warnt dann selbst,
+    C.48), und market_context traegt 'unknown' wie bei einem Wert ausserhalb der
+    Skala (C.41)."""
+    from src import db
+    _stub_pipeline(mocker)
+    mocker.patch("main.fetch_market_context", return_value=dict(_CTX))
+    mocker.patch("main.run_policy_monitor", side_effect=exc())
+    mocker.patch("main.generate_daily_briefing", return_value=["Trend: x"])
+    deep = mocker.patch("main.analyze_batches", return_value=([], []))
+    portfolio = mocker.patch("main.check_open_positions", return_value=[])
+    mocker.patch("main.rank_and_persist", return_value=dict(_RANKED_EMPTY))
+    mail = mocker.patch("main.send_daily_email")
+
+    run_pipeline(run_type="pre_market", date="2026-09-16", db_path=str(tmp_db_path))
+
+    fallback = {"policy_risk_level": "unknown", "events": [], "summary": None}
+    assert deep.call_args.kwargs["policy_context"] == fallback
+    assert portfolio.call_args.kwargs["policy_context"] == fallback
+    payload = mail.call_args.kwargs["payload"]
+    assert payload["briefing"][0] == "Trend: x"
+    assert any("Policy" in b for b in payload["briefing"][1:]), payload["briefing"]
+    assert payload["cost_summary"]["aborted_at_phase"] is None
+    conn = db.connect(str(tmp_db_path))
+    assert db.load_policy_context(conn, "2026-09-16", "pre_market") is None
+    row = conn.execute(
+        "SELECT policy_risk_level FROM market_context "
+        "WHERE date='2026-09-16' AND run_type='pre_market'").fetchone()
+    assert row["policy_risk_level"] == "unknown"
+    conn.close()
+
+
 def test_run_trade_proposals_reuses_the_morning_policy_context_without_a_second_call(
         tmp_db_path, mocker):
     """C.48 / F65 (Entscheidung 16.09.): kein zweiter Policy-Call um 16:10. Die

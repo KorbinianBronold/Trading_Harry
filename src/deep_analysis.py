@@ -132,7 +132,16 @@ def run_policy_monitor(
     date: str, run_type: str, cost_tracker: CostTracker,
 ) -> dict:
     """Single Sonnet+web_search call. Returns
-    {policy_risk_level, events, summary}. Tolerates empty events list."""
+    {policy_risk_level, events, summary}. Tolerates empty events list.
+
+    C.52 (2026-09-16): eine unbrauchbare Antwort (Syntaxfehler, fehlende
+    Pflichtschluessel) wird EINMAL wiederholt -- das Modellverhalten ist nicht
+    deterministisch, und der zweite Versuch kostet ~0,25 EUR gegen einen
+    verlorenen Lauf. Beide Versuche sind gebucht. Erst der zweite Fehlschlag
+    wird PolicyMonitorError; main.py faengt den seit C.52 ab und laeuft ohne
+    Policy-Lage weiter. Eine Kappung wird davor von
+    call_claude_retry_on_truncation() behandelt und nie als 'kaputtes JSON'
+    hierher durchgereicht."""
     user_msg = (
         f"Today is {date}. Run type: {run_type}. "
         "Use web_search up to 5 times to surface market-moving policy/geopolitics "
@@ -140,18 +149,29 @@ def run_policy_monitor(
         "scheduled decisions that land within the next 5 trading days. Then "
         "return the JSON object defined in your system prompt."
     )
-    # Bucht jeden Versuch selbst -- auch einen verworfenen gekappten.
-    result = call_claude_retry_on_truncation(
-        model=MODEL, system=POLICY_SYSTEM_PROMPT, user=user_msg,
-        max_tokens=MAX_TOKENS_POLICY, cost_tracker=cost_tracker,
-        tools=[WEB_SEARCH_TOOL],
-    )
-    parsed = extract_json_blob(result.text, PolicyMonitorError)
-    if "events" not in parsed or "policy_risk_level" not in parsed:
-        raise PolicyMonitorError(
-            "Policy monitor response missing required keys "
-            "(policy_risk_level, events)"
+    parsed: dict = {}
+    for attempt in (1, 2):
+        # Bucht jeden Versuch selbst -- auch einen verworfenen gekappten.
+        result = call_claude_retry_on_truncation(
+            model=MODEL, system=POLICY_SYSTEM_PROMPT, user=user_msg,
+            max_tokens=MAX_TOKENS_POLICY, cost_tracker=cost_tracker,
+            tools=[WEB_SEARCH_TOOL],
         )
+        try:
+            parsed = extract_json_blob(result.text, PolicyMonitorError)
+            if "events" not in parsed or "policy_risk_level" not in parsed:
+                raise PolicyMonitorError(
+                    "Policy monitor response missing required keys "
+                    "(policy_risk_level, events)"
+                )
+            break
+        except PolicyMonitorError as e:
+            if attempt == 2:
+                raise
+            log.warning(
+                f"Policy monitor: Antwort unbrauchbar ({e}) -- einmalige "
+                f"Wiederholung (C.52)"
+            )
     parsed["policy_risk_level"] = _normalise_policy_level(parsed["policy_risk_level"])
     log.info(
         f"Policy monitor: level={parsed['policy_risk_level']} "

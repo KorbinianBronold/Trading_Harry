@@ -3857,7 +3857,7 @@ aber genau solche Reste sollen ab jetzt nicht mehr liegen bleiben. Nicht angefas
 `test_commodities_crypto_v2_untouched` erzwingen die alte Regel und bewachen nur die vier
 Altlast-Dateien (`deep_analysis_v1`, `commodities_crypto_v1/v2`, `portfolio_check_v1`).
 Tests und Dateien sind Kandidaten zum Entfernen — nicht unaufgefordert gelöscht (Regel 8).
-→ **Erledigt 2026-09-16** auf Korbinians Anweisung, s. C.49.
+→ **Erledigt 2026-09-16** auf Korbinians Anweisung, s. C.51.
 
 ### C.30 — Nachfolge aus dem market_context-Review: Marktlage sichtbar, Rotationsform, Test-Hygiene, Live-Test (2026-09-10)
 
@@ -5318,33 +5318,6 @@ zu „16:10 nutzt die Morgen-Events und schreibt keine eigenen", der Parametrize
 neuen Code hat keine Morgenzeile ein `policy_context_json` — der erste 16:10-Lauf
 danach läuft preisbasiert mit Hinweis; das ist erwartet, kein Fehler.
 
-### C.49 — Prompt-Altlast entfernt: vier verwaiste `_vN.txt` und ihre `*_untouched`-Tests gelöscht (Entscheidung 2026-09-16)
-
-Anweisung Korbinian: „lösche alle prompt file die nicht mehr benötigt werden, behalte nur
-die relevanten." Damit ist die seit C.29 offene Entscheidung getroffen.
-
-**Gelöscht (`git rm`):** `prompts/deep_analysis_v1.txt` (v2 seit Plan 3a),
-`prompts/commodities_crypto_v1.txt` und `_v2.txt` (v3 seit C.15), `prompts/portfolio_check_v1.txt`
-(v2). Kein Modul und kein Test ausser den beiden `*_untouched`-Tests las sie noch. Der Stand
-jeder Datei bleibt über `git log -- prompts/<datei>` erreichbar — der Prompt-Stand einer
-Prediction ist laut Regel 10 ohnehin nur Git-Historie.
-
-**Mit entfernt:** `test_deep_analysis_v1_untouched` und `test_commodities_crypto_v2_untouched`
-(samt Konstante `CC_V2`). Beide bewachten ausschliesslich die Existenz der gelöschten Dateien
-und erzwangen die alte „nie editieren"-Regel, die seit 2026-09-10 nicht mehr gilt. Regel 8
-(Tests nicht löschen) ist nicht berührt: nach dem Löschen der Dateien hatten die Tests keinen
-Gegenstand mehr. Die Vertragstests (`*_pins_contract`) bleiben unverändert.
-
-**Behalten:** `prompts/quick_filter_v1.txt`. `src/quick_filter.py` ist toter Code, liest die
-Datei aber beim Import; fünf Testdateien importieren das Modul. Datei, Modul und Tests gehen
-nur gemeinsam — eigene Entscheidung, nicht Teil dieses Schritts.
-
-**Nebenbei bereinigt:** zwei Docstrings nannten `commodities_crypto_v2` noch als aktiven Prompt
-(`src/analysis_signal.py`, `tests/unit/test_ranking.py`) — jetzt v3. ARCHITECTURE 11e und
-Regel 10 angepasst.
-
-**Tests:** 1143 grün, 16 übersprungen, Coverage 93,3 % — genau zwei Tests weniger als bei C.48 (die beiden entfernten `*_untouched`-Tests), keine neuen. Kein Modul und kein Test referenziert die gelöschten Dateinamen mehr (grep über `src/`, `tests/`, `main.py`, `setup/`, `.github/`).
-
 ### C.49 — `trade_proposals`-Review, Teil 1 (Code und Notebook-Lauf 16.09.): Nachfolgezeile behält den Wissensstand (F66), feste Prompt-Nutzlast (F67), Levels vom 16:10-Entry (F68), relative Stärke intraday (F69), Eröffnungskurs im Gap (F70), Modellwerte geprüft und persistiert (F71), Preise in der Mail (F72), Sweep nur benötigte Ticker (F73), Technik inkl. laufender Sitzung (F74) (2026-09-16)
 
 Dreizehnter Durchgang, zweiter Run-Type: `run_trade_proposals()`, `_revalidate_all()`,
@@ -5532,6 +5505,87 @@ Drei Kandidaten aus dem C.49-Nachtrag, Entscheidung Korbinian: alle.
 Positionsalter, Anker nach/vor der Eröffnung, Uhr durch `revalidate_one`; angepasst: der
 Anker-Test aus C.49 (neues Format), `_revalidate_all` reicht `now_utc` durch. Nicht live
 verifiziert; sichtbar im nächsten Notebook-Lauf (erste Zeile der User-Message, Mail).
+
+### C.51 — Prompt-Altlast entfernt: vier verwaiste `_vN.txt` und ihre `*_untouched`-Tests gelöscht (Entscheidung 2026-09-16)
+
+Anweisung Korbinian: „lösche alle prompt file die nicht mehr benötigt werden, behalte nur
+die relevanten." Damit ist die seit C.29 offene Entscheidung getroffen. (Commit `f94134a`,
+zeitlich vor C.49/C.50; zunächst als C.49 abgelegt, wegen der parallelen `trade_proposals`-
+Session umnummeriert, s. C.52.)
+
+**Gelöscht (`git rm`):** `prompts/deep_analysis_v1.txt` (v2 seit Plan 3a),
+`prompts/commodities_crypto_v1.txt` und `_v2.txt` (v3 seit C.15), `prompts/portfolio_check_v1.txt`
+(v2). Kein Modul und kein Test ausser den beiden `*_untouched`-Tests las sie noch. Der Stand
+jeder Datei bleibt über `git log -- prompts/<datei>` erreichbar — der Prompt-Stand einer
+Prediction ist laut Regel 10 ohnehin nur Git-Historie.
+
+**Mit entfernt:** `test_deep_analysis_v1_untouched` und `test_commodities_crypto_v2_untouched`
+(samt Konstante `CC_V2`). Beide bewachten ausschliesslich die Existenz der gelöschten Dateien
+und erzwangen die alte „nie editieren"-Regel, die seit 2026-09-10 nicht mehr gilt. Regel 8
+(Tests nicht löschen) ist nicht berührt: nach dem Löschen der Dateien hatten die Tests keinen
+Gegenstand mehr. Die Vertragstests (`*_pins_contract`) bleiben unverändert.
+
+**Behalten:** `prompts/quick_filter_v1.txt`. `src/quick_filter.py` ist toter Code, liest die
+Datei aber beim Import; fünf Testdateien importieren das Modul. Datei, Modul und Tests gehen
+nur gemeinsam — eigene Entscheidung, nicht Teil dieses Schritts.
+
+**Nebenbei bereinigt:** zwei Docstrings nannten `commodities_crypto_v2` noch als aktiven Prompt
+(`src/analysis_signal.py`, `tests/unit/test_ranking.py`) — jetzt v3. ARCHITECTURE 11e und
+Regel 10 angepasst.
+
+**Tests:** 1143 grün, 16 übersprungen, Coverage 93,3 % — genau zwei Tests weniger als bei C.48 (die beiden entfernten `*_untouched`-Tests), keine neuen. Kein Modul und kein Test referenziert die gelöschten Dateinamen mehr (grep über `src/`, `tests/`, `main.py`, `setup/`, `.github/`).
+
+### C.52 — Policy-Monitor nicht mehr fatal: Rohantwort-Logging bei Parse-Fehlern, eine Wiederholung, Lauf ohne Policy-Lage statt Abbruch (Fehlerlauf 16.09., Entscheidung 2026-09-16)
+
+**Anlass:** der Cron-`pre_market`-Lauf vom 16.09. (GitHub-Run 35128077890, Code-Stand
+`56cf5ae` = C.38, die lokalen Commits seit dem 11.09. sind nicht gepusht) brach in Phase
+`policy_monitor` ab: `PolicyMonitorError: Could not parse JSON: Expecting property name
+enclosed in double quotes: line 33 column 1 (char 2120)`. Phase 0 bis 2b waren durch
+(0,50 €), keine Tagesmail, nur die Fehlermail. Befund im Actions-Log: genau **ein** Call,
+`end_turn` (keine Kappung — sonst hätte `call_claude_retry_on_truncation` wiederholt), 21 s
+Laufzeit. Der Fehler sitzt in einem Objekt direkt nach einem Komma: typischerweise ein
+nachgestelltes Komma vor `}`, ein Kommentar oder ein unquotierter Schlüssel. **Welcher Fall
+es war, ist nicht mehr feststellbar** — die Rohantwort stand nirgends, weder im Log noch in
+der DB (`audit_log` ist Sprint 3D). Der Konstruktionsfehler war seit C.41/P3 notiert:
+`run_pipeline` fing `PolicyMonitorError` nicht (nur `CostCapExceeded`), während Phase 0b bei
+`MarketContextError` weiterläuft.
+
+**Anweisung Korbinian:** „fixe alles außer dass die jobs zu spät laufen." Drei Änderungen:
+
+1. **`utils.extract_json_blob()` loggt die Rohantwort** (WARNING): bei `JSONDecodeError`
+   Fehlerart, Zeile/Spalte/Position und ein Fenster von 400 Zeichen davor und 150 danach mit
+   `>>>HIER<<<`-Marker (`_error_window()`); ohne öffnende Klammer die ersten 300 Zeichen.
+   Gilt automatisch für alle neun Aufrufer. Beim nächsten Mal steht im Actions-Log, was das
+   Modell geschrieben hat.
+2. **`run_policy_monitor()` wiederholt einmal** bei unbrauchbarer Antwort (Parse-Fehler
+   oder fehlende Pflichtschlüssel), beide Versuche gebucht; erst der zweite Fehlschlag wird
+   `PolicyMonitorError`. Die Kappungs-Behandlung (C.18) läuft davor und bleibt unverändert.
+3. **`run_pipeline` fängt `PolicyMonitorError` und `ClaudeTruncatedError`** in Phase
+   `policy_monitor` und läuft wie Phase 0b weiter: `policy_context = {"policy_risk_level":
+   "unknown", "events": [], "summary": None}` für Phase 3/3b/4a, Hinweis-Bullet im
+   Briefing, `market_context.policy_risk_level = 'unknown'` per Backfill (C.41-Konvention),
+   **kein** `save_policy_context` — `policy_context_json` bleibt NULL, der 16:10-Lauf fällt
+   in seinen C.48-Pfad („keine Morgenlage", preisbasiert mit Hinweis). `CostCapExceeded`
+   geht weiterhin nur an den äußeren Handler.
+
+**Bewusst nicht:** Phase 0 (`analyze_trends`) bleibt fatal (Spec § 3). Keine Reparatur am
+JSON — nachgestellte Kommata still zu schlucken wäre die schlimmere Fehlerklasse
+(`extract_json_blob`-Docstring). Die Cron-Verspätung (s. u.).
+
+**Nebenbefund, ausdrücklich zurückgestellt (Korbinian 16.09.: „Das fixen wir später"):** die
+GitHub-Crons feuern seit mindestens 14.09. rund **4 h 25 min** zu spät, nicht 35–40 min
+(F.1): `pre_market` startete am 15.09. um 17:26 UTC und am 16.09. um 17:25 UTC — 13:25 ET,
+mitten in der Sitzung; der Prompt behauptet 09:00 ET vor der Eröffnung, der „Vorbörsenkurs"
+ist ein Sitzungskurs. Der `trade_proposals`-Slot kam beide Tage um ~18:07 UTC an und wurde
+vom NY-Stundencheck korrekt übersprungen (die „success"-Läufe sind Skips ohne Pipeline);
+`final_close` lief um 04:53/04:58 UTC statt 00:15. Kandidat: eigener Auslöser statt
+`schedule` (`workflow_dispatch` per externem Cron) — bei F.1 fortschreiben.
+
+**Nummerierung:** der Prompt-Altlast-Eintrag von heute Nachmittag (Commit `f94134a`) war
+zunächst als C.49 abgelegt, parallel zur `trade_proposals`-Session, die C.49/C.50 belegte;
+er heißt jetzt **C.51**, die Verweise (ARCHITECTURE 11e, Regel 10, C.29) sind nachgezogen.
+
+**Tests:** 1186 grün, 16 übersprungen, Coverage 93,4 %. Sieben neue (rot zuerst): `extract_json_blob` loggt das Fenster um die Fehlerstelle bzw. den Anfang ohne Klammer; `run_policy_monitor` wiederholt einmal bei Parse-Fehler und bei fehlenden Schlüsseln, gibt nach dem zweiten Fehlschlag auf (genau zwei Calls, beide gebucht); `run_pipeline` läuft bei `PolicyMonitorError` und bei `ClaudeTruncatedError` weiter (Phase 3 und 4a sehen `unknown`, Hinweis im Briefing hinter den Trend-Bullets, `policy_context_json` NULL, `market_context.policy_risk_level = 'unknown'`, kein Abbruch im Kostenbericht). Bestehende Tests unverändert, insbesondere der Kostendeckel-Parametrize über `policy_monitor` (CostCapExceeded geht weiter durch).
 
 ## Sprint 3D — Learning Modul
 
@@ -5822,7 +5876,7 @@ nicht verloren gehen.**
     Aktiv geladen: `trend_analyzer_v1`, `broad_scan_v1`, `deep_analysis_v2`, `policy_monitor_v1`,
     `commodities_crypto_v3`, `market_context_v1`, `portfolio_check_v2`, `trade_proposals_v1`
     (+ `quick_filter_v1`, toter Code). Die Altlast `deep_analysis_v1`, `commodities_crypto_v1/v2`,
-    `portfolio_check_v1` ist seit 2026-09-16 gelöscht (C.49) — nur noch in der Git-Historie.
+    `portfolio_check_v1` ist seit 2026-09-16 gelöscht (C.51) — nur noch in der Git-Historie.
 
     Ältere Abschnitte dieses Dokuments (u. a. C.3-Einleitung, C.15/C.16, C.19, C.25, P2.x)
     begründen Entscheidungen noch mit der alten Regel — sie beschreiben, was **damals** galt,

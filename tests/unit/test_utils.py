@@ -286,6 +286,31 @@ def test_extract_json_blob_ignores_trailing_json_like_content():
     assert result == {"a": 1}  # only first object parsed, second ignored
 
 
+# ---------- C.52: Rohantwort bei Parse-Fehlern sichtbar machen ----------
+# 2026-09-16 riss ein Syntaxfehler in der Policy-Monitor-Antwort den ganzen
+# pre_market-Lauf -- und niemand konnte nachsehen, was das Modell geschrieben
+# hatte: kein Log, keine DB-Spur, nur "line 33 column 1 (char 2120)".
+
+def test_extract_json_blob_logs_a_window_around_the_error_position(caplog):
+    import logging
+    broken = '{"policy_risk_level": "high",\n  "events": [{"headline": "FOMC"}],\n}'
+    with caplog.at_level(logging.WARNING, logger="shares_future"):
+        with pytest.raises(_DemoError):
+            extract_json_blob(broken, _DemoError)
+    msgs = [r.message for r in caplog.records if r.levelno == logging.WARNING]
+    assert any("Rohantwort" in m and '"events": [{"headline": "FOMC"}],' in m
+               for m in msgs), msgs
+    assert any(">>>HIER<<<" in m and "Zeile 3" in m for m in msgs), msgs
+
+
+def test_extract_json_blob_logs_the_head_when_there_is_no_brace(caplog):
+    import logging
+    with caplog.at_level(logging.WARNING, logger="shares_future"):
+        with pytest.raises(_DemoError):
+            extract_json_blob("I could not find anything relevant today.", _DemoError)
+    assert any("could not find anything" in r.message for r in caplog.records)
+
+
 def test_call_claude_streaming_path_uses_messages_stream():
     """stream=True geht ueber messages.stream(), nicht messages.create()."""
     fake_message = MagicMock()

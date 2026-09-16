@@ -222,6 +222,19 @@ from typing import Type
 
 _JSON_FENCE_RE = re.compile(r"```(?:json)?\s*(\{.*\})\s*```", re.DOTALL)
 
+# C.52 (2026-09-16): Fenster der Rohantwort, das bei einem Parse-Fehler ins Log
+# geht. Gross genug, um das kaputte Objekt zu sehen (ein Policy-Event ist ~500
+# Zeichen), klein genug fuer eine Logzeile.
+RAW_LOG_BEFORE = 400
+RAW_LOG_AFTER = 150
+RAW_LOG_HEAD = 300
+
+
+def _error_window(text: str, pos: int) -> str:
+    """Ausschnitt der Rohantwort um die Fehlerposition, mit Marker an der Stelle."""
+    return (text[max(0, pos - RAW_LOG_BEFORE):pos]
+            + " >>>HIER<<< " + text[pos:pos + RAW_LOG_AFTER])
+
 
 def extract_json_blob(text: str, error_cls: Type[Exception]) -> dict:
     """Tolerate ```json ... ``` fences, leading prose, and trailing text/commentary.
@@ -241,17 +254,31 @@ def extract_json_blob(text: str, error_cls: Type[Exception]) -> dict:
 
     ⚠️ Tritt nicht-deterministisch auf: derselbe Prompt liefert mal escapte,
     mal rohe Umbrueche. Ein sauberer Lauf beweist hier nichts (dieselbe Lehre
-    wie beim adaptiven Denken, C.18). Gilt fuer alle neun Aufrufer."""
+    wie beim adaptiven Denken, C.18). Gilt fuer alle neun Aufrufer.
+
+    C.52 (2026-09-16): jeder Fehlschlag loggt ein Fenster der Rohantwort um die
+    Fehlerstelle (WARNING). Am 16.09. riss ein Syntaxfehler in der Policy-
+    Monitor-Antwort den pre_market-Lauf, und die Antwort war nirgends
+    nachlesbar -- weder im Log noch in der DB (audit_log ist Sprint 3D)."""
     m = _JSON_FENCE_RE.search(text)
     if m:
         text = m.group(1)
     start = text.find("{")
     if start < 0:
+        log.warning(
+            f"Keine JSON-Klammer in der Antwort ({len(text)} Zeichen). "
+            f"Anfang der Rohantwort: {text[:RAW_LOG_HEAD]!r}"
+        )
         raise error_cls("No JSON object found in response")
     try:
         obj, _ = json.JSONDecoder(strict=False).raw_decode(text, start)
         return obj
     except json.JSONDecodeError as e:
+        log.warning(
+            f"JSON-Parse-Fehler: {e.msg} an Zeile {e.lineno}, Spalte {e.colno} "
+            f"(Zeichen {e.pos} von {len(text)}). Rohantwort um die Fehlerstelle: "
+            f"{_error_window(text, e.pos)!r}"
+        )
         raise error_cls(f"Could not parse JSON: {e}") from e
 
 

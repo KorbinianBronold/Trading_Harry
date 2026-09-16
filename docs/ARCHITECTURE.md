@@ -274,8 +274,10 @@ DB-Close.
 │           komplette Antwort -> market_context.policy_context_json│
 │           (C.48 / F65), Events -> news_summaries (C.41)          │
 │  Cost: ~0.21-0.25 EUR (gemessen 2026-09-13, 4-5 Websuchen)      │
-│  Fail: ❌ PolicyMonitorError nicht gefangen -> Lauf bricht ab    │
-│        (nur der Kappungs-Retry aus C.18 schuetzt)                │
+│  Fail: ✅ seit C.52 nicht fatal: unbrauchbare Antwort 1x wieder- │
+│        holt (beide gebucht), dann Lauf ohne Policy-Lage          │
+│        ('unknown', Hinweis in der Mail, policy_context_json NULL)│
+│        Kappung weiterhin ueber call_claude_retry_on_truncation   │
 │  16:10: KEIN Call -- db.load_policy_context(date, 'pre_market'); │
 │        fehlt die Morgenlage: 'unknown', Hinweis in der Mail      │
 └─────────────────────────────────────────────────────────────────┘
@@ -723,6 +725,9 @@ def run_policy_monitor(date, run_type, cost_tracker) -> dict:
     policy_risk_level wird normalisiert (C.41): lower(), Whitelist, sonst 'unknown'.
     Je Event: headline, detail, category, beneficiary_tickers, negative_tickers,
     affected_sectors (GICS), source_url, as_of, effective_date.
+    C.52: unbrauchbare Antwort (Parse-Fehler, fehlende Schluessel) wird EINMAL
+    wiederholt, beide Versuche gebucht; der zweite Fehlschlag ist PolicyMonitorError,
+    den main.run_pipeline() abfaengt (Lauf ohne Policy-Lage, s. Phasen-Box).
     """
 
 def build_batches(ticker_datas, batch_size=config.BATCH_SIZE_DEEP) -> list[list[dict]]:
@@ -1452,7 +1457,7 @@ Querschnitts-Helfer, die jedes Claude-aufrufende Modul benutzt.
 | `call_claude(..., stream=False)` | Anthropic-Wrapper mit Prompt-Caching, optional gestreamt |
 | `call_claude_retry_on_truncation(...)` | `call_claude()` + Kappungs-Erkennung für die Einzelcall-Module (C.18) |
 | `ClaudeTruncatedError` | Wurf, wenn auch die Wiederholung mit doppelter Decke kappt |
-| `extract_json_blob(text, error_cls)` | toleranter JSON-Auszug aus Claudes Antwort |
+| `extract_json_blob(text, error_cls)` | toleranter JSON-Auszug aus Claudes Antwort; loggt bei Parse-Fehler ein Fenster der Rohantwort um die Fehlerstelle (`>>>HIER<<<`, C.52) |
 
 ⚠️ `extract_json_blob` nutzt `raw_decode`, weil Claude gelegentlich Fliesstext hinter das
 JSON hängt. Ein striktes `json.loads` scheiterte daran.
@@ -1542,7 +1547,7 @@ Versionssuffix:
 Modul fest verdrahtet; ein Wechsel ist eine Code-Änderung. Die Tabelle `prompt_versions`
 wird angelegt und **nie benutzt** — sie gehört zu Sprint 3D.
 
-`prompts/` enthält seit 2026-09-16 (C.49) nur noch die geladenen Dateien plus
+`prompts/` enthält seit 2026-09-16 (C.51) nur noch die geladenen Dateien plus
 `quick_filter_v1.txt` (toter Code; `src/quick_filter.py` liest sie beim Import, fünf
 Testdateien importieren das Modul). Die vier Altlast-Dateien `deep_analysis_v1`,
 `commodities_crypto_v1/v2` und `portfolio_check_v1` sind gelöscht; ihr Stand bleibt über
@@ -1570,7 +1575,7 @@ Daran hängen heute nur noch die Vertragstests; die zweite Testart ist Geschicht
 - **`*_untouched`-Tests** (`test_deep_analysis_v1_untouched`,
   `test_commodities_crypto_v2_untouched`) erzwangen ausschließlich die **alte** Regel und
   bewachten zuletzt nur noch verwaiste Dateien — am 2026-09-16 zusammen mit den vier
-  Altlast-Dateien entfernt (C.49, Entscheidung Korbinian).
+  Altlast-Dateien entfernt (C.51, Entscheidung Korbinian).
 
 ⚠️ Die Prompts werden **auf Modulebene** gelesen, nicht je Aufruf. Eine geänderte
 Prompt-Datei wirkt erst nach einem Neustart des Prozesses.

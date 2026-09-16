@@ -19,7 +19,8 @@ from src.data_collector import collect, run_phase_2b
 from src.sector_momentum import collect_sector_momentum
 from src.trend_analyzer import analyze_trends, TrendAnalyzerError
 from src.broad_scan import broad_scan_batch, cutoff_candidates
-from src.deep_analysis import run_policy_monitor, analyze_batches
+from src.deep_analysis import run_policy_monitor, analyze_batches, PolicyMonitorError
+from src.utils import ClaudeTruncatedError
 from src.commodities_crypto import (
     analyze_commodities_and_crypto, fetch_fear_greed, fetch_btc_dominance,
     gold_silver_ratio,
@@ -724,13 +725,35 @@ def run_pipeline(run_type: str, date: str, db_path: str) -> None:
 
         current_phase = "policy_monitor"
         # Phase 3 policy monitor (1× for all of Phase 3 + 3b + 4a)
-        policy_context = run_policy_monitor(
-            date=date, run_type=run_type, cost_tracker=cost_tracker,
-        )
-        # C.48 / F65: die komplette Lage ueberlebt den Lauf -- der 16:10-Lauf
-        # liest sie statt ein zweites Mal zu suchen.
-        db.save_policy_context(conn, date, run_type, policy_context)
+        # C.52 (2026-09-16): nicht mehr fatal. Ein Syntaxfehler in der Antwort
+        # riss am 16.09. den ganzen Lauf (Phase 0-2b bezahlt, keine Mail).
+        # run_policy_monitor wiederholt einmal; scheitert auch das (oder ist die
+        # Antwort doppelt gekappt, ClaudeTruncatedError), laeuft der Rest wie
+        # Phase 0b ohne Kontext weiter: Phase 3/3b/4a sehen 'unknown' ohne
+        # Events, die Mail traegt den Hinweis, market_context bekommt 'unknown'
+        # (C.41-Konvention) und policy_context_json bleibt NULL -- der 16:10-Lauf
+        # warnt dann selbst (C.48). CostCapExceeded faengt weiterhin nur der
+        # aeussere Handler.
+        policy_failed: str | None = None
+        try:
+            policy_context = run_policy_monitor(
+                date=date, run_type=run_type, cost_tracker=cost_tracker,
+            )
+            # C.48 / F65: die komplette Lage ueberlebt den Lauf -- der 16:10-Lauf
+            # liest sie statt ein zweites Mal zu suchen.
+            db.save_policy_context(conn, date, run_type, policy_context)
+        except (PolicyMonitorError, ClaudeTruncatedError) as e:
+            log.warning(f"Policy-Monitor ohne verwertbare Antwort, Run laeuft "
+                        f"ohne Policy-Lage: {e}")
+            policy_context = {"policy_risk_level": "unknown", "events": [],
+                              "summary": None}
+            policy_failed = str(e)
         payload["briefing"] = generate_daily_briefing(trend_context, policy_context)
+        if policy_failed:
+            payload["briefing"].append(
+                "⚠️ Policy-Monitor ohne verwertbare Antwort (auch nach Wiederholung) — "
+                "Tiefenanalyse und Portfolio-Check liefen ohne Policy-Lage, der "
+                "16:10-Lauf prüft rein preisbasiert.")
 
         current_phase = "deep_analysis"
         # Phase 3 — Batch-Tiefenanalyse nach Sub-Sektor (Spec 4.8, 20.2).
