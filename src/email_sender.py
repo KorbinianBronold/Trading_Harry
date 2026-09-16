@@ -784,17 +784,31 @@ _VERDICT_LABEL = {
 
 def _section_signal_changes(changes: list[dict]) -> str:
     """Kernsektion der 16:10-Mail: was ist seit der Morgenanalyse mit jedem Signal
-    passiert (B.2/Schritt 5)."""
+    passiert (B.2/Schritt 5). Seit C.49 / F72 mit den Preisen: Entry 15:00,
+    Eroeffnung, Kurs 16:10 mit Bewegung seit der Eroeffnung, TP/SL und das R/R
+    gegen den 16:10-Kurs -- die einzige handlungsrelevante Mail zeigte bis
+    dahin keine Levels. Zeilen ohne diese Schluessel (nicht_geprueft, alte
+    Payloads) rendern '—'."""
     if not changes:
         return ('<h2>Signal-Prüfung 16:10</h2>'
                 '<p><i>Keine offenen Morgensignale zu prüfen.</i></p>')
+
+    def _num(v: Any) -> str:
+        return _h(v) if v is not None else "—"
+
     rows = []
     for c in changes:
         before, after = c.get("probability_before"), c.get("probability_after")
         arrow = f'{_h(before)}% → {_h(after)}%' if after is not None else f'{_h(before)}% → —'
-        window = ""
-        if c.get("entry_window_low") is not None:
+        window = "—"
+        if c.get("entry_window_low") is not None and c.get("entry_window_high") is not None:
             window = f'{_h(c["entry_window_low"])} – {_h(c["entry_window_high"])}'
+        move = c.get("move_since_open_pct")
+        now_cell = _num(c.get("price_1610"))
+        if move is not None:
+            now_cell += f' ({float(move):+.2f} %)'
+        levels = ("—" if c.get("tp_price") is None and c.get("sl_price") is None
+                  else f'{_num(c.get("tp_price"))} / {_num(c.get("sl_price"))}')
         # title traegt den rohen Verdict-Slug (z.B. "bestaetigt"): das Label
         # daneben ist bewusst in korrektem Deutsch mit Umlaut, aber Tests und
         # spaetere Auswertungen sollen sich auf den stabilen Rohwert stuetzen
@@ -804,7 +818,13 @@ def _section_signal_changes(changes: list[dict]) -> str:
             f'<td>{_h(c.get("direction"))}</td>'
             f'<td title="{_h(c.get("verdict"))}">'
             f'{_VERDICT_LABEL.get(c.get("verdict"), _h(c.get("verdict")))}</td>'
-            f'<td>{arrow}</td><td>{window}</td>'
+            f'<td>{arrow}</td>'
+            f'<td>{_num(c.get("entry_premarket"))}</td>'
+            f'<td>{_num(c.get("price_open"))}</td>'
+            f'<td>{now_cell}</td>'
+            f'<td>{levels}</td>'
+            f'<td>{_num(c.get("rr_new"))}</td>'
+            f'<td>{window}</td>'
             f'<td>{_h("; ".join(c.get("checks") or []))}</td>'
             f'<td>{_h(_cut(c.get("reason", ""), 200))}</td></tr>'
         )
@@ -812,6 +832,8 @@ def _section_signal_changes(changes: list[dict]) -> str:
         '<h2>Signal-Prüfung 16:10</h2>'
         '<table border="1" cellpadding="4" cellspacing="0">'
         '<tr><th>Ticker</th><th>Dir</th><th>Urteil</th><th>Wahrsch.</th>'
+        '<th>Entry 15:00</th><th>Open</th><th>Kurs 16:10 (seit Open)</th>'
+        '<th>TP / SL</th><th>R/R neu</th>'
         '<th>Entry-Fenster</th><th>Checks</th><th>Begründung</th></tr>'
         + "".join(rows) + '</table>'
     )

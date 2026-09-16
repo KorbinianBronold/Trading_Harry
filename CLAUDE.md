@@ -79,9 +79,18 @@ Kurzform zum Erkennen einer drohenden Verletzung; Begründung und Randfälle in
 - `technical_indicators`-Zeile `date=T` ist aus Bars bis **T-1** — kein Off-by-one,
   **nicht** „korrigieren" (Leakage). Indikatoren sind pro Tag konstant; mehrere
   Läufe/Tag schreiben wertgleich per `INSERT OR REPLACE`. → C.14
+  **Ausnahme nur im Snapshot:** der 16:10-Lauf gibt `collect()` je Ticker die laufende
+  Sitzung als Tagesbar (`main._intraday_bars`, Stundenbars ab 00:00 UTC) — das `td` und
+  das Technik-Signal im Sidecar rechnen dann inkl. heute (Close = Sweep-Kurs,
+  `volume_ratio` bleibt final), die DB-Zeile bleibt die Morgenrechnung. → C.49
 - Je Trade-Idee genau **eine** offene Prediction; `trade_proposals` löst per
   `superseded_by` ab (partieller Index `ux_predictions_one_open_per_idea`). Die
   Schrittreihenfolge in `db.supersede_prediction()` nicht umstellen. → P2.13
+  Das Ablöse-Dict in `main._persist_revision()` ist **handgeschrieben**: jede neue
+  `predictions`-Spalte muss dort mitwandern, sonst trägt die einzige Zeile mit Outcome
+  NULL (C.13 `candidate_class`, C.49 die sieben E2/E3-Spalten). `tp_pct`/`sl_pct`/`rr_ratio`
+  der 16:10-Zeile aus `derive_levels()` gegen den 16:10-Kurs; `summary` bleibt die
+  Morgen-These, die 16:10-Begründung steht als `revision_reason` auf der Morgenzeile. → C.49
 - Offene Position (Phase 1c, 4a, Mail) = **live bei Capital.com** (`get_open_positions`,
   jeder Lauf, ein Abruf). Predictions sind Papier-Vorschläge und laufen getrennt durch die
   Auswertung; Phase 4a liest `predictions` **nie**. Abruf gescheitert = keine Empfehlung
@@ -101,6 +110,11 @@ Kurzform zum Erkennen einer drohenden Verletzung; Begründung und Randfälle in
   `learnable=False` (übersprungene Ticker) nie ins Lernmodul.
 
 **Claude-Calls**
+- Revalidation (16:10): `ORIGINAL PREDICTION` = `revalidation.PREDICTION_KEYS`,
+  `CURRENT SNAPSHOT` = `SNAPSHOT_KEYS` (die 14 Technik-Schlüssel aus `build_snapshot`
+  plus `price_open`), Datumsanker, Technik-Signal Morgen → jetzt (0–4) — nie die rohe
+  DB-Zeile oder das rohe `td` (Tests pinnen die Sichten). `probability_pct` 0–100 und
+  das Entry-Fenster (Seite, Reihenfolge, zwischen SL und TP) prüft der Code. → C.49
 - `call_claude()` setzt kein `thinking`-Feld → unter Claude 5 = **adaptives Denken
   an**, teilt die `max_tokens`-Decke mit der Antwort. Jeder neue Aufrufer braucht
   eine `stop_reason`-Prüfung; ein sauberer Lauf beweist nichts (nicht
@@ -176,6 +190,9 @@ Kurzform zum Erkennen einer drohenden Verletzung; Begründung und Randfälle in
   Phase 1 liest für sie keinen Cache, der Wochenjob räumt Altbestand weg. → C.35
 - Kurs-Sweep: Sammelabruf `/markets?epics=` in 20er-Chunks, dreistufige 429-Notbremse.
   Fehlender Live-Kurs = **kein** Skip (Fallback letzter finaler Close, WARNING). → P2.2
+  Um 16:10 werden **nur** die Ticker der offenen Morgensignale, der Broker-Positionen und
+  alle Rohstoffe/Kryptos gezogen (plus Sektor-ETFs per Batch für die relative Stärke),
+  nicht das Universum. → C.49
 - Capital.com: `to` nie in der Zukunft (HTTP 400, `_not_in_future()`). Tages-Bar-`open`
   ≠ Eröffnungskurs (Bar ab 08:00 UTC; echter Open aus `MINUTE`-Bar). → P3.4
 - Gap-Fill legt **keine** Historie an (nur Löcher; Fenster `GAP_SCAN_BARS = 220` =

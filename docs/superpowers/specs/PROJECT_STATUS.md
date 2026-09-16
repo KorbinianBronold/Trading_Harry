@@ -364,6 +364,11 @@ noch gültig sind, und konkrete Handlungsempfehlungen für den Tag geben.
 > 16:10-Lauf liest die Morgenlage aus `market_context.policy_context_json` und hat
 > keine Websuche mehr. Der E1-Satz „Breaking News deckt der eine Policy-Monitor-Call
 > ab" gilt damit nicht mehr.
+>
+> **Seit C.49 (2026-09-16):** Schritt 1 („frische Kurse für ALLE Ticker … in
+> `price_history` schreiben") gilt nicht mehr — `price_history` schreibt seit P3 nur
+> `final_close`, und der Sweep umfasst nur offene Signale, Positionen und die cc-Liste.
+> Dafür rechnet der Lauf die Technik inklusive der laufenden Sitzung neu (F74).
 
 | Schritt | Was passiert |
 |---|---|
@@ -5339,6 +5344,121 @@ nur gemeinsam — eigene Entscheidung, nicht Teil dieses Schritts.
 Regel 10 angepasst.
 
 **Tests:** 1143 grün, 16 übersprungen, Coverage 93,3 % — genau zwei Tests weniger als bei C.48 (die beiden entfernten `*_untouched`-Tests), keine neuen. Kein Modul und kein Test referenziert die gelöschten Dateinamen mehr (grep über `src/`, `tests/`, `main.py`, `setup/`, `.github/`).
+
+### C.49 — `trade_proposals`-Review, Teil 1 (Code und Notebook-Lauf 16.09.): Nachfolgezeile behält den Wissensstand (F66), feste Prompt-Nutzlast (F67), Levels vom 16:10-Entry (F68), relative Stärke intraday (F69), Eröffnungskurs im Gap (F70), Modellwerte geprüft und persistiert (F71), Preise in der Mail (F72), Sweep nur benötigte Ticker (F73), Technik inkl. laufender Sitzung (F74) (2026-09-16)
+
+Dreizehnter Durchgang, zweiter Run-Type: `run_trade_proposals()`, `_revalidate_all()`,
+`_persist_revision()`, `src/revalidation.py`, `prompts/trade_proposals_v1.txt`, die
+16:10-Mail. Grundlage: Code-Lektüre plus der erste Lauf des neuen Notebooks
+`random/pipeline_walkthrough_trade_proposals.ipynb` (unversioniert wie das Morgen-
+Notebook) am 16.09. um 19:44 Berlin gegen die Wegwerf-Kopie des Morgen-Walkthroughs
+(ein Signal: BTCUSD short, Entry 75 840,1, TP 74 323,3, SL 76 598,5, P 52 %, conf low;
+eine GOLD-Long-Position beim Broker). Rohstoffe/Krypto bleiben ausgeklammert (C.43); dass
+das Beispielsignal Krypto ist, ändert an den Befunden nichts, sie betreffen den Pfad.
+
+**Ziel des Laufs (Korbinian, 16.09.):** die Morgen-Vorhersagen bestätigen oder verwerfen,
+indem frische Kurse abgefragt und die technischen Indikatoren neu gerechnet werden;
+Unternehmens-, Politik-, Welt- und Wirtschaftsnachrichten kommen aus dem Morgenlauf.
+Damit ist die offene Frage aus C.48 (Ticker-Suche bei starker Abweichung) entschieden:
+**keine** zweite Recherche, der Lauf hat keine Websuche.
+
+**Was der Notebook-Lauf zeigte:** VIX 18,44 aus der Bar des laufenden Tages (nicht der
+Vortagesschluss — der C.28-Prüfpunkt ist damit beantwortet). Revalidation-Call 1 381 in /
+569 out, `end_turn`, 0,0152 €, cache_write 1 081 (Decke 6 144 zu 9 % genutzt, C.18-
+Messwert). Portfolio-Check GOLD HALTEN, 2 236 in / 1 769 out, 20,8 s, 0,0361 €
+(Sonnet-Messwert aus C.46). Modell „geschwächt" 52 → 47 %, Code `verworfen`: R/R
+nach Opening 0,98 < 1,5, weil der Kurs (75 452) schon 0,51 % Richtung TP gelaufen war —
+korrekt nach E3, aber die Mail nannte den R/R-Grund nicht (F72). Die Policy-Lage fehlte
+(Morgen-Kopie vor C.48, erwartet). `RELATIVE STRENGTH: unbekannt`. Der Snapshot trug
+**dieselben** Indikatorwerte wie am Morgen (GOLD `price_change_1d` −0,109 um 12:37 und um
+19:44; BTCUSD `rsi_14` 48,1455… identisch mit `rsi_at_entry`) — nur `price` war frisch;
+der Prompt behauptete „technische Indikatoren von jetzt" (F74). Der Sweep zog alle 7
+cc-Ticker inkl. Gap-Fill für fünf, aber 0 Aktien (F73-Logik im Notebook); Setup 5 brach an
+`policy_context_json` ab (Kopie vor C.48, Notebook jetzt tolerant).
+
+**Befunde und Umsetzung (Entscheidung Korbinian: alles):**
+- **F66 — Nachfolgezeile verlor den eingefrorenen Wissensstand (behoben, Priorität).**
+  `_persist_revision` baut das Ablöse-Dict von Hand; die sieben E2/E3-Spalten (`pe_ratio`,
+  `forward_pe`, `market_cap_b`, `debt_equity`, `analyst_consensus`, `analyst_consensus_period`,
+  `relative_strength`) fehlten → `_insert_prediction` schrieb NULL in die einzige Zeile,
+  die je ein Outcome bekommt (C.13-Klasse). Jetzt wandern sie mit; `relative_strength`
+  ist die 16:10-Messung (F69). `summary` der Nachfolgezeile bleibt die Morgen-These, die
+  16:10-Begründung steht als `revision_reason` auf der Morgenzeile (F71). CLAUDE.md warnt
+  jetzt, dass das Dict handgeschrieben ist.
+- **F67 — Prompt-Nutzlast war die rohe DB-Zeile plus rohes `td` (behoben, F48-Klasse).**
+  62 Spalten (`id`, `status`, `learnable`, `rank_score`, `candidate_class`, `created_at`,
+  Score-Spalten) und 28 `td`-Schlüssel gingen in den bezahlten Call, ohne Datumsanker und
+  ohne Skala des Technik-Signals. Neu `revalidation.PREDICTION_KEYS` (14) und
+  `SNAPSHOT_KEYS` (`TECHNICAL_KEYS` des Portfolio-Checks + `price_open`), `prediction_view()`
+  / `snapshot_view()`, „Today is …, 10:10 ET", `TECHNICAL SIGNAL morning → now` (0–4),
+  `LEVELS AT CURRENT PRICE`, `MOVE`. Tests pinnen die Sichten; `sqlite3.Row` und `dict`
+  werden gleich behandelt (`_field`).
+- **F68 — Prozente und Range-Checks rechneten mit dem 15:00-Entry (behoben).**
+  `tp_pct`/`sl_pct` der Nachfolgezeile und `check_stop_distance`/`check_tp_reach` um 16:10
+  laufen jetzt über `derive_levels()` gegen den 16:10-Kurs. Live: BTCUSD-Zeile 2,0/1,0,
+  vom 16:10-Entry 1,5/1,52 — der Stop-Check meldete 0,33 statt 0,50 der Range.
+- **F69 — `RELATIVE STRENGTH` war die Sitzung von gestern (behoben).** Neu
+  `main._etf_intraday_changes()` (ein Batch-Kursabruf der Sub-Sektor-ETFs der Signal-Ticker
+  gegen den letzten finalen Close) und `_intraday_relative_strength()` = `price_change_1d`
+  des Snapshots (seit F74 intraday) minus ETF-Bewegung; Prompt-Label „seit gestern Schluss".
+  `signal_checks.compute_relative_strength` (Vortag) bleibt für das Morgen-Ranking.
+- **F70 — Eröffnungskurs ungenutzt (behoben).** `check_opening_gap` misst jetzt Vorbörse →
+  Open (ohne Eröffnungsbar wie bisher → jetzt); die Bewegung seit Open steht als `MOVE` im
+  Prompt und in der Mail; `price_open` ist Teil von `SNAPSHOT_KEYS`.
+- **F71 — Modellwerte ungeprüft und nicht persistiert (behoben).** `probability_pct`
+  ausserhalb 0–100 oder unlesbar → `RevalidationError` (Zeile bleibt offen wie bei jedem
+  Fehler). Entry-Fenster: `_window_error()` (beide Grenzen, low ≤ high, Long SL < low ≤
+  high < TP, Short gespiegelt) → sonst beide None mit WARNING, Urteil bleibt. Neue
+  Spalten `predictions.revision_reason`, `entry_window_low/high` (Migrations-Guard):
+  Grund und Fenster auf der Morgenzeile (`record_revision`, `supersede_prediction`),
+  Fenster auch auf der Nachfolgezeile.
+- **F72 — Die Mail zeigte keine Preise (behoben).** `signal_changes`-Zeilen tragen
+  `entry_premarket`, `price_open`, `price_1610`, `move_since_open_pct`, `tp_price`,
+  `sl_price`, `rr_new`; die R/R-Ablehnung steht als `rr_ratio: …` in den Checks
+  (`_persist_revision` gibt `(new_id, reject)` zurück). Tabelle: Entry 15:00 · Open ·
+  Kurs 16:10 (seit Open) · TP / SL · R/R neu · Entry-Fenster · Checks · Begründung; alte
+  Zeilen rendern „—".
+- **F73 — Sweep über alles (behoben).** Nur offene Morgensignale, Broker-Positionen (dafür
+  Phase 1c jetzt vor dem Sweep) und die cc-Liste; Eröffnungskurse nur für diese Aktien.
+  B.2 Schritt 1 („ALLE Ticker, in `price_history` schreiben") ist seit P3 gegenstandslos.
+- **F74 — Um 16:10 war nur `price` frisch (behoben, Kern des Ziels).** `main._intraday_bars()`
+  holt je Ticker Stundenbars ab 00:00 UTC (ein Call, ≤ 15 Bars) und verdichtet sie per
+  `collapse_to_daily_bar`; `collect(intraday_bars=…)` → `_process_ticker(intraday_bar=…)`
+  rechnet das `td` (Prozentänderungen, RSI, MACD-Label, ATR, BB, SMA-Abstände, Range) und
+  das Sidecar-Signal aus Historie plus dieser Bar, Close = Sweep-Kurs, High/Low darauf
+  geweitet; `volume_ratio` bleibt aus finalen Bars (40-Minuten-Volumen). Persistiert wird
+  **unverändert** die Morgenrechnung (C.14, Test vergleicht die DB-Zeilen mit/ohne Bar);
+  die td-Schlüsselmenge bleibt gepinnt. Prompt-Text sagt jetzt, was er bekommt.
+
+**Prompt (Regel 15):** `trade_proposals_v1.txt` neu gefasst — Ziel nach Korbinians
+Formulierung, Nachrichten nur aus dem Morgen, Eingaben-Liste inkl. Skala 0–4, Entry-Fenster
+mit Seitenregel und `null` erlaubt, Begründung aus Bewegung und Technik. Pin-Test
+(`test_trade_proposals_prompt_pins_contract`). `portfolio_check_v2` unberührt („the
+snapshot carries the current technicals" ist um 16:10 jetzt wahr).
+
+**Nebenbefunde ohne Änderung:** der Prompt-Satz „Pullback abwarten" ist gestrichen
+(Fenster jetzt zwischen SL und TP, Kurs darf darin liegen); Winter: der Run-Type fällt
+mit der Sommerzeit aus (bekannt, TODO im Workflow) — damit auch alle harten 16:10-Checks.
+
+**Tests:** 1174 grün, 16 übersprungen, Coverage 93,3 %. Neu (rot zuerst, 29):
+`_process_ticker`/`collect` mit Intraday-Bar ×4 (td ändert sich, DB-Zeile nicht,
+`volume_ratio` bleibt, Close = Sweep-Kurs), DB ×3 (Migration, `record_revision`,
+`supersede_prediction` mit Grund/Fenster), Revalidation ×8 (Sichten ×2, Nachricht,
+Wahrscheinlichkeit, Fenster ×4 parametrisiert, plausibles Fenster, Prompt-Pin),
+`main` ×11 (`_intraday_bars`, Sweep nur benötigte Ticker mit Bars, `_persist_revision`
+×4, `_revalidate_all` ×5, `_etf_intraday_changes`), Mail ×2. Angepasst: sieben
+`_persist_revision`-Tests entpacken das Tupel, der B.2-Schritt-1-Test prüft jetzt „keine
+Aktien ohne Signal, cc komplett", ein Marktlage-Test s. C.47.
+
+**Nicht live verifiziert:** der Lauf mit Intraday-Bars, den neuen Sichten und der Mail;
+Notebook (neu öffnen) an einem Handelstag ab 16:10 nach einem Morgen-Walkthrough mit
+Richtung — prüfen: Tabelle Morgen-vs-jetzt je Ticker (Werte müssen abweichen), Stundenbars
+je Ticker, `RELATIVE STRENGTH` mit Zahl (AAPL hat einen Sektor-ETF), Prompt-Sichten,
+Nachfolgezeile mit `pe_ratio`/`relative_strength`/`revision_reason`/Fenster, Mail-Spalten.
+
+**Beobachtungsposten neu:** wie oft das Technik-Signal 16:10 vom Morgen abweicht
+(Richtung/Stärke), Anteil verworfener Entry-Fenster (`Entry-Fenster verworfen` im Log),
+Häufigkeit der R/R-Ablehnung nach Opening gegen „geschwächt"/„bestätigt" des Modells.
 
 ## Sprint 3D — Learning Modul
 

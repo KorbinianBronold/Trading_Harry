@@ -378,6 +378,7 @@ def _process_ticker(
     run_type: str,
     premarket_price: float | None = None,
     gap_stats: GapFillStats | None = None,
+    intraday_bar: dict | None = None,
 ) -> tuple[dict, dict] | None:
     """Runs the full Phase-1 pipeline for one ticker: ensures today's bar exists,
     computes indicators from the last 220 DB days, and reads fundamentals/earnings
@@ -396,7 +397,18 @@ def _process_ticker(
     Finnhub-Calls, das Nachladen sitzt in fetch_missing_fundamentals()
     (Phase 2b, ab Task 10 verdrahtet). Der Parameter bleibt fuer eine stabile
     Schnittstelle zu collect() stehen, statt den Aufrufer und alle bestehenden
-    Tests fuer eine Zwischen-Task umzubauen."""
+    Tests fuer eine Zwischen-Task umzubauen.
+
+    `intraday_bar` (C.49 / F74, nur der 16:10-Lauf): die zu EINER Bar
+    verdichtete laufende Sitzung (main._intraday_bars). Ist sie da, rechnet das
+    zurueckgegebene td seine Technik (RSI, MACD, SMA-Abstaende, BB, Range,
+    Prozentaenderungen) aus Historie PLUS dieser Bar, deren Close der Sweep-
+    Kurs ist -- bis dahin war um 16:10 nur `price` frisch, alle Indikatoren
+    identisch mit dem Morgen. volume_ratio bleibt aus den finalen Bars (ein
+    40-Minuten-Volumen ist kein Tagesvolumen). Persistiert wird UNVERAENDERT
+    die Morgenrechnung aus Bars bis gestern (C.14: technical_indicators
+    date=T ist wertgleich je Lauf); das Technik-Signal im Sidecar folgt dem
+    td, also der laufenden Sitzung."""
     # Step 1: Luecken schliessen (Spec B.8). `gap_stats` meldet collect(), ob
     # dabei ein Capital.com-Call fiel -- daran haengt die Batch-Pause (F8).
     _fill_price_gaps(ticker, price_provider, conn, date, stats=gap_stats)
@@ -445,22 +457,7 @@ def _process_ticker(
     # erst Sprint 3D). Weiter unten zusammengefuehrt: fuer die Persistierung UND
     # (Task 6) als Eingabe fuer technical_signal.compute() -- macd_line/
     # macd_signal_line/adx_14 sitzen nur hier, nicht in td.
-    extra_indicators: dict[str, Any] = {
-        **compute_macd_raw(df),
-        **compute_adx(df),
-        **compute_psar(df),
-        **compute_ichimoku(df),
-        **compute_stochastic(df),
-        **compute_trix(df),
-        **compute_bollinger_raw(df),
-        **compute_donchian(df),
-        "ema_50_dist_pct": compute_ema_distance_pct(df, 50),
-        "willr_14":        compute_willr(df),
-        "cci_20":          compute_cci(df),
-        "mom_12":          compute_momentum(df),
-        "atr_abs":         compute_atr_abs(df),
-        "obv":             compute_obv(df),
-    }
+    extra_indicators: dict[str, Any] = _extra_indicators(df)
 
     # Fundamentals: NUR Cache-Lesung (Sprint 3C / Analyse-Pipeline-Umbau, Task 7).
     # Phase 1 ruft Finnhub nicht mehr auf -- 0 Calls, kein Geld. Das Nachladen
@@ -497,6 +494,13 @@ def _process_ticker(
     merged_indicators = {**td, **extra_indicators}
     _persist_indicators(conn, ticker, date, merged_indicators)
 
+    # C.49 / F74: NACH der Persistierung die Technik auf die laufende Sitzung
+    # ziehen -- nur im td und im Sidecar-Signal, nie in der DB-Zeile.
+    if intraday_bar is not None:
+        df_live = _with_intraday_bar(df, intraday_bar, date, price)
+        td.update(_live_technicals(df_live))
+        merged_indicators = {**td, **_extra_indicators(df_live)}
+
     # Sprint 3C / Analyse-Pipeline-Umbau (Task 6): das deterministische
     # Technik-Signal braucht Werte aus BEIDEN Dicts (RSI/SMA aus td, MACD/ADX
     # aus extra_indicators) -- derselbe Merge wie fuer die Persistierung.
@@ -511,6 +515,62 @@ def _process_ticker(
         "tech_strength":        signal.strength,
     }
     return td, sidecar_entry
+
+
+def _extra_indicators(df) -> dict[str, Any]:
+    """Die 29 Zusatzindikatoren fuer technical_indicators und das Technik-Signal
+    (Sprint 3C, Plan 1) -- nie im td."""
+    return {
+        **compute_macd_raw(df),
+        **compute_adx(df),
+        **compute_psar(df),
+        **compute_ichimoku(df),
+        **compute_stochastic(df),
+        **compute_trix(df),
+        **compute_bollinger_raw(df),
+        **compute_donchian(df),
+        "ema_50_dist_pct": compute_ema_distance_pct(df, 50),
+        "willr_14":        compute_willr(df),
+        "cci_20":          compute_cci(df),
+        "mom_12":          compute_momentum(df),
+        "atr_abs":         compute_atr_abs(df),
+        "obv":             compute_obv(df),
+    }
+
+
+def _live_technicals(df) -> dict[str, Any]:
+    """Die td-Technik aus einem Bar-Frame, der die laufende Sitzung enthaelt
+    (C.49 / F74). Ohne volume_ratio: das bleibt aus den finalen Bars."""
+    return {
+        **compute_price_changes(df),
+        "rsi_14":             compute_rsi_14(df),
+        "rsi_trend":          compute_rsi_trend(df),
+        "macd_signal":        compute_macd_signal(df),
+        "atr_pct":            compute_atr_pct(df),
+        "bb_position":        compute_bb_position(df),
+        "above_sma20":        compute_sma_distance_pct(df, 20),
+        "above_sma50":        compute_sma_distance_pct(df, 50),
+        "above_sma200":       compute_sma_distance_pct(df, 200),
+        "intraday_range_pct": compute_intraday_range_pct(df),
+    }
+
+
+def _with_intraday_bar(df, bar: dict, date: str, price: float | None):
+    """Historie plus die laufende Sitzung als letzte Bar (C.49 / F74). Close ist
+    der Sweep-Kurs, damit `price` und Technik dieselbe Zahl sehen; High/Low
+    werden darauf geweitet. Eine schon vorhandene Bar fuer `date` wird ersetzt,
+    nie verdoppelt."""
+    import pandas as pd
+    close = float(price) if price is not None else float(bar["Close"])
+    row = pd.DataFrame([{
+        "Open":   float(bar["Open"]),
+        "High":   max(float(bar["High"]), close),
+        "Low":    min(float(bar["Low"]), close),
+        "Close":  close,
+        "Volume": int(bar.get("Volume") or 0),
+    }], index=pd.to_datetime([date]))
+    base = df[df.index < pd.Timestamp(date)]
+    return pd.concat([base, row])
 
 
 def _gate_phase(tickers: list[str], conn, date: str) -> list[str]:
@@ -586,6 +646,7 @@ def collect(
     conn,
     date: str,
     run_type: str,
+    intraday_bars: dict[str, dict] | None = None,
 ) -> tuple[list[dict], int, dict[str, dict]]:
     """Run Phase 1 in drei Paessen (Sprint 3C / Analyse-Pipeline-Umbau, Task 5):
 
@@ -622,6 +683,7 @@ def collect(
             run_type=run_type,
             premarket_price=premarket_prices.get(t),
             gap_stats=gap_stats,
+            intraday_bar=(intraday_bars or {}).get(t),
         )
         if out is not None:
             td, sidecar_entry = out

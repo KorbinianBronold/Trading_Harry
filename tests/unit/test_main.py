@@ -719,9 +719,10 @@ def _stub_trade_proposals_side_phases(mocker) -> None:
     mocker.patch("main.check_open_positions", return_value=[])
 
 
-def test_run_trade_proposals_collects_all_tickers(tmp_db_path, mocker):
-    """B.2/Schritt 1: der 16:10-Lauf zieht frische Kurse fuer ALLE Ticker,
-    nicht nur fuer die Top-Listen."""
+def test_run_trade_proposals_collects_no_stocks_without_signals_but_all_cc(tmp_db_path, mocker):
+    """B.2/Schritt 1 sagte 'frische Kurse fuer ALLE Ticker'; seit C.49 / F73
+    nur die Aktien mit offenem Morgensignal oder Broker-Position (hier: keine),
+    Rohstoffe/Krypto weiterhin komplett fuer die Mail."""
     mocker.patch("main.CapitalComProvider", return_value=MagicMock())
     mocker.patch("main.FinnhubProvider", return_value=MagicMock())
     collect_mock = mocker.patch("main.collect", return_value=([], 0, {}))
@@ -731,12 +732,11 @@ def test_run_trade_proposals_collects_all_tickers(tmp_db_path, mocker):
     from main import run_trade_proposals
     run_trade_proposals(date="2026-07-30", db_path=str(tmp_db_path))
 
-    # zwei Aufrufe: SP500 und Commodities/Crypto
+    # zwei Aufrufe: Aktien (leer) und Commodities/Crypto (alle sieben)
     assert collect_mock.call_count == 2
     passed = [set(c.kwargs["tickers"]) for c in collect_mock.call_args_list]
-    assert set(config.SP500_PROD_TICKERS) in passed
-    cc = set(config.COMMODITY_TICKERS) | set(config.CRYPTO_TICKERS)
-    assert cc in passed
+    assert passed[0] == set()
+    assert passed[1] == set(config.COMMODITY_TICKERS) | set(config.CRYPTO_TICKERS)
 
 
 def test_run_trade_proposals_sends_the_mail(tmp_db_path, mocker):
@@ -1023,7 +1023,7 @@ def test_confirmed_signal_supersedes_the_morning_row(in_memory_db):
     pid = _pred_row(in_memory_db)
     pred = in_memory_db.execute("SELECT * FROM predictions WHERE id=?", (pid,)).fetchone()
 
-    new_id = _persist_revision(
+    new_id, _reject = _persist_revision(
         conn=in_memory_db, pred=pred,
         verdict={"verdict": "bestaetigt", "probability_pct": 71,
                  "reason": "haelt", "entry_window_low": 100.2,
@@ -1065,7 +1065,7 @@ def test_supersession_carries_the_plan3b_signal_columns(in_memory_db):
     pred = in_memory_db.execute("SELECT * FROM predictions WHERE id=?", (pid,)).fetchone()
     assert pred["candidate_class"] == "divergence", "Testaufbau"
 
-    new_id = _persist_revision(
+    new_id, _ = _persist_revision(
         conn=in_memory_db, pred=pred,
         verdict={"verdict": "bestaetigt", "probability_pct": 71, "reason": "haelt"},
         snapshot={"price": 101.0}, date="2026-07-30", checks=[],
@@ -1099,7 +1099,7 @@ def test_supersession_carries_the_c1_indicators(in_memory_db):
     pid = _pred_row(in_memory_db)
     pred = in_memory_db.execute("SELECT * FROM predictions WHERE id=?", (pid,)).fetchone()
 
-    new_id = _persist_revision(
+    new_id, _ = _persist_revision(
         conn=in_memory_db, pred=pred,
         verdict={"verdict": "bestaetigt", "probability_pct": 71, "reason": "haelt"},
         snapshot={"price": 101.0, "atr_pct": 2.7, "rsi_14": 61.2,
@@ -1121,7 +1121,7 @@ def test_supersession_survives_a_snapshot_without_c1_indicators(in_memory_db):
     pid = _pred_row(in_memory_db)
     pred = in_memory_db.execute("SELECT * FROM predictions WHERE id=?", (pid,)).fetchone()
 
-    new_id = _persist_revision(
+    new_id, _ = _persist_revision(
         conn=in_memory_db, pred=pred,
         verdict={"verdict": "bestaetigt", "probability_pct": 71, "reason": "haelt"},
         snapshot={"price": 101.0}, date="2026-07-30", checks=[],
@@ -1142,7 +1142,7 @@ def test_confirmed_divergence_lands_in_the_divergence_bucket(in_memory_db):
     db.init_schema(in_memory_db)
     pid = _pred_row(in_memory_db, candidate_class="divergence")
     pred = in_memory_db.execute("SELECT * FROM predictions WHERE id=?", (pid,)).fetchone()
-    new_id = _persist_revision(
+    new_id, _ = _persist_revision(
         conn=in_memory_db, pred=pred,
         verdict={"verdict": "bestaetigt", "probability_pct": 71, "reason": "haelt"},
         snapshot={"price": 101.0}, date="2026-07-30", checks=[],
@@ -1166,7 +1166,7 @@ def test_flipped_signal_creates_no_counter_position(in_memory_db):
     pid = _pred_row(in_memory_db)
     pred = in_memory_db.execute("SELECT * FROM predictions WHERE id=?", (pid,)).fetchone()
 
-    new_id = _persist_revision(
+    new_id, _ = _persist_revision(
         conn=in_memory_db, pred=pred,
         verdict={"verdict": "gedreht", "probability_pct": 30, "reason": "gekippt"},
         snapshot={"price": 99.0}, date="2026-07-30", checks=[], momentum=(None, None),
@@ -1186,7 +1186,7 @@ def test_hard_check_marks_the_signal_verworfen(in_memory_db):
     pid = _pred_row(in_memory_db)
     pred = in_memory_db.execute("SELECT * FROM predictions WHERE id=?", (pid,)).fetchone()
 
-    new_id = _persist_revision(
+    new_id, _ = _persist_revision(
         conn=in_memory_db, pred=pred,
         verdict={"verdict": "bestaetigt", "probability_pct": 71, "reason": "x"},
         snapshot={"price": 101.0}, date="2026-07-30",
@@ -1206,7 +1206,7 @@ def test_entry_past_the_stop_is_verworfen(in_memory_db):
     pid = _pred_row(in_memory_db)
     pred = in_memory_db.execute("SELECT * FROM predictions WHERE id=?", (pid,)).fetchone()
 
-    new_id = _persist_revision(
+    new_id, _ = _persist_revision(
         conn=in_memory_db, pred=pred,
         verdict={"verdict": "bestaetigt", "probability_pct": 71, "reason": "x"},
         snapshot={"price": 97.0}, date="2026-07-30", checks=[], momentum=(None, None),
@@ -2679,3 +2679,246 @@ def test_run_trade_proposals_without_morning_policy_context_warns_and_runs_price
         "policy_risk_level": "unknown", "events": []}
     briefing = mail.call_args.kwargs["payload"]["briefing"]
     assert any("Policy" in b for b in briefing), briefing
+
+
+# ---------- C.49 / F66 + F68 + F69 + F70 + F72 + F73 + F74: der 16:10-Lauf ----------
+
+import pandas as _pd
+
+
+def _hour_bars(date: str, closes: list[float]) -> _pd.DataFrame:
+    idx = _pd.date_range(f"{date} 13:00", periods=len(closes), freq="h")
+    return _pd.DataFrame({"Open": closes, "High": [c + 1 for c in closes],
+                          "Low": [c - 1 for c in closes], "Close": closes,
+                          "Volume": [1000] * len(closes)}, index=idx)
+
+
+def test_intraday_bars_collapse_hour_bars_since_midnight_utc(mocker):
+    """F74: eine Stundenbar-Abfrage je Ticker ab 00:00 UTC, zu EINER Tagesbar
+    verdichtet (signal_window.collapse_to_daily_bar)."""
+    from main import _intraday_bars
+    prov = MagicMock()
+    prov.get_intraday_ohlc.side_effect = lambda t, s, e, resolution="MINUTE": (
+        _hour_bars("2026-09-16", [100.0, 102.0, 101.0]) if t == "AAPL" else None)
+    bars = _intraday_bars(prov, ["AAPL", "MSFT"], "2026-09-16", now_utc="2026-09-16T14:10:00")
+    assert bars == {"AAPL": {"Open": 100.0, "High": 103.0, "Low": 99.0, "Close": 101.0, "Volume": 3000}}
+    args = prov.get_intraday_ohlc.call_args_list[0]
+    assert args.args[1] == "2026-09-16T00:00:00" and args.kwargs.get("resolution") == "HOUR"
+
+
+def test_run_trade_proposals_sweeps_only_needed_tickers_with_intraday_bars(tmp_db_path, mocker):
+    """F73: bis C.49 zog der 16:10-Lauf Kurse fuer alle 150 Aktien plus 150
+    Einzelabrufe fuer den Eroeffnungskurs; gebraucht werden Signale, Positionen
+    und Rohstoffe/Krypto. F74: die Snapshots bekommen die Tagesbar bis jetzt."""
+    from src import db
+    conn = db.connect(str(tmp_db_path)); db.init_schema(conn)
+    _pred_row(conn)                         # AAPL long, offen
+    conn.commit(); conn.close()
+    mocker.patch("main.CapitalComProvider", return_value=MagicMock())
+    mocker.patch("main.FinnhubProvider", return_value=MagicMock())
+    mocker.patch("main._open_broker_positions", return_value=[
+        {"deal_id": "d1", "ticker": "MSFT", "direction": "long", "entry_price": 400.0,
+         "current_price": 401.0, "tp_price": None, "sl_price": 390.0, "size": 1.0,
+         "profit_loss": 1.0, "opened_at": "2026-07-29T14:00:00", "epic": "MSFT"}])
+    mocker.patch("main.vix_only_context", return_value={"vix_level": 18.0, "vix_source": "capital.com"})
+    mocker.patch("main.collect_sector_momentum", return_value={})
+    bars = mocker.patch("main._intraday_bars", return_value={"AAPL": {"Open": 1, "High": 1, "Low": 1, "Close": 1, "Volume": 1}})
+    opens = mocker.patch("main._opening_prices", return_value={})
+    collect = mocker.patch("main.collect", return_value=([{"ticker": "AAPL", "price": 101.0}], 0, {}))
+    mocker.patch("main.revalidate_one", return_value={
+        "verdict": "bestaetigt", "probability_pct": 71, "reason": "ok"})
+    mocker.patch("main.check_open_positions", return_value=[])
+    mocker.patch("main.send_trade_proposals_email")
+
+    from main import run_trade_proposals
+    run_trade_proposals(date="2026-07-30", db_path=str(tmp_db_path))
+
+    stock_call, cc_call = collect.call_args_list[0], collect.call_args_list[1]
+    assert set(stock_call.kwargs["tickers"]) == {"AAPL", "MSFT"}
+    assert set(cc_call.kwargs["tickers"]) == set(config.COMMODITY_TICKERS) | set(config.CRYPTO_TICKERS)
+    assert stock_call.kwargs["intraday_bars"] is bars.return_value
+    assert set(opens.call_args.args[1]) == {"AAPL", "MSFT"}
+    assert set(bars.call_args.args[1]) >= {"AAPL", "MSFT", "GOLD", "BTCUSD"}
+
+
+def _frozen_pred(conn):
+    return _pred_row(conn, pe_ratio=25.0, forward_pe=23.0, market_cap_b=3000.0,
+                     debt_equity=1.4, analyst_consensus="buy",
+                     analyst_consensus_period="2026-08-01", relative_strength=0.4,
+                     summary="Morgen-These", tp_pct=6.0, sl_pct=2.0)
+
+
+def test_persist_revision_carries_the_frozen_knowledge_into_the_successor(in_memory_db):
+    """F66: die sieben E2/E3-Spalten fehlten im Abloese-Dict -- die einzige Zeile,
+    die je ein Outcome bekommt, verlor die eingefrorenen Fundamentals."""
+    from src import db
+    from main import _persist_revision
+    db.init_schema(in_memory_db)
+    pid = _frozen_pred(in_memory_db)
+    pred = in_memory_db.execute("SELECT * FROM predictions WHERE id=?", (pid,)).fetchone()
+    new_id, reject = _persist_revision(
+        conn=in_memory_db, pred=pred,
+        verdict={"verdict": "bestaetigt", "probability_pct": 71, "reason": "haelt",
+                 "entry_window_low": 100.2, "entry_window_high": 101.0},
+        snapshot={"price": 101.0}, date="2026-07-30", checks=[], momentum=(1.2, 0.8),
+        relative_strength=-0.7)
+    assert reject is None
+    new = in_memory_db.execute("SELECT * FROM predictions WHERE id=?", (new_id,)).fetchone()
+    assert (new["pe_ratio"], new["forward_pe"], new["market_cap_b"], new["debt_equity"]) == (25.0, 23.0, 3000.0, 1.4)
+    assert (new["analyst_consensus"], new["analyst_consensus_period"]) == ("buy", "2026-08-01")
+    assert new["relative_strength"] == -0.7, "die 16:10-Messung, nicht der Morgenwert"
+
+
+def test_persist_revision_derives_levels_from_the_1610_entry(in_memory_db):
+    """F68: tp_pct/sl_pct wanderten unveraendert vom Morgen, obwohl entry_price
+    der 16:10-Kurs ist -- rr_ratio war neu, die Prozente nicht."""
+    from src import db
+    from main import _persist_revision
+    db.init_schema(in_memory_db)
+    pid = _frozen_pred(in_memory_db)
+    pred = in_memory_db.execute("SELECT * FROM predictions WHERE id=?", (pid,)).fetchone()
+    new_id, _ = _persist_revision(
+        conn=in_memory_db, pred=pred,
+        verdict={"verdict": "bestaetigt", "probability_pct": 71, "reason": "haelt"},
+        snapshot={"price": 101.0}, date="2026-07-30", checks=[], momentum=(None, None))
+    new = in_memory_db.execute("SELECT * FROM predictions WHERE id=?", (new_id,)).fetchone()
+    assert new["tp_pct"] == pytest.approx(4.95, abs=0.01)     # 106 gegen 101
+    assert new["sl_pct"] == pytest.approx(2.97, abs=0.01)     # 98 gegen 101
+    assert new["rr_ratio"] == pytest.approx(1.67, abs=0.01)
+
+
+def test_persist_revision_keeps_the_morning_thesis_and_stores_reason_and_window(in_memory_db):
+    """F66/F71: summary der Nachfolgezeile war die 240-Zeichen-Begruendung; die
+    These stand nur noch ueber superseded_by. Jetzt: These bleibt, Grund auf der
+    Morgenzeile, Fenster auf beiden."""
+    from src import db
+    from main import _persist_revision
+    db.init_schema(in_memory_db)
+    pid = _frozen_pred(in_memory_db)
+    pred = in_memory_db.execute("SELECT * FROM predictions WHERE id=?", (pid,)).fetchone()
+    new_id, _ = _persist_revision(
+        conn=in_memory_db, pred=pred,
+        verdict={"verdict": "geschwaecht", "probability_pct": 55, "reason": "schwaecher",
+                 "entry_window_low": 100.2, "entry_window_high": 101.0},
+        snapshot={"price": 101.0}, date="2026-07-30", checks=[], momentum=(None, None))
+    old = in_memory_db.execute("SELECT * FROM predictions WHERE id=?", (pid,)).fetchone()
+    new = in_memory_db.execute("SELECT * FROM predictions WHERE id=?", (new_id,)).fetchone()
+    assert new["summary"] == "Morgen-These"
+    assert old["revision_reason"] == "schwaecher"
+    assert (new["entry_window_low"], new["entry_window_high"]) == (100.2, 101.0)
+
+
+def test_persist_revision_returns_the_rr_reject_detail(in_memory_db):
+    """F72: die R/R-Ablehnung stand nur in guardrail_rejects -- die Mail zeigte
+    'verworfen' mit der Begruendung eines Modells, das 'geschwaecht' sagte."""
+    from src import db
+    from main import _persist_revision
+    db.init_schema(in_memory_db)
+    pid = _frozen_pred(in_memory_db)
+    pred = in_memory_db.execute("SELECT * FROM predictions WHERE id=?", (pid,)).fetchone()
+    new_id, reject = _persist_revision(
+        conn=in_memory_db, pred=pred,
+        verdict={"verdict": "bestaetigt", "probability_pct": 71, "reason": "haelt"},
+        snapshot={"price": 104.5}, date="2026-07-30", checks=[], momentum=(None, None))
+    assert new_id is None and reject.startswith("rr_ratio:")
+    old = in_memory_db.execute("SELECT * FROM predictions WHERE id=?", (pid,)).fetchone()
+    assert old["revision_verdict"] == "verworfen" and old["revision_reason"] == "haelt"
+
+
+def _revalidate(conn, mocker, snapshot, verdict, etf_changes=None, tech=None):
+    from src.cost_tracker import CostTracker
+    out = []
+    reval = mocker.patch("main.revalidate_one", return_value=verdict)
+    main._revalidate_all(
+        conn=conn, date="2026-07-30", snapshots={"AAPL": snapshot}, sector_mom={},
+        market_ctx={"vix_level": 18.0}, policy_context={}, cost_tracker=CostTracker(),
+        out=out, signal_by_ticker={"AAPL": tech or {}}, etf_changes=etf_changes or {})
+    return out, reval
+
+
+def test_revalidate_all_range_checks_use_levels_from_the_1610_entry(in_memory_db, mocker):
+    """F68: check_stop_distance/check_tp_reach liefen mit den Morgen-Prozenten."""
+    from src import db
+    from src.cost_tracker import CostTracker
+    db.init_schema(in_memory_db)
+    # Morgen: Entry 100, SL 98 (2 %), Range 3 % -> 0.67 der Range -> stop_inside_noise.
+    # 16:10 bei 99.0: SL-Abstand 1.0 % -> 0.33 der Range; TP 106 -> 7.07 %.
+    _pred_row(in_memory_db, tp_pct=6.0, sl_pct=2.0)
+    out, _ = _revalidate(in_memory_db, mocker,
+                         snapshot={"price": 99.0, "intraday_range_pct": 3.0},
+                         verdict={"verdict": "bestaetigt", "probability_pct": 70, "reason": "ok"})
+    stop = [c for c in out[0]["checks"] if c.startswith("stop_inside_noise")]
+    assert stop and "SL 1.01 %" in stop[0], stop
+
+
+def test_revalidate_all_row_carries_prices_levels_and_the_reject_reason(in_memory_db, mocker):
+    """F72: die einzige handlungsrelevante Mail zeigte keine Preise."""
+    from src import db
+    db.init_schema(in_memory_db)
+    _pred_row(in_memory_db, tp_pct=6.0, sl_pct=2.0)
+    out, _ = _revalidate(in_memory_db, mocker,
+                         snapshot={"price": 104.5, "price_open": 103.0, "intraday_range_pct": 3.0},
+                         verdict={"verdict": "bestaetigt", "probability_pct": 70, "reason": "ok"})
+    row = out[0]
+    assert row["verdict"] == "verworfen"
+    assert (row["entry_premarket"], row["price_open"], row["price_1610"]) == (100.0, 103.0, 104.5)
+    assert (row["tp_price"], row["sl_price"]) == (106.0, 98.0)
+    assert row["rr_new"] == pytest.approx(0.23, abs=0.01)
+    assert row["move_since_open_pct"] == pytest.approx(1.46, abs=0.01)
+    assert any(c.startswith("rr_ratio:") for c in row["checks"])
+
+
+def test_revalidate_all_gap_check_measures_premarket_to_open(in_memory_db, mocker):
+    """F70: der Eroeffnungskurs wurde geholt und persistiert, aber kein Check
+    las ihn; der Gap-Check verglich 15:00 mit jetzt."""
+    from src import db
+    db.init_schema(in_memory_db)
+    _pred_row(in_memory_db, tp_pct=6.0, sl_pct=2.0)
+    # Gap 15:00 -> Open: +2 % (Warnschwelle 1.5 %); seit Open nur +0.1 %.
+    out, reval = _revalidate(in_memory_db, mocker,
+                             snapshot={"price": 102.1, "price_open": 102.0, "intraday_range_pct": 3.0},
+                             verdict={"verdict": "bestaetigt", "probability_pct": 70, "reason": "ok"})
+    gap = [c for c in out[0]["checks"] if c.startswith("opening_gap")]
+    assert gap and "102.0" in gap[0], gap
+
+
+def test_revalidate_all_relative_strength_is_intraday_against_the_sector_etf(in_memory_db, mocker):
+    """F69: RELATIVE STRENGTH war die Sitzung von gestern (zwei finale Bars);
+    jetzt Bewegung seit gestern Schluss gegen die des Sub-Sektor-ETF."""
+    from src import db
+    from tests.unit.test_ranking import _seed_sector_for
+    db.init_schema(in_memory_db)
+    _seed_sector_for(in_memory_db)   # AAPL -> Technology Hardware (XLK)
+    _pred_row(in_memory_db, tp_pct=6.0, sl_pct=2.0)
+    out, reval = _revalidate(in_memory_db, mocker,
+                             snapshot={"price": 101.0, "price_change_1d": 1.0, "intraday_range_pct": 3.0},
+                             verdict={"verdict": "bestaetigt", "probability_pct": 70, "reason": "ok"},
+                             etf_changes={"XLK": 0.4})
+    assert reval.call_args.kwargs["relative_strength"] == pytest.approx(0.6)
+
+
+def test_revalidate_all_passes_tech_and_date_to_the_call(in_memory_db, mocker):
+    from src import db
+    db.init_schema(in_memory_db)
+    _pred_row(in_memory_db, tp_pct=6.0, sl_pct=2.0)
+    _, reval = _revalidate(in_memory_db, mocker,
+                           snapshot={"price": 101.0, "intraday_range_pct": 3.0},
+                           verdict={"verdict": "bestaetigt", "probability_pct": 70, "reason": "ok"},
+                           tech={"tech_direction": "long", "tech_strength": 2})
+    assert reval.call_args.kwargs["tech"] == {"tech_direction": "long", "tech_strength": 2}
+    assert reval.call_args.kwargs["date"] == "2026-07-30"
+
+
+def test_etf_intraday_changes_use_the_batch_sweep_against_the_last_final_close(in_memory_db, mocker):
+    from src import db
+    from tests.unit.test_ranking import _seed_sector_for
+    from main import _etf_intraday_changes
+    db.init_schema(in_memory_db)
+    _seed_sector_for(in_memory_db)   # AAPL -> XLK
+    db.upsert_price_history(in_memory_db, ticker="XLK", date="2026-07-29", open_=200.0,
+                            high=201.0, low=199.0, close=200.0, volume=1, source="test")
+    prov = MagicMock()
+    prov.get_premarket_prices_batch.return_value = {"XLK": 201.0}
+    changes = _etf_intraday_changes(prov, in_memory_db, ["AAPL", "GOLD"], "2026-07-30")
+    assert changes == {"XLK": pytest.approx(0.5)}
+    assert set(prov.get_premarket_prices_batch.call_args.args[0]) == {"XLK"}

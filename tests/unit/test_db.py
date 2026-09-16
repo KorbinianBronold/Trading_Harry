@@ -2812,3 +2812,52 @@ def test_migration_adds_policy_context_json_to_a_legacy_market_context():
     assert "policy_context_json" in cols
     init_schema(conn)   # idempotent
     conn.close()
+
+
+# ---------- C.49 / F66 + F71: Urteilsgrund und Entry-Fenster an der Prediction ----------
+
+def test_migration_adds_revision_reason_and_entry_window_to_a_legacy_predictions():
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    init_schema(conn)
+    for col in ("revision_reason", "entry_window_low", "entry_window_high"):
+        conn.execute(f"ALTER TABLE predictions DROP COLUMN {col}")
+    conn.commit()
+    init_schema(conn)
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(predictions)")}
+    assert {"revision_reason", "entry_window_low", "entry_window_high"} <= cols
+    init_schema(conn)   # idempotent
+    conn.close()
+
+
+def test_record_revision_keeps_reason_and_entry_window(in_memory_db):
+    """F71: fuer 'gedreht'/'verworfen' entsteht keine neue Zeile -- bis C.49 war
+    die Begruendung des Modells nur in der Mail, das Entry-Fenster nirgends."""
+    from src.db import save_prediction, record_revision
+    init_schema(in_memory_db)
+    pid = save_prediction(in_memory_db, {
+        "date": "2026-09-16", "run_type": "pre_market", "ticker": "AAPL",
+        "direction": "long", "entry_price": 100.0, "tp_price": 106.0, "sl_price": 98.0})
+    record_revision(in_memory_db, pid, "gedreht", reason="Sektor dreht",
+                    entry_window_low=99.0, entry_window_high=100.5)
+    row = in_memory_db.execute("SELECT * FROM predictions WHERE id=?", (pid,)).fetchone()
+    assert row["revision_verdict"] == "gedreht" and row["status"] == "open"
+    assert row["revision_reason"] == "Sektor dreht"
+    assert (row["entry_window_low"], row["entry_window_high"]) == (99.0, 100.5)
+
+
+def test_supersede_prediction_writes_the_reason_on_the_old_row_and_the_window_on_the_new(in_memory_db):
+    from src.db import save_prediction, supersede_prediction
+    init_schema(in_memory_db)
+    pid = save_prediction(in_memory_db, {
+        "date": "2026-09-16", "run_type": "pre_market", "ticker": "AAPL",
+        "direction": "long", "entry_price": 100.0, "tp_price": 106.0, "sl_price": 98.0})
+    new_id = supersede_prediction(in_memory_db, pid, {
+        "date": "2026-09-16", "run_type": "trade_proposals", "ticker": "AAPL",
+        "direction": "long", "entry_price": 101.0, "tp_price": 106.0, "sl_price": 98.0,
+        "entry_window_low": 100.5, "entry_window_high": 101.5,
+    }, verdict="bestaetigt", reason="haelt nach Opening")
+    old = in_memory_db.execute("SELECT * FROM predictions WHERE id=?", (pid,)).fetchone()
+    new = in_memory_db.execute("SELECT * FROM predictions WHERE id=?", (new_id,)).fetchone()
+    assert old["revision_reason"] == "haelt nach Opening"
+    assert (new["entry_window_low"], new["entry_window_high"]) == (100.5, 101.5)

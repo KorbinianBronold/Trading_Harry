@@ -133,7 +133,12 @@ CREATE TABLE IF NOT EXISTS predictions (
     debt_equity REAL,
     analyst_consensus TEXT,
     analyst_consensus_period TEXT,
-    relative_strength REAL
+    relative_strength REAL,
+    -- C.49 / F71: Urteilsgrund des 16:10-Laufs (auf der Morgenzeile) und das
+    -- Entry-Fenster des Modells (auf beiden Zeilen), geprueft im Code.
+    revision_reason TEXT,
+    entry_window_low REAL,
+    entry_window_high REAL
 );
 
 CREATE TABLE IF NOT EXISTS outcomes (
@@ -495,6 +500,12 @@ def _apply_migrations(conn: sqlite3.Connection) -> None:
         ("analyst_consensus", "TEXT"), ("analyst_consensus_period", "TEXT"),
         ("relative_strength", "REAL"),
     ):
+        if _col not in _pred_cols:
+            conn.execute(f"ALTER TABLE predictions ADD COLUMN {_col} {_type}")
+
+    # C.49 / F71: Urteilsgrund und Entry-Fenster, additiv.
+    for _col, _type in (("revision_reason", "TEXT"),
+                        ("entry_window_low", "REAL"), ("entry_window_high", "REAL")):
         if _col not in _pred_cols:
             conn.execute(f"ALTER TABLE predictions ADD COLUMN {_col} {_type}")
 
@@ -886,6 +897,8 @@ def _insert_prediction(conn: sqlite3.Connection, pred: dict) -> int:
         # liefert pred.get() None -- Bestandsaufrufer brechen nicht (E6).
         "pe_ratio", "forward_pe", "market_cap_b", "debt_equity",
         "analyst_consensus", "analyst_consensus_period", "relative_strength",
+        # C.49 / F71: das geprueft uebernommene Entry-Fenster des 16:10-Laufs.
+        "entry_window_low", "entry_window_high",
     ]
     placeholders = ", ".join(["?"] * len(cols))
     values = [pred.get(c) for c in cols]
@@ -924,6 +937,7 @@ def save_prediction(conn: sqlite3.Connection, pred: dict) -> int | None:
 
 def supersede_prediction(
     conn: sqlite3.Connection, old_id: int, new_pred: dict, verdict: str,
+    reason: str | None = None,
 ) -> int:
     """Legt die trade_proposals-Nachfolgezeile an und loest die pre_market-Zeile
     im SELBEN Commit ab (E3). Gibt die ID der neuen Zeile zurueck.
@@ -945,9 +959,9 @@ def supersede_prediction(
     try:
         conn.execute(
             """UPDATE predictions
-               SET revision_verdict = ?, status = 'superseded'
+               SET revision_verdict = ?, revision_reason = ?, status = 'superseded'
                WHERE id = ?""",
-            (verdict, old_id),
+            (verdict, reason, old_id),
         )
         new_id = _insert_prediction(conn, new_pred)
         conn.execute(
@@ -982,6 +996,8 @@ def close_prediction(
 
 def record_revision(
     conn: sqlite3.Connection, pred_id: int, verdict: str,
+    reason: str | None = None,
+    entry_window_low: float | None = None, entry_window_high: float | None = None,
 ) -> None:
     """Schreibt das Urteil des 16:10-Laufs auf die pre_market-Zeile (E3) und
     laesst sie dabei **offen**.
@@ -999,10 +1015,15 @@ def record_revision(
     und neue Zeile gleichzeitig offen sind.
 
     Das Urteil sitzt bewusst auf der ALTEN Zeile: in drei von sechs Ausgaengen
-    entsteht gar keine neue, dort waere es sonst nirgends."""
+    entsteht gar keine neue, dort waere es sonst nirgends. Seit C.49 / F71 mit
+    Begruendung und Entry-Fenster des Modells -- bis dahin stand beides nur in
+    der Mail."""
     conn.execute(
-        "UPDATE predictions SET revision_verdict = ? WHERE id = ?",
-        (verdict, pred_id),
+        """UPDATE predictions
+           SET revision_verdict = ?, revision_reason = ?,
+               entry_window_low = ?, entry_window_high = ?
+           WHERE id = ?""",
+        (verdict, reason, entry_window_low, entry_window_high, pred_id),
     )
     conn.commit()
 

@@ -435,6 +435,75 @@ def _opening_prices(price_provider, tickers: list[str], date: str) -> dict[str, 
     return out
 
 
+def _intraday_bars(
+    price_provider, tickers: list[str], date: str, now_utc: str | None = None,
+) -> dict[str, dict]:
+    """Die laufende Sitzung je Ticker als EINE Tagesbar (C.49 / F74): Stundenbars
+    ab 00:00 UTC bis jetzt, verdichtet wie im Evaluator (collapse_to_daily_bar).
+    Stundenbars aggregieren High/Low exakt, und 15 davon passen in einen Call.
+    Fuer Aktien beginnt die Capital.com-Sitzung ohnehin erst 08:00 UTC. Ticker
+    ohne Bars (Feiertag, Abruffehler) fehlen im Ergebnis -- collect() rechnet
+    fuer sie wie am Morgen."""
+    end = now_utc or datetime.now(ZoneInfo("UTC")).strftime("%Y-%m-%dT%H:%M:%S")
+    out: dict[str, dict] = {}
+    for ticker in tickers:
+        try:
+            df = price_provider.get_intraday_ohlc(
+                ticker, f"{date}T00:00:00", end, resolution="HOUR")
+        except Exception as e:
+            log.warning(f"{ticker}: Intraday-Bars nicht abrufbar: {e}")
+            continue
+        bar = signal_window.collapse_to_daily_bar(df)
+        if bar is not None:
+            out[ticker] = bar
+    return out
+
+
+def _etf_intraday_changes(
+    price_provider, conn, tickers: list[str], date: str,
+) -> dict[str, float]:
+    """Bewegung der Sub-Sektor-ETFs seit gestern Schluss, in Prozent (C.49 / F69):
+    EIN Batch-Kursabruf ueber die ETFs der uebergebenen Ticker gegen den letzten
+    finalen Close aus price_history. Grundlage der intraday relativen Staerke;
+    bis C.49 war RELATIVE STRENGTH die Sitzung von gestern."""
+    etfs = sorted({
+        s["etf"] for s in (db.get_ticker_sector(conn, t) for t in tickers)
+        if s is not None and s["etf"]
+    })
+    if not etfs:
+        return {}
+    try:
+        live = price_provider.get_premarket_prices_batch(etfs) or {}
+    except Exception as e:
+        log.warning(f"ETF-Kurse fuer die relative Staerke nicht abrufbar: {e}")
+        return {}
+    out: dict[str, float] = {}
+    for etf in etfs:
+        price = live.get(etf)
+        hist = db.load_price_history_from_db(conn, etf, as_of_date=date, limit=1)
+        if price is None or hist is None or len(hist) == 0:
+            continue
+        last_close = float(hist["Close"].iloc[-1])
+        if last_close:
+            out[etf] = (float(price) - last_close) / last_close * 100.0
+    return out
+
+
+def _intraday_relative_strength(
+    conn, ticker: str, snapshot: dict, etf_changes: dict[str, float],
+) -> float | None:
+    """Ticker-Bewegung seit gestern Schluss (price_change_1d des 16:10-Snapshots,
+    C.49 / F74) minus die seines Sub-Sektor-ETF; None ohne Sektor oder Wert."""
+    own = snapshot.get("price_change_1d")
+    sector = db.get_ticker_sector(conn, ticker)
+    if own is None or sector is None:
+        return None
+    etf = etf_changes.get(sector["etf"])
+    if etf is None:
+        return None
+    return round(float(own) - float(etf), 3)
+
+
 def _final_bar_warning(conn, date: str) -> str | None:
     """Warnt, wenn fuer den letzten Werktag keine finale Tagesbar vorliegt.
 
@@ -816,45 +885,59 @@ def run_pipeline(run_type: str, date: str, db_path: str) -> None:
 def _persist_revision(
     conn, pred, verdict: dict, snapshot: dict, date: str,
     checks: list, momentum: tuple[float | None, float | None],
-) -> int | None:
+    relative_strength: float | None = None,
+) -> tuple[int | None, str | None]:
     """Setzt das Urteil des 16:10-Laufs nach der Tabelle aus Spec 6.3 um.
 
-    Gibt die ID der neuen trade_proposals-Zeile zurueck, oder None, wenn keine
-    entstand (Urteil 'gedreht' oder ein hart greifender Check). In beiden
-    None-Faellen bleibt die pre_market-Zeile offen und wird regulaer ausgewertet —
-    nur so laesst sich messen, ob die Ablehnung richtig lag."""
+    Gibt (ID der neuen trade_proposals-Zeile, Ablehnungsgrund) zurueck. Die ID
+    ist None, wenn keine Zeile entstand (Urteil 'gedreht', ein hart greifender
+    Check oder R/R unter dem Minimum); der Grund ist nur bei der R/R-Ablehnung
+    gesetzt (C.49 / F72: die Mail zeigte 'verworfen' mit der Begruendung eines
+    Modells, das 'geschwaecht' sagte). In allen None-Faellen bleibt die
+    pre_market-Zeile offen und wird regulaer ausgewertet — nur so laesst sich
+    messen, ob die Ablehnung richtig lag. Begruendung und Entry-Fenster des
+    Modells landen auf der Morgenzeile (C.49 / F71)."""
     etf_mom, db_mom = momentum
     ticker, direction = pred["ticker"], pred["direction"]
+    reason = verdict.get("reason")
+    win_lo, win_hi = verdict.get("entry_window_low"), verdict.get("entry_window_high")
 
     if verdict["verdict"] == "gedreht":
         # E5: melden, nicht handeln. Das Gegensignal ist nie durch Phase 3
         # gelaufen — es haette keine Belege und kein analytisch hergeleitetes TP/SL.
-        db.record_revision(conn, pred["id"], "gedreht")
-        return None
+        db.record_revision(conn, pred["id"], "gedreht", reason=reason,
+                           entry_window_low=win_lo, entry_window_high=win_hi)
+        return None, None
 
     if signal_checks.blocks(checks):
-        db.record_revision(conn, pred["id"], "verworfen")
-        return None
+        db.record_revision(conn, pred["id"], "verworfen", reason=reason,
+                           entry_window_low=win_lo, entry_window_high=win_hi)
+        return None, None
 
     entry = snapshot.get("price") or pred["entry_price"]
+    # C.49 / F68: R/R UND die Prozentabstaende gegen den 16:10-Einstieg -- bis
+    # dahin wanderten tp_pct/sl_pct unveraendert vom Morgen in die neue Zeile.
+    levels = signal_checks.derive_levels(
+        entry, pred["tp_price"], pred["sl_price"], direction)
     rr = signal_checks.recompute_rr_ratio(
         entry, pred["tp_price"], pred["sl_price"], direction)
     if rr is None or rr < config.RR_RATIO_MIN_HARD:
+        detail = (f"R/R nach Opening {rr if rr is None else round(rr, 2)} < "
+                  f"{config.RR_RATIO_MIN_HARD} (Einstieg {entry} statt {pred['entry_price']})")
         db.log_guardrail_reject(conn, {
             "date": date, "run_type": "trade_proposals", "ticker": ticker,
-            "direction": direction, "rule": "rr_ratio",
-            "detail": f"R/R nach Opening {rr} < {config.RR_RATIO_MIN_HARD} "
-                      f"(Einstieg {entry} statt {pred['entry_price']})",
+            "direction": direction, "rule": "rr_ratio", "detail": detail,
             "enforced": 1,
             "sector_etf_momentum": etf_mom, "sector_db_momentum": db_mom,
         })
-        db.record_revision(conn, pred["id"], "verworfen")
-        return None
+        db.record_revision(conn, pred["id"], "verworfen", reason=reason,
+                           entry_window_low=win_lo, entry_window_high=win_hi)
+        return None, f"rr_ratio: {detail}"
 
     # E3: INSERT der neuen Zeile und Abloesung der alten in EINER Transaktion —
     # zwei getrennte Commits liessen bei einem Abbruch dazwischen zwei offene
     # Zeilen stehen, und der Evaluator schloesse beide.
-    return db.supersede_prediction(conn, pred["id"], {
+    new_id = db.supersede_prediction(conn, pred["id"], {
         "date": date, "run_type": "trade_proposals",
         "asset_class": pred["asset_class"], "ticker": ticker, "direction": direction,
         "entry_price": entry,
@@ -862,8 +945,8 @@ def _persist_revision(
         "price_open":      snapshot.get("price_open"),
         "price_1610":      snapshot.get("price"),
         "is_premarket":    0,
-        "tp_price": pred["tp_price"], "tp_pct": pred["tp_pct"],
-        "sl_price": pred["sl_price"], "sl_pct": pred["sl_pct"],
+        "tp_price": pred["tp_price"], "tp_pct": levels["tp_pct"],
+        "sl_price": pred["sl_price"], "sl_pct": levels["sl_pct"],
         "rr_ratio": round(rr, 2),
         "total_score": pred["total_score"],
         "probability_pct": verdict.get("probability_pct"),
@@ -880,7 +963,10 @@ def _persist_revision(
         "vix_at_prediction": pred["vix_at_prediction"],
         "sector": pred["sector"],
         "earnings_warning": pred["earnings_warning"],
-        "summary": verdict.get("reason") or pred["summary"],
+        # C.49 / F66: die Morgen-These bleibt die Summary der ausgewerteten
+        # Zeile; die 16:10-Begruendung steht als revision_reason auf der
+        # abgeloesten Morgenzeile (supersede_prediction).
+        "summary": pred["summary"],
         "learnable": True,
         "hold_days_recommended": pred["hold_days_recommended"],
         "intraday_range_pct": pred["intraday_range_pct"],
@@ -915,7 +1001,21 @@ def _persist_revision(
         "atr_pct": snapshot.get("atr_pct"),
         "rsi_at_entry": snapshot.get("rsi_14"),
         "volume_ratio": snapshot.get("volume_ratio"),
-    }, verdict=verdict["verdict"])
+        # C.49 / F66: der eingefrorene Wissensstand (Spec E2/E3, C.20) wandert
+        # mit -- bis dahin fehlten diese Spalten hier und _insert_prediction()
+        # schrieb NULL in die einzige Zeile, die je ein Outcome bekommt
+        # (dieselbe Klasse wie der candidate_class-Befund aus C.13).
+        "pe_ratio": pred["pe_ratio"], "forward_pe": pred["forward_pe"],
+        "market_cap_b": pred["market_cap_b"], "debt_equity": pred["debt_equity"],
+        "analyst_consensus": pred["analyst_consensus"],
+        "analyst_consensus_period": pred["analyst_consensus_period"],
+        # C.49 / F69: die 16:10-Messung (seit gestern Schluss, gegen den ETF),
+        # nicht der Morgenwert.
+        "relative_strength": relative_strength,
+        # C.49 / F71: das geprueft uebernommene Entry-Fenster.
+        "entry_window_low": win_lo, "entry_window_high": win_hi,
+    }, verdict=verdict["verdict"], reason=reason)
+    return new_id, None
 
 
 def _split_sectors(raw: str | None) -> list[str]:
@@ -962,38 +1062,56 @@ def run_trade_proposals(date: str, db_path: str) -> None:
         payload["market_context"] = market_ctx
         morning_ctx = db.load_market_context(conn, date=date, run_type="pre_market")
 
+        current_phase = "open_positions"
+        # Vor dem Sweep (C.49 / F73): die Positionen bestimmen mit, welche
+        # Ticker der Lauf ueberhaupt braucht.
+        positions = _open_broker_positions(price_provider)   # C.37: Quelle fuer 4a
+        _forced_tickers(positions)                            # nur fuer den Log
+        payload["positions_unavailable"] = positions is None
+        payload["portfolio_recs"] = pending_rows(positions)   # C.46 / F53
+
         current_phase = "data_collection"
-        _tickers = stock_universe()
+        # C.49 / F73: nur die Ticker, die der Lauf braucht -- offene Morgen-
+        # signale und Broker-Positionen (plus alle Rohstoffe/Kryptos fuer die
+        # Mail). Bis dahin zog der Lauf Kurse und Indikatoren fuer alle 150
+        # Aktien und holte 150 Eroeffnungskurse einzeln; B.2 Schritt 1
+        # begruendete das mit price_history, das schreibt seit P3 nur
+        # final_close. Krypto/Rohstoffe unter den Signalen kommen ueber die
+        # cc-Liste.
+        needed = ({p["ticker"] for p in db.load_predictions_for_revalidation(conn, date)}
+                  | {p["ticker"] for p in (positions or []) if p.get("ticker")})
+        stock_tickers = sorted(t for t in needed if not is_commodity_or_crypto(t))
+        cc_tickers = [d["ticker"] for d in build_commodity_crypto_inputs()]
+        # C.49 / F74: die laufende Sitzung als Tagesbar, damit die Technik im
+        # Snapshot (und das Technik-Signal) den Stand von jetzt zeigen -- bis
+        # dahin war um 16:10 nur `price` frisch.
+        intraday = _intraday_bars(price_provider, stock_tickers + cc_tickers, date)
         # C.46 / F48: der Sidecar (Technik-Signal) geht um 16:10 in den
         # Portfolio-Check -- bis dahin wurde er hier verworfen.
         sp_tds, _, sp_sidecar = collect(
-            tickers=_tickers, price_provider=price_provider,
+            tickers=stock_tickers, price_provider=price_provider,
             earnings_provider=earnings_provider,
-            conn=conn, date=date, run_type="trade_proposals")
-        cc_tickers = [d["ticker"] for d in build_commodity_crypto_inputs()]
+            conn=conn, date=date, run_type="trade_proposals",
+            intraday_bars=intraday)
         cc_tds, _, cc_sidecar = collect(
             tickers=cc_tickers, price_provider=price_provider,
             earnings_provider=earnings_provider,
-            conn=conn, date=date, run_type="trade_proposals")
+            conn=conn, date=date, run_type="trade_proposals",
+            intraday_bars=intraday)
         snapshots = {td["ticker"]: td for td in (sp_tds + cc_tds)}
         signal_by_ticker = {**sp_sidecar, **cc_sidecar}
 
-        opens = _opening_prices(
-            price_provider, [td["ticker"] for td in sp_tds], date)
+        opens = _opening_prices(price_provider, stock_tickers, date)
         for _t, _snap in snapshots.items():
             _snap["price_open"] = opens.get(_t)
+        # C.49 / F69: ETF-Bewegung seit gestern Schluss fuer die relative Staerke.
+        etf_changes = _etf_intraday_changes(price_provider, conn, stock_tickers, date)
 
         # Rohstoffe/Krypto: Phase 3b laeuft um 16:10 nicht, der Abschnitt war
         # deshalb bis 2026-08-20 strukturell IMMER leer ("Keine Daten."). Statt
         # eines zweiten Analyselaufs die Morgen-Einschaetzung plus 16:10-Kurs.
         payload["commodities_crypto"] = _commodities_from_morning(
             conn, date, snapshots)
-
-        current_phase = "open_positions"
-        positions = _open_broker_positions(price_provider)   # C.37: Quelle fuer 4a
-        _forced_tickers(positions)                            # nur fuer den Log
-        payload["positions_unavailable"] = positions is None
-        payload["portfolio_recs"] = pending_rows(positions)   # C.46 / F53
 
         current_phase = "sector_momentum"
         sector_mom: dict[int, dict] = {}
@@ -1033,6 +1151,7 @@ def run_trade_proposals(date: str, db_path: str) -> None:
             conn=conn, date=date, snapshots=snapshots, sector_mom=sector_mom,
             market_ctx=market_ctx, policy_context=policy_context,
             cost_tracker=cost_tracker, out=payload["signal_changes"],
+            signal_by_ticker=signal_by_ticker, etf_changes=etf_changes,
         )
 
         current_phase = "portfolio_check"
@@ -1122,6 +1241,8 @@ def _revalidate_all(
     conn, date: str, snapshots: dict, sector_mom: dict,
     market_ctx: dict, policy_context: dict, cost_tracker: CostTracker,
     out: list[dict],
+    signal_by_ticker: dict[str, dict] | None = None,
+    etf_changes: dict[str, float] | None = None,
 ) -> list[dict]:
     """Prueft jedes heutige offene pre_market-Signal nach und persistiert das
     Ergebnis. Haengt die Zeilen fuer die Mail an `out` an.
@@ -1135,6 +1256,8 @@ def _revalidate_all(
     der Nutzer laese '0 Signale' neben dem Warnbalken (Spec 7.1: Teilergebnis)."""
     open_preds = db.load_predictions_for_revalidation(conn, date)
     log.info(f"Re-Validierung: {len(open_preds)} offene pre_market-Signale")
+    signal_by_ticker = signal_by_ticker or {}
+    etf_changes = etf_changes or {}
 
     counts = signal_checks.cluster_counts(conn, [p["ticker"] for p in open_preds])
     for pred in open_preds:
@@ -1154,6 +1277,10 @@ def _revalidate_all(
         etf_mom, db_mom = signal_checks.momentum_for(conn, ticker, sector_mom)
         sector = db.get_ticker_sector(conn, ticker)
         sector_name = sector["name"] if sector else None
+        # C.49 / F68: die Range-Checks gegen den Abstand vom 16:10-Einstieg,
+        # nicht gegen die Morgen-Prozente.
+        levels = signal_checks.derive_levels(
+            snapshot["price"], pred["tp_price"], pred["sl_price"], pred["direction"])
         checks = [c for c in (
             signal_checks.check_vix(pred["direction"], pred["confidence"],
                                     market_ctx.get("vix_level"), enforce=True),
@@ -1175,16 +1302,18 @@ def _revalidate_all(
             signal_checks.check_earnings(
                 pred["direction"], snapshot.get("earnings_in_days"),
                 enforce=True),
+            # C.49 / F70: das Gap ist Vorboerse -> Eroeffnung; ohne Eroeffnungs-
+            # bar (Krypto/Rohstoffe) wie bisher gegen jetzt.
             signal_checks.check_opening_gap(
-                pred["entry_price"], snapshot.get("price")),
+                pred["entry_price"], snapshot.get("price_open") or snapshot.get("price")),
             # Spec G1/G3: derselbe weiche Check wie um 15:00, damit die
             # Statistik beide Entscheidungspunkte abdeckt.
             signal_checks.check_stop_distance(
-                pred["sl_pct"], snapshot.get("intraday_range_pct")),
+                levels["sl_pct"], snapshot.get("intraday_range_pct")),
             # C.45 / F45: das Spiegelbild, ebenso weich, ebenso in beiden
             # Laeufen (15:00: ranking._run_checks).
             signal_checks.check_tp_reach(
-                pred["tp_pct"], snapshot.get("intraday_range_pct")),
+                levels["tp_pct"], snapshot.get("intraday_range_pct")),
             # Spec G4: HART. Ist das Morgen-Risikobudget vor der Eroeffnung
             # aufgebraucht, ist die Praemisse widerlegt -- und die R/R-Huerde
             # faengt das NICHT, sie belohnt Naehe zum Stop sogar (NVDA wurde mit
@@ -1205,12 +1334,15 @@ def _revalidate_all(
                 "sector_etf_momentum": etf_mom, "sector_db_momentum": db_mom,
             })
 
+        # C.49 / F69: relative Staerke intraday (seit gestern Schluss, gegen den
+        # ETF) statt der Sitzung von gestern.
+        rel_strength = _intraday_relative_strength(conn, ticker, snapshot, etf_changes)
         try:
             verdict = revalidate_one(
                 prediction=pred, snapshot=snapshot, checks=checks,
-                relative_strength=signal_checks.compute_relative_strength(
-                    conn, ticker, date),
+                relative_strength=rel_strength,
                 policy_context=policy_context, cost_tracker=cost_tracker,
+                tech=signal_by_ticker.get(ticker), date=date,
             )
         except CostCapExceeded:
             # Deckel gilt fuer den ganzen Lauf, nicht fuer ein Signal — muss
@@ -1229,10 +1361,12 @@ def _revalidate_all(
             out.append(_unchecked_row(pred, str(e)))
             continue
 
-        new_id = _persist_revision(
+        new_id, reject = _persist_revision(
             conn=conn, pred=pred, verdict=verdict, snapshot=snapshot,
             date=date, checks=checks, momentum=(etf_mom, db_mom),
+            relative_strength=rel_strength,
         )
+        opn, now = snapshot.get("price_open"), snapshot.get("price")
         out.append({
             "ticker": ticker, "direction": pred["direction"],
             "verdict": "verworfen" if (new_id is None and
@@ -1243,7 +1377,16 @@ def _revalidate_all(
             "entry_window_low": verdict.get("entry_window_low"),
             "entry_window_high": verdict.get("entry_window_high"),
             "reason": verdict.get("reason"),
-            "checks": [f"{c.rule}: {c.detail}" for c in checks],
+            # C.49 / F72: Preise, Levels, neues R/R und der Ablehnungsgrund
+            # der R/R-Regel fuer die Mail.
+            "entry_premarket": pred["entry_price"],
+            "price_open": opn, "price_1610": now,
+            "move_since_open_pct": (round((now - opn) / opn * 100.0, 2)
+                                    if opn and now is not None else None),
+            "tp_price": pred["tp_price"], "sl_price": pred["sl_price"],
+            "rr_new": levels["rr_ratio"],
+            "checks": [f"{c.rule}: {c.detail}" for c in checks]
+                      + ([reject] if reject else []),
         })
     return out
 

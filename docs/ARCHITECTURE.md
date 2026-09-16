@@ -1237,6 +1237,25 @@ revalidate_one(...) -> dict   # {verdict, probability_pct, reason, ...}
 über `superseded_by`, eine neue Prediction oder blosse Warnung — entscheidet
 `main.run_trade_proposals()`. In drei von sechs Ausgängen entsteht gar keine neue Zeile.
 
+**Nutzlast seit C.49 (F67/F70/F71):** `prediction_view()` = `PREDICTION_KEYS` (These,
+Vorbörsen-Entry, TP/SL, Prozente, R/R, P, Confidence, Haltedauer, Range, Summary),
+`snapshot_view()` = die 14 `TECHNICAL_KEYS` des Portfolio-Checks plus `price_open`,
+dazu „Today is …", `TECHNICAL SIGNAL morning x/n -> now y/m` (0–4), `LEVELS AT CURRENT
+PRICE` (`derive_levels` gegen den 16:10-Kurs), `MOVE` (Vorbörse → Open → jetzt),
+`RELATIVE STRENGTH` intraday (seit gestern Schluss gegen den Sub-Sektor-ETF,
+`main._etf_intraday_changes`), Checks, Morgen-Policy-Lage. Bis C.49 gingen die rohe
+`predictions`-Zeile (`SELECT *`, ~60 Spalten) und das rohe `td` in den Call. Der Code
+prüft `probability_pct` (0–100, sonst `RevalidationError`) und das Entry-Fenster (beide
+Grenzen, low ≤ high, zwischen SL und TP; sonst beide None mit WARNING, Urteil bleibt).
+
+**Technik von jetzt (C.49 / F74):** `run_trade_proposals()` gibt `collect()` je Ticker
+die laufende Sitzung als Tagesbar (`main._intraday_bars`, Stundenbars ab 00:00 UTC,
+`collapse_to_daily_bar`); `_process_ticker()` rechnet das `td` und das Sidecar-Signal
+aus Historie plus dieser Bar (Close = Sweep-Kurs, `volume_ratio` aus finalen Bars),
+persistiert aber unverändert die Morgenrechnung (C.14). Bis dahin war um 16:10 nur
+`price` frisch. Der Sweep umfasst nur offene Signale, Positionen und die cc-Liste
+(F73); die Range-Checks laufen auf den Abständen vom 16:10-Einstieg (F68).
+
 ---
 
 ### 10c. **`src/signal_window.py`** (neu im Preismodell-Umbau, 2026-08-07)
@@ -1687,7 +1706,10 @@ TOTAL: ~3.50 EUR
    laufenden Tag. Die Vermischung von provisorisch und final war der Frozen-Bar-Bug
 10. **Eine offene Prediction je Trade-Idee** – `trade_proposals` löst die `pre_market`-Zeile
     über `status='superseded'` + `superseded_by` ab, statt eine zweite daneben zu legen.
-    Das Urteil steht auf der **alten** Zeile (`revision_verdict`). Seit 2026-08-15 erzwingt
+    Das Urteil steht auf der **alten** Zeile (`revision_verdict`, seit C.49 auch
+    `revision_reason` und das geprüfte Entry-Fenster; die Nachfolgezeile trägt das Fenster,
+    die Morgen-These als `summary`, die sieben E2/E3-Spalten und `relative_strength` von
+    16:10, `tp_pct`/`sl_pct`/`rr_ratio` gegen den 16:10-Kurs). Seit 2026-08-15 erzwingt
     das ein partieller UNIQUE-Index `ux_predictions_one_open_per_idea` auf
     `(date, ticker, direction) WHERE status='open'` — bewusst partiell, sonst könnten
     abgelöste und ablösende Zeile (die sich alle drei Spalten teilen) nicht nebeneinander

@@ -1912,3 +1912,94 @@ def test_phase_2b_adds_no_new_keys_to_the_td(in_memory_db):
     run_phase_2b([td], ["AAPL"], ep, in_memory_db, date="2026-05-19")
 
     assert set(td) == before
+
+
+# ---------- C.49 / F74: Intraday-Bar fuer die 16:10-Technik (nur im td, nie persistiert) ----------
+
+def _sweep_provider(df: pd.DataFrame, live: float) -> MagicMock:
+    p = _good_provider(df)
+    p.get_premarket_prices_batch.side_effect = (
+        lambda tickers, chunk_size=20: {t: live for t in tickers})
+    return p
+
+
+_BAR = {"Open": 225.0, "High": 231.0, "Low": 224.0, "Close": 229.0, "Volume": 50_000}
+
+
+def _run(conn, df, live, bar):
+    init_schema(conn)
+    _seed_price_history(conn, "AAPL", df)
+    # premarket_price kommt in collect() aus dem Sweep; beim Direktaufruf hier
+    # wird der Live-Kurs uebergeben.
+    out = _process_ticker(
+        ticker="AAPL", price_provider=_sweep_provider(df, live),
+        earnings_provider=_earnings_provider(), conn=conn,
+        date="2026-05-19", run_type="trade_proposals",
+        premarket_price=live, intraday_bar=bar)
+    assert out is not None
+    return out
+
+
+def test_intraday_bar_changes_the_td_technicals_but_not_the_persisted_row():
+    """F74: um 16:10 war bis C.49 nur `price` frisch -- RSI, MACD, SMA-Abstand,
+    BB-Position und price_change_1d waren identisch mit dem Morgen (Bars bis
+    gestern). Mit der Tagesbar bis jetzt rechnet das td die Technik inklusive
+    der laufenden Sitzung; die technical_indicators-Zeile bleibt die des Morgens
+    (C.14: date=T aus Bars bis T-1, wertgleich je Lauf)."""
+    import sqlite3
+    df = _df_monotonic_up(250)
+    a, b = sqlite3.connect(":memory:"), sqlite3.connect(":memory:")
+    a.row_factory = b.row_factory = sqlite3.Row
+    td_plain, _ = _run(a, df, live=230.0, bar=None)
+    td_live, _ = _run(b, df, live=230.0, bar=_BAR)
+
+    assert td_plain["price"] == td_live["price"] == 230.0
+    assert td_live["price_change_1d"] == pytest.approx((230.0 - 224.5) / 224.5 * 100, abs=0.01), \
+        "1d-Aenderung = Live-Kurs gegen den letzten finalen Close"
+    assert td_plain["price_change_1d"] != td_live["price_change_1d"]
+    # RSI ist auf der monotonen Testreihe mit und ohne Zusatzbar 100 -- die
+    # SMA-Abstaende und die BB-Position zeigen die Neuberechnung eindeutig.
+    assert td_plain["above_sma20"] != td_live["above_sma20"]
+    assert td_plain["above_sma50"] != td_live["above_sma50"]
+    assert td_plain["bb_position"] != td_live["bb_position"]
+    assert set(td_plain) == set(td_live), "keine neuen td-Schluessel (Sidecar-Invariante)"
+
+    row_a = dict(a.execute("SELECT * FROM technical_indicators WHERE ticker='AAPL'").fetchone())
+    row_b = dict(b.execute("SELECT * FROM technical_indicators WHERE ticker='AAPL'").fetchone())
+    row_a.pop("created_at", None); row_b.pop("created_at", None)
+    assert row_a == row_b, "persistierte Indikatoren bleiben die des Morgens"
+
+
+def test_intraday_bar_does_not_touch_the_volume_ratio():
+    """Ein 40-Minuten-Volumen ist kein Tagesvolumen -- volume_ratio bleibt aus
+    den finalen Bars, sonst saehe jeder 16:10-Snapshot ein Volumen-Tief."""
+    import sqlite3
+    df = _df_monotonic_up(250)
+    a, b = sqlite3.connect(":memory:"), sqlite3.connect(":memory:")
+    a.row_factory = b.row_factory = sqlite3.Row
+    td_plain, _ = _run(a, df, live=230.0, bar=None)
+    td_live, _ = _run(b, df, live=230.0, bar=_BAR)
+    assert td_live["volume_ratio"] == td_plain["volume_ratio"]
+
+
+def test_intraday_bar_close_follows_the_sweep_price():
+    """Der Close der synthetischen Bar ist der Sweep-Kurs, nicht der Close der
+    letzten Stundenbar -- sonst widerspraechen sich `price` und die Technik."""
+    import sqlite3
+    df = _df_monotonic_up(250)
+    conn = sqlite3.connect(":memory:"); conn.row_factory = sqlite3.Row
+    td, _ = _run(conn, df, live=240.0, bar={**_BAR, "Close": 229.0, "High": 231.0})
+    # High wird auf den Kurs geweitet: 240 > 231
+    assert td["price_change_1d"] == pytest.approx((240.0 - 224.5) / 224.5 * 100, abs=0.01)
+
+
+def test_collect_passes_the_intraday_bar_per_ticker(in_memory_db):
+    df = _df_monotonic_up(250)
+    init_schema(in_memory_db)
+    _seed_price_history(in_memory_db, "AAPL", df)
+    tds, _skipped, _side = data_collector.collect(
+        tickers=["AAPL"], price_provider=_sweep_provider(df, 230.0),
+        earnings_provider=_earnings_provider(), conn=in_memory_db,
+        date="2026-05-19", run_type="trade_proposals",
+        intraday_bars={"AAPL": _BAR})
+    assert tds[0]["price_change_1d"] == pytest.approx((230.0 - 224.5) / 224.5 * 100, abs=0.01)

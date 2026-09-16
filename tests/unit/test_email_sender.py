@@ -1263,3 +1263,31 @@ def test_divergence_rows_carry_the_policy_flag_like_the_top10():
     table = render_daily_html(payload).split(
         "<h2>Divergenz-Kandidaten</h2>")[1].split("</table>")[0]
     assert "⚠️" in table
+
+
+# ---------- C.49 / F72: die 16:10-Zeile zeigt Preise, Levels und das neue R/R ----------
+
+def test_trade_proposals_mail_shows_entry_open_now_levels_and_rr():
+    from src.email_sender import render_trade_proposals_html
+    payload = {**VERDICT_PAYLOAD, "signal_changes": [{
+        "ticker": "AAPL", "direction": "long", "verdict": "verworfen",
+        "probability_before": 65, "probability_after": 60,
+        "entry_window_low": None, "entry_window_high": None,
+        "entry_premarket": 100.0, "price_open": 103.0, "price_1610": 104.5,
+        "move_since_open_pct": 1.46, "tp_price": 106.0, "sl_price": 98.0, "rr_new": 0.23,
+        "reason": "haelt", "checks": ["rr_ratio: R/R nach Opening 0.23 < 1.5"]}]}
+    html = render_trade_proposals_html(payload)
+    table = html.split("Signal-Prüfung 16:10")[1].split("</table>")[0]
+    for col in ("Entry 15:00", "Open", "Kurs 16:10", "TP / SL", "R/R neu"):
+        assert col in table, col
+    assert "100.0" in table and "103.0" in table and "104.5" in table
+    assert "106.0 / 98.0" in table and "0.23" in table
+    assert "+1.46 %" in table
+    assert "rr_ratio" in table
+
+
+def test_trade_proposals_mail_survives_rows_without_the_new_keys():
+    """Alte Zeilen (nicht_geprueft, Payload vor C.49) tragen die Preisfelder nicht."""
+    from src.email_sender import render_trade_proposals_html
+    html = render_trade_proposals_html(VERDICT_PAYLOAD)
+    assert "MSFT" in html and "None" not in html.split("Signal-Prüfung 16:10")[1].split("</table>")[0]
