@@ -5464,7 +5464,12 @@ Häufigkeit der R/R-Ablehnung nach Opening gegen „geschwächt"/„bestätigt" 
 #### Nachtrag — Live-Verifikation 16.09., 20:18 Berlin (Korbinian, zweiter Notebook-Lauf)
 
 Gleiche Wegwerf-Kopie, dasselbe Signal (BTCUSD short #15), GOLD-Position, AAPL und GOLD
-als Beispiel-Ticker. Sitzung offen (14:18 ET).
+als Beispiel-Ticker. ⚠️ **Uhrzeit nur testbedingt:** 20:18 Berlin = 14:18 ET, gut vier
+Stunden nach der Eröffnung statt 40 Minuten. Die Intraday-Bar deckt deshalb die ganze
+Sitzung bis dahin ab, Kurse und Technik-Abweichungen sind entsprechend grösser als um
+16:10 zu erwarten. Der Lauf belegt die **Mechanik**, nicht die 16:10-Verhältnisse; die
+Nutzernachricht trägt den festen Anker „10:10 ET" unabhängig von der echten Uhrzeit
+(Kandidat: echte ET-Zeit in den Anker, auch weil der Cron ~35–40 min zu spät feuert, F.1).
 
 **Live verifiziert:**
 - **F74:** Stundenbars für alle 8 Ticker (AAPL O 330,75 / H 335,40 / L 324,95, Close =
