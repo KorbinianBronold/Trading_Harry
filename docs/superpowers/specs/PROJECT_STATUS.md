@@ -5587,6 +5587,36 @@ er heißt jetzt **C.51**, die Verweise (ARCHITECTURE 11e, Regel 10, C.29) sind n
 
 **Tests:** 1186 grün, 16 übersprungen, Coverage 93,4 %. Sieben neue (rot zuerst): `extract_json_blob` loggt das Fenster um die Fehlerstelle bzw. den Anfang ohne Klammer; `run_policy_monitor` wiederholt einmal bei Parse-Fehler und bei fehlenden Schlüsseln, gibt nach dem zweiten Fehlschlag auf (genau zwei Calls, beide gebucht); `run_pipeline` läuft bei `PolicyMonitorError` und bei `ClaudeTruncatedError` weiter (Phase 3 und 4a sehen `unknown`, Hinweis im Briefing hinter den Trend-Bullets, `policy_context_json` NULL, `market_context.policy_risk_level = 'unknown'`, kein Abbruch im Kostenbericht). Bestehende Tests unverändert, insbesondere der Kostendeckel-Parametrize über `policy_monitor` (CostCapExceeded geht weiter durch).
 
+### C.53 — Live-Check nach dem Push rot: der broad_scan-Live-Test hing seit C.39 an der alten Signatur (2026-09-16)
+
+**Anlass:** nach dem Push von C.52 (`6239899`) fiel der Job `live-api-checks` in `test.yml`
+(Run 35135838844): `tests/live/test_broad_scan_integration.py` rief `broad_scan_batch()` ohne
+`date` und `run_type` — die beiden Pflicht-Parameter, die C.39 (`a9dd231`, 11.09.) eingeführt
+hat. `TypeError` vor dem ersten API-Call; die 14 übrigen Live-Checks waren grün, der
+Mailversand-Step lief wegen `if: always()` trotzdem. Die Pipeline war nie betroffen —
+`main.py` übergibt beide Werte seit C.39.
+
+**Warum es fünf Tage unbemerkt blieb:** die Live-Tests laufen lokal nie (`--run-live`), der
+Coverage-Job zieht sie nicht mit, und der letzte grüne Live-Lauf (11.09. 13:31 UTC, `56cf5ae`)
+lag zwei Stunden **vor** dem C.39-Commit. Zwischen C.39 und heute gab es keinen Push — die
+Live-Prüfung ist push-getriggert, also das erste Mal seit C.39 gelaufen.
+
+**Fix:** Aufruf um `date=<heute Berlin>` und `run_type="pre_market"` ergänzt; Nutzlast auf den
+C.39-Stand gebracht (nur `ticker`, `sector`, `earnings_in_days` aus td, `premarket_change_pct`
+aus dem Sidecar — die Technikfelder im Fixture waren seit C.39 totes Gewicht); Docstring von
+„Sonnet, 6 Websuchen" auf Haiku/5 korrigiert. Lokal einmal mit `--run-live` gegen die echte API
+gefahren: grün, 8 s.
+
+**Damit es nicht wieder passiert:** neuer Unit-Test
+`test_live_tests_call_their_src_functions_with_every_required_argument`
+(`tests/unit/test_live_email_guard.py`) parst jede Datei in `tests/live/` per AST und prüft
+jeden Aufruf einer `src`-Funktion statisch gegen `inspect.signature()`: jeder Parameter ohne
+Default muss im Aufruf stehen. Rot zuerst (nannte genau die Lücke), grün nach dem Fix. Läuft im
+normalen `pytest tests/` — eine Signaturänderung in `src/` bricht ab jetzt lokal, nicht erst im
+Actions-Job mit echtem Key.
+
+**Tests:** 1187 grün, 16 übersprungen, Coverage 93,4 % (ein neuer Test gegenüber C.52). Live: `pytest tests/live/test_broad_scan_integration.py -m live_api --run-live` lokal grün.
+
 ## Sprint 3D — Learning Modul
 
 ⚠️ **Noch nicht ausgearbeitet — braucht eine eigene Planungssession, bevor die Implementierung

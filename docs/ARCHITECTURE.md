@@ -1754,6 +1754,9 @@ TOTAL: ~3.50 EUR
   **777 passed, 14 skipped**, 0 failures (Stand 2026-08-17, nach der
   Token-Neukalibrierung — s. PROJECT_STATUS C.9 und C.10). Die übersprungenen sind die Live-Tests unter `tests/live/`; sie
   laufen nur mit `--run-live` und sprechen dann echte APIs an (inkl. echtem Mailversand).
+  Weil sie lokal nie laufen, prüft `tests/unit/test_live_email_guard.py` ihre Aufrufe statisch
+  gegen die aktuelle `src`-Signatur (C.53) — eine neue Pflicht-Parameter in `src/` bricht sonst
+  erst im Actions-Job nach dem Push.
   ⚠️ **Grüne Tests sind hier kein Reifezeugnis:** der `max_tokens`-Befund aus C.9 ist
   gegen die echte API entstanden, nicht im Testlauf — die Unit-Tests mocken `call_claude()`
   und können ein zu knappes Token-Budget grundsätzlich nicht sehen. Dieselbe Lücke hatte

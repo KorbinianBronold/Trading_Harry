@@ -4,9 +4,12 @@ Ruft die echte Anthropic-API mit Websuche auf -- read-only: kein DB-Schreiben,
 kein Mailversand, nur die Vertragsform der Antwort wird geprueft, nicht ihre
 inhaltliche Qualitaet. Laeuft nur mit `--run-live` (s. tests/conftest.py).
 
-Kosten: ein Sonnet-Call mit bis zu 6 Websuchen fuer zwei Ticker -- deutlich
+Kosten: ein Haiku-Call mit bis zu 5 Websuchen fuer zwei Ticker -- deutlich
 teurer als die Ein-Token-Pings in test_api_connectivity.py, aber weit unter
 einem vollen Pipeline-Lauf."""
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
 import pytest
 
 import config
@@ -24,19 +27,20 @@ def test_broad_scan_batch_against_real_api(report, key_source):
         report(f"❌ broad_scan: kein ANTHROPIC_API_KEY aus {key_source}")
         pytest.fail(f"ANTHROPIC_API_KEY fehlt in {key_source}")
 
+    # Nutzlast seit C.39: nur ticker, sector, earnings_in_days aus td plus
+    # premarket_change_pct aus dem Sidecar -- keine Technik, kein Kurs.
     ticker_datas = [
-        {"ticker": "AAPL", "price": 230.0, "price_change_1d": 0.5,
-         "price_change_5d": 1.2, "rsi_14": 55.0, "atr_pct": 1.8,
-         "sector": "Technology"},
-        {"ticker": "MSFT", "price": 430.0, "price_change_1d": -0.3,
-         "price_change_5d": 0.8, "rsi_14": 48.0, "atr_pct": 1.5,
-         "sector": "Technology"},
+        {"ticker": "AAPL", "sector": "Technology", "earnings_in_days": None},
+        {"ticker": "MSFT", "sector": "Technology", "earnings_in_days": None},
     ]
     sidecar = {
         "AAPL": {"premarket_change_pct": 0.4},
         "MSFT": {"premarket_change_pct": -0.1},
     }
     tracker = CostTracker(hard_cap_eur=1.0)
+    # C.39: date/run_type sind Pflicht -- sie verankern das 24-48h-Nachrichten-
+    # fenster. Bis C.53 fehlten sie hier: TypeError im Actions-Job nach jedem Push.
+    today = datetime.now(ZoneInfo("Europe/Berlin")).date().isoformat()
 
     try:
         out = broad_scan_batch(
@@ -45,6 +49,7 @@ def test_broad_scan_batch_against_real_api(report, key_source):
             trend_context={"trend_summary": "Live smoke test, no real trend data."},
             market_context={"vix_level": 15.0},
             cost_tracker=tracker,
+            date=today, run_type="pre_market",
         )
     except Exception as e:
         report(f"❌ broad_scan FEHLGESCHLAGEN ({key_source}): {type(e).__name__}: {e}")

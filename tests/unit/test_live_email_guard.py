@@ -166,6 +166,47 @@ def test_guard_covers_every_requests_verb():
             getattr(requests, verb)("https://api.resend.com/emails")
 
 
+def test_live_tests_call_their_src_functions_with_every_required_argument():
+    """C.53 (2026-09-16): der Live-Test fuer broad_scan rief broad_scan_batch()
+    seit C.39 (11.09.) ohne die dort eingefuehrten Pflicht-Parameter date und
+    run_type auf -- TypeError erst im Actions-Job nach dem Push, mit echtem
+    API-Key. Die Live-Tests laufen lokal nie (--run-live), ihre Aufrufe
+    muessen deshalb hier statisch gegen die aktuelle Signatur geprueft werden:
+    jeder Pflicht-Parameter ohne Default muss im Aufruf stehen."""
+    import ast
+    import importlib
+    import inspect
+
+    findings: list[str] = []
+    for f in sorted((ROOT / "tests" / "live").glob("test_*.py")):
+        tree = ast.parse(f.read_text())
+        imported: dict[str, tuple[str, str]] = {}
+        for n in ast.walk(tree):
+            if isinstance(n, ast.ImportFrom) and n.module and n.module.startswith("src"):
+                for a in n.names:
+                    imported[a.asname or a.name] = (n.module, a.name)
+        for n in ast.walk(tree):
+            if not (isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+                    and n.func.id in imported):
+                continue
+            mod, name = imported[n.func.id]
+            fn = getattr(importlib.import_module(mod), name)
+            if not callable(fn) or inspect.isclass(fn):
+                continue
+            params = inspect.signature(fn).parameters
+            required = {q.name for q in params.values()
+                        if q.default is q.empty
+                        and q.kind in (q.POSITIONAL_OR_KEYWORD, q.KEYWORD_ONLY)}
+            given = ({k.arg for k in n.keywords if k.arg}
+                     | set(list(params)[:len(n.args)]))
+            if any(k.arg is None for k in n.keywords):      # **kwargs: nicht pruefbar
+                continue
+            missing = sorted(required - given)
+            if missing:
+                findings.append(f"{f.name}:{n.lineno} {name}() ohne {missing}")
+    assert not findings, "\n".join(findings)
+
+
 def test_guard_blocks_the_real_call_claude_path():
     """Der teure Pfad, End-to-End geprueft.
 
