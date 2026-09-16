@@ -499,13 +499,6 @@ def test_deep_analysis_v2_pins_contract_the_code_relies_on():
     assert "never omit" in text.lower()
 
 
-def test_deep_analysis_v1_untouched():
-    """Regel 10: v1 bleibt auf der Platte, unveraendert."""
-    v1 = Path(__file__).parent.parent.parent / "prompts" / "deep_analysis_v1.txt"
-    assert v1.exists()
-    assert "You receive ONE ticker snapshot" in v1.read_text()
-
-
 # --- run_policy_monitor: Kappungs-Erkennung (C.18-Nachtrag) -----------------
 # Vierter Sonnet-5-Einzelcall, beim ersten Durchgang uebersehen: 3072 war die
 # knappste verbliebene Decke, und eine Kappung kam als JSONDecodeError an.

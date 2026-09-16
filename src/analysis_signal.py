@@ -10,7 +10,7 @@ Netz, keine Datenbank.
   * `momentum` ist ABSOLUT abgelesen: eine Kursbewegung, hoch = bullisch,
     tief = baerisch. Ein guter Short hat hier einen NIEDRIGEN Wert.
   * die anderen SIEBEN sind TRADE-RELATIV. Die aktiven v2-Prompts legen das
-    woertlich fest (prompts/deep_analysis_v2.txt, prompts/commodities_crypto_v2.txt,
+    woertlich fest (prompts/deep_analysis_v2.txt, prompts/commodities_crypto_v3.txt,
     Abschnitt zur Polaritaet): "HIGHER IS ALWAYS BETTER FOR THE PROPOSED TRADE,
     in the direction you chose. There is no dimension where a high number is a
     warning." -- ausbuchstabiert an `valuation`: 10 heisst "guenstig fuer einen

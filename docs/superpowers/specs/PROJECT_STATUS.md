@@ -3852,6 +3852,7 @@ aber genau solche Reste sollen ab jetzt nicht mehr liegen bleiben. Nicht angefas
 `test_commodities_crypto_v2_untouched` erzwingen die alte Regel und bewachen nur die vier
 Altlast-Dateien (`deep_analysis_v1`, `commodities_crypto_v1/v2`, `portfolio_check_v1`).
 Tests und Dateien sind Kandidaten zum Entfernen — nicht unaufgefordert gelöscht (Regel 8).
+→ **Erledigt 2026-09-16** auf Korbinians Anweisung, s. C.49.
 
 ### C.30 — Nachfolge aus dem market_context-Review: Marktlage sichtbar, Rotationsform, Test-Hygiene, Live-Test (2026-09-10)
 
@@ -5312,6 +5313,33 @@ zu „16:10 nutzt die Morgen-Events und schreibt keine eigenen", der Parametrize
 neuen Code hat keine Morgenzeile ein `policy_context_json` — der erste 16:10-Lauf
 danach läuft preisbasiert mit Hinweis; das ist erwartet, kein Fehler.
 
+### C.49 — Prompt-Altlast entfernt: vier verwaiste `_vN.txt` und ihre `*_untouched`-Tests gelöscht (Entscheidung 2026-09-16)
+
+Anweisung Korbinian: „lösche alle prompt file die nicht mehr benötigt werden, behalte nur
+die relevanten." Damit ist die seit C.29 offene Entscheidung getroffen.
+
+**Gelöscht (`git rm`):** `prompts/deep_analysis_v1.txt` (v2 seit Plan 3a),
+`prompts/commodities_crypto_v1.txt` und `_v2.txt` (v3 seit C.15), `prompts/portfolio_check_v1.txt`
+(v2). Kein Modul und kein Test ausser den beiden `*_untouched`-Tests las sie noch. Der Stand
+jeder Datei bleibt über `git log -- prompts/<datei>` erreichbar — der Prompt-Stand einer
+Prediction ist laut Regel 10 ohnehin nur Git-Historie.
+
+**Mit entfernt:** `test_deep_analysis_v1_untouched` und `test_commodities_crypto_v2_untouched`
+(samt Konstante `CC_V2`). Beide bewachten ausschliesslich die Existenz der gelöschten Dateien
+und erzwangen die alte „nie editieren"-Regel, die seit 2026-09-10 nicht mehr gilt. Regel 8
+(Tests nicht löschen) ist nicht berührt: nach dem Löschen der Dateien hatten die Tests keinen
+Gegenstand mehr. Die Vertragstests (`*_pins_contract`) bleiben unverändert.
+
+**Behalten:** `prompts/quick_filter_v1.txt`. `src/quick_filter.py` ist toter Code, liest die
+Datei aber beim Import; fünf Testdateien importieren das Modul. Datei, Modul und Tests gehen
+nur gemeinsam — eigene Entscheidung, nicht Teil dieses Schritts.
+
+**Nebenbei bereinigt:** zwei Docstrings nannten `commodities_crypto_v2` noch als aktiven Prompt
+(`src/analysis_signal.py`, `tests/unit/test_ranking.py`) — jetzt v3. ARCHITECTURE 11e und
+Regel 10 angepasst.
+
+**Tests:** 1143 grün, 16 übersprungen, Coverage 93,3 % — genau zwei Tests weniger als bei C.48 (die beiden entfernten `*_untouched`-Tests), keine neuen. Kein Modul und kein Test referenziert die gelöschten Dateinamen mehr (grep über `src/`, `tests/`, `main.py`, `setup/`, `.github/`).
+
 ## Sprint 3D — Learning Modul
 
 ⚠️ **Noch nicht ausgearbeitet — braucht eine eigene Planungssession, bevor die Implementierung
@@ -5600,8 +5628,8 @@ nicht verloren gehen.**
 
     Aktiv geladen: `trend_analyzer_v1`, `broad_scan_v1`, `deep_analysis_v2`, `policy_monitor_v1`,
     `commodities_crypto_v3`, `market_context_v1`, `portfolio_check_v2`, `trade_proposals_v1`
-    (+ `quick_filter_v1`, toter Code). Nicht mehr geladen und seit dieser Regeländerung reine
-    Altlast: `deep_analysis_v1`, `commodities_crypto_v1/v2`, `portfolio_check_v1`.
+    (+ `quick_filter_v1`, toter Code). Die Altlast `deep_analysis_v1`, `commodities_crypto_v1/v2`,
+    `portfolio_check_v1` ist seit 2026-09-16 gelöscht (C.49) — nur noch in der Git-Historie.
 
     Ältere Abschnitte dieses Dokuments (u. a. C.3-Einleitung, C.15/C.16, C.19, C.25, P2.x)
     begründen Entscheidungen noch mit der alten Regel — sie beschreiben, was **damals** galt,

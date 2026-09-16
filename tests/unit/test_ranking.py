@@ -751,7 +751,7 @@ def test_rank_and_persist_counts_tech_only_abstentions(in_memory_db):
 def test_rank_and_persist_counts_tech_only_abstentions_for_commodities_too(in_memory_db):
     """Spec 5.5, mittlere Zeile ist NICHT auf Aktien beschraenkt: Commodities/
     Krypto bekommen ebenfalls ein Technik-Signal (technical_signal.compute()
-    laeuft universumsweit) und eine Claude-Richtung (commodities_crypto_v2 kann
+    laeuft universumsweit) und eine Claude-Richtung (commodities_crypto_v3 kann
     ebenfalls direction='none' liefern) -- die Enthaltungs-Kennzahl muss beide
     Quellen zaehlen, nicht nur stock_analyses."""
     conn = in_memory_db

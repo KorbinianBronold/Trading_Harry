@@ -324,7 +324,6 @@ def test_user_message_includes_extra_context_keys():
 
 
 CC_V3 = Path(__file__).parent.parent.parent / "prompts" / "commodities_crypto_v3.txt"
-CC_V2 = Path(__file__).parent.parent.parent / "prompts" / "commodities_crypto_v2.txt"
 
 
 def test_commodities_crypto_v3_pins_contract():
@@ -335,13 +334,6 @@ def test_commodities_crypto_v3_pins_contract():
     # Batch-Format seit der Umstellung auf asset_class-Batches (2026-08-19):
     # der results-Wrapper MUSS da sein, anders als in v2.
     assert '"results"' in text
-
-
-def test_commodities_crypto_v2_untouched():
-    """Regel 10: v1/v2-Dateien werden nie ueberschrieben, neue Versionen sind
-    neue Dateien. v2 bleibt auf der Platte, auch wenn das Modul jetzt v3 laedt."""
-    text = CC_V2.read_text()
-    assert '"results"' not in text
 
 
 def test_commodities_crypto_module_uses_v3():

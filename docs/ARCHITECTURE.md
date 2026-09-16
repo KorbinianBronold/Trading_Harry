@@ -1518,9 +1518,11 @@ Versionssuffix:
 Modul fest verdrahtet; ein Wechsel ist eine Code-Änderung. Die Tabelle `prompt_versions`
 wird angelegt und **nie benutzt** — sie gehört zu Sprint 3D.
 
-⚠️ `prompts/portfolio_check_v1.txt` ist verwaist: genutzt wird v2. Dasselbe gilt seit
-Plan 3a für `deep_analysis_v1.txt`, und seit C.15 für `commodities_crypto_v1.txt`
-**und** `commodities_crypto_v2.txt` (genutzt wird jetzt v3).
+`prompts/` enthält seit 2026-09-16 (C.49) nur noch die geladenen Dateien plus
+`quick_filter_v1.txt` (toter Code; `src/quick_filter.py` liest sie beim Import, fünf
+Testdateien importieren das Modul). Die vier Altlast-Dateien `deep_analysis_v1`,
+`commodities_crypto_v1/v2` und `portfolio_check_v1` sind gelöscht; ihr Stand bleibt über
+`git log -- prompts/<datei>` erreichbar.
 
 **Prompts werden direkt in der aktiven Datei angepasst — keine neuen Versionsdateien**
 (PROJECT_STATUS Regel 10; seit 2026-09-08 überschreibbar, seit 2026-09-10 ohne neue
@@ -1535,7 +1537,7 @@ Schwellen, Sektor-/Regime-Listen, Modellnamen, Sprache. Die `*_pins_contract`-Te
 fangen nur die Schlüssel, an denen Code hängt; Beispieltexte und Zahlen prüft niemand
 automatisch — deshalb `grep -rn "<Bezeichner>" prompts/` bei jeder Änderung.
 
-Zwei Testarten hängen daran, sie sind **nicht** dasselbe:
+Daran hängen heute nur noch die Vertragstests; die zweite Testart ist Geschichte:
 - **Vertragstests** (`test_deep_analysis_v2_pins_contract`,
   `test_commodities_crypto_v3_pins_contract`) prüfen, dass die **aktive** Datei die
   Schlüssel enthält, auf die der Parser sich verlässt (`"results"`, `"evidence_quality"`,
@@ -1543,9 +1545,8 @@ Zwei Testarten hängen daran, sie sind **nicht** dasselbe:
   überflüssig: sie sind das Netz, das eine Prompt-Bearbeitung auffängt, die den Vertrag bricht.
 - **`*_untouched`-Tests** (`test_deep_analysis_v1_untouched`,
   `test_commodities_crypto_v2_untouched`) erzwangen ausschließlich die **alte** Regel und
-  bewachen heute nur noch verwaiste Dateien — seit Regel 10 (2026-09-10: keine neuen
-  Versionen) sind sie samt den vier Altlast-Dateien (`deep_analysis_v1`,
-  `commodities_crypto_v1/v2`, `portfolio_check_v1`) Kandidaten zum Entfernen.
+  bewachten zuletzt nur noch verwaiste Dateien — am 2026-09-16 zusammen mit den vier
+  Altlast-Dateien entfernt (C.49, Entscheidung Korbinian).
 
 ⚠️ Die Prompts werden **auf Modulebene** gelesen, nicht je Aufruf. Eine geänderte
 Prompt-Datei wirkt erst nach einem Neustart des Prozesses.
