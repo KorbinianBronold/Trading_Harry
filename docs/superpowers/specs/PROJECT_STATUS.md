@@ -5617,6 +5617,74 @@ Actions-Job mit echtem Key.
 
 **Tests:** 1187 grün, 16 übersprungen, Coverage 93,4 % (ein neuer Test gegenüber C.52). Live: `pytest tests/live/test_broad_scan_integration.py -m live_api --run-live` lokal grün.
 
+### C.54 — Live-Verifikation des 16:10-Laufs (25.09., Wegwerf-DB): neun Befunde bestätigt, drei brauchen die offene Sitzung, ein neuer Defekt (F78)
+
+Auftrag Korbinian 25.09.: „Mache vorher die live verifikation der 16:10 laufes jetzt. Wenn du
+dafür den morgen lauf brauchst dann mach diesen auch selbständig." Damit ist der seit C.49/C.50
+offene Punkt „nicht live verifiziert" abgearbeitet, soweit die Uhrzeit es zulässt.
+
+**Aufbau.** Beide Läufe gegen eine Kopie von `db-latest` im Scratchpad (`--db-path`), die echte
+DB und das Release unberührt. Morgenlauf 11:06–11:46 Berlin (4,38 €, 22 Predictions: 10 long,
+10 short, 2 cc), danach eine zweite Kopie für den echten 16:10-Slot, dann `trade_proposals` auf
+Kopie A um 11:47 (22 Signale, 0,4629 €) und ein zweiter Lauf um 11:53 für die Idempotenz
+(0 Signale, 0,0273 €). Das Guthaben war wieder vorhanden (seit 22.09. erschöpft, s. C.52-Nachtrag).
+Bewusst **nicht** 40 min pausiert: um 05:47 ET handeln die US-Aktien nicht, die Pause hätte an den
+Kursen nichts geändert. Kein Notebook benutzt (`random/` bleibt unangetastet), stattdessen
+`main.py` direkt — näher am Produktivlauf.
+
+**Bestätigt (live):** F66 (22/22 Nachfolgezeilen tragen alle elf eingefrorenen Spalten),
+F67 (65 DB-Spalten → 14 Prompt-Schlüssel; `SNAPSHOT_KEYS` = 15), F68 (FDX Einstieg 279,20 →
+279,67, R/R 2,00 → 2,34; MU 1098,17 → 1093,20, R/R 3,45), F71 (22/22 Entry-Fenster auf der
+**Nachfolgezeile**, 22/22 `revision_reason` auf der **Morgenzeile** — die Aufteilung ist
+Absicht, beim Prüfen zuerst in der falschen Zeile gesucht), F73 (Sweep 20 Aktien statt 150,
+plus 6 cc), F75 (zweiter Lauf: „0 offene pre_market-Signale", `guardrail_rejects` bleibt bei
+48 statt 96), F77 („Today is 2026-09-25, 05:47 ET (222 minutes BEFORE the 09:30 open)";
+Gegenprobe mit 14:10 UTC ergibt „10:10 ET (40 minutes after)"), C.28 (16:10-Zeile trägt nur
+VIX 17,89, kein Regime/Rotation/Policy) und C.48 (keine „Keine Policy-Lage"-Warnung, exakt
+**23** Anthropic-Calls = 22 Re-Validierungen + 1 Portfolio-Check, keine Websuche).
+
+**Zwei Nebenverifikationen, die länger offen standen:** der C.52-Retry feuerte im **Ernstfall** —
+der Policy-Monitor lieferte erneut unparsebares JSON, die Wiederholung lief sauber (Mehrkosten
+~0,30 €). Das neue Logging zeigt erstmals die Ursache, die am 16.09. niemand sehen konnte:
+`"summary": "… oil trade.", \n }` — ein **nachgestelltes Komma** vor der schliessenden Klammer,
+am letzten Zeichen der Antwort, `end_turn`, keine Kappung. Ausserdem sprang der
+C.45/F41-WARNING-Pfad an (D: `sl_pct` Modell 0,7 vs. Preise 0,75; AMD: `rr_ratio` 2,0 vs. 2,06),
+den der Walkthrough vom 15.09. nicht ausgelöst hatte.
+
+**F78 — Eröffnungskurs-Abruf mit umgekehrtem Zeitfenster (NEU, offen).** `main._opening_prices()`
+baut `start = regular_open_utc(date)` (13:30 UTC) und `end = start + 1 min`; der Provider klemmt
+`to` über `_not_in_future()` auf jetzt (09:47 UTC). Läuft der Job **vor** der Eröffnung, ist
+`from > to` → Capital.com antwortet mit HTTP 400, gemessen **20 von 20** Anfragen. Der Wächter
+deckt nur `to` ab. Der Docstring nennt die Annahme ausdrücklich („Zum Abrufzeitpunkt (10:10 ET)
+liegt die Eroeffnung bereits in der Vergangenheit") — genau die hat C.50/F77 aufgehoben, indem der
+Anker den Lauf vor der Eröffnung ausdrücklich vorsieht. Folge: 20 nutzlose Requests je Lauf,
+`price_open` bleibt NULL, F70 fällt in den Fallback. Produktiv nur bei manuellem Dispatch und
+verspäteten Crons relevant. Vorschlag: vor der Schleife abbrechen, wenn die Eröffnung noch
+aussteht (eine Bedingung, spart die Requests gleich mit). **Nicht umgesetzt — Entscheidung offen.**
+
+**Nicht verifizierbar zu dieser Uhrzeit (Kopie B liegt bereit):** F69 (relative Stärke intraday),
+F70 (Gap gegen den echten Eröffnungskurs, hängt an F78) und F74 (Technik inkl. laufender Sitzung —
+Capital.com liefert um 05:47 ET keine Stundenbars, 404 je Ticker, Fallback auf die Morgentechnik
+greift). F72/F76 (Preise und Positionsalter in der Mail) sind unit-getestet; die drei echten Mails
+liegen in Korbinians Postfach.
+
+**Drei Beobachtungen am Rand.**
+- `OIL_BRENT` fehlt seit dem 11.09. in jeder Analyse: 10 von 20 nötigen Bars bei `skip_count` 9 von
+  `TICKER_MAX_SKIPS` 20. Klassischer B-12-Fall (neuer Ticker ohne Backfill); es ist ein Rennen
+  zwischen Bar-Aufbau und Deaktivierung. Fix wäre `historical_loader.py --tickers OIL_BRENT` gegen
+  die **Produktions**-DB — nicht angefasst.
+- Der Policy-Monitor kostete 0,60 € statt der dokumentierten 0,21–0,25 € (Wiederholung).
+- Der Portfolio-Check empfahl morgens ANPASSEN, 40 min später bei praktisch unverändertem Kurs
+  SCHLIESSEN. Kein Defekt: um 16:10 fehlt die Phase-3-Analyse (C.46), der Check urteilt auf
+  Technik und Policy. Als Konsistenzfrage notiert.
+
+**Offen (Entscheidung Korbinian):** (1) F78 beheben; (2) darf `extract_json_blob` ein
+nachgestelltes Komma vor `}`/`]` entfernen? Zweimal in neun Tagen beobachtet, die Reparatur wäre
+rein syntaktisch und bedeutungserhaltend — die Invariante „kein JSON-Reparieren" (CLAUDE.md,
+C.52) spricht bisher dagegen; (3) der echte 16:10-Lauf auf Kopie B für F69/F70/F74.
+
+**Tests:** keine Code-Änderung in diesem Schritt, Suite unverändert 1187 grün.
+
 ## Sprint 3D — Learning Modul
 
 ⚠️ **Noch nicht ausgearbeitet — braucht eine eigene Planungssession, bevor die Implementierung
