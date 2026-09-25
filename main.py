@@ -404,7 +404,8 @@ def _news_summaries_from_policy(
     return rows
 
 
-def _opening_prices(price_provider, tickers: list[str], date: str) -> dict[str, float]:
+def _opening_prices(price_provider, tickers: list[str], date: str,
+                    now_utc: str | None = None) -> dict[str, float]:
     """Tatsaechlicher Eroeffnungskurs je Ticker, minutengenau.
 
     Der 'Open' der Tagesbar taugt dafuer nicht: Capital.com laesst sie um
@@ -412,14 +413,26 @@ def _opening_prices(price_provider, tickers: list[str], date: str) -> dict[str, 
     lagen Tagesbar-Open (310,54) und tatsaechlicher Open (309,09) 0,47 %
     auseinander.
 
-    Zum Abrufzeitpunkt (10:10 ET) liegt die Eroeffnung bereits in der
-    Vergangenheit, der Abruf ist also rein historisch.
+    Der Abruf ist rein historisch -- er setzt voraus, dass die Eroeffnung schon
+    stattgefunden hat. Steht sie noch aus, wird gar nicht erst gefragt (C.55 /
+    F78): das Fenster waere `from` Eroeffnung, `to` jetzt, und weil
+    `_not_in_future()` nur `to` klemmt, laege `from` hinter `to` -- Capital.com
+    beantwortet das mit HTTP 400, im Livelauf vom 25.09. um 05:47 ET auf 20 von
+    20 Anfragen. Bis C.50/F77 war der Fall ausgeschlossen (fester Anker
+    "10:10 ET"); seit der echten Uhr ist ein Lauf vor der Eroeffnung vorgesehen.
 
     Der Aufrufer uebergibt ausschliesslich Aktien. Krypto und Rohstoffe handeln
     durchgehend und haetten zwar eine Minutenbar um 13:30 UTC, aber keinen
     Eroeffnungskurs -- der Wert waere ein beliebiger Zeitpunkt, kein Ereignis.
     Fuer sie bleibt price_open NULL (E6)."""
     start = signal_window.regular_open_utc(date)
+    now = now_utc or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+    if signal_window.is_premarket(date, now):
+        log.info(
+            f"Eroeffnung ({start} UTC) steht noch aus -- kein "
+            f"Eroeffnungskurs-Abruf, {len(tickers)} Requests gespart (F78)"
+        )
+        return {}
     end = (datetime.fromisoformat(start) + timedelta(minutes=1)).strftime(
         "%Y-%m-%dT%H:%M:%S")
     out: dict[str, float] = {}

@@ -2973,3 +2973,39 @@ def test_etf_intraday_changes_use_the_batch_sweep_against_the_last_final_close(i
     changes = _etf_intraday_changes(prov, in_memory_db, ["AAPL", "GOLD"], "2026-07-30")
     assert changes == {"XLK": pytest.approx(0.5)}
     assert set(prov.get_premarket_prices_batch.call_args.args[0]) == {"XLK"}
+
+
+# ---------- C.55 / F78: kein Eroeffnungskurs-Abruf vor der Eroeffnung ----------
+# Live-Lauf 25.09. um 05:47 ET: _opening_prices baute from=13:30 UTC (Eroeffnung)
+# und to=jetzt; _not_in_future() klemmt NUR to, also from > to -> Capital.com
+# antwortete auf 20 von 20 Anfragen mit HTTP 400. Der Docstring nannte die
+# Annahme ("zum Abrufzeitpunkt liegt die Eroeffnung in der Vergangenheit") --
+# C.50/F77 hat sie aufgehoben, seitdem ist ein Lauf vor der Eroeffnung vorgesehen.
+
+def test_opening_prices_skips_the_fetch_while_the_open_is_still_ahead():
+    """Vor 09:30 ET gibt es keinen Eroeffnungskurs -- also auch keinen Request."""
+    prov = MagicMock()
+    out = main._opening_prices(prov, ["AAPL", "MSFT"], "2026-09-25",
+                               now_utc="2026-09-25T09:47:25")   # 05:47 ET
+    assert out == {}
+    prov.get_intraday_ohlc.assert_not_called()
+
+
+def test_opening_prices_fetches_once_the_open_has_passed():
+    """Nach der Eroeffnung laeuft der Abruf unveraendert."""
+    import pandas as pd
+    prov = MagicMock()
+    prov.get_intraday_ohlc.return_value = pd.DataFrame(
+        {"Open": [309.09]}, index=pd.to_datetime(["2026-09-25 13:30:00"]))
+    out = main._opening_prices(prov, ["AAPL"], "2026-09-25",
+                               now_utc="2026-09-25T14:10:00")   # 10:10 ET
+    assert out == {"AAPL": 309.09}
+    assert prov.get_intraday_ohlc.call_count == 1
+
+
+def test_opening_prices_uses_the_system_clock_without_an_explicit_time():
+    """now_utc ist optional -- ohne Wert entscheidet die Systemuhr. Ein Datum in
+    der fernen Zukunft liegt garantiert vor seiner eigenen Eroeffnung."""
+    prov = MagicMock()
+    assert main._opening_prices(prov, ["AAPL"], "2099-01-05") == {}
+    prov.get_intraday_ohlc.assert_not_called()

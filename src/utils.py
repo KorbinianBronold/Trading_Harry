@@ -229,6 +229,30 @@ RAW_LOG_BEFORE = 400
 RAW_LOG_AFTER = 150
 RAW_LOG_HEAD = 300
 
+# C.55: Obergrenze fuer die Komma-Reparatur. Eine gesunde Antwort braucht keine,
+# eine kaputte selten mehr als eine Handvoll -- die Schranke verhindert nur, dass
+# eine pathologische Antwort die Schleife lange laufen laesst.
+MAX_COMMA_REPAIRS = 10
+
+
+def _strip_trailing_comma(text: str, pos: int) -> str | None:
+    """Entfernt genau das eine nachgestellte Komma, ueber das der Parser an
+    `pos` gestolpert ist. `None`, wenn dort keines steht.
+
+    ⚠️ Setzt ausschliesslich an der vom Decoder GEMELDETEN Fehlerstelle an, nie
+    per Regex ueber den Text: `pos` zeigt auf eine strukturelle Position
+    (die schliessende Klammer), niemals in einen String hinein. Ein ", }" mitten
+    in einem Textfeld wird deshalb nie angefasst -- gueltiges JSON erreicht
+    diese Funktion gar nicht erst."""
+    if pos >= len(text) or text[pos] not in "}]":
+        return None
+    i = pos - 1
+    while i >= 0 and text[i] in " \t\r\n":
+        i -= 1
+    if i < 0 or text[i] != ",":
+        return None
+    return text[:i] + text[i + 1:]
+
 
 def _error_window(text: str, pos: int) -> str:
     """Ausschnitt der Rohantwort um die Fehlerposition, mit Marker an der Stelle."""
@@ -259,7 +283,17 @@ def extract_json_blob(text: str, error_cls: Type[Exception]) -> dict:
     C.52 (2026-09-16): jeder Fehlschlag loggt ein Fenster der Rohantwort um die
     Fehlerstelle (WARNING). Am 16.09. riss ein Syntaxfehler in der Policy-
     Monitor-Antwort den pre_market-Lauf, und die Antwort war nirgends
-    nachlesbar -- weder im Log noch in der DB (audit_log ist Sprint 3D)."""
+    nachlesbar -- weder im Log noch in der DB (audit_log ist Sprint 3D).
+
+    C.55 (2026-09-25): genau EINE Fehlerform wird repariert -- ein nachgestelltes
+    Komma vor `}` oder `]`. Das Logging aus C.52 hat sie als Ursache belegt
+    (16.09. Absturz, 25.09. Wiederholung; beide Male Policy-Monitor, beide Male
+    `"summary": "...",` gefolgt von `}`). Die Reparatur ist bedeutungserhaltend
+    und setzt an der gemeldeten Fehlerstelle an, nicht per Regex -- ein Komma in
+    einem String kann sie nicht erreichen (s. `_strip_trailing_comma`). Sie wird
+    als WARNING protokolliert, bleibt also messbar. **Jede andere Fehlerform
+    wirft weiter**: ein Parser, der Modellfehler verschluckt, waere die
+    schlimmere Fehlerklasse."""
     m = _JSON_FENCE_RE.search(text)
     if m:
         text = m.group(1)
@@ -270,16 +304,30 @@ def extract_json_blob(text: str, error_cls: Type[Exception]) -> dict:
             f"Anfang der Rohantwort: {text[:RAW_LOG_HEAD]!r}"
         )
         raise error_cls("No JSON object found in response")
-    try:
-        obj, _ = json.JSONDecoder(strict=False).raw_decode(text, start)
+    decoder = json.JSONDecoder(strict=False)
+    repairs = 0
+    while True:
+        try:
+            obj, _ = decoder.raw_decode(text, start)
+        except json.JSONDecodeError as e:
+            repaired = (_strip_trailing_comma(text, e.pos)
+                        if repairs < MAX_COMMA_REPAIRS else None)
+            if repaired is not None:
+                text = repaired
+                repairs += 1
+                continue
+            log.warning(
+                f"JSON-Parse-Fehler: {e.msg} an Zeile {e.lineno}, Spalte "
+                f"{e.colno} (Zeichen {e.pos} von {len(text)}). Rohantwort um "
+                f"die Fehlerstelle: {_error_window(text, e.pos)!r}"
+            )
+            raise error_cls(f"Could not parse JSON: {e}") from e
+        if repairs:
+            log.warning(
+                f"{repairs}x nachgestelltes Komma vor einer schliessenden "
+                f"Klammer repariert (C.55) -- die Antwort war kein gueltiges JSON"
+            )
         return obj
-    except json.JSONDecodeError as e:
-        log.warning(
-            f"JSON-Parse-Fehler: {e.msg} an Zeile {e.lineno}, Spalte {e.colno} "
-            f"(Zeichen {e.pos} von {len(text)}). Rohantwort um die Fehlerstelle: "
-            f"{_error_window(text, e.pos)!r}"
-        )
-        raise error_cls(f"Could not parse JSON: {e}") from e
 
 
 WEB_SEARCH_TOOL = {

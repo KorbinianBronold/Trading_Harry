@@ -543,7 +543,10 @@ def test_run_policy_monitor_bills_the_discarded_truncated_attempt():
 # Das Modellverhalten ist nicht deterministisch (s. extract_json_blob) -- ein
 # zweiter Versuch kostet ~0,25 EUR, der verlorene Lauf hatte 0,50 EUR gekostet.
 
-_BROKEN_POLICY = '{"policy_risk_level": "high", "events": [],\n}'   # Komma vor }
+# C.55: bewusst KEIN nachgestelltes Komma mehr -- das repariert
+# extract_json_blob() seit C.55 und der Retry traete nicht mehr an. Hier steht
+# ein Fehler, den keine Reparatur deckt (fehlender Wert).
+_BROKEN_POLICY = '{"policy_risk_level": "high", "events":}'
 
 
 def test_run_policy_monitor_retries_once_on_an_unparseable_answer():
@@ -572,6 +575,24 @@ def test_run_policy_monitor_retries_an_answer_without_the_required_keys_too():
 
     assert out["policy_risk_level"] == "medium"
     assert mock_call.call_count == 2
+
+
+def test_run_policy_monitor_accepts_the_real_16_09_answer_without_a_retry():
+    """C.55, der gemessene Vorfall: beide Aussetzer (16.09. Absturz, 25.09.
+    Retry) waren ein nachgestelltes Komma hinter `summary`. Seit der Reparatur
+    kostet diese Antwortform keinen zweiten Call mehr."""
+    trailing = ('{"policy_risk_level": "high", "events": [], '
+                '"summary": "Brent above $108/bbl, yields at 22-year highs.",\n}')
+    tracker = CostTracker(hard_cap_eur=10.0)
+
+    with patch("src.utils.call_claude",
+               return_value=_fake_result(trailing)) as mock_call:
+        out = run_policy_monitor(date="2026-09-25", run_type="pre_market",
+                                 cost_tracker=tracker)
+
+    assert out["policy_risk_level"] == "high"
+    assert mock_call.call_count == 1, "kein Retry -- die Antwort ist reparabel"
+    assert tracker.input_tokens == 5000
 
 
 def test_run_policy_monitor_gives_up_after_the_second_unparseable_answer():

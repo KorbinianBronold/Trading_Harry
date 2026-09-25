@@ -5685,6 +5685,51 @@ C.52) spricht bisher dagegen; (3) der echte 16:10-Lauf auf Kopie B für F69/F70/
 
 **Tests:** keine Code-Änderung in diesem Schritt, Suite unverändert 1187 grün.
 
+### C.55 — F78 behoben (kein Eröffnungskurs-Abruf vor der Eröffnung) und eine eng begrenzte JSON-Reparatur (nachgestelltes Komma) (Entscheidung 2026-09-25)
+
+Beides auf Korbinians Anweisung nach der Live-Verifikation (C.54).
+
+**F78 — `_opening_prices()` fragt nicht mehr vor der Eröffnung (behoben).** Neuer Parameter
+`now_utc` (optional, sonst Systemuhr); steht die Eröffnung noch aus
+(`signal_window.is_premarket`), gibt die Funktion `{}` zurück und loggt eine INFO-Zeile mit der
+Zahl der gesparten Requests — **bevor** die Schleife läuft. Vorher entstand ein Fenster mit
+`from` = Eröffnung und `to` = jetzt, und weil `_not_in_future()` nur `to` klemmt, lag `from`
+hinter `to`: HTTP 400 auf 20 von 20 Anfragen im Lauf vom 25.09. Der Docstring trug die
+Annahme ("zum Abrufzeitpunkt liegt die Eroeffnung in der Vergangenheit"), die C.50/F77 mit der
+echten Uhr aufgehoben hatte. Drei Tests: kein Request vor der Eröffnung, unveränderter Abruf
+danach, Systemuhr ohne expliziten Wert.
+
+**Nachgestelltes Komma wird repariert (Invariante präzisiert).** Das C.52-Logging hat die
+Ursache beider Aussetzer belegt: am 16.09. (Absturz) und am 25.09. (Retry) endete die
+Policy-Antwort auf `"summary": "…",` gefolgt von `}` — beide Male `end_turn`, keine Kappung.
+`extract_json_blob()` entfernt dieses Komma jetzt und parst erneut, **ausschliesslich an der vom
+Decoder gemeldeten Fehlerstelle** (`_strip_trailing_comma()`): `e.pos` zeigt immer auf eine
+strukturelle Position, nie in einen String — ein ", }" mitten in einem Textfeld ist damit
+unerreichbar (eigener Test). Maximal `MAX_COMMA_REPAIRS = 10` Durchgänge, jede Reparatur als
+WARNING protokolliert, damit die Häufigkeit messbar bleibt.
+
+**Warum das die C.52-Begründung nicht umstösst:** dort stand "kein JSON-Reparieren — ein Parser,
+der Modellfehler verschluckt, wäre die schlimmere Fehlerklasse". Das gilt weiter für alles, was
+Bedeutung hinzuerfindet. Ein Komma vor einer schliessenden Klammer trägt keine: seine Entfernung
+ist die einzige mögliche Lesart, verlustfrei und nicht mehrdeutig. Jede andere Syntaxform wirft
+unverändert. Die Invariante in CLAUDE.md und die Entscheidungstabelle (Abschnitt 4) sind
+entsprechend präzisiert, nicht gestrichen.
+
+**Drei bestehende Tests angepasst, keiner abgeschwächt:** `_BROKEN_POLICY` (test_deep_analysis)
+und das Beispiel in `test_extract_json_blob_logs_a_window_around_the_error_position` benutzten
+ausgerechnet ein nachgestelltes Komma als "kaputtes JSON" — das ist jetzt reparabel, also steht
+dort ein Fehler, den keine Reparatur deckt (fehlender Wert). Die gepinnte Zusicherung
+(Retry bei unbrauchbarer Antwort, Logging des Fensters) ist unverändert. Neu dazu:
+`test_run_policy_monitor_accepts_the_real_16_09_answer_without_a_retry` — die Antwortform aus
+dem echten Vorfall kostet keinen zweiten Call mehr.
+
+**Tests:** 1196 grün, 16 übersprungen, Coverage 93,4 %. Neu (rot zuerst, 9): drei zu F78, fünf
+zur Komma-Reparatur (Klammer, eckige Klammer, mehrfach, Komma im String unangetastet, echter
+Syntaxfehler wirft weiter), eine zum Vorfall vom 16.09.
+
+**Offen:** der echte 16:10-Lauf auf Kopie B für F69/F70/F74 (C.54) — er prüft zugleich den
+F78-Fix von der anderen Seite: nach der Eröffnung muss `price_open` gefüllt sein.
+
 ## Sprint 3D — Learning Modul
 
 ⚠️ **Noch nicht ausgearbeitet — braucht eine eigene Planungssession, bevor die Implementierung
@@ -5910,7 +5955,7 @@ nicht verloren gehen.**
 | `ZoneInfo("Europe/Berlin")` überall | Märkte schließen um Berliner Zeit; Crons in Berlin-Zeit geplant |
 | Capital.com Session-Level Auth | Ein Session-Object pro Run (lazy init); nicht je Request neu authentifizieren |
 | Fundamentals 7-Tage-Cache in SQLite | Finnhub Free hat Limits; Fundamentals ändern sich selten |
-| `extract_json_blob()` mit `raw_decode` + `strict=False` | Claude hängt oft Text nach dem JSON an (`raw_decode` toleriert das) und escapet mehrzeilige Strings gelegentlich nicht (`strict=False` toleriert rohe Steuerzeichen **in** Strings, s. C.26). Echte Syntaxfehler werfen weiter, ein Test pinnt das. |
+| `extract_json_blob()` mit `raw_decode` + `strict=False` | Claude hängt oft Text nach dem JSON an (`raw_decode` toleriert das) und escapet mehrzeilige Strings gelegentlich nicht (`strict=False` toleriert rohe Steuerzeichen **in** Strings, s. C.26). Seit C.55 zusätzlich **eine** bedeutungserhaltende Reparatur: ein nachgestelltes Komma vor `}`/`]`, ausschliesslich an der vom Decoder gemeldeten Fehlerstelle und als WARNING protokolliert. Jede andere Syntaxform wirft weiter, Tests pinnen beides. |
 | DB-Persistenz via GitHub Releases (`db-latest`) | Kein externer Storage nötig; funktioniert mit kostenlosen GH Actions |
 | **8 Score-Dimensionen einzeln persistiert, keine Gewichtung im Code** | Market Environment, Company Quality, Valuation, Momentum, Risk, Sector Trend, Catalyst, Policy Risk werden je einzeln gespeichert. Eine Gewichtung zu einem Gesamtscore findet **nicht** statt — `score_total()` und `config.DIMENSION_WEIGHTS` sind seit Plan 3b entfernt (C.13). Sortierschlüssel ist `rank_score = analysis_strength × tech_strength` (Spec § 5.2/5.4). Welche Dimension predictet, misst Sprint 3D — nicht per Annahme wieder eine Gewichtung einführen. |
 | **Portfolio-Sektion zuerst in der Mail** | Direkt umsetzbar beim Aufwachen. Gilt unabhängig davon, dass Phase 4a ab 3B *nach* Phase 4 ausgeführt wird. |

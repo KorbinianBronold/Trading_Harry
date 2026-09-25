@@ -123,7 +123,9 @@ Kurzform zum Erkennen einer drohenden Verletzung; Begründung und Randfälle in
   deterministisch); jeder Versuch wird **gebucht**. → C.18
 - `extract_json_blob()` für **jede** Claude-Antwort (`raw_decode` + `strict=False`);
   nie `json.loads()` daneben bauen. Bei Parse-Fehler loggt sie ein Fenster der Rohantwort
-  (`>>>HIER<<<`-Marker) — die einzige Spur, die es gibt. Kein JSON-Reparieren. → C.26 / C.52
+  (`>>>HIER<<<`-Marker) — die einzige Spur, die es gibt. **Genau eine** Reparatur ist
+  erlaubt: ein nachgestelltes Komma vor `}`/`]`, an der vom Parser gemeldeten Fehlerstelle,
+  als WARNING protokolliert. Jede andere Fehlerform wirft weiter. → C.26 / C.52 / C.55
 - Policy-Monitor (Phase-3-Vorlauf) ist **nicht** fatal: unbrauchbare Antwort einmal
   wiederholen (beide Versuche gebucht), dann Lauf mit `policy_risk_level: unknown`, Hinweis
   in der Mail, `policy_context_json` bleibt NULL. Phase 0 bleibt fatal. → C.52

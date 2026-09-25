@@ -1457,7 +1457,7 @@ Querschnitts-Helfer, die jedes Claude-aufrufende Modul benutzt.
 | `call_claude(..., stream=False)` | Anthropic-Wrapper mit Prompt-Caching, optional gestreamt |
 | `call_claude_retry_on_truncation(...)` | `call_claude()` + Kappungs-Erkennung für die Einzelcall-Module (C.18) |
 | `ClaudeTruncatedError` | Wurf, wenn auch die Wiederholung mit doppelter Decke kappt |
-| `extract_json_blob(text, error_cls)` | toleranter JSON-Auszug aus Claudes Antwort; loggt bei Parse-Fehler ein Fenster der Rohantwort um die Fehlerstelle (`>>>HIER<<<`, C.52) |
+| `extract_json_blob(text, error_cls)` | toleranter JSON-Auszug aus Claudes Antwort; loggt bei Parse-Fehler ein Fenster der Rohantwort um die Fehlerstelle (`>>>HIER<<<`, C.52) und repariert ein nachgestelltes Komma vor `}`/`]` an genau dieser Stelle (C.55) |
 
 ⚠️ `extract_json_blob` nutzt `raw_decode`, weil Claude gelegentlich Fliesstext hinter das
 JSON hängt. Ein striktes `json.loads` scheiterte daran.

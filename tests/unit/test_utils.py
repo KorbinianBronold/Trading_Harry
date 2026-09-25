@@ -293,7 +293,9 @@ def test_extract_json_blob_ignores_trailing_json_like_content():
 
 def test_extract_json_blob_logs_a_window_around_the_error_position(caplog):
     import logging
-    broken = '{"policy_risk_level": "high",\n  "events": [{"headline": "FOMC"}],\n}'
+    # C.55: ein Fehler, den die Komma-Reparatur NICHT deckt -- sonst parst die
+    # Antwort und es gaebe nichts zu loggen.
+    broken = '{"policy_risk_level": "high",\n  "events": [{"headline": "FOMC"}],\n  "summary":}'
     with caplog.at_level(logging.WARNING, logger="shares_future"):
         with pytest.raises(_DemoError):
             extract_json_blob(broken, _DemoError)
@@ -480,3 +482,46 @@ def test_truncation_retry_forwards_tools_and_stream():
     kwargs = mock_call.call_args.kwargs
     assert kwargs["tools"] == tools
     assert kwargs["stream"] is True
+
+
+# ---------- C.55: genau EIN nachgestelltes Komma vor } oder ] reparieren ----------
+# Zweimal in neun Tagen riss ein Trailing Comma den pre_market-Lauf bzw. kostete
+# eine Wiederholung (16.09. Absturz, 25.09. C.52-Retry). Die Reparatur ist rein
+# syntaktisch: sie setzt an der vom Parser GEMELDETEN Fehlerstelle an, nie per
+# Regex ueber den Text -- ein Komma in einem String wird so nie angefasst.
+
+def test_extract_json_blob_repairs_a_trailing_comma_before_a_brace(caplog):
+    import logging
+    text = '{"policy_risk_level": "high", "events": [], "summary": "x",\n}'
+    with caplog.at_level(logging.WARNING, logger="shares_future"):
+        assert extract_json_blob(text, _DemoError) == {
+            "policy_risk_level": "high", "events": [], "summary": "x"}
+    assert any("nachgestelltes Komma" in r.message for r in caplog.records), \
+        "die Reparatur muss sichtbar bleiben, nicht stillschweigend passieren"
+
+
+def test_extract_json_blob_repairs_a_trailing_comma_before_a_bracket():
+    assert extract_json_blob('{"a": [1, 2,]}', _DemoError) == {"a": [1, 2]}
+
+
+def test_extract_json_blob_repairs_several_trailing_commas():
+    assert extract_json_blob('{"a": [1,], "b": {"c": 2,},}', _DemoError) == {
+        "a": [1], "b": {"c": 2}}
+
+
+def test_extract_json_blob_never_touches_a_comma_inside_a_string():
+    """Der gefaehrliche Fall: ein ', }' MITTEN in einem Textfeld. Die Reparatur
+    darf daran nichts aendern -- sie setzt nur an der Fehlerstelle an, und ein
+    gueltiges JSON hat gar keine."""
+    text = '{"summary": "tariffs, } and yields, ] stayed high", "n": 1}'
+    assert extract_json_blob(text, _DemoError) == {
+        "summary": "tariffs, } and yields, ] stayed high", "n": 1}
+
+
+def test_extract_json_blob_still_rejects_json_that_a_comma_cannot_fix():
+    """Ein echter Syntaxfehler bleibt ein Fehler -- die Reparatur ist eng."""
+    import pytest as _pytest
+    with _pytest.raises(_DemoError):
+        extract_json_blob('{"a": 1, "b":}', _DemoError)
+    with _pytest.raises(_DemoError):
+        extract_json_blob('{"a": 1 "b": 2}', _DemoError)
